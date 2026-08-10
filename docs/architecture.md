@@ -31,7 +31,7 @@ Mesh Node
 +-- Routing Engine       node/src/routing.ts
 +-- Content Discovery    node/src/content.ts
 +-- Cache Manager        node/src/content.ts (ContentStore)
-+-- Store & Forward      roadmap milestone 12 — non implementato
++-- Store & Forward      node/src/store-and-forward.ts — implementato (pacchetti unicast, vedi roadmap.md milestone 12)
 +-- Sync Engine          roadmap milestone 13 — non implementato
 +-- Security Manager     docs/security.md — parzialmente implementato (identità)
 +-- Service Registry     roadmap — non implementato
@@ -40,9 +40,9 @@ Mesh Node
 
 Non tutti i nodi implementano tutte le funzioni: uno smartphone può essere client/cache/relay limitato, un computer relay/server/cache/gateway, un server NOMAD service/content provider (§7).
 
-## Stato di implementazione attuale (Milestone 0-5)
+## Stato di implementazione attuale (Milestone 0-7 e 12)
 
-Lo stato corrente del codice copre le fasi 1-5 della specifica (§62-66): identità, packet protocol, transport TCP, routing multi-hop con TTL e deduplicazione, content discovery e cache. **Non** implementa ancora BLE, Wi-Fi, mobile, gateway NOMAD, store-and-forward, sync di partizione, sicurezza avanzata: sono passi successivi della roadmap (vedi [`roadmap.md`](./roadmap.md)), costruiti bottom-up (§89, §105) senza saltare livelli.
+Lo stato corrente del codice copre le fasi 1-7 della specifica (§62-66: identità, packet protocol, transport TCP, routing multi-hop con TTL e deduplicazione, content discovery, cache) più la Milestone 12 (store-and-forward, scope: pacchetti unicast). **Non** implementa ancora BLE, Wi-Fi, mobile, gateway NOMAD, sync di partizione, sicurezza avanzata: sono passi successivi della roadmap (vedi [`roadmap.md`](./roadmap.md)), costruiti bottom-up (§89, §105) senza saltare livelli.
 
 ## Gateway (§8, §37-40)
 

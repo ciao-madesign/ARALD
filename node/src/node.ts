@@ -4,6 +4,7 @@ import { PeerTable } from "./peer.js";
 import { MessageType, Priority, createPacket, type Packet } from "./packet.js";
 import { ChunkAssembler, ContentStore, type ContentMetadata } from "./content.js";
 import { SeenCache, decideForward } from "./routing.js";
+import { PendingDeliveryQueue } from "./store-and-forward.js";
 import type { PeerAddress, Transport } from "./transport.js";
 
 export interface NomadNodeOptions {
@@ -11,6 +12,10 @@ export interface NomadNodeOptions {
   identity?: Identity;
   defaultTtl?: number;
   contentRequestTimeoutMs?: number;
+  /** How long an undeliverable unicast packet is held before being dropped (spec §30, milestone 12). */
+  storeAndForwardTtlMs?: number;
+  /** Max packets held in the store-and-forward queue at once (spec §57 resource limits). */
+  maxPendingDeliveries?: number;
 }
 
 interface ContentWaiter {
@@ -70,6 +75,7 @@ export class NomadNode extends EventEmitter {
   private readonly transports: Transport[] = [];
   private readonly peerTransport = new Map<string, Transport>();
   private readonly pendingContentRequests = new Map<string, PendingContentEntry>();
+  private readonly pendingDeliveries: PendingDeliveryQueue;
   private started = false;
 
   constructor(options: NomadNodeOptions = {}) {
@@ -78,6 +84,10 @@ export class NomadNode extends EventEmitter {
     this.displayName = options.displayName ?? `NODE-${this.identity.nodeId.slice(0, 8)}`;
     this.defaultTtl = options.defaultTtl ?? 8;
     this.contentRequestTimeoutMs = options.contentRequestTimeoutMs ?? 3000;
+    this.pendingDeliveries = new PendingDeliveryQueue({
+      ttlMs: options.storeAndForwardTtlMs,
+      maxSize: options.maxPendingDeliveries,
+    });
   }
 
   get nodeId(): string {
@@ -88,12 +98,18 @@ export class NomadNode extends EventEmitter {
     return this.started ? "ONLINE" : "OFFLINE";
   }
 
+  /** Packets currently held for a destination that wasn't reachable yet (spec §30, milestone 12). */
+  get pendingDeliveryCount(): number {
+    return this.pendingDeliveries.size;
+  }
+
   addTransport(transport: Transport): void {
     transport.onPacket((packet, fromPeerId) => this.handlePacket(packet, fromPeerId));
     transport.onPeerConnected((peerId, address) => {
       this.peers.upsert(peerId, address);
       this.peerTransport.set(peerId, transport);
       this.emit("peer:connected", peerId);
+      void this.flushPendingDeliveries();
     });
     transport.onPeerDisconnected((peerId) => {
       this.peers.remove(peerId);
@@ -212,17 +228,49 @@ export class NomadNode extends EventEmitter {
     return packet;
   }
 
-  private async sendToPeer(peerId: string, packet: Packet): Promise<void> {
+  /** Returns whether the send actually succeeded, so callers can tell a real delivery from a swallowed failure. */
+  private async sendToPeer(peerId: string, packet: Packet): Promise<boolean> {
     const transport = this.peerTransport.get(peerId);
-    if (!transport) return;
-    await transport.send(peerId, packet).catch(() => {
-      /* best-effort: a peer that dropped mid-send will be cleaned up via onPeerDisconnected */
-    });
+    if (!transport) return false;
+    try {
+      await transport.send(peerId, packet);
+      return true;
+    } catch {
+      // best-effort: a peer that dropped mid-send will be cleaned up via onPeerDisconnected;
+      // the caller (floodExcept) decides whether the failed send warrants a store-and-forward retry.
+      return false;
+    }
   }
 
-  private async floodExcept(packet: Packet, exceptPeerId?: string): Promise<void> {
+  /**
+   * Floods a packet to every currently connected peer (except the one it
+   * arrived from, if any). If this is a unicast packet (a specific
+   * destination is known, and it isn't us) and either there is nobody to
+   * flood it to, or every send attempt failed, it is held in the
+   * store-and-forward queue instead of being silently dropped (spec §30) —
+   * retried automatically the next time a new peer connects (see
+   * `flushPendingDeliveries`). Returns whether at least one send succeeded.
+   */
+  private async floodExcept(packet: Packet, exceptPeerId?: string): Promise<boolean> {
     const targets = this.peers.list().filter((p) => p.id !== exceptPeerId);
-    await Promise.all(targets.map((p) => this.sendToPeer(p.id, packet)));
+    const isUnicastElsewhere = packet.destination !== undefined && packet.destination !== this.nodeId;
+
+    const delivered =
+      targets.length > 0 && (await Promise.all(targets.map((p) => this.sendToPeer(p.id, packet)))).some(Boolean);
+
+    if (!delivered && isUnicastElsewhere) {
+      this.pendingDeliveries.enqueue(packet, exceptPeerId);
+      this.emit("store-and-forward:queued", packet);
+    }
+
+    return delivered;
+  }
+
+  /** Retries every packet still worth delivering, typically triggered by a new peer connecting (spec §32, courier). */
+  private async flushPendingDeliveries(): Promise<void> {
+    await Promise.all(
+      this.pendingDeliveries.drain().map(({ packet, exceptPeerId }) => this.floodExcept(packet, exceptPeerId)),
+    );
   }
 
   private handlePacket(packet: Packet, fromPeerId: string): void {

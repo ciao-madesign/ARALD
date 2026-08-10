@@ -2,7 +2,7 @@
 
 Riferimento: [`docs/roadmap.md`](./roadmap.md) per lo stato di tutte le milestone (0-20). Questo documento traduce le milestone candidate come "prossimo passo" in piani d'azione concreti — file da toccare, prerequisiti, rischi, criteri di accettazione — così la scelta si può fare con cognizione di causa invece che sulla sola numerazione.
 
-**Stato: nessuna opzione è stata ancora selezionata.** Le tre milestone qui sotto sono tutte legittimamente "il prossimo passo" secondo la specifica (§89 dice solo di non svilupparle in parallelo, non ne impone l'ordine). Vengono confrontate, non decise.
+**Stato: Opzione C (store-and-forward) selezionata e completata.** Vedi `node/src/store-and-forward.ts`, `tests/integration/store-and-forward.test.ts` e la nota su [`docs/roadmap.md`](./roadmap.md#milestone-12--store-and-forward-dettagli-e-limitazione-nota) per lo scope e una limitazione nota (non bloccante). Le opzioni A (BLE) e B (gateway NOMAD) restano aperte e sono confrontate qui sotto, invariate.
 
 ## Come leggere questo documento
 
@@ -46,7 +46,9 @@ Per ciascuna opzione: cosa costruire, file coinvolti, prerequisiti, criteri di a
 
 ---
 
-## Opzione C — Store-and-forward (roadmap Milestone 12)
+## Opzione C — Store-and-forward (roadmap Milestone 12) — ✅ completata
+
+**Nota**: questa sezione è stata lasciata invariata come riferimento storico della pianificazione originale. Lo stato reale è in [`docs/roadmap.md`](./roadmap.md).
 
 **Cosa costruire**: una coda di consegne pendenti per pacchetti unicast il cui destinatario non è (ancora) raggiungibile, invece di lasciarli morire silenziosamente per TTL come accade oggi. È precondizione esplicita per il quarto e quinto obiettivo tecnico della specifica (§93-94: partition sync tra mesh separate, gateway Internet intermittente).
 
@@ -76,4 +78,4 @@ Se l'obiettivo immediato resta validare la logica di rete senza introdurre dipen
 
 ## Come procedere
 
-Nessuna opzione è stata selezionata in questa sessione. Alla prossima richiesta di continuare lo sviluppo, indicare quale milestone avviare (anche più di una, in sequenza) — questo documento va aggiornato con lo stato "in corso" e i task concreti via via che si procede, così resta lo strumento di riferimento per capire cosa è pianificato e cosa è ancora aperto.
+L'Opzione C (store-and-forward) è stata scelta e completata. Restano aperte le opzioni A (BLE transport) e B (gateway NOMAD): alla prossima richiesta di continuare lo sviluppo, indicare quale avviare (anche entrambe, in sequenza) — questo documento va aggiornato con lo stato "in corso" e i task concreti via via che si procede, così resta lo strumento di riferimento per capire cosa è pianificato e cosa è ancora aperto.

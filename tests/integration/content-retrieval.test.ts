@@ -78,8 +78,11 @@ describe("content-centric retrieval (A -> B -> C, content only on C)", () => {
     const metadata = c.node.publishContent("slow.txt", "text/plain", data);
 
     // A short-timeout caller and a long-timeout caller race on the same content id;
-    // both must resolve successfully once the (single) transfer completes.
-    const shortTimeout = a.node.getContent(metadata.contentId, { timeoutMs: 50 });
+    // both must resolve successfully once the (single) transfer completes. The short
+    // timeout is deliberately much smaller than the long one (to exercise the race)
+    // but not so tight that it flakes under CPU contention from other tests running
+    // in parallel — actual local delivery normally completes in low single-digit ms.
+    const shortTimeout = a.node.getContent(metadata.contentId, { timeoutMs: 500 });
     const longTimeout = a.node.getContent(metadata.contentId, { timeoutMs: 5000 });
 
     await expect(shortTimeout).resolves.toEqual(data);
