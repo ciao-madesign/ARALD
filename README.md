@@ -21,6 +21,7 @@ L'utente non deve sapere quale dispositivo possiede il contenuto, quanti hop ser
 - [`docs/development.md`](docs/development.md) — come compilare, eseguire e testare
 - [`docs/deployment.md`](docs/deployment.md) — scenari di deployment target (rifugio, emergenza)
 - [`docs/roadmap.md`](docs/roadmap.md) — stato delle milestone
+- [`docs/next-steps.md`](docs/next-steps.md) — piani d'azione concreti per le milestone candidate come prossimo passo
 
 ## Stato del progetto
 

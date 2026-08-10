@@ -13,12 +13,19 @@ export interface NomadNodeOptions {
   contentRequestTimeoutMs?: number;
 }
 
-interface PendingContentRequest {
-  contentId: string;
+interface ContentWaiter {
   resolve: (data: Buffer) => void;
   reject: (err: Error) => void;
   timeout: NodeJS.Timeout;
+}
+
+interface PendingContentEntry {
+  contentId: string;
+  /** True once a CONTENT_QUERY has been flooded for this content id, so concurrent local callers don't re-flood. */
+  queried: boolean;
+  /** True once a CONTENT_REQUEST has been sent to a specific provider, so multiple CONTENT_FOUND replies only trigger one request. */
   requested: boolean;
+  waiters: ContentWaiter[];
 }
 
 interface ContentQueryPayload {
@@ -62,7 +69,7 @@ export class NomadNode extends EventEmitter {
   private readonly relayAssembler = new ChunkAssembler();
   private readonly transports: Transport[] = [];
   private readonly peerTransport = new Map<string, Transport>();
-  private readonly pendingContentRequests = new Map<string, PendingContentRequest>();
+  private readonly pendingContentRequests = new Map<string, PendingContentEntry>();
   private started = false;
 
   constructor(options: NomadNodeOptions = {}) {
@@ -130,19 +137,36 @@ export class NomadNode extends EventEmitter {
 
     return new Promise<Buffer>((resolve, reject) => {
       const timeoutMs = options.timeoutMs ?? this.contentRequestTimeoutMs;
-      const timeout = setTimeout(() => {
-        this.pendingContentRequests.delete(contentId);
-        reject(new Error(`content not found within mesh: ${contentId}`));
-      }, timeoutMs);
 
-      this.pendingContentRequests.set(contentId, { contentId, resolve, reject, timeout, requested: false });
+      let entry = this.pendingContentRequests.get(contentId);
+      if (!entry) {
+        entry = { contentId, queried: false, requested: false, waiters: [] };
+        this.pendingContentRequests.set(contentId, entry);
+      }
+      const activeEntry = entry;
 
-      const query = this.originate<ContentQueryPayload>(
-        MessageType.CONTENT_QUERY,
-        { contentId },
-        { priority: Priority.CONTENT },
-      );
-      void this.floodExcept(query);
+      const waiter: ContentWaiter = {
+        resolve,
+        reject,
+        timeout: setTimeout(() => {
+          activeEntry.waiters = activeEntry.waiters.filter((w) => w !== waiter);
+          if (activeEntry.waiters.length === 0) this.pendingContentRequests.delete(contentId);
+          reject(new Error(`content not found within mesh: ${contentId}`));
+        }, timeoutMs),
+      };
+      activeEntry.waiters.push(waiter);
+
+      // Only the first caller for a given content id actually floods a query;
+      // concurrent callers for the same id piggyback on the same in-flight request.
+      if (!activeEntry.queried) {
+        activeEntry.queried = true;
+        const query = this.originate<ContentQueryPayload>(
+          MessageType.CONTENT_QUERY,
+          { contentId },
+          { priority: Priority.CONTENT },
+        );
+        void this.floodExcept(query);
+      }
     });
   }
 
@@ -212,7 +236,9 @@ export class NomadNode extends EventEmitter {
     const decision = decideForward(packet, this.nodeId, this.seenCache);
     if (decision.duplicate) return;
 
-    if (decision.forwardPacket && (packet.type === MessageType.CONTENT_CHUNK || packet.type === MessageType.CONTENT_COMPLETE)) {
+    // A relay caches transiting content whenever it isn't the final destination itself — including the
+    // edge case where TTL is exhausted on arrival and the packet is about to be dropped rather than forwarded.
+    if (!decision.deliverLocally && (packet.type === MessageType.CONTENT_CHUNK || packet.type === MessageType.CONTENT_COMPLETE)) {
       this.observeRelayedContent(packet);
     }
 
@@ -295,9 +321,9 @@ export class NomadNode extends EventEmitter {
   }
 
   private handleContentFound(packet: Packet<ContentFoundPayload>): void {
-    const pending = this.pendingContentRequests.get(packet.payload.contentId);
-    if (!pending || pending.requested) return; // Not waiting on this, or already requested from an earlier reply.
-    pending.requested = true;
+    const entry = this.pendingContentRequests.get(packet.payload.contentId);
+    if (!entry || entry.requested) return; // Not waiting on this, or already requested from an earlier reply.
+    entry.requested = true;
     const request = this.originate<ContentQueryPayload>(
       MessageType.CONTENT_REQUEST,
       { contentId: packet.payload.contentId },
@@ -333,23 +359,28 @@ export class NomadNode extends EventEmitter {
 
   private handleContentComplete(packet: Packet<ContentCompletePayload>): void {
     const { contentId, metadata } = packet.payload;
-    const pending = this.pendingContentRequests.get(contentId);
+    const entry = this.pendingContentRequests.get(contentId);
     const data = this.requesterAssembler.tryComplete(contentId, metadata);
 
     if (!data) {
-      if (pending) {
-        clearTimeout(pending.timeout);
+      if (entry) {
         this.pendingContentRequests.delete(contentId);
-        pending.reject(new Error(`content hash mismatch or incomplete transfer: ${contentId}`));
+        const error = new Error(`content hash mismatch or incomplete transfer: ${contentId}`);
+        for (const waiter of entry.waiters) {
+          clearTimeout(waiter.timeout);
+          waiter.reject(error);
+        }
       }
       return;
     }
 
     this.contentStore.putVerified(metadata, data);
-    if (pending) {
-      clearTimeout(pending.timeout);
+    if (entry) {
       this.pendingContentRequests.delete(contentId);
-      pending.resolve(data);
+      for (const waiter of entry.waiters) {
+        clearTimeout(waiter.timeout);
+        waiter.resolve(data);
+      }
     }
   }
 

@@ -57,4 +57,32 @@ describe("content-centric retrieval (A -> B -> C, content only on C)", () => {
     const unknownId = computeContentId(Buffer.from("never published"));
     await expect(a.node.getContent(unknownId, { timeoutMs: 300 })).rejects.toThrow(/not found/);
   });
+
+  it("resolves all concurrent callers requesting the same content id, without one clobbering another", async () => {
+    const data = Buffer.from("concurrent callers should not clobber each other");
+    const metadata = c.node.publishContent("shared.txt", "text/plain", data);
+
+    const [first, second, third] = await Promise.all([
+      a.node.getContent(metadata.contentId),
+      a.node.getContent(metadata.contentId),
+      a.node.getContent(metadata.contentId),
+    ]);
+
+    expect(first).toEqual(data);
+    expect(second).toEqual(data);
+    expect(third).toEqual(data);
+  });
+
+  it("does not let one caller's timeout reject a still-pending concurrent caller for the same content id", async () => {
+    const data = Buffer.from("slow reply but both callers should still resolve");
+    const metadata = c.node.publishContent("slow.txt", "text/plain", data);
+
+    // A short-timeout caller and a long-timeout caller race on the same content id;
+    // both must resolve successfully once the (single) transfer completes.
+    const shortTimeout = a.node.getContent(metadata.contentId, { timeoutMs: 50 });
+    const longTimeout = a.node.getContent(metadata.contentId, { timeoutMs: 5000 });
+
+    await expect(shortTimeout).resolves.toEqual(data);
+    await expect(longTimeout).resolves.toEqual(data);
+  });
 });
