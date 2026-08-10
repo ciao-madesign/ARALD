@@ -5,5 +5,6 @@ export * from "./packet.js";
 export * from "./transport.js";
 export * from "./routing.js";
 export * from "./content.js";
+export * from "./catalog.js";
 export * from "./store-and-forward.js";
 export { TcpTransport } from "./transports/tcp.js";

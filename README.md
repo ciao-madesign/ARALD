@@ -25,7 +25,7 @@ L'utente non deve sapere quale dispositivo possiede il contenuto, quanti hop ser
 
 ## Stato del progetto
 
-Prototipo software (Milestone 0-7 della roadmap): identità crittografica per nodo, protocollo a pacchetti con TTL e deduplicazione, transport TCP, routing multi-hop, content discovery e cache — tutto dimostrato su rete locale, **senza Internet e senza BLE**, per validare la logica di rete prima di introdurre i radio transport. Vedi [`docs/roadmap.md`](docs/roadmap.md) per lo stato dettagliato di ogni milestone.
+Prototipo software (Milestone 0-7, 12, 13 e parte della 15 nella roadmap): identità crittografica per nodo, protocollo a pacchetti con TTL e deduplicazione, transport TCP, routing multi-hop, content discovery e cache, store-and-forward, sincronizzazione dei cataloghi tra segmenti di rete riconnessi, firma dei contenuti — tutto dimostrato su rete locale, **senza Internet e senza BLE**, per validare la logica di rete prima di introdurre i radio transport. Questo è tutto ciò che si può costruire e testare senza hardware BLE e senza Docker/Project NOMAD: i passi successivi (BLE, mobile, gateway NOMAD) restano bloccati su quei prerequisiti. Vedi [`docs/roadmap.md`](docs/roadmap.md) per lo stato dettagliato di ogni milestone e [`docs/next-steps.md`](docs/next-steps.md) per cosa resta aperto.
 
 ## Quick start
 

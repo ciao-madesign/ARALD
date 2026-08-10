@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { CHUNK_SIZE, ChunkAssembler, ContentStore, computeContentId } from "../../node/src/content.js";
+import {
+  CHUNK_SIZE,
+  ChunkAssembler,
+  ContentStore,
+  computeContentId,
+  contentSigningPayload,
+  type ContentMetadata,
+} from "../../node/src/content.js";
+import { Identity } from "../../node/src/identity.js";
 
 describe("ContentStore", () => {
   it("derives the content id as sha256 of the payload", () => {
@@ -31,6 +39,98 @@ describe("ContentStore", () => {
     const chunks = store.chunksFor(metadata.contentId);
     expect(chunks).toHaveLength(3);
     expect(Buffer.concat(chunks)).toEqual(data);
+  });
+});
+
+describe("ContentStore publisher signature verification (spec §55)", () => {
+  function signedMetadata(
+    identity: Identity,
+    data: Buffer,
+    fieldOverrides: Partial<Pick<ContentMetadata, "name" | "mimeType" | "publisherId">> = {},
+  ): ContentMetadata {
+    const contentId = computeContentId(data);
+    const name = fieldOverrides.name ?? "n";
+    const mimeType = fieldOverrides.mimeType ?? "text/plain";
+    const publisherId = fieldOverrides.publisherId ?? identity.nodeId;
+    const size = data.length;
+    return {
+      contentId,
+      name,
+      mimeType,
+      size,
+      createdAt: Date.now(),
+      publisherId,
+      signature: identity.sign(contentSigningPayload({ contentId, name, mimeType, size, publisherId })).toString("hex"),
+    };
+  }
+
+  it("accepts content correctly signed by its claimed publisher", () => {
+    const publisher = Identity.generate();
+    const data = Buffer.from("rifugio: bollettino ufficiale");
+    const store = new ContentStore();
+
+    const ok = store.putVerified(signedMetadata(publisher, data), data);
+    expect(ok).toBe(true);
+  });
+
+  it("rejects content whose hash matches but carries no signature at all", () => {
+    const data = Buffer.from("no signature attached");
+    const metadata: ContentMetadata = {
+      contentId: computeContentId(data),
+      name: "n",
+      mimeType: "text/plain",
+      size: data.length,
+      createdAt: Date.now(),
+      // publisherId/signature intentionally omitted
+    };
+    const store = new ContentStore();
+
+    expect(store.putVerified(metadata, data)).toBe(false);
+    expect(store.has(metadata.contentId)).toBe(false);
+  });
+
+  it("rejects content impersonating a publisher it wasn't actually signed by", () => {
+    const victim = Identity.generate();
+    const attacker = Identity.generate();
+    const data = Buffer.from("evacuare zona X");
+
+    // Attacker signs with their own key but claims to be `victim` — the
+    // signature won't verify against victim's public key.
+    const forged = signedMetadata(attacker, data, { publisherId: victim.nodeId });
+    const store = new ContentStore();
+
+    expect(store.putVerified(forged, data)).toBe(false);
+    expect(store.has(forged.contentId)).toBe(false);
+  });
+
+  it("rejects genuinely-signed content whose name/mimeType was relabeled after signing (relay tampering)", () => {
+    const publisher = Identity.generate();
+    const data = Buffer.from("bollettino meteo ufficiale");
+    const genuine = signedMetadata(publisher, data, { name: "bollettino.txt", mimeType: "text/plain" });
+
+    // A relay keeps contentId/signature untouched but swaps the label — this must NOT verify,
+    // otherwise the signature would only be proving "these bytes exist", not "this is what
+    // the publisher actually called them" (spec §55).
+    const relabeled: ContentMetadata = { ...genuine, name: "security-patch.exe", mimeType: "application/x-msdownload" };
+    const store = new ContentStore();
+
+    expect(store.putVerified(relabeled, data)).toBe(false);
+    expect(store.has(relabeled.contentId)).toBe(false);
+
+    // The untouched original, by contrast, still verifies fine.
+    expect(store.putVerified(genuine, data)).toBe(true);
+  });
+
+  it("NomadNode.publishContent signs content so it round-trips through putVerified", async () => {
+    const { NomadNode } = await import("../../node/src/node.js");
+    const node = new NomadNode({ displayName: "signer" });
+    const data = Buffer.from("published via NomadNode");
+
+    const metadata = node.publishContent("doc.txt", "text/plain", data);
+
+    expect(metadata.publisherId).toBe(node.nodeId);
+    expect(metadata.signature).toBeTruthy();
+    expect(node.contentStore.has(metadata.contentId)).toBe(true);
   });
 });
 

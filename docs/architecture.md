@@ -32,17 +32,17 @@ Mesh Node
 +-- Content Discovery    node/src/content.ts
 +-- Cache Manager        node/src/content.ts (ContentStore)
 +-- Store & Forward      node/src/store-and-forward.ts — implementato (pacchetti unicast, vedi roadmap.md milestone 12)
-+-- Sync Engine          roadmap milestone 13 — non implementato
-+-- Security Manager     docs/security.md — parzialmente implementato (identità)
++-- Sync Engine          node/src/catalog.ts — implementato (vedi roadmap.md milestone 13)
++-- Security Manager     docs/security.md — parzialmente implementato (identità + firma dei contenuti, vedi milestone 15)
 +-- Service Registry     roadmap — non implementato
 +-- Storage Manager      node/src/content.ts (in-memory nel prototipo)
 ```
 
 Non tutti i nodi implementano tutte le funzioni: uno smartphone può essere client/cache/relay limitato, un computer relay/server/cache/gateway, un server NOMAD service/content provider (§7).
 
-## Stato di implementazione attuale (Milestone 0-7 e 12)
+## Stato di implementazione attuale (Milestone 0-7, 12, 13, 15 parziale)
 
-Lo stato corrente del codice copre le fasi 1-7 della specifica (§62-66: identità, packet protocol, transport TCP, routing multi-hop con TTL e deduplicazione, content discovery, cache) più la Milestone 12 (store-and-forward, scope: pacchetti unicast). **Non** implementa ancora BLE, Wi-Fi, mobile, gateway NOMAD, sync di partizione, sicurezza avanzata: sono passi successivi della roadmap (vedi [`roadmap.md`](./roadmap.md)), costruiti bottom-up (§89, §105) senza saltare livelli.
+Lo stato corrente del codice copre le fasi 1-7 della specifica (§62-66: identità, packet protocol, transport TCP, routing multi-hop con TTL e deduplicazione, content discovery, cache), la Milestone 12 (store-and-forward, scope: pacchetti unicast), la Milestone 13 (sincronizzazione dei cataloghi tra segmenti di rete riconnessi) e una parte della Milestone 15 (firma dei publisher sui contenuti). Questo è **tutto ciò che si può costruire e testare senza hardware BLE e senza Docker/Project NOMAD**: BLE, Wi-Fi reale, mobile e gateway NOMAD restano bloccati su quei prerequisiti (vedi [`roadmap.md`](./roadmap.md) per il dettaglio di cosa è bloccato da cosa), costruiti bottom-up (§89, §105) senza saltare livelli quando si potrà riprendere.
 
 ## Gateway (§8, §37-40)
 

@@ -13,6 +13,8 @@ export enum MessageType {
   CONTENT_REQUEST = "CONTENT_REQUEST",
   CONTENT_CHUNK = "CONTENT_CHUNK",
   CONTENT_COMPLETE = "CONTENT_COMPLETE",
+  SYNC_REQUEST = "SYNC_REQUEST",
+  SYNC_RESPONSE = "SYNC_RESPONSE",
 }
 
 /** Traffic priority classes (spec §50). Carried as data only in the prototype — no differentiated scheduling yet. */

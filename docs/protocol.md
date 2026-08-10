@@ -34,10 +34,14 @@ Implementato in `node/src/packet.ts`. Framing su TCP: un pacchetto JSON per riga
 | `CONTENT_REQUEST` | richiesta esplicita del contenuto trovato | Milestone 4 |
 | `CONTENT_CHUNK` | un chunk del contenuto (§26) | Milestone 4 |
 | `CONTENT_COMPLETE` | fine trasferimento, contiene l'hash finale da verificare | Milestone 4 |
+| `SYNC_REQUEST` | annuncio del proprio catalogo (content id conosciuti) a un peer appena connesso | Milestone 13 |
+| `SYNC_RESPONSE` | risposta con le voci di catalogo che il peer non conosceva ancora (solo metadata, mai i byte) | Milestone 13 |
 
 Non esiste un pacchetto esplicito `CONTENT_NOT_FOUND`: l'assenza di un contenuto è segnalata implicitamente dal timeout lato richiedente (nessun `CONTENT_FOUND` ricevuto entro `contentRequestTimeoutMs` mentre il flood si esaurisce per TTL, §21). Un pacchetto `CONTENT_NOT_FOUND` esplicito è un possibile miglioramento futuro, non necessario per gli obiettivi §90-92.
 
-Tipi previsti dalla specifica ma **non ancora implementati** (§49): `ANNOUNCE`, `CAPABILITY`, `ROUTE_QUERY`, `ROUTE_REPLY`, `SERVICE_QUERY`, `SERVICE_ANNOUNCE`, `SERVICE_REQUEST`, `SERVICE_RESPONSE`, `SYNC_REQUEST`, `SYNC_RESPONSE`, `STORE`, `FORWARD`, `ERROR`.
+`SYNC_REQUEST`/`SYNC_RESPONSE` sono scambiati direttamente peer-a-peer (un solo hop, come `HELLO`) ogni volta che due nodi si connettono — non vengono inoltrati/floodati oltre i due nodi coinvolti. Vedi `docs/roadmap.md` milestone 13 per il flusso completo.
+
+Tipi previsti dalla specifica ma **non ancora implementati** (§49): `ANNOUNCE`, `CAPABILITY`, `ROUTE_QUERY`, `ROUTE_REPLY`, `SERVICE_QUERY`, `SERVICE_ANNOUNCE`, `SERVICE_REQUEST`, `SERVICE_RESPONSE`, `STORE`, `FORWARD`, `ERROR`.
 
 ## TTL e deduplicazione (§19-21)
 
@@ -51,7 +55,7 @@ Tipi previsti dalla specifica ma **non ancora implementati** (§49): `ANNOUNCE`,
 content_id = sha256(payload)
 ```
 
-esadecimale, calcolato da `node/src/content.ts`. Metadata associati nel prototipo: `contentId, name, mimeType, size, createdAt`. Firma del publisher ed expiry (§55) non sono ancora implementate — vedi [`security.md`](./security.md).
+esadecimale, calcolato da `node/src/content.ts`. Metadata associati nel prototipo: `contentId, name, mimeType, size, createdAt, publisherId, signature`. Firma del publisher (§55) è implementata — vedi [`security.md`](./security.md); expiry non è ancora implementata.
 
 ## Flusso di content discovery (§25, Milestone 4)
 

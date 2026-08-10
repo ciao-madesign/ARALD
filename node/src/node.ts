@@ -2,7 +2,15 @@ import { EventEmitter } from "node:events";
 import { Identity } from "./identity.js";
 import { PeerTable } from "./peer.js";
 import { MessageType, Priority, createPacket, type Packet } from "./packet.js";
-import { ChunkAssembler, ContentStore, type ContentMetadata } from "./content.js";
+import {
+  ChunkAssembler,
+  ContentStore,
+  computeContentId,
+  contentSigningPayload,
+  verifyContentSignature,
+  type ContentMetadata,
+} from "./content.js";
+import { RemoteCatalog } from "./catalog.js";
 import { SeenCache, decideForward } from "./routing.js";
 import { PendingDeliveryQueue } from "./store-and-forward.js";
 import type { PeerAddress, Transport } from "./transport.js";
@@ -16,6 +24,8 @@ export interface NomadNodeOptions {
   storeAndForwardTtlMs?: number;
   /** Max packets held in the store-and-forward queue at once (spec §57 resource limits). */
   maxPendingDeliveries?: number;
+  /** Max entries held in the remote (metadata-only) content catalog at once (spec §57 resource limits). */
+  maxRemoteCatalogEntries?: number;
 }
 
 interface ContentWaiter {
@@ -55,6 +65,16 @@ interface ContentCompletePayload {
   metadata: ContentMetadata;
 }
 
+interface SyncRequestPayload {
+  /** Content ids the sender already knows about (has locally, or has previously learned of via sync) — spec §33. */
+  knownContentIds: string[];
+}
+
+interface SyncResponsePayload {
+  /** Metadata only, never the bytes (spec §33: "confrontare cataloghi", not re-transfer everything). */
+  entries: ContentMetadata[];
+}
+
 /**
  * A Nomad-Net mesh node (spec §7): wires identity, peer table, one or more
  * transports, controlled-flooding routing and the content-centric protocol
@@ -66,6 +86,8 @@ export class NomadNode extends EventEmitter {
   readonly displayName: string;
   readonly peers = new PeerTable();
   readonly contentStore = new ContentStore();
+  /** Content known to exist elsewhere in the mesh via catalog sync (spec §33-34, milestone 13) but not fetched locally. */
+  readonly remoteCatalog: RemoteCatalog;
 
   private readonly defaultTtl: number;
   private readonly contentRequestTimeoutMs: number;
@@ -88,6 +110,7 @@ export class NomadNode extends EventEmitter {
       ttlMs: options.storeAndForwardTtlMs,
       maxSize: options.maxPendingDeliveries,
     });
+    this.remoteCatalog = new RemoteCatalog({ maxSize: options.maxRemoteCatalogEntries });
   }
 
   get nodeId(): string {
@@ -110,6 +133,7 @@ export class NomadNode extends EventEmitter {
       this.peerTransport.set(peerId, transport);
       this.emit("peer:connected", peerId);
       void this.flushPendingDeliveries();
+      void this.startCatalogSync(peerId);
     });
     transport.onPeerDisconnected((peerId) => {
       this.peers.remove(peerId);
@@ -137,9 +161,39 @@ export class NomadNode extends EventEmitter {
     return peerId;
   }
 
-  /** Publishes local content, making it discoverable via CONTENT_QUERY (spec §23-25). */
+  /**
+   * Publishes local content, making it discoverable via CONTENT_QUERY
+   * (spec §23-25). Signs the full metadata — not just the content id — with
+   * this node's identity (spec §55), so any other node that later receives
+   * it can verify both that the bytes are unmodified AND that the claimed
+   * name/type/size actually came from this publisher, not relabeled by a
+   * relay along the way. Goes through the same `putVerified` trust gate as
+   * content received from the network, rather than a separate
+   * "local, unchecked" path.
+   */
   publishContent(name: string, mimeType: string, data: Buffer): ContentMetadata {
-    return this.contentStore.put(name, mimeType, data);
+    const contentId = computeContentId(data);
+    const size = data.length;
+    const publisherId = this.nodeId;
+    const signature = this.identity.sign(contentSigningPayload({ contentId, name, mimeType, size, publisherId })).toString("hex");
+    const metadata: ContentMetadata = { contentId, name, mimeType, size, createdAt: Date.now(), publisherId, signature };
+    if (!this.contentStore.putVerified(metadata, data)) {
+      throw new Error("internal error: freshly signed content failed its own signature verification");
+    }
+    return metadata;
+  }
+
+  /**
+   * Everything this node can currently tell a user about: content it
+   * actually holds plus content it only knows exists elsewhere via catalog
+   * sync (spec §33, §59 "Search" UI). Local entries win on conflict, since
+   * they mean the bytes are already here.
+   */
+  listKnownContent(): ContentMetadata[] {
+    const merged = new Map<string, ContentMetadata>();
+    for (const metadata of this.remoteCatalog.list()) merged.set(metadata.contentId, metadata);
+    for (const metadata of this.contentStore.list()) merged.set(metadata.contentId, metadata);
+    return Array.from(merged.values());
   }
 
   /**
@@ -273,6 +327,22 @@ export class NomadNode extends EventEmitter {
     );
   }
 
+  /**
+   * Announces this node's catalog to a newly connected peer (spec §33-34,
+   * milestone 13). This is a direct, single-hop exchange — sent straight to
+   * the peer via `sendToPeer`, not flooded — because it only ever concerns
+   * the two nodes that just connected, exactly like the HELLO handshake.
+   */
+  private async startCatalogSync(peerId: string): Promise<void> {
+    const knownContentIds = this.listKnownContent().map((m) => m.contentId);
+    const request = this.originate<SyncRequestPayload>(
+      MessageType.SYNC_REQUEST,
+      { knownContentIds },
+      { destination: peerId, priority: Priority.CONTROL },
+    );
+    await this.sendToPeer(peerId, request);
+  }
+
   private handlePacket(packet: Packet, fromPeerId: string): void {
     this.peers.touch(fromPeerId);
 
@@ -352,6 +422,14 @@ export class NomadNode extends EventEmitter {
         this.handleContentComplete(packet as Packet<ContentCompletePayload>);
         break;
 
+      case MessageType.SYNC_REQUEST:
+        this.handleSyncRequest(packet as Packet<SyncRequestPayload>, fromPeerId);
+        break;
+
+      case MessageType.SYNC_RESPONSE:
+        this.handleSyncResponse(packet as Packet<SyncResponsePayload>);
+        break;
+
       default:
         break;
     }
@@ -410,10 +488,20 @@ export class NomadNode extends EventEmitter {
     const entry = this.pendingContentRequests.get(contentId);
     const data = this.requesterAssembler.tryComplete(contentId, metadata);
 
-    if (!data) {
+    // putVerified() re-checks the hash (redundant with tryComplete's own check, harmless) and —
+    // critically — the publisher signature (spec §55). A caller must never be handed bytes this
+    // node itself wouldn't trust enough to cache: resolving with `data` regardless of this result
+    // would let a node with a forged/missing signature still succeed a getContent() call.
+    const stored = data ? this.contentStore.putVerified(metadata, data) : false;
+
+    if (!stored) {
       if (entry) {
         this.pendingContentRequests.delete(contentId);
-        const error = new Error(`content hash mismatch or incomplete transfer: ${contentId}`);
+        const error = new Error(
+          data
+            ? `content signature invalid or untrusted publisher: ${contentId}`
+            : `content hash mismatch or incomplete transfer: ${contentId}`,
+        );
         for (const waiter of entry.waiters) {
           clearTimeout(waiter.timeout);
           waiter.reject(error);
@@ -422,12 +510,11 @@ export class NomadNode extends EventEmitter {
       return;
     }
 
-    this.contentStore.putVerified(metadata, data);
     if (entry) {
       this.pendingContentRequests.delete(contentId);
       for (const waiter of entry.waiters) {
         clearTimeout(waiter.timeout);
-        waiter.resolve(data);
+        waiter.resolve(data!);
       }
     }
   }
@@ -447,5 +534,39 @@ export class NomadNode extends EventEmitter {
       const data = this.relayAssembler.tryComplete(contentId, metadata);
       if (data) this.contentStore.putVerified(metadata, data);
     }
+  }
+
+  /** Replies with catalog entries the requester doesn't already know about (spec §33) — metadata only, never bytes. */
+  private handleSyncRequest(packet: Packet<SyncRequestPayload>, fromPeerId: string): void {
+    const known = new Set(packet.payload.knownContentIds);
+    const newEntries = this.listKnownContent().filter((metadata) => !known.has(metadata.contentId));
+    if (newEntries.length === 0) return;
+
+    const response = this.originate<SyncResponsePayload>(
+      MessageType.SYNC_RESPONSE,
+      { entries: newEntries },
+      { destination: packet.source, priority: Priority.CONTROL },
+    );
+    void this.sendToPeer(fromPeerId, response);
+  }
+
+  /**
+   * Records what a peer's catalog reply announced — existence only;
+   * retrieval still happens on demand via getContent(). A SYNC_RESPONSE is
+   * untrusted network input just like a CONTENT_COMPLETE: each entry must
+   * carry a valid publisher signature (spec §55) before it's trusted enough
+   * to keep and re-advertise to the next peer — otherwise a single
+   * malicious node could inject fabricated "this content exists, signed by
+   * <victim>" claims that propagate transitively across catalog syncs.
+   */
+  private handleSyncResponse(packet: Packet<SyncResponsePayload>): void {
+    const accepted: ContentMetadata[] = [];
+    for (const metadata of packet.payload.entries) {
+      if (this.contentStore.has(metadata.contentId)) continue; // we already hold the actual bytes
+      if (!verifyContentSignature(metadata)) continue; // unsigned or forged claim — never trust it
+      this.remoteCatalog.record(metadata);
+      accepted.push(metadata);
+    }
+    if (accepted.length > 0) this.emit("catalog-sync", accepted);
   }
 }

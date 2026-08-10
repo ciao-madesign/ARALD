@@ -2,7 +2,7 @@
 
 Riferimento: [`docs/roadmap.md`](./roadmap.md) per lo stato di tutte le milestone (0-20). Questo documento traduce le milestone candidate come "prossimo passo" in piani d'azione concreti — file da toccare, prerequisiti, rischi, criteri di accettazione — così la scelta si può fare con cognizione di causa invece che sulla sola numerazione.
 
-**Stato: Opzione C (store-and-forward) selezionata e completata.** Vedi `node/src/store-and-forward.ts`, `tests/integration/store-and-forward.test.ts` e la nota su [`docs/roadmap.md`](./roadmap.md#milestone-12--store-and-forward-dettagli-e-limitazione-nota) per lo scope e una limitazione nota (non bloccante). Le opzioni A (BLE) e B (gateway NOMAD) restano aperte e sono confrontate qui sotto, invariate.
+**Stato: tutto ciò che si poteva fare senza hardware BLE e senza Docker/Project NOMAD è stato completato.** Oltre all'Opzione C (store-and-forward, Milestone 12), sono state completate anche la Milestone 13 (partition sync, vedi `node/src/catalog.ts`) e una parte della Milestone 15 (firma dei contenuti, vedi `docs/security.md`) — entrambe emerse come naturali prosecuzioni puramente software dopo il completamento dell'Opzione C. Le opzioni A (BLE) e B (gateway NOMAD), qui sotto invariate rispetto alla pianificazione originale, restano **bloccate**: richiedono rispettivamente hardware fisico e un'istanza Docker di Project NOMAD, nessuno dei due disponibile in questa sessione. Più sotto, una sezione nuova elenca cosa resta percorribile in puro software se si vuole andare oltre prima di procurarsi quegli elementi.
 
 ## Come leggere questo documento
 
@@ -20,7 +20,7 @@ Per ciascuna opzione: cosa costruire, file coinvolti, prerequisiti, criteri di a
 
 **File coinvolti**: `node/src/transports/ble.ts`; probabilmente anche un livello di fragmentation *a livello di transport* separato dal chunking di contenuto esistente — l'MTU BLE tipico (~20-500 byte) è molto più piccolo di `CHUNK_SIZE` (4096 byte in `node/src/content.ts`), quindi un singolo `CONTENT_CHUNK` andrebbe comunque spezzettato ulteriormente per attraversare un link BLE.
 
-**Prerequisiti**: hardware BLE reale per i test end-to-end. I test automatici (`tests/integration/`) non possono verificare BLE reale in CI — servirebbe un `Transport` fittizio ("loopback BLE simulato") per i test automatici, più verifica manuale su dispositivi reali.
+**Prerequisiti**: hardware BLE reale per i test end-to-end. I test automatici (`tests/integration/`) non possono verificare BLE reale in CI — servirebbe un `Transport` fittizio ("loopback BLE simulato") per i test automatici, più verifica manuale su dispositivi reali. **Stato: bloccata — nessun hardware BLE disponibile in questa sessione.**
 
 **Criteri di accettazione**: gli stessi scenari di `tests/integration/three-node-relay.test.ts` e `content-retrieval.test.ts`, ma con `TcpTransport` sostituito da `BleTransport`, eseguiti su almeno due dispositivi fisici (spec §67 — "il routing non deve essere modificato" nel passaggio di transport).
 
@@ -36,7 +36,7 @@ Per ciascuna opzione: cosa costruire, file coinvolti, prerequisiti, criteri di a
 
 **File coinvolti**: un entry point del gateway (es. `gateway/nomad/index.ts`) più un adapter per servizio NOMAD esposto — partire da **un solo** servizio (Kiwix è il candidato più semplice: API HTTP di sola lettura) per contenere lo scope iniziale.
 
-**Prerequisiti**: un'istanza di Project NOMAD funzionante e raggiungibile via Docker (richiede un ambiente Docker + sistema Debian-based o container Linux compatibile, spec §4) — **da verificare se disponibile nell'ambiente di sviluppo corrente prima di iniziare**, altrimenti questa opzione si blocca subito su un prerequisito ambientale.
+**Prerequisiti**: un'istanza di Project NOMAD funzionante e raggiungibile via Docker (richiede un ambiente Docker + sistema Debian-based o container Linux compatibile, spec §4). **Stato: bloccata — nessun ambiente Docker/Project NOMAD disponibile in questa sessione.**
 
 **Criteri di accettazione**: un `NomadNode` con questo gateway attivo risponde a una `CONTENT_QUERY` per un articolo Kiwix reale con lo stesso ciclo `CONTENT_FOUND` → `CONTENT_REQUEST` → `CONTENT_CHUNK`* → `CONTENT_COMPLETE` già coperto dai test esistenti, servendo dati reali invece che contenuto pubblicato via `publishContent()`.
 
@@ -64,18 +64,26 @@ Per ciascuna opzione: cosa costruire, file coinvolti, prerequisiti, criteri di a
 
 ---
 
-## Confronto sintetico
+## Opzione D — Partition sync (roadmap Milestone 13) — ✅ completata
 
-| Opzione | Nuove dipendenze esterne | Riuso del codice esistente | Testabilità automatica in CI | Sforzo |
-|---|---|---|---|---|
-| A. BLE transport | Alta (libreria BLE + hardware) | Alto (stessa interfaccia `Transport`) | Bassa (serve hardware reale o un fake transport) | Alto |
-| B. Gateway NOMAD | Alta (Docker + Project NOMAD) | Alto (stesso protocollo/routing) | Media (dipende da un'istanza NOMAD raggiungibile) | Medio |
-| C. Store-and-forward | Nessuna | Molto alto | Alta (stessa infrastruttura `tests/integration/` già in uso) | Medio-basso |
+Aggiunta a questo documento a posteriori: emersa come prosecuzione naturale dell'Opzione C una volta completata, senza introdurre dipendenze nuove. Due nodi che si connettono si scambiano automaticamente un catalogo di cosa possiedono (solo metadata, mai i byte), così due segmenti di mesh precedentemente separati possono sapere cosa esiste dall'altra parte non appena si ricollegano, senza dover ritrasferire tutto — vedi `node/src/catalog.ts` e `docs/roadmap.md` milestone 13 per il dettaglio. Realizza direttamente il quarto obiettivo tecnico della specifica (§93).
 
-## Raccomandazione (non vincolante)
+## Opzione E — Firma dei contenuti (parte della roadmap Milestone 15) — ✅ completata (parziale)
 
-Se l'obiettivo immediato resta validare la logica di rete senza introdurre dipendenze ambientali (hardware BLE, Docker) — coerentemente con il principio bottom-up della specifica (§89, §105) — l'**Opzione C (store-and-forward)** è la prosecuzione più naturale: usa la stessa infrastruttura di test già verificata in questa sessione e sblocca direttamente il quarto e quinto obiettivo tecnico (§93-94, roadmap). Le opzioni A e B restano necessarie prima o poi, ma richiedono di verificare un prerequisito ambientale (hardware BLE reale; un'istanza Docker di Project NOMAD) prima ancora di poter iniziare a scrivere codice.
+Anch'essa emersa a posteriori: senza autenticità verificabile, sia il content discovery (Milestone 5) sia il nuovo catalog sync (Opzione D) si fidano ciecamente di qualunque cosa un peer dichiari — un gap di sicurezza reale, non solo teorico, indipendente da hardware o Docker. Ogni contenuto pubblicato viene ora firmato (Ed25519) su nome/tipo/dimensione oltre che sull'hash, e sia il completamento di un trasferimento sia una voce di catalogo ricevuta vengono scartati se la firma non verifica. Vedi `docs/security.md` per lo stato completo e cosa resta (trust levels, cifratura E2E, rate limiting).
+
+## Cosa resta possibile in puro software, se si vuole andare oltre
+
+Nessuna di queste richiede hardware BLE o Docker/Project NOMAD:
+
+| Candidato | Cosa aggiungerebbe | Sforzo |
+|---|---|---|
+| Trust levels (spec §54) | Stato di fiducia aggregato per peer (`UNKNOWN/SEEN/VERIFIED/TRUSTED/ADMIN`), oltre alla verifica indipendente per-contenuto già presente | Medio |
+| Cifratura end-to-end (spec §52) | I relay instradano senza poter leggere il payload di `DATA`/`CONTENT_CHUNK` privati — oggi lo leggono in chiaro | Medio-alto |
+| Rate limiting / admission control (spec §57) | Limite a quanti pacchetti/richieste un peer può generare, per resistere a un nodo che fa flooding | Medio |
+| Routing energy-aware (roadmap Milestone 16, spec §22) | Funzione di costo multi-metrica invece del solo controlled flooding — richiede metriche simulate/auto-dichiarate in assenza di dispositivi reali | Medio |
+| Simulatore/scalabilità (roadmap Milestone 20, spec §80) | Test con decine/centinaia di nodi in-process, oltre ai pochi nodi usati finora nei test di integrazione | Medio |
 
 ## Come procedere
 
-L'Opzione C (store-and-forward) è stata scelta e completata. Restano aperte le opzioni A (BLE transport) e B (gateway NOMAD): alla prossima richiesta di continuare lo sviluppo, indicare quale avviare (anche entrambe, in sequenza) — questo documento va aggiornato con lo stato "in corso" e i task concreti via via che si procede, così resta lo strumento di riferimento per capire cosa è pianificato e cosa è ancora aperto.
+Le opzioni A (BLE) e B (gateway NOMAD) sono le uniche due rimaste dalla pianificazione originale, ed entrambe restano bloccate sugli stessi prerequisiti ambientali (hardware fisico; Docker + Project NOMAD). Quando quegli elementi saranno disponibili, si riprende da lì. Nel frattempo, se si vuole proseguire ulteriormente in puro software, la tabella sopra elenca le opzioni aperte — indicare quale avviare alla prossima richiesta.
