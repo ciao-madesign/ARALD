@@ -1,0 +1,22 @@
+{
+  "name": "@nomad-net/node",
+  "private": true,
+  "version": "0.1.0",
+  "description": "nomad-node: il runtime di rete di Nomad-Net (identity, routing, content, transport).",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "nomad-node": "dist/cli.js"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "build": "tsc -p .",
+    "start": "node dist/cli.js"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "@types/node": "^22.9.0"
+  }
+}

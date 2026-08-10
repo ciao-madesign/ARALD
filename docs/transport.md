@@ -1,0 +1,71 @@
+# Transport
+
+Riferimento completo: [`SPECIFICATION.md`](./SPECIFICATION.md) §16, §41-47.
+
+## Principio: il routing non conosce il transport
+
+```ts
+interface Transport {
+  readonly id: string;
+  start(): Promise<void>;
+  stop(): Promise<void>;
+  connect(address: PeerAddress): Promise<void>;
+  send(peerId: string, packet: Packet): Promise<void>;
+  onPacket(handler: (packet: Packet, fromPeerId: string) => void): void;
+  onPeerConnected(handler: (peerId: string, address: PeerAddress) => void): void;
+  onPeerDisconnected(handler: (peerId: string) => void): void;
+}
+```
+
+Definita in `node/src/transport.ts`. Il routing engine (`node/src/routing.ts`) e il nodo (`node/src/node.ts`) dipendono solo da questa interfaccia, mai da un transport concreto — questo è ciò che permette di sostituire TCP con BLE senza toccare la logica di routing (§16, §67).
+
+## Transport implementati
+
+| Transport | Stato | File |
+|---|---|---|
+| TCP | Implementato (Milestone 1-5) | `node/src/transports/tcp.ts` |
+| WebSocket | Non implementato — alternativa equivalente a TCP per il prototipo, non necessaria avendo già TCP | — |
+| BLE | Non implementato — Milestone 8 | `node/src/transports/ble.ts` (da creare) |
+| Wi-Fi (LAN / Direct) | Non implementato — Milestone 14 | `node/src/transports/wifi.ts` (da creare) |
+| LoRa | Fuori scope MVP (§45) — riferimento di ricerca futuro, non dipendenza software | — |
+
+## Perché si parte da TCP e non da BLE (§16)
+
+Il problema della *rete* (routing, TTL, dedup, content discovery, cache) va separato dal problema del *radio stack* (BLE ha discovery, range, gestione connessioni e comportamento cross-platform molto più complessi di un socket TCP). Sequenza:
+
+```
+A <-> B   (Milestone 1: connessione diretta)
+A -> B -> C   (Milestone 2: multi-hop su TCP)
+A --BLE--> B --BLE--> C   (Milestone 8: stesso routing, transport sostituito)
+```
+
+Se un test fallisce nella fase BLE, la causa è isolata al transport, non al routing — perché il routing è già stato validato in Milestone 1-5 su TCP.
+
+## Combinazione BLE + Wi-Fi prevista (§42-44)
+
+- **BLE**: discovery, control, piccoli messaggi, metadata, relay, richieste. Non adatto a grandi contenuti.
+- **Wi-Fi**: file, mappe, documenti, database, contenuti voluminosi, sincronizzazioni.
+
+```
+Phone --BLE--> Node --Wi-Fi--> NOMAD
+```
+
+## Vincoli piattaforma mobile
+
+### iOS (§46) — trattato come vincolo sperimentale, non come garanzia
+
+Apple Core Bluetooth (https://developer.apple.com/documentation/corebluetooth) supporta BLE in background con meccanismi specifici. Da iOS 26, Apple documenta la possibilità di mantenere alcune attività BLE in background quando l'app ha una **Live Activity** attiva e un `CBManager` istanziato. Questo **non implica** che un iPhone possa fungere da nodo mesh infrastrutturale sempre attivo.
+
+Scenari da verificare sperimentalmente prima di fare qualunque assunzione nel routing:
+
+1. App in foreground
+2. App in background
+3. App in background con Live Activity attiva
+4. App sospesa dal sistema
+5. App terminata
+
+Fino a misurazione empirica su dispositivi reali, il ruolo assegnato a iOS nel modello di deployment resta: client, nodo opportunistico, relay solo quando l'app è attiva, cache, courier — mai nodo infrastrutturale permanente (quel ruolo resta di computer/server, §85).
+
+### Android (§47)
+
+Più flessibile, ma richiede permessi runtime espliciti su Android 12+: `BLUETOOTH_SCAN`, `BLUETOOTH_ADVERTISE`, `BLUETOOTH_CONNECT` (https://developer.android.com/develop/connectivity/bluetooth/bt-permissions). Disponibile anche Companion Device Manager per alcuni scenari di associazione. La strategia mobile iniziale privilegia Android per i test di rete persistente; iOS resta secondo target.

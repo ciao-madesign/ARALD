@@ -1,0 +1,19 @@
+{
+  "name": "nomad-net",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Nomad-Net: rete distribuita, content-centric e delay-tolerant senza infrastruttura Internet.",
+  "workspaces": [
+    "node"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "npm run build -w node"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  },
+  "license": "MIT"
+}
