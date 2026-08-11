@@ -13,6 +13,9 @@ import {
 import { RemoteCatalog } from "./catalog.js";
 import { SeenCache, decideForward } from "./routing.js";
 import { PendingDeliveryQueue } from "./store-and-forward.js";
+import { RateLimiter } from "./rate-limit.js";
+import { TrustLevel, TrustManager, meetsTrustLevel } from "./trust.js";
+import { RelayPolicy, type RelayPolicyOptions } from "./relay-policy.js";
 import type { PeerAddress, Transport } from "./transport.js";
 
 export interface NomadNodeOptions {
@@ -26,6 +29,28 @@ export interface NomadNodeOptions {
   maxPendingDeliveries?: number;
   /** Max entries held in the remote (metadata-only) content catalog at once (spec §57 resource limits). */
   maxRemoteCatalogEntries?: number;
+  /** Max node ids tracked in the trust table at once (spec §57 resource limits). */
+  maxTrustEntries?: number;
+  /** Max packets a single peer may send per window before further packets are dropped (spec §57). */
+  maxPacketsPerWindow?: number;
+  /** Rate-limiting window length in milliseconds. */
+  rateLimitWindowMs?: number;
+  /**
+   * Minimum trust level (spec §54) a directly-connected peer must have
+   * before this node will relay traffic on its behalf. Does not affect
+   * whether that peer's own direct requests to us are served — only
+   * whether we extend relay effort for it. Undefined (default) disables
+   * this gate entirely, matching the prototype's previous behavior.
+   *
+   * Note: `TrustLevel.SEEN` is not a meaningful threshold here — every
+   * peer that can reach this gate at all is already at least `SEEN`
+   * (that level is assigned the moment a peer connects, before it can
+   * send anything else), so `minTrustToRelay: SEEN` behaves identically
+   * to leaving this unset. Use `VERIFIED` or higher for an actual gate.
+   */
+  minTrustToRelay?: TrustLevel;
+  /** Whether/when this node relays traffic on behalf of others (spec §51, §58) — battery/charging-aware opt-out. */
+  relayPolicy?: RelayPolicyOptions;
 }
 
 interface ContentWaiter {
@@ -88,9 +113,12 @@ export class NomadNode extends EventEmitter {
   readonly contentStore = new ContentStore();
   /** Content known to exist elsewhere in the mesh via catalog sync (spec §33-34, milestone 13) but not fetched locally. */
   readonly remoteCatalog: RemoteCatalog;
+  /** Per-node-id trust state (spec §54): SEEN/VERIFIED are earned automatically, TRUSTED/ADMIN are operator-assigned. */
+  readonly trust: TrustManager;
 
   private readonly defaultTtl: number;
   private readonly contentRequestTimeoutMs: number;
+  private readonly minTrustToRelay?: TrustLevel;
   private readonly seenCache = new SeenCache();
   private readonly requesterAssembler = new ChunkAssembler();
   private readonly relayAssembler = new ChunkAssembler();
@@ -98,6 +126,8 @@ export class NomadNode extends EventEmitter {
   private readonly peerTransport = new Map<string, Transport>();
   private readonly pendingContentRequests = new Map<string, PendingContentEntry>();
   private readonly pendingDeliveries: PendingDeliveryQueue;
+  private readonly rateLimiter: RateLimiter;
+  private readonly relayPolicy: RelayPolicy;
   private started = false;
 
   constructor(options: NomadNodeOptions = {}) {
@@ -106,11 +136,18 @@ export class NomadNode extends EventEmitter {
     this.displayName = options.displayName ?? `NODE-${this.identity.nodeId.slice(0, 8)}`;
     this.defaultTtl = options.defaultTtl ?? 8;
     this.contentRequestTimeoutMs = options.contentRequestTimeoutMs ?? 3000;
+    this.minTrustToRelay = options.minTrustToRelay;
     this.pendingDeliveries = new PendingDeliveryQueue({
       ttlMs: options.storeAndForwardTtlMs,
       maxSize: options.maxPendingDeliveries,
     });
     this.remoteCatalog = new RemoteCatalog({ maxSize: options.maxRemoteCatalogEntries });
+    this.trust = new TrustManager({ maxSize: options.maxTrustEntries });
+    this.rateLimiter = new RateLimiter({
+      maxPacketsPerWindow: options.maxPacketsPerWindow,
+      windowMs: options.rateLimitWindowMs,
+    });
+    this.relayPolicy = new RelayPolicy(options.relayPolicy);
   }
 
   get nodeId(): string {
@@ -131,6 +168,7 @@ export class NomadNode extends EventEmitter {
     transport.onPeerConnected((peerId, address) => {
       this.peers.upsert(peerId, address);
       this.peerTransport.set(peerId, transport);
+      this.trust.markSeen(peerId);
       this.emit("peer:connected", peerId);
       void this.flushPendingDeliveries();
       void this.startCatalogSync(peerId);
@@ -138,6 +176,7 @@ export class NomadNode extends EventEmitter {
     transport.onPeerDisconnected((peerId) => {
       this.peers.remove(peerId);
       this.peerTransport.delete(peerId);
+      this.rateLimiter.reset(peerId);
       this.emit("peer:disconnected", peerId);
     });
     this.transports.push(transport);
@@ -320,11 +359,45 @@ export class NomadNode extends EventEmitter {
     return delivered;
   }
 
-  /** Retries every packet still worth delivering, typically triggered by a new peer connecting (spec §32, courier). */
+  /**
+   * Retries every packet still worth delivering, typically triggered by a
+   * new peer connecting (spec §32, courier). A queued packet originally
+   * relayed on behalf of `exceptPeerId` (as opposed to one we originated
+   * ourselves) must pass the same trust/relay-policy gates a fresh forward
+   * decision would — conditions can change between when it was queued and
+   * when it's retried (trust revoked, battery since dropped) — otherwise
+   * store-and-forward would be a silent way around both gates.
+   */
   private async flushPendingDeliveries(): Promise<void> {
     await Promise.all(
-      this.pendingDeliveries.drain().map(({ packet, exceptPeerId }) => this.floodExcept(packet, exceptPeerId)),
+      this.pendingDeliveries.drain().map(async ({ packet, exceptPeerId }) => {
+        if (exceptPeerId !== undefined) {
+          const gate = this.relayGateFor(exceptPeerId);
+          if (gate !== "ok") {
+            // Still worth retrying later if circumstances change — re-queue rather than drop.
+            this.pendingDeliveries.enqueue(packet, exceptPeerId);
+            this.emitRelayGateDenied(gate, exceptPeerId, packet.type);
+            return;
+          }
+        }
+        await this.floodExcept(packet, exceptPeerId);
+      }),
     );
+  }
+
+  /** Whether this node is currently willing to relay on behalf of `peerId` (spec §54, §51/§58). */
+  private relayGateFor(peerId: string): "trust" | "policy" | "ok" {
+    if (this.minTrustToRelay && !meetsTrustLevel(this.trust.get(peerId), this.minTrustToRelay)) return "trust";
+    if (!this.relayPolicy.canRelayNow()) return "policy";
+    return "ok";
+  }
+
+  private emitRelayGateDenied(gate: "trust" | "policy", peerId: string, packetType: MessageType): void {
+    if (gate === "trust") {
+      this.emit("trust:relay-denied", peerId, this.trust.get(peerId));
+    } else {
+      this.emit("relay-policy:denied", peerId, packetType);
+    }
   }
 
   /**
@@ -344,6 +417,13 @@ export class NomadNode extends EventEmitter {
   }
 
   private handlePacket(packet: Packet, fromPeerId: string): void {
+    if (!this.rateLimiter.allow(fromPeerId)) {
+      // Over budget for this window (spec §57): drop without processing, forwarding, or even
+      // touching the peer table — a flooding peer shouldn't cost this node more than the check itself.
+      this.emit("rate-limit:exceeded", fromPeerId, packet.type);
+      return;
+    }
+
     this.peers.touch(fromPeerId);
 
     if (packet.type === MessageType.HELLO) {
@@ -365,7 +445,22 @@ export class NomadNode extends EventEmitter {
     }
 
     if (decision.forwardPacket) {
-      void this.floodExcept(decision.forwardPacket, fromPeerId);
+      // This peer's own direct requests to us are unaffected either way — these gates only
+      // decide whether we extend relay effort ferrying its traffic onward to others (spec §54, §57, §51/§58).
+      const gate = this.relayGateFor(fromPeerId);
+      if (gate !== "ok") {
+        const denied = decision.forwardPacket;
+        if (denied.destination !== undefined && denied.destination !== this.nodeId) {
+          // Worth retrying later — trust can be upgraded, a battery-gated policy can recover —
+          // so this is a queue, not a drop (consistent with how flushPendingDeliveries re-queues
+          // on a denial found at retry time, so the packet is treated the same regardless of
+          // which attempt — first or retried — the gate happened to catch it on).
+          this.pendingDeliveries.enqueue(denied, fromPeerId);
+        }
+        this.emitRelayGateDenied(gate, fromPeerId, denied.type);
+      } else {
+        void this.floodExcept(decision.forwardPacket, fromPeerId);
+      }
     }
   }
 
@@ -510,6 +605,10 @@ export class NomadNode extends EventEmitter {
       return;
     }
 
+    // A successfully verified signature is real evidence this publisher controls its claimed
+    // identity's private key (spec §54) — independent of whether we happen to trust *this* content.
+    if (metadata.publisherId) this.trust.markVerified(metadata.publisherId);
+
     if (entry) {
       this.pendingContentRequests.delete(contentId);
       for (const waiter of entry.waiters) {
@@ -532,7 +631,9 @@ export class NomadNode extends EventEmitter {
         return;
       }
       const data = this.relayAssembler.tryComplete(contentId, metadata);
-      if (data) this.contentStore.putVerified(metadata, data);
+      if (data && this.contentStore.putVerified(metadata, data) && metadata.publisherId) {
+        this.trust.markVerified(metadata.publisherId);
+      }
     }
   }
 
@@ -565,6 +666,7 @@ export class NomadNode extends EventEmitter {
       if (this.contentStore.has(metadata.contentId)) continue; // we already hold the actual bytes
       if (!verifyContentSignature(metadata)) continue; // unsigned or forged claim — never trust it
       this.remoteCatalog.record(metadata);
+      if (metadata.publisherId) this.trust.markVerified(metadata.publisherId);
       accepted.push(metadata);
     }
     if (accepted.length > 0) this.emit("catalog-sync", accepted);

@@ -2,7 +2,7 @@
 
 Riferimento: [`docs/roadmap.md`](./roadmap.md) per lo stato di tutte le milestone (0-20). Questo documento traduce le milestone candidate come "prossimo passo" in piani d'azione concreti — file da toccare, prerequisiti, rischi, criteri di accettazione — così la scelta si può fare con cognizione di causa invece che sulla sola numerazione.
 
-**Stato: tutto ciò che si poteva fare senza hardware BLE e senza Docker/Project NOMAD è stato completato.** Oltre all'Opzione C (store-and-forward, Milestone 12), sono state completate anche la Milestone 13 (partition sync, vedi `node/src/catalog.ts`) e una parte della Milestone 15 (firma dei contenuti, vedi `docs/security.md`) — entrambe emerse come naturali prosecuzioni puramente software dopo il completamento dell'Opzione C. Le opzioni A (BLE) e B (gateway NOMAD), qui sotto invariate rispetto alla pianificazione originale, restano **bloccate**: richiedono rispettivamente hardware fisico e un'istanza Docker di Project NOMAD, nessuno dei due disponibile in questa sessione. Più sotto, una sezione nuova elenca cosa resta percorribile in puro software se si vuole andare oltre prima di procurarsi quegli elementi.
+**Stato: tutto ciò che si poteva fare senza hardware BLE e senza Docker/Project NOMAD è stato completato**, in due passate successive. Oltre all'Opzione C (store-and-forward, Milestone 12), sono state completate: Milestone 13 (partition sync, `node/src/catalog.ts`), Milestone 15 quasi per intero (firma dei contenuti, trust levels, rate limiting — vedi `docs/security.md`), una parte della Milestone 16 (relay policy legata a batteria/carica, `node/src/relay-policy.ts`) e la Milestone 20 (simulatore di rete, `tools/simulator/`). Le opzioni A (BLE) e B (gateway NOMAD), qui sotto invariate rispetto alla pianificazione originale, restano **bloccate**: richiedono rispettivamente hardware fisico e un'istanza Docker di Project NOMAD, nessuno dei due disponibile in questa sessione. Restano solo due candidati aperti in puro software (cifratura E2E e routing a costo multi-metrica completo) — vedi la sezione finale.
 
 ## Come leggere questo documento
 
@@ -68,22 +68,27 @@ Per ciascuna opzione: cosa costruire, file coinvolti, prerequisiti, criteri di a
 
 Aggiunta a questo documento a posteriori: emersa come prosecuzione naturale dell'Opzione C una volta completata, senza introdurre dipendenze nuove. Due nodi che si connettono si scambiano automaticamente un catalogo di cosa possiedono (solo metadata, mai i byte), così due segmenti di mesh precedentemente separati possono sapere cosa esiste dall'altra parte non appena si ricollegano, senza dover ritrasferire tutto — vedi `node/src/catalog.ts` e `docs/roadmap.md` milestone 13 per il dettaglio. Realizza direttamente il quarto obiettivo tecnico della specifica (§93).
 
-## Opzione E — Firma dei contenuti (parte della roadmap Milestone 15) — ✅ completata (parziale)
+## Opzione E — Firma dei contenuti, trust levels, rate limiting (Milestone 15, quasi completa) — ✅ completata
 
-Anch'essa emersa a posteriori: senza autenticità verificabile, sia il content discovery (Milestone 5) sia il nuovo catalog sync (Opzione D) si fidano ciecamente di qualunque cosa un peer dichiari — un gap di sicurezza reale, non solo teorico, indipendente da hardware o Docker. Ogni contenuto pubblicato viene ora firmato (Ed25519) su nome/tipo/dimensione oltre che sull'hash, e sia il completamento di un trasferimento sia una voce di catalogo ricevuta vengono scartati se la firma non verifica. Vedi `docs/security.md` per lo stato completo e cosa resta (trust levels, cifratura E2E, rate limiting).
+Emersa a posteriori: senza autenticità verificabile, sia il content discovery (Milestone 5) sia il catalog sync (Opzione D) si fidano ciecamente di qualunque cosa un peer dichiari — un gap di sicurezza reale, non solo teorico, indipendente da hardware o Docker. Realizzato in due passate: prima la firma dei contenuti (Ed25519 su nome/tipo/dimensione oltre che sull'hash), poi trust levels (`UNKNOWN/SEEN/VERIFIED/TRUSTED/ADMIN`) e rate limiting per peer. Tre bug di sicurezza reali sono stati trovati e corretti durante lo sviluppo — vedi `docs/security.md` per il dettaglio, incluso il più grave (verifica della firma calcolata ma mai controllata sul percorso principale di recupero contenuti). Resta aperta solo la cifratura end-to-end.
+
+## Opzione F — Relay policy legata a batteria/carica (parte della roadmap Milestone 16) — ✅ completata (parziale)
+
+Realizza la parte pratica di spec §51/§58 ("Relay OFF / Relay when charging / Relay while battery > X%"): un nodo decide se fare da relay per il traffico altrui in base al proprio stato di risorse auto-dichiarato, senza che questo influisca sulle richieste dirette rivolte a lui. Non realizza la funzione di costo multi-metrica completa di §22 (che richiederebbe una vera selezione di percorso tra alternative, non presente nell'architettura a controlled-flooding attuale) — vedi `docs/roadmap.md` milestone 16 per la distinzione.
+
+## Opzione G — Simulatore di rete (roadmap Milestone 20) — ✅ completata
+
+`tools/simulator/simulate.ts` collega N nodi reali in una topologia configurabile e misura consegna/latenza a scala (§76-80), utilizzabile anche da riga di comando. Il suo sviluppo ha scovato un bug reale nel transport TCP di base (due connessioni simultanee tra la stessa coppia di nodi bloccavano per sempre la chiusura di un nodo) — corretto con test di regressione dedicato, vedi `docs/roadmap.md` milestone 20.
 
 ## Cosa resta possibile in puro software, se si vuole andare oltre
 
-Nessuna di queste richiede hardware BLE o Docker/Project NOMAD:
+Solo due candidati restano aperti, nessuno dei due richiede hardware BLE o Docker/Project NOMAD — entrambi più complessi delle estensioni già fatte e meritano di essere affrontati singolarmente:
 
 | Candidato | Cosa aggiungerebbe | Sforzo |
 |---|---|---|
-| Trust levels (spec §54) | Stato di fiducia aggregato per peer (`UNKNOWN/SEEN/VERIFIED/TRUSTED/ADMIN`), oltre alla verifica indipendente per-contenuto già presente | Medio |
 | Cifratura end-to-end (spec §52) | I relay instradano senza poter leggere il payload di `DATA`/`CONTENT_CHUNK` privati — oggi lo leggono in chiaro | Medio-alto |
-| Rate limiting / admission control (spec §57) | Limite a quanti pacchetti/richieste un peer può generare, per resistere a un nodo che fa flooding | Medio |
-| Routing energy-aware (roadmap Milestone 16, spec §22) | Funzione di costo multi-metrica invece del solo controlled flooding — richiede metriche simulate/auto-dichiarate in assenza di dispositivi reali | Medio |
-| Simulatore/scalabilità (roadmap Milestone 20, spec §80) | Test con decine/centinaia di nodi in-process, oltre ai pochi nodi usati finora nei test di integrazione | Medio |
+| Routing a costo multi-metrica completo (spec §22, resto della Milestone 16) | Vera selezione del percorso migliore tra più alternative (hop count, latenza, perdita, energia, congestione), non solo un sì/no complessivo come l'attuale relay policy | Alto — richiederebbe superare il modello di controlled flooding attuale |
 
 ## Come procedere
 
-Le opzioni A (BLE) e B (gateway NOMAD) sono le uniche due rimaste dalla pianificazione originale, ed entrambe restano bloccate sugli stessi prerequisiti ambientali (hardware fisico; Docker + Project NOMAD). Quando quegli elementi saranno disponibili, si riprende da lì. Nel frattempo, se si vuole proseguire ulteriormente in puro software, la tabella sopra elenca le opzioni aperte — indicare quale avviare alla prossima richiesta.
+Le opzioni A (BLE) e B (gateway NOMAD) sono le uniche due rimaste dalla pianificazione originale, ed entrambe restano bloccate sugli stessi prerequisiti ambientali (hardware fisico; Docker + Project NOMAD). Quando quegli elementi saranno disponibili, si riprende da lì. Nel frattempo, se si vuole proseguire ulteriormente in puro software, la tabella sopra elenca le due opzioni ancora aperte — indicare quale avviare alla prossima richiesta.

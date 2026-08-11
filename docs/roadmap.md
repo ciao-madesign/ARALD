@@ -23,12 +23,12 @@ Stato al 10 agosto 2026, versione specifica 0.1.
 | 12 | Store-and-forward | ✅ Fatto (scope: pacchetti unicast) | `node/src/store-and-forward.ts`, `tests/integration/store-and-forward.test.ts` — vedi limitazione nota sotto |
 | 13 | Partition synchronization | ✅ Fatto | `node/src/catalog.ts`, `tests/integration/partition-sync.test.ts` |
 | 14 | Wi-Fi high bandwidth | ⏳ Bloccato — richiede hardware/OS Wi-Fi Direct reale | `node/src/transports/wifi.ts` |
-| 15 | Security hardening | 🔶 Parziale — firma dei contenuti fatta | vedi `security.md`; restano trust levels, E2E, rate limiting |
-| 16 | Energy-aware routing | ⏳ Non iniziato | funzione di costo multi-metrica (§22) — software puro, nessun blocco hardware |
+| 15 | Security hardening | 🔶 Parziale — firma dei contenuti, rate limiting, trust levels fatti | vedi `security.md`; resta la cifratura E2E |
+| 16 | Energy-aware routing | 🔶 Parziale — relay policy legata a batteria/carica fatta | `node/src/relay-policy.ts`; manca il routing multi-metrica completo (§22) |
 | 17 | Raspberry / mini-PC node | ⏳ Bloccato — richiede hardware | deployment hardware, non richiesto per MVP software |
 | 18 | Rifugio pilot | ⏳ Bloccato — richiede hardware/deployment reale | vedi `deployment.md` |
 | 19 | Emergency pilot | ⏳ Bloccato — richiede hardware/deployment reale | vedi `deployment.md` |
-| 20 | Scalability testing | ⏳ Non iniziato | 100+ dispositivi simulati (§80) — software puro, nessun blocco hardware |
+| 20 | Scalability testing | ✅ Fatto | `tools/simulator/simulate.ts`, `tests/network/simulate.test.ts` |
 
 ## I "cinque obiettivi tecnici" della specifica (§90-95)
 
@@ -52,17 +52,28 @@ Quando due nodi si connettono (in qualunque momento, non solo dopo una partizion
 
 ## Milestone 15 — sicurezza: cosa è stato fatto e cosa resta
 
-**Fatto**: ogni contenuto pubblicato tramite `NomadNode.publishContent()` viene firmato con la chiave del nodo (Ed25519) su un payload che copre `contentId`, nome, tipo e dimensione — non solo l'hash — cosicché un relay non possa "rietichettare" un contenuto genuino con un nome diverso mantenendo la firma valida (`node/src/content.ts`, `contentSigningPayload`/`verifyContentSignature`). Sia il completamento di un trasferimento (`ContentStore.putVerified`, usato sia dal richiedente finale sia dai relay che fanno cache passiva) sia una voce di catalogo ricevuta via sync devono superare questa verifica prima di essere accettati — nessuno dei due percorsi si fida ciecamente di quello che un peer dichiara.
+**Fatto**:
+- **Firma dei contenuti** (§55): ogni contenuto pubblicato tramite `NomadNode.publishContent()` viene firmato con la chiave del nodo (Ed25519) su un payload che copre `contentId`, nome, tipo e dimensione — non solo l'hash — cosicché un relay non possa "rietichettare" un contenuto genuino con un nome diverso mantenendo la firma valida (`node/src/content.ts`, `contentSigningPayload`/`verifyContentSignature`). Sia il completamento di un trasferimento sia una voce di catalogo ricevuta via sync devono superare questa verifica prima di essere accettati.
+- **Trust levels** (§54): `UNKNOWN/SEEN/VERIFIED/TRUSTED/ADMIN` per node id (`node/src/trust.ts`, `TrustManager`). `SEEN` si guadagna alla connessione diretta, `VERIFIED` quando una firma di quel node id verifica correttamente; `TRUSTED`/`ADMIN` restano assegnazioni manuali dell'operatore. Un nodo può opzionalmente rifiutarsi di fare da relay per un peer sotto una soglia di fiducia configurata (`minTrustToRelay`), senza che questo influisca sulle richieste dirette di quel peer.
+- **Rate limiting** (§57): ogni peer ha un budget di pacchetti per finestra temporale (`node/src/rate-limit.ts`); superato il budget, i pacchetti in eccesso vengono scartati senza essere processati.
 
-**Non ancora fatto** (candidati per una prossima sessione, nessuno richiede hardware o Docker): trust levels (`UNKNOWN/SEEN/VERIFIED/TRUSTED/ADMIN`, spec §54), cifratura end-to-end dei pacchetti (oggi un relay legge il payload in chiaro), rate limiting/admission control contro un nodo che fa flooding (spec §57). Vedi [`security.md`](./security.md) per i dettagli.
+**Non ancora fatto**: cifratura end-to-end dei pacchetti (oggi un relay legge il payload in chiaro). Vedi [`security.md`](./security.md) per i dettagli, inclusi tre bug reali di sicurezza trovati e corretti durante lo sviluppo di trust levels e sync (catalogo che accettava voci non firmate, firma che copriva solo l'hash, verifica della firma ignorata sul percorso principale di recupero contenuti).
+
+## Milestone 16 — relay policy: dettagli
+
+Un nodo può decidere se e quando fare da relay per il traffico altrui in base al proprio stato di risorse auto-dichiarato (batteria, stato di carica — spec §51, §58): `node/src/relay-policy.ts`, modalità `off`/`always`/`when-charging`/`battery-above`. Non implementa ancora la funzione di costo multi-metrica completa prevista da §22 (hop count + latenza + perdita + energia + congestione) — quella resta un routing "intelligente" vero e proprio, non ancora costruito; qui invece un nodo o accetta o rifiuta di fare relay nel suo complesso, in base al proprio stato, non sceglie il percorso migliore tra più alternative.
+
+## Milestone 20 — simulatore: dettagli
+
+`tools/simulator/simulate.ts` avvia N istanze reali di `NomadNode` in locale, le collega secondo una topologia configurabile (catena, anello, stella, casuale) ed esegue lo scenario "content fanout" (un nodo pubblica, tutti gli altri lo richiedono), misurando percentuale di consegna e latenza (§76-77). Utilizzabile anche da riga di comando: `npm run simulate -- --nodes 50 --topology random`. Lo sviluppo di questo strumento ha scovato un bug reale nel transport TCP di base (due connessioni simultanee tra la stessa coppia di nodi lasciavano un socket "orfano" che bloccava per sempre la chiusura del nodo) — corretto in `node/src/transports/tcp.ts`, con test di regressione dedicato.
 
 ## Ordine di lavoro consigliato per i prossimi passi
 
-Con Milestone 12, 13 e (parzialmente) 15 completate in questa sessione, tutto ciò che si poteva costruire e testare **senza hardware BLE e senza Docker/Project NOMAD** è stato portato avanti fino al punto in cui la prossima estensione naturale richiede uno di questi due elementi:
+Con le Milestone 12, 13, 20 e la quasi totalità della 15 completate, **tutto ciò che si poteva costruire e testare senza hardware BLE e senza Docker/Project NOMAD è stato portato a termine**. Quello che resta è bloccato su uno di due prerequisiti esterni:
 
 - **Milestone 8/9** (BLE, app mobile) richiedono dispositivi fisici per i test end-to-end.
 - **Milestone 10/11** (integrazione e gateway NOMAD) richiedono Docker e un'istanza di Project NOMAD raggiungibile.
 - **Milestone 14** (Wi-Fi Direct) richiede API di sistema operativo legate all'hardware di rete reale.
 - **Milestone 17-19** (deployment hardware, pilot) richiedono per definizione hardware reale.
 
-Restano invece **ancora percorribili senza hardware/Docker**, se si vuole proseguire ulteriormente prima di procurarsi quegli elementi: completare la Milestone 15 (trust levels, rate limiting, E2E — vedi sopra), la Milestone 16 (routing energy-aware, con metriche simulate/auto-dichiarate in assenza di dispositivi reali) e la Milestone 20 (simulatore/test di scalabilità con molti nodi in-process). Il confronto dettagliato delle opzioni originariamente aperte è in [`docs/next-steps.md`](./next-steps.md) (aggiornato con lo stato corrente).
+Le uniche due cose ancora percorribili in puro software, se si vuole approfondire ulteriormente prima di procurarsi hardware/Docker, sono: la cifratura end-to-end (unica parte mancante della Milestone 15) e il routing a costo multi-metrica completo (resto della Milestone 16, §22) — entrambe sono estensioni più complesse delle precedenti e meritano di essere affrontate una alla volta. Il confronto dettagliato è in [`docs/next-steps.md`](./next-steps.md) (aggiornato con lo stato corrente).

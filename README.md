@@ -25,7 +25,7 @@ L'utente non deve sapere quale dispositivo possiede il contenuto, quanti hop ser
 
 ## Stato del progetto
 
-Prototipo software (Milestone 0-7, 12, 13 e parte della 15 nella roadmap): identità crittografica per nodo, protocollo a pacchetti con TTL e deduplicazione, transport TCP, routing multi-hop, content discovery e cache, store-and-forward, sincronizzazione dei cataloghi tra segmenti di rete riconnessi, firma dei contenuti — tutto dimostrato su rete locale, **senza Internet e senza BLE**, per validare la logica di rete prima di introdurre i radio transport. Questo è tutto ciò che si può costruire e testare senza hardware BLE e senza Docker/Project NOMAD: i passi successivi (BLE, mobile, gateway NOMAD) restano bloccati su quei prerequisiti. Vedi [`docs/roadmap.md`](docs/roadmap.md) per lo stato dettagliato di ogni milestone e [`docs/next-steps.md`](docs/next-steps.md) per cosa resta aperto.
+Prototipo software (Milestone 0-7, 12, 13, 15, 16 parziale e 20 nella roadmap): identità crittografica per nodo, protocollo a pacchetti con TTL e deduplicazione, transport TCP, routing multi-hop, content discovery e cache, store-and-forward, sincronizzazione dei cataloghi tra segmenti di rete riconnessi, firma dei contenuti, trust levels, rate limiting, relay policy legata a batteria/carica, simulatore di rete a scala — tutto dimostrato su rete locale, **senza Internet e senza BLE**, per validare la logica di rete prima di introdurre i radio transport. Questo è tutto ciò che si può costruire e testare senza hardware BLE e senza Docker/Project NOMAD: i passi successivi (BLE, mobile, gateway NOMAD, e le due estensioni software rimaste — cifratura E2E e routing a costo multi-metrica) restano rispettivamente bloccati su quei prerequisiti o aperti per una sessione futura. Vedi [`docs/roadmap.md`](docs/roadmap.md) per lo stato dettagliato di ogni milestone e [`docs/next-steps.md`](docs/next-steps.md) per cosa resta aperto.
 
 ## Quick start
 
@@ -52,7 +52,7 @@ nomad-net/
 +-- gateway/      traduzione Nomad-Net <-> Project NOMAD / Internet — non ancora implementato
 +-- mobile/       app Android/iOS — non ancora implementato
 +-- tests/        unit, integration, network, dtn
-+-- tools/        simulatore e benchmark — non ancora implementato
++-- tools/        simulatore di rete (tools/simulator/) — benchmark non ancora implementato
 ```
 
 Struttura di riferimento completa: [`docs/SPECIFICATION.md` §87](docs/SPECIFICATION.md#87-struttura-della-repository-finale).

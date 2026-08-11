@@ -7,4 +7,7 @@ export * from "./routing.js";
 export * from "./content.js";
 export * from "./catalog.js";
 export * from "./store-and-forward.js";
+export * from "./rate-limit.js";
+export * from "./trust.js";
+export * from "./relay-policy.js";
 export { TcpTransport } from "./transports/tcp.js";

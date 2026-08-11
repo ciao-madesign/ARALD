@@ -145,6 +145,21 @@ export class TcpTransport implements Transport {
       if (!peerId) {
         peerId = packet.source;
         this.pendingSockets.delete(socket);
+
+        // Already have a connection tracked for this peer id — e.g. both sides dialed each other
+        // at nearly the same time, a topology happens to connect the same pair twice, or (the
+        // important case) a peer reconnected after a real network interruption before its old,
+        // now-stale socket was torn down (TCP doesn't always notice a dead link quickly, and this
+        // is exactly the kind of interruption a mobile/BLE courier scenario expects). Prefer the
+        // *new* connection: it's the one that just proved it can complete a handshake right now.
+        // Leaving the old one open but untracked would orphan it, and an orphaned *inbound* socket
+        // keeps the server's own connection count from ever reaching zero, which hangs `stop()`'s
+        // `server.close()` forever — so it must be destroyed, not merely dropped from our maps.
+        const existing = this.sockets.get(peerId);
+        if (existing) {
+          existing.socket.destroy();
+        }
+
         this.sockets.set(peerId, { socket, peerId });
         onIdentified?.(peerId);
         for (const handler of this.connectedHandlers) handler(peerId, address);
