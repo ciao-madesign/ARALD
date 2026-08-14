@@ -1,7 +1,14 @@
 import type { IdentityAnnouncement } from "./encryption.js";
 
 export interface PeerDirectoryOptions {
-  /** Bounds memory (spec §57): once full, an incoming announcement for an unknown node id is dropped. */
+  /**
+   * Bounds memory (spec §57): once full, the oldest entry is evicted to
+   * make room for a new node id, matching `RemoteCatalog`/`RoutingTable`.
+   * Known trade-off: unlike `TrustManager` (which evicts its lowest-trust
+   * entry first specifically to resist this), a peer can cheaply mint
+   * throwaway keypairs and self-sign fresh `IdentityAnnouncement`s to evict
+   * legitimately-learned entries — see docs/security.md.
+   */
   maxSize?: number;
 }
 

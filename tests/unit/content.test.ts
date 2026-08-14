@@ -169,4 +169,41 @@ describe("ChunkAssembler", () => {
     assembler.addChunk(metadata.contentId, 0, 1, Buffer.from("different"));
     expect(assembler.tryComplete(metadata.contentId, metadata)).toBeUndefined();
   });
+
+  it("evicts the oldest in-progress content id once maxEntries is exceeded, bounding memory against a flood of fabricated content ids", () => {
+    const assembler = new ChunkAssembler({ maxEntries: 2 });
+    assembler.addChunk("a", 0, 2, Buffer.from("1"));
+    assembler.addChunk("b", 0, 2, Buffer.from("1"));
+    assembler.addChunk("c", 0, 2, Buffer.from("1"));
+
+    // "a" was evicted to make room for "c" — completing it now can never succeed, even with all chunks resent.
+    assembler.addChunk("a", 1, 2, Buffer.from("2"));
+    const metadata = { contentId: "a", name: "n", mimeType: "text/plain", size: 2, createdAt: Date.now() };
+    expect(assembler.tryComplete("a", metadata)).toBeUndefined();
+  });
+
+  it("rejects a totalChunks claim above maxChunksPerEntry, instead of allocating unbounded chunk slots", () => {
+    const assembler = new ChunkAssembler({ maxChunksPerEntry: 4 });
+    assembler.addChunk("huge", 0, 1_000_000, Buffer.from("x"));
+    const metadata = { contentId: "huge", name: "n", mimeType: "text/plain", size: 1, createdAt: Date.now() };
+    // Never registered at all — a legitimate resend with a sane totalChunks must still work.
+    assembler.addChunk("huge", 0, 2, Buffer.from("y"));
+    assembler.addChunk("huge", 1, 2, Buffer.from("z"));
+    expect(assembler.tryComplete("huge", { ...metadata, contentId: computeContentId(Buffer.from("yz")) })).toEqual(
+      Buffer.from("yz"),
+    );
+  });
+
+  it("rejects a chunkIndex outside [0, totalChunks)", () => {
+    const assembler = new ChunkAssembler();
+    assembler.addChunk("c", -1, 2, Buffer.from("x"));
+    assembler.addChunk("c", 2, 2, Buffer.from("x"));
+    const metadata = { contentId: "c", name: "n", mimeType: "text/plain", size: 1, createdAt: Date.now() };
+    // Neither malformed chunk was stored — completing normally with valid chunks still works.
+    assembler.addChunk("c", 0, 2, Buffer.from("y"));
+    assembler.addChunk("c", 1, 2, Buffer.from("z"));
+    expect(assembler.tryComplete("c", { ...metadata, contentId: computeContentId(Buffer.from("yz")) })).toEqual(
+      Buffer.from("yz"),
+    );
+  });
 });

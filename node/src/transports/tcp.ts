@@ -11,6 +11,17 @@ import type {
 
 const CONNECT_TIMEOUT_MS = 5000;
 
+/**
+ * `readline`'s Interface has no maximum line length — it buffers indefinitely
+ * while waiting for a `\n`, so a peer that just never sends one can grow that
+ * buffer without bound (a memory-exhaustion DoS reachable from a single
+ * connected peer, independent of and prior to `decodePacket()`/the packet
+ * rate limiter, which only ever see fully-decoded packets). This caps bytes
+ * received since the last newline, well above any legitimate packet this
+ * protocol produces (spec §57 resource limits).
+ */
+const MAX_LINE_BYTES = 2 * 1024 * 1024;
+
 interface SocketEntry {
   socket: Socket;
   peerId: string;
@@ -206,6 +217,14 @@ export class TcpTransport implements Transport {
     // mid-read is exactly the kind of unreliable-link event this software exists to tolerate.
     rl.on("error", () => {
       /* 'close' always follows; avoid crashing on a bare 'error' event, same as the socket below */
+    });
+    // A second, independent listener on the same 'data' event — Node fans out 'data' to every
+    // registered listener, so this doesn't disrupt readline's own consumption of the stream.
+    let bytesSinceNewline = 0;
+    socket.on("data", (chunk: Buffer) => {
+      const lastNewline = chunk.lastIndexOf(0x0a);
+      bytesSinceNewline = lastNewline === -1 ? bytesSinceNewline + chunk.length : chunk.length - lastNewline - 1;
+      if (bytesSinceNewline > MAX_LINE_BYTES) socket.destroy(new Error("line exceeds max packet size"));
     });
     let peerId: string | undefined;
 

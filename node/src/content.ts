@@ -143,19 +143,62 @@ interface AssemblyEntry {
   totalChunks: number;
 }
 
+export interface ChunkAssemblerOptions {
+  /** Max distinct content ids being assembled concurrently (spec §57 resource limits). */
+  maxEntries?: number;
+  /** Max chunks a single content id may claim; also caps `chunkIndex`. Bounds the largest content this node will attempt to reassemble (`maxChunksPerEntry * CHUNK_SIZE` bytes). */
+  maxChunksPerEntry?: number;
+}
+
+const DEFAULT_MAX_ENTRIES = 64;
+const DEFAULT_MAX_CHUNKS_PER_ENTRY = 65536; // 65536 * CHUNK_SIZE (4096B) = 256MB reconstructable content
+
 /**
  * Reassembles chunked content (spec §26) from `CONTENT_CHUNK` packets and
  * verifies the final hash against the announced content id. Used both by
  * the node actually requesting content, and by relay nodes that
  * opportunistically cache content as they forward it (spec §27, milestone
  * "second/third objective" §91-92).
+ *
+ * Fed directly by untrusted network input — `handleContentChunk` accepts
+ * chunks for *any* content id a peer sends, whether or not this node ever
+ * asked for it (spec §27's opportunistic relay caching depends on that).
+ * Both dimensions of memory use are bounded like every other network-fed
+ * store in this codebase (spec §57): the number of distinct content ids
+ * tracked at once (FIFO eviction, matching `SeenCache`/`RemoteCatalog`/etc.)
+ * and the size any single one can claim (a `totalChunks`/`chunkIndex` claim
+ * outside `maxChunksPerEntry` is rejected outright, before anything is
+ * stored) — otherwise a single connected peer could flood fabricated chunks
+ * for content ids nobody requested and grow this map without bound.
  */
 export class ChunkAssembler {
   private readonly entries = new Map<string, AssemblyEntry>();
+  private readonly maxEntries: number;
+  private readonly maxChunksPerEntry: number;
+
+  constructor(options: ChunkAssemblerOptions = {}) {
+    this.maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES;
+    this.maxChunksPerEntry = options.maxChunksPerEntry ?? DEFAULT_MAX_CHUNKS_PER_ENTRY;
+  }
 
   addChunk(contentId: string, chunkIndex: number, totalChunks: number, data: Buffer): void {
+    if (
+      !Number.isInteger(totalChunks) ||
+      totalChunks <= 0 ||
+      totalChunks > this.maxChunksPerEntry ||
+      !Number.isInteger(chunkIndex) ||
+      chunkIndex < 0 ||
+      chunkIndex >= totalChunks
+    ) {
+      return; // malformed or out-of-bounds claim — never trust it (spec §57)
+    }
+
     let entry = this.entries.get(contentId);
     if (!entry) {
+      if (this.entries.size >= this.maxEntries) {
+        const oldestKey = this.entries.keys().next().value;
+        if (oldestKey !== undefined) this.entries.delete(oldestKey);
+      }
       entry = { chunks: new Map(), totalChunks };
       this.entries.set(contentId, entry);
     }

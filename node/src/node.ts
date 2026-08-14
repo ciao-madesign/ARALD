@@ -70,6 +70,10 @@ export interface NomadNodeOptions {
   maxRoutingTableEntries?: number;
   /** Routes with a hop-count cost above this are never adopted, bounding how far distance-vector updates propagate (spec §22). */
   maxRouteCost?: number;
+  /** Max distinct content ids being chunk-reassembled at once, for both the requester and relay assemblers (spec §57 resource limits). */
+  maxChunkAssemblyEntries?: number;
+  /** Max chunks a single content id may claim during reassembly; also bounds the largest content this node will attempt to reassemble. */
+  maxChunksPerContent?: number;
 }
 
 interface ContentWaiter {
@@ -191,8 +195,8 @@ export class NomadNode extends EventEmitter {
   private readonly contentRequestTimeoutMs: number;
   private readonly minTrustToRelay?: TrustLevel;
   private readonly seenCache = new SeenCache();
-  private readonly requesterAssembler = new ChunkAssembler();
-  private readonly relayAssembler = new ChunkAssembler();
+  private readonly requesterAssembler: ChunkAssembler;
+  private readonly relayAssembler: ChunkAssembler;
   private readonly transports: Transport[] = [];
   private readonly peerTransport = new Map<string, Transport>();
   private readonly pendingContentRequests = new Map<string, PendingContentEntry>();
@@ -223,6 +227,9 @@ export class NomadNode extends EventEmitter {
     this.peerDirectory = new PeerDirectory({ maxSize: options.maxPeerDirectoryEntries });
     this.ownAnnouncement = signIdentityAnnouncement(this.identity, this.encryptionIdentity);
     this.routingTable = new RoutingTable({ maxSize: options.maxRoutingTableEntries, maxCost: options.maxRouteCost });
+    const assemblerOptions = { maxEntries: options.maxChunkAssemblyEntries, maxChunksPerEntry: options.maxChunksPerContent };
+    this.requesterAssembler = new ChunkAssembler(assemblerOptions);
+    this.relayAssembler = new ChunkAssembler(assemblerOptions);
   }
 
   get nodeId(): string {
