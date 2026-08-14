@@ -36,10 +36,14 @@ Implementato in `node/src/packet.ts`. Framing su TCP: un pacchetto JSON per riga
 | `CONTENT_COMPLETE` | fine trasferimento, contiene l'hash finale da verificare | Milestone 4 |
 | `SYNC_REQUEST` | annuncio del proprio catalogo (content id conosciuti) a un peer appena connesso | Milestone 13 |
 | `SYNC_RESPONSE` | risposta con le voci di catalogo che il peer non conosceva ancora (solo metadata, mai i byte) | Milestone 13 |
+| `IDENTITY_REQUEST` | annuncio dei node id di cui si conosce già la chiave di cifratura, a un peer appena connesso | Milestone 15 |
+| `IDENTITY_RESPONSE` | risposta con gli `IdentityAnnouncement` (autofirmati) che il peer non conosceva ancora | Milestone 15 |
+| `PRIVATE_MESSAGE` | payload applicativo cifrato end-to-end (AES-256-GCM su chiave derivata via ECDH X25519), instradato per `destination`; porta con sé l'`IdentityAnnouncement` del mittente | Milestone 15 |
+| `ROUTE_ANNOUNCE` | annuncio distance-vector (`{destination, cost}` o `cost: null` per un ritiro) scambiato tra vicini diretti | Milestone 16 |
 
 Non esiste un pacchetto esplicito `CONTENT_NOT_FOUND`: l'assenza di un contenuto è segnalata implicitamente dal timeout lato richiedente (nessun `CONTENT_FOUND` ricevuto entro `contentRequestTimeoutMs` mentre il flood si esaurisce per TTL, §21). Un pacchetto `CONTENT_NOT_FOUND` esplicito è un possibile miglioramento futuro, non necessario per gli obiettivi §90-92.
 
-`SYNC_REQUEST`/`SYNC_RESPONSE` sono scambiati direttamente peer-a-peer (un solo hop, come `HELLO`) ogni volta che due nodi si connettono — non vengono inoltrati/floodati oltre i due nodi coinvolti. Vedi `docs/roadmap.md` milestone 13 per il flusso completo.
+`SYNC_REQUEST`/`SYNC_RESPONSE`, `IDENTITY_REQUEST`/`IDENTITY_RESPONSE` e `ROUTE_ANNOUNCE` sono tutti scambiati direttamente peer-a-peer (un solo hop, come `HELLO`) — non vengono mai inoltrati/floodati oltre i due nodi coinvolti. I primi due si scambiano ogni volta che due nodi si connettono (vedi `docs/roadmap.md` milestone 13); `ROUTE_ANNOUNCE` in aggiunta ogni volta che la tabella di instradamento locale cambia (triggered update, non solo alla connessione) — vedi `docs/roadmap.md` milestone 16. `PRIVATE_MESSAGE`, a differenza di questi, **è** instradato/floodato come `DATA` (per `destination`, non un solo hop) — un relay lo inoltra senza poterlo decifrare.
 
 Tipi previsti dalla specifica ma **non ancora implementati** (§49): `ANNOUNCE`, `CAPABILITY`, `ROUTE_QUERY`, `ROUTE_REPLY`, `SERVICE_QUERY`, `SERVICE_ANNOUNCE`, `SERVICE_REQUEST`, `SERVICE_RESPONSE`, `STORE`, `FORWARD`, `ERROR`.
 
@@ -48,6 +52,10 @@ Tipi previsti dalla specifica ma **non ancora implementati** (§49): `ANNOUNCE`,
 - Ogni pacchetto nasce con un TTL (default 8 nel prototipo).
 - Ogni nodo che inoltra un pacchetto lo decrementa; a TTL 0 il pacchetto viene scartato.
 - Ogni nodo mantiene una cache `seen packet id -> timestamp` (`node/src/routing.ts`, classe `SeenCache`) con eviction dimensionale, per evitare di rielaborare o reinoltrare lo stesso pacchetto (controlled flooding, §21).
+
+## Instradamento per traffico unicast (§22, Milestone 16)
+
+Un pacchetto con `destination` impostato (unicast) viene instradato verso il next hop noto in `node/src/routing-table.ts` quando esiste una rotta — un solo invio, non un flood verso tutti i vicini. Se non esiste ancora una rotta nota (mesh appena connessa) o l'invio instradato fallisce, si ricade sul controlled flooding come nel resto del protocollo. Il flooding resta l'unico meccanismo per il traffico broadcast (`CONTENT_QUERY`, destination assente). Il TTL si decrementa comunque a ogni hop, instradato o floodato che sia — instradare cambia solo *a chi* viene inviato il pacchetto, non la logica di TTL/dedup.
 
 ## Content ID (§24)
 

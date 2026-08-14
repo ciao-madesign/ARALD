@@ -57,11 +57,14 @@ describe("network simulator", () => {
       // Documents the tradeoff exercised above, deterministically, with numbers checked
       // empirically rather than derived by hand (the round trip involves more than one packet
       // type, each getting its own fresh TTL budget, so "distance <= TTL" is not quite the whole
-      // story). With defaultTtl=8 on a chain, distance 11 still fully succeeds and distance 12
-      // starts failing — a 15-node chain (max distance 14) gives a comfortable, non-flaky margin
-      // past that cutoff. Expected protocol behavior (spec §19, §21), not a bug.
-      const result = await runSimulation({ nodeCount: 15, topology: "chain", getContentTimeoutMs: 1500, defaultTtl: 8 });
-      expect(result.deliveries).toHaveLength(14);
+      // story; distance-vector routing (spec §22) also speeds up how fast opportunistic caching
+      // reaches intermediate nodes, which recalibrates the margin further vs. flooding alone).
+      // With defaultTtl=8 on a chain, empirically the farthest node still occasionally succeeds
+      // via a cached copy up to distance 17 — a 20-node chain (max distance 19) gives a
+      // comfortable, non-flaky margin past that cutoff. Expected protocol behavior (spec §19,
+      // §21), not a bug.
+      const result = await runSimulation({ nodeCount: 20, topology: "chain", getContentTimeoutMs: 1500, defaultTtl: 8 });
+      expect(result.deliveries).toHaveLength(19);
       expect(result.deliveryRatio).toBeLessThan(1);
       const farthest = result.deliveries[result.deliveries.length - 1];
       expect(farthest.success).toBe(false);

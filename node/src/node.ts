@@ -16,6 +16,17 @@ import { PendingDeliveryQueue } from "./store-and-forward.js";
 import { RateLimiter } from "./rate-limit.js";
 import { TrustLevel, TrustManager, meetsTrustLevel } from "./trust.js";
 import { RelayPolicy, type RelayPolicyOptions } from "./relay-policy.js";
+import {
+  EncryptionIdentity,
+  decryptFromPeer,
+  encryptForPeer,
+  signIdentityAnnouncement,
+  verifyIdentityAnnouncement,
+  type EncryptedPayload,
+  type IdentityAnnouncement,
+} from "./encryption.js";
+import { PeerDirectory } from "./peer-directory.js";
+import { RoutingTable } from "./routing-table.js";
 import type { PeerAddress, Transport } from "./transport.js";
 
 export interface NomadNodeOptions {
@@ -51,6 +62,14 @@ export interface NomadNodeOptions {
   minTrustToRelay?: TrustLevel;
   /** Whether/when this node relays traffic on behalf of others (spec §51, §58) — battery/charging-aware opt-out. */
   relayPolicy?: RelayPolicyOptions;
+  /** X25519 key pair for end-to-end encrypted private messages (spec §52). Generated automatically if omitted. */
+  encryptionIdentity?: EncryptionIdentity;
+  /** Max node ids tracked in the peer encryption-key directory at once (spec §57 resource limits). */
+  maxPeerDirectoryEntries?: number;
+  /** Max destinations tracked in the routing table at once (spec §57 resource limits). */
+  maxRoutingTableEntries?: number;
+  /** Routes with a hop-count cost above this are never adopted, bounding how far distance-vector updates propagate (spec §22). */
+  maxRouteCost?: number;
 }
 
 interface ContentWaiter {
@@ -100,6 +119,41 @@ interface SyncResponsePayload {
   entries: ContentMetadata[];
 }
 
+interface IdentityRequestPayload {
+  /** Node ids the sender already has a directory entry for — mirrors SyncRequestPayload's shape for content. */
+  knownNodeIds: string[];
+}
+
+interface IdentityResponsePayload {
+  announcements: IdentityAnnouncement[];
+}
+
+/**
+ * A PRIVATE_MESSAGE carries the sender's own self-signed `IdentityAnnouncement`
+ * alongside the ciphertext. Identity sync (like catalog sync) only exchanges
+ * entries point-to-point at connection time and is never retroactively
+ * re-announced to already-connected peers — so a destination reached only
+ * via a relay that met the sender *after* the destination's own sync round
+ * would otherwise never learn the sender's encryption key and could never
+ * decrypt. Piggybacking a self-verifiable announcement removes that
+ * dependency on sync ordering entirely: the destination can always decrypt
+ * as long as the announcement's signature checks out.
+ */
+interface PrivateMessagePayload extends EncryptedPayload {
+  senderAnnouncement: IdentityAnnouncement;
+}
+
+/**
+ * Distance-vector route advertisement (spec §22), exchanged directly
+ * between neighbors like IDENTITY_REQUEST/RESPONSE — never flooded, since
+ * it only ever concerns the two nodes on that link. `cost: null` withdraws
+ * a destination (its route via the sender no longer exists), matching the
+ * shape of a normal advertisement so the same handler processes both.
+ */
+interface RouteAnnouncePayload {
+  routes: Array<{ destination: string; cost: number | null }>;
+}
+
 /**
  * A Nomad-Net mesh node (spec §7): wires identity, peer table, one or more
  * transports, controlled-flooding routing and the content-centric protocol
@@ -115,6 +169,23 @@ export class NomadNode extends EventEmitter {
   readonly remoteCatalog: RemoteCatalog;
   /** Per-node-id trust state (spec §54): SEEN/VERIFIED are earned automatically, TRUSTED/ADMIN are operator-assigned. */
   readonly trust: TrustManager;
+  /** Known node id -> encryption key bindings (spec §52), propagated peer-to-peer like remoteCatalog. Deliberately never holds this node's own entry — see `ownAnnouncement`. */
+  readonly peerDirectory: PeerDirectory;
+  /** This node's X25519 key pair, used only for end-to-end encrypted private messages. */
+  readonly encryptionIdentity: EncryptionIdentity;
+  /**
+   * This node's own self-signed identity announcement. Kept as a dedicated
+   * field rather than the first entry ever inserted into `peerDirectory`
+   * (as it briefly was) — that map is bounded and FIFO-evicting, and being
+   * first in meant it was always the *first* thing evicted once the
+   * directory filled up, silently breaking both `sendPrivateMessage()`
+   * (piggybacks this) and `handleIdentityRequest()` (advertises it to new
+   * peers). Special-cased at the two call sites that need it instead,
+   * mirroring how `routingTable` never stores a route to this node itself.
+   */
+  private readonly ownAnnouncement: IdentityAnnouncement;
+  /** Best known {nextHop, cost} per destination (spec §22), learned via ROUTE_ANNOUNCE. Unicast sends prefer a known route; flooding remains the fallback/bootstrap and is still used for broadcasts. */
+  readonly routingTable: RoutingTable;
 
   private readonly defaultTtl: number;
   private readonly contentRequestTimeoutMs: number;
@@ -148,6 +219,10 @@ export class NomadNode extends EventEmitter {
       windowMs: options.rateLimitWindowMs,
     });
     this.relayPolicy = new RelayPolicy(options.relayPolicy);
+    this.encryptionIdentity = options.encryptionIdentity ?? EncryptionIdentity.generate();
+    this.peerDirectory = new PeerDirectory({ maxSize: options.maxPeerDirectoryEntries });
+    this.ownAnnouncement = signIdentityAnnouncement(this.identity, this.encryptionIdentity);
+    this.routingTable = new RoutingTable({ maxSize: options.maxRoutingTableEntries, maxCost: options.maxRouteCost });
   }
 
   get nodeId(): string {
@@ -172,12 +247,26 @@ export class NomadNode extends EventEmitter {
       this.emit("peer:connected", peerId);
       void this.flushPendingDeliveries();
       void this.startCatalogSync(peerId);
+      void this.startIdentitySync(peerId);
+      const isNewDirectRoute = this.routingTable.offer(peerId, peerId, 1);
+      void this.announceRoutes(peerId);
+      // A brand-new direct neighbor is news to every *other* already-connected peer too — without this,
+      // only peerId itself (via the full-table announceRoutes above) ever hears about it, and nobody else
+      // discovers this link exists until some unrelated future update happens to carry it along.
+      if (isNewDirectRoute) {
+        for (const peer of this.peers.list()) {
+          if (peer.id === peerId) continue;
+          void this.announceRoutes(peer.id, [peerId]);
+        }
+      }
     });
     transport.onPeerDisconnected((peerId) => {
       this.peers.remove(peerId);
       this.peerTransport.delete(peerId);
       this.rateLimiter.reset(peerId);
       this.emit("peer:disconnected", peerId);
+      const withdrawn = this.routingTable.removeRoutesVia(peerId);
+      if (withdrawn.length > 0) this.broadcastWithdrawal(withdrawn, peerId);
     });
     this.transports.push(transport);
   }
@@ -290,6 +379,53 @@ export class NomadNode extends EventEmitter {
     return packet.id;
   }
 
+  /**
+   * Sends an end-to-end encrypted message (spec §52, §56 "private
+   * messages"), as opposed to `sendData()` — which stays deliberately
+   * plaintext, since most of what this codebase's own test suite uses it
+   * for is exercising routing/relay mechanics, not privacy. A relay
+   * forwards the ciphertext without being able to read it; only
+   * `destination` can decrypt it. Throws if `destination`'s encryption key
+   * isn't known yet — call `waitForPeerKey()` first if it might not be.
+   */
+  sendPrivateMessage(destination: string, payload: unknown): string {
+    const peerKey = this.peerDirectory.getKey(destination);
+    if (!peerKey) {
+      throw new Error(`cannot send private message: encryption key for ${destination} is not yet known`);
+    }
+    const sharedKey = this.encryptionIdentity.sharedKeyWith(peerKey);
+    const encryptedPayload = encryptForPeer(sharedKey, Buffer.from(JSON.stringify(payload)));
+    const packet = this.originate<PrivateMessagePayload>(
+      MessageType.PRIVATE_MESSAGE,
+      { ...encryptedPayload, senderAnnouncement: this.ownAnnouncement },
+      { destination, priority: Priority.MESSAGING },
+    );
+    void this.floodExcept(packet);
+    return packet.id;
+  }
+
+  /** Resolves once `nodeId`'s encryption key is known (immediately, if already is), or rejects after `timeoutMs`. */
+  waitForPeerKey(nodeId: string, options: { timeoutMs?: number } = {}): Promise<string> {
+    const known = this.peerDirectory.getKey(nodeId);
+    if (known) return Promise.resolve(known);
+
+    return new Promise((resolve, reject) => {
+      const timeoutMs = options.timeoutMs ?? this.contentRequestTimeoutMs;
+      const timer = setTimeout(() => {
+        this.off("identity:synced", handler);
+        reject(new Error(`timed out waiting for ${nodeId}'s encryption key`));
+      }, timeoutMs);
+      const handler = (nodeIds: string[]): void => {
+        if (!nodeIds.includes(nodeId)) return;
+        clearTimeout(timer);
+        this.off("identity:synced", handler);
+        const key = this.peerDirectory.getKey(nodeId);
+        if (key) resolve(key);
+      };
+      this.on("identity:synced", handler);
+    });
+  }
+
   /** Announces this node's known peers (spec §15 "PEER_LIST"), informational only — does not auto-connect. */
   sharePeerList(destination?: string): void {
     const list = this.peers.list().map((p) => ({ id: p.id, address: p.address }));
@@ -345,9 +481,18 @@ export class NomadNode extends EventEmitter {
    * `flushPendingDeliveries`). Returns whether at least one send succeeded.
    */
   private async floodExcept(packet: Packet, exceptPeerId?: string): Promise<boolean> {
-    const targets = this.peers.list().filter((p) => p.id !== exceptPeerId);
     const isUnicastElsewhere = packet.destination !== undefined && packet.destination !== this.nodeId;
 
+    if (isUnicastElsewhere) {
+      const route = this.routingTable.bestRoute(packet.destination!);
+      if (route && route.nextHop !== exceptPeerId) {
+        if (await this.sendToPeer(route.nextHop, packet)) return true;
+        // The routed next hop just failed (e.g. dropped mid-send) — fall through to flooding
+        // rather than queuing immediately, since other peers may still be able to relay it.
+      }
+    }
+
+    const targets = this.peers.list().filter((p) => p.id !== exceptPeerId);
     const delivered =
       targets.length > 0 && (await Promise.all(targets.map((p) => this.sendToPeer(p.id, packet)))).some(Boolean);
 
@@ -414,6 +559,66 @@ export class NomadNode extends EventEmitter {
       { destination: peerId, priority: Priority.CONTROL },
     );
     await this.sendToPeer(peerId, request);
+  }
+
+  /**
+   * Announces this node's known identity directory (node id -> encryption
+   * key bindings, spec §52) to a newly connected peer — same pattern as
+   * `startCatalogSync`, and for the same reason: propagates transitively
+   * across the mesh as nodes connect in sequence, without ever needing a
+   * network-wide flood for what's fundamentally point-to-point information.
+   */
+  private async startIdentitySync(peerId: string): Promise<void> {
+    const knownNodeIds = [this.nodeId, ...this.peerDirectory.list().map((a) => a.nodeId)];
+    const request = this.originate<IdentityRequestPayload>(
+      MessageType.IDENTITY_REQUEST,
+      { knownNodeIds },
+      { destination: peerId, priority: Priority.CONTROL },
+    );
+    await this.sendToPeer(peerId, request);
+  }
+
+  /**
+   * Sends `peerId` this node's full distance vector (spec §22), split-horizon
+   * filtered — routes that go via `peerId` itself are omitted, since
+   * advertising a peer's own best path back to it can never help and is how
+   * naive distance-vector protocols form 2-node routing loops. This always
+   * includes an implicit route to this node itself at cost 0, so `peerId`
+   * learns how to reach us — direct, sent like every other sync exchange,
+   * never flooded.
+   */
+  private async announceRoutes(peerId: string, destinations?: string[]): Promise<void> {
+    const filter = destinations === undefined ? undefined : new Set(destinations);
+    const known = this.routingTable
+      .list()
+      .filter((route) => route.nextHop !== peerId && route.destination !== peerId)
+      .filter((route) => filter === undefined || filter.has(route.destination))
+      .map((route) => ({ destination: route.destination, cost: route.cost }));
+    const routes = filter === undefined || filter.has(this.nodeId)
+      ? [{ destination: this.nodeId, cost: 0 }, ...known]
+      : known;
+    if (routes.length === 0) return;
+
+    const announcement = this.originate<RouteAnnouncePayload>(
+      MessageType.ROUTE_ANNOUNCE,
+      { routes },
+      { destination: peerId, priority: Priority.CONTROL },
+    );
+    await this.sendToPeer(peerId, announcement);
+  }
+
+  /** Tells every remaining peer (except the one that just disconnected) that `destinations` are no longer reachable via us. */
+  private broadcastWithdrawal(destinations: string[], exceptPeerId: string): void {
+    for (const peer of this.peers.list()) {
+      if (peer.id === exceptPeerId) continue;
+      const routes = destinations.map((destination) => ({ destination, cost: null }));
+      const announcement = this.originate<RouteAnnouncePayload>(
+        MessageType.ROUTE_ANNOUNCE,
+        { routes },
+        { destination: peer.id, priority: Priority.CONTROL },
+      );
+      void this.sendToPeer(peer.id, announcement);
+    }
   }
 
   private handlePacket(packet: Packet, fromPeerId: string): void {
@@ -523,6 +728,22 @@ export class NomadNode extends EventEmitter {
 
       case MessageType.SYNC_RESPONSE:
         this.handleSyncResponse(packet as Packet<SyncResponsePayload>);
+        break;
+
+      case MessageType.IDENTITY_REQUEST:
+        this.handleIdentityRequest(packet as Packet<IdentityRequestPayload>, fromPeerId);
+        break;
+
+      case MessageType.IDENTITY_RESPONSE:
+        this.handleIdentityResponse(packet as Packet<IdentityResponsePayload>);
+        break;
+
+      case MessageType.PRIVATE_MESSAGE:
+        this.handlePrivateMessage(packet as Packet<PrivateMessagePayload>);
+        break;
+
+      case MessageType.ROUTE_ANNOUNCE:
+        this.handleRouteAnnounce(packet as Packet<RouteAnnouncePayload>, fromPeerId);
         break;
 
       default:
@@ -639,7 +860,7 @@ export class NomadNode extends EventEmitter {
 
   /** Replies with catalog entries the requester doesn't already know about (spec §33) — metadata only, never bytes. */
   private handleSyncRequest(packet: Packet<SyncRequestPayload>, fromPeerId: string): void {
-    const known = new Set(packet.payload.knownContentIds);
+    const known = new Set(Array.isArray(packet.payload?.knownContentIds) ? packet.payload.knownContentIds : []);
     const newEntries = this.listKnownContent().filter((metadata) => !known.has(metadata.contentId));
     if (newEntries.length === 0) return;
 
@@ -661,8 +882,10 @@ export class NomadNode extends EventEmitter {
    * <victim>" claims that propagate transitively across catalog syncs.
    */
   private handleSyncResponse(packet: Packet<SyncResponsePayload>): void {
+    const entries = Array.isArray(packet.payload?.entries) ? packet.payload.entries : [];
     const accepted: ContentMetadata[] = [];
-    for (const metadata of packet.payload.entries) {
+    for (const metadata of entries) {
+      if (!metadata || typeof metadata.contentId !== "string") continue; // malformed entry — never trust it
       if (this.contentStore.has(metadata.contentId)) continue; // we already hold the actual bytes
       if (!verifyContentSignature(metadata)) continue; // unsigned or forged claim — never trust it
       this.remoteCatalog.record(metadata);
@@ -670,5 +893,110 @@ export class NomadNode extends EventEmitter {
       accepted.push(metadata);
     }
     if (accepted.length > 0) this.emit("catalog-sync", accepted);
+  }
+
+  /** Replies with directory entries the requester doesn't already know about (spec §52) — mirrors handleSyncRequest for content. */
+  private handleIdentityRequest(packet: Packet<IdentityRequestPayload>, fromPeerId: string): void {
+    const known = new Set(Array.isArray(packet.payload?.knownNodeIds) ? packet.payload.knownNodeIds : []);
+    const newAnnouncements = this.peerDirectory.list().filter((a) => !known.has(a.nodeId));
+    if (!known.has(this.nodeId)) newAnnouncements.push(this.ownAnnouncement);
+    if (newAnnouncements.length === 0) return;
+
+    const response = this.originate<IdentityResponsePayload>(
+      MessageType.IDENTITY_RESPONSE,
+      { announcements: newAnnouncements },
+      { destination: packet.source, priority: Priority.CONTROL },
+    );
+    void this.sendToPeer(fromPeerId, response);
+  }
+
+  /**
+   * Records what a peer's identity directory reply announced. Each entry
+   * is a self-signed `IdentityAnnouncement` (spec §52, §55's pattern
+   * applied to identity) — a relay cannot forge "node X's encryption key
+   * is Y" for a node id it doesn't control the Ed25519 private key for, so
+   * this is safe to trust and re-share exactly like catalog sync.
+   */
+  private handleIdentityResponse(packet: Packet<IdentityResponsePayload>): void {
+    const announcements = Array.isArray(packet.payload?.announcements) ? packet.payload.announcements : [];
+    const accepted: string[] = [];
+    for (const announcement of announcements) {
+      if (!announcement || announcement.nodeId === this.nodeId) continue; // malformed, or a claim about ourselves — never record either
+      if (!verifyIdentityAnnouncement(announcement)) continue; // unsigned or forged claim — never trust it
+      if (this.peerDirectory.record(announcement)) {
+        this.trust.markVerified(announcement.nodeId);
+        accepted.push(announcement.nodeId);
+      }
+    }
+    if (accepted.length > 0) this.emit("identity:synced", accepted);
+  }
+
+  /**
+   * Applies a neighbor's distance-vector advertisement (spec §22):
+   * `fromPeerId` is always exactly 1 hop away, so every entry it advertises
+   * costs `entry.cost + 1` via `fromPeerId` from here. A route this node
+   * adopts or withdraws as a result is re-advertised (split horizon
+   * applied per recipient by `announceRoutes`/`broadcastWithdrawal`) so the
+   * update propagates outward — the same triggered-update pattern
+   * distance-vector protocols like RIP use, without waiting on a periodic
+   * refresh this prototype doesn't run.
+   */
+  private handleRouteAnnounce(packet: Packet<RouteAnnouncePayload>, fromPeerId: string): void {
+    const routes = Array.isArray(packet.payload?.routes) ? packet.payload.routes : [];
+    const changed: string[] = [];
+    const withdrawn: string[] = [];
+    for (const entry of routes) {
+      if (!entry || typeof entry.destination !== "string") continue; // malformed entry — never trust it
+      if (entry.destination === this.nodeId) continue; // never need a route to ourselves
+      if (entry.cost === null) {
+        if (this.routingTable.withdraw(entry.destination, fromPeerId)) withdrawn.push(entry.destination);
+        continue;
+      }
+      if (typeof entry.cost !== "number") continue; // malformed cost — never trust it
+      if (this.routingTable.offer(entry.destination, fromPeerId, entry.cost + 1)) changed.push(entry.destination);
+    }
+
+    if (changed.length > 0) {
+      this.emit("routing:updated", changed);
+      for (const peer of this.peers.list()) {
+        if (peer.id === fromPeerId) continue;
+        void this.announceRoutes(peer.id, changed);
+      }
+    }
+    if (withdrawn.length > 0) this.broadcastWithdrawal(withdrawn, fromPeerId);
+  }
+
+  /**
+   * Decrypts a PRIVATE_MESSAGE addressed to us (spec §52, §56 "private
+   * messages: end-to-end encrypted"). Requires already knowing the
+   * sender's encryption key (via identity sync) — if we don't, or if
+   * decryption/authentication fails (wrong key, tampered ciphertext), the
+   * message is rejected rather than silently dropped, so a caller waiting
+   * on it can tell the difference between "never arrived" and "arrived but
+   * couldn't be trusted".
+   */
+  private handlePrivateMessage(packet: Packet<PrivateMessagePayload>): void {
+    const senderAnnouncement = packet.payload?.senderAnnouncement;
+    if (
+      senderAnnouncement &&
+      senderAnnouncement.nodeId === packet.source &&
+      verifyIdentityAnnouncement(senderAnnouncement) &&
+      this.peerDirectory.record(senderAnnouncement)
+    ) {
+      this.emit("identity:synced", [senderAnnouncement.nodeId]);
+    }
+
+    const senderKey = this.peerDirectory.getKey(packet.source);
+    if (!senderKey) {
+      this.emit("private-message:failed", packet.source, "sender's encryption key is not yet known");
+      return;
+    }
+    try {
+      const sharedKey = this.encryptionIdentity.sharedKeyWith(senderKey);
+      const payload: unknown = JSON.parse(decryptFromPeer(sharedKey, packet.payload).toString("utf8"));
+      this.emit("private-message", { ...packet, payload });
+    } catch (err) {
+      this.emit("private-message:failed", packet.source, (err as Error).message);
+    }
   }
 }

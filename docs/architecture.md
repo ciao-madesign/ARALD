@@ -25,15 +25,15 @@ Il Network Fabric (questo repository) non dipende da un transport specifico: ogn
 
 ```
 Mesh Node
-+-- Identity Manager     node/src/identity.ts
++-- Identity Manager     node/src/identity.ts (firma, Ed25519), node/src/encryption.ts (cifratura, X25519)
 +-- Transport Manager    node/src/transport.ts, node/src/transports/*
 +-- Peer Discovery       node/src/peer.ts
-+-- Routing Engine       node/src/routing.ts
++-- Routing Engine       node/src/routing.ts (controlled flooding, bootstrap/fallback e broadcast) + node/src/routing-table.ts (distance-vector a costo, unicast)
 +-- Content Discovery    node/src/content.ts
 +-- Cache Manager        node/src/content.ts (ContentStore)
 +-- Store & Forward      node/src/store-and-forward.ts — implementato (pacchetti unicast, vedi roadmap.md milestone 12)
-+-- Sync Engine          node/src/catalog.ts — implementato (vedi roadmap.md milestone 13)
-+-- Security Manager     node/src/trust.ts, node/src/rate-limit.ts, node/src/content.ts — quasi completo (manca solo E2E, vedi security.md)
++-- Sync Engine          node/src/catalog.ts (contenuti) + node/src/peer-directory.ts (identità/chiavi) — implementato (vedi roadmap.md milestone 13, 15)
++-- Security Manager     node/src/trust.ts, node/src/rate-limit.ts, node/src/content.ts, node/src/encryption.ts — completo, vedi security.md
 +-- Service Registry     roadmap — non implementato
 +-- Storage Manager      node/src/content.ts (in-memory nel prototipo)
 +-- Resource Manager     node/src/relay-policy.ts — implementato (relay on/off/when-charging/battery-above, vedi milestone 16)
@@ -41,9 +41,9 @@ Mesh Node
 
 Non tutti i nodi implementano tutte le funzioni: uno smartphone può essere client/cache/relay limitato, un computer relay/server/cache/gateway, un server NOMAD service/content provider (§7).
 
-## Stato di implementazione attuale (Milestone 0-7, 12, 13, 15, 16 parziale, 20)
+## Stato di implementazione attuale (Milestone 0-7, 12, 13, 15, 16, 20)
 
-Lo stato corrente del codice copre le fasi 1-7 della specifica (§62-66: identità, packet protocol, transport TCP, routing multi-hop con TTL e deduplicazione, content discovery, cache), la Milestone 12 (store-and-forward), la Milestone 13 (sincronizzazione dei cataloghi), quasi tutta la Milestone 15 (firma dei contenuti, trust levels, rate limiting — manca solo la cifratura E2E), una parte della Milestone 16 (relay policy legata a batteria/carica) e la Milestone 20 (simulatore di rete a scala). Questo è **tutto ciò che si può costruire e testare senza hardware BLE e senza Docker/Project NOMAD**: BLE, Wi-Fi reale, mobile e gateway NOMAD restano bloccati su quei prerequisiti (vedi [`roadmap.md`](./roadmap.md) per il dettaglio di cosa è bloccato da cosa), costruiti bottom-up (§89, §105) senza saltare livelli quando si potrà riprendere.
+Lo stato corrente del codice copre le fasi 1-7 della specifica (§62-66: identità, packet protocol, transport TCP, routing multi-hop con TTL e deduplicazione, content discovery, cache), la Milestone 12 (store-and-forward), la Milestone 13 (sincronizzazione dei cataloghi), la Milestone 15 (firma dei contenuti, trust levels, rate limiting, cifratura E2E dei messaggi privati), la Milestone 16 (relay policy legata a batteria/carica **e** routing a costo distance-vector, §22) e la Milestone 20 (simulatore di rete a scala). Questo è **tutto ciò che si può costruire e testare senza hardware BLE e senza Docker/Project NOMAD**: BLE, Wi-Fi reale, mobile e gateway NOMAD restano bloccati su quei prerequisiti (vedi [`roadmap.md`](./roadmap.md) per il dettaglio di cosa è bloccato da cosa), costruiti bottom-up (§89, §105) senza saltare livelli quando si potrà riprendere.
 
 ## Gateway (§8, §37-40)
 

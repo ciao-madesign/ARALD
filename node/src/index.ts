@@ -10,4 +10,7 @@ export * from "./store-and-forward.js";
 export * from "./rate-limit.js";
 export * from "./trust.js";
 export * from "./relay-policy.js";
+export * from "./encryption.js";
+export * from "./peer-directory.js";
+export * from "./routing-table.js";
 export { TcpTransport } from "./transports/tcp.js";
