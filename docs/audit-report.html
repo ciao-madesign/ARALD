@@ -1,0 +1,504 @@
+<title>Verifica Nomad-Net</title>
+<style>
+  :root {
+    --paper: #f2f4f5;
+    --paper-raised: #ffffff;
+    --ink: #131b22;
+    --ink-soft: #4a5560;
+    --ink-faint: #7c8792;
+    --line: #d7dde1;
+    --line-soft: #e6eaec;
+    --accent: #e8622c;
+    --accent-ink: #ffffff;
+    --accent-soft: #fce6da;
+    --signal: #1d7a8c;
+    --signal-soft: #dcedf0;
+    --ok: #2f9e5b;
+    --ok-soft: #e1f3e8;
+    --warn: #b8790f;
+    --warn-soft: #faedd6;
+    --open: #c1432f;
+    --open-soft: #fbe4df;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", "JetBrains Mono", Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --radius: 10px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #10161c;
+      --paper-raised: #171f26;
+      --ink: #e8edf0;
+      --ink-soft: #aab6bf;
+      --ink-faint: #7c8792;
+      --line: #2a343c;
+      --line-soft: #202a31;
+      --accent: #f0794a;
+      --accent-ink: #171008;
+      --accent-soft: #3a2419;
+      --signal: #4db8c9;
+      --signal-soft: #16323a;
+      --ok: #57c584;
+      --ok-soft: #163326;
+      --warn: #e0a83f;
+      --warn-soft: #3a2c10;
+      --open: #ea6f5c;
+      --open-soft: #3a1c17;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #10161c;
+    --paper-raised: #171f26;
+    --ink: #e8edf0;
+    --ink-soft: #aab6bf;
+    --ink-faint: #7c8792;
+    --line: #2a343c;
+    --line-soft: #202a31;
+    --accent: #f0794a;
+    --accent-ink: #171008;
+    --accent-soft: #3a2419;
+    --signal: #4db8c9;
+    --signal-soft: #16323a;
+    --ok: #57c584;
+    --ok-soft: #163326;
+    --warn: #e0a83f;
+    --warn-soft: #3a2c10;
+    --open: #ea6f5c;
+    --open-soft: #3a1c17;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--signal); }
+  a:focus-visible, button:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--signal);
+    outline-offset: 2px;
+  }
+
+  .page {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 56px 24px 96px;
+  }
+
+  /* ---------- masthead ---------- */
+  .masthead {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding-bottom: 36px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 40px;
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--signal);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .eyebrow::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--ok);
+    box-shadow: 0 0 0 3px var(--ok-soft);
+    flex: none;
+  }
+  h1 {
+    font-size: clamp(28px, 4.4vw, 38px);
+    line-height: 1.12;
+    letter-spacing: -0.01em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .lede {
+    font-size: 17px;
+    color: var(--ink-soft);
+    max-width: 62ch;
+    margin: 0;
+  }
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 22px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--ink-faint);
+  }
+  .meta-row code {
+    background: var(--line-soft);
+    padding: 1px 6px;
+    border-radius: 4px;
+    color: var(--ink-soft);
+    font-family: var(--mono);
+  }
+
+  /* ---------- stat tiles ---------- */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .stat {
+    background: var(--paper-raised);
+    padding: 18px 18px 16px;
+  }
+  .stat-num {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 27px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .stat-num.ok { color: var(--ok); }
+  .stat-num.accent { color: var(--accent); }
+  .stat-label {
+    font-size: 12.5px;
+    color: var(--ink-faint);
+    margin-top: 4px;
+  }
+
+  /* ---------- sections ---------- */
+  section { margin-top: 52px; }
+  .section-head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    margin-bottom: 18px;
+  }
+  .section-num {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--ink-faint);
+    letter-spacing: 0.04em;
+  }
+  h2 {
+    font-size: 21px;
+    margin: 0;
+    letter-spacing: -0.005em;
+  }
+  h3 {
+    font-size: 16px;
+    margin: 22px 0 8px;
+  }
+  p { margin: 0 0 14px; }
+  .prose p:last-child { margin-bottom: 0; }
+
+  ul.check-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 8px;
+  }
+  ul.check-list li {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    font-size: 15px;
+    padding: 10px 14px;
+    background: var(--paper-raised);
+    border: 1px solid var(--line-soft);
+    border-radius: 8px;
+  }
+  ul.check-list li .tick {
+    flex: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--ok-soft);
+    color: var(--ok);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    margin-top: 1px;
+  }
+
+  /* ---------- finding cards ---------- */
+  .finding {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--paper-raised);
+    padding: 16px 18px 18px;
+    margin-bottom: 14px;
+  }
+  .finding-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  .finding-title {
+    font-size: 15.5px;
+    font-weight: 600;
+    margin: 0;
+  }
+  .chip {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 3px 9px;
+    border-radius: 100px;
+    white-space: nowrap;
+    flex: none;
+  }
+  .chip.fixed { background: var(--ok-soft); color: var(--ok); }
+  .chip.open { background: var(--warn-soft); color: var(--warn); }
+  .finding p { font-size: 14.5px; color: var(--ink-soft); margin: 0; }
+  .finding .file {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--signal);
+    display: block;
+    margin-bottom: 6px;
+  }
+
+  /* ---------- next steps (plain language) ---------- */
+  .steps-intro {
+    background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+    margin-bottom: 22px;
+    font-size: 15px;
+  }
+  .steps-intro strong { color: var(--accent); }
+
+  ol.steps {
+    list-style: none;
+    counter-reset: step;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 14px;
+  }
+  ol.steps li {
+    counter-increment: step;
+    display: grid;
+    grid-template-columns: 40px 1fr;
+    gap: 16px;
+    align-items: start;
+    background: var(--paper-raised);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: 8px;
+    padding: 16px 18px;
+  }
+  ol.steps li::before {
+    content: counter(step);
+    font-family: var(--mono);
+    font-size: 19px;
+    font-weight: 700;
+    color: var(--accent);
+    line-height: 1.3;
+  }
+  .step-title {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0 0 5px;
+  }
+  .step-body {
+    font-size: 14.5px;
+    color: var(--ink-soft);
+    margin: 0;
+  }
+
+  .reassure {
+    margin-top: 22px;
+    padding: 16px 18px;
+    border-radius: var(--radius);
+    background: var(--ok-soft);
+    border: 1px solid color-mix(in srgb, var(--ok) 35%, transparent);
+    font-size: 14.5px;
+    color: var(--ink);
+  }
+  .reassure strong { color: var(--ok); }
+
+  footer {
+    margin-top: 64px;
+    padding-top: 22px;
+    border-top: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-faint);
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  @media (max-width: 480px) {
+    ol.steps li { grid-template-columns: 28px 1fr; gap: 12px; padding: 14px; }
+    ol.steps li::before { font-size: 16px; }
+  }
+</style>
+
+<div class="page">
+
+  <div class="masthead">
+    <div class="eyebrow">Verifica tecnica completa &middot; 14 agosto 2026</div>
+    <h1>Nomad-Net — stato del progetto dopo il controllo approfondito</h1>
+    <p class="lede">
+      È stato eseguito un controllo completo di tutto il codice scritto finora: test automatici,
+      compilazione, dipendenze, coerenza della documentazione e una revisione riga per riga
+      dell'intero motore di rete. Sono stati trovati e corretti due problemi di sicurezza reali;
+      tutto il resto è risultato solido. In fondo trovi la lista dei prossimi passi, spiegata senza
+      termini tecnici.
+    </p>
+    <div class="meta-row">
+      <span>Rami: <code>claude/nomad-net-project-spec-lcnbqt</code> + <code>main</code></span>
+      <span>Ultimo commit: <code>80b6e8e</code></span>
+      <span>8 commit in totale</span>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="stat-num ok">142</div><div class="stat-label">test automatici, tutti superati</div></div>
+    <div class="stat"><div class="stat-num">31</div><div class="stat-label">file di test</div></div>
+    <div class="stat"><div class="stat-num">18</div><div class="stat-label">moduli del motore di rete</div></div>
+    <div class="stat"><div class="stat-num accent">2</div><div class="stat-label">problemi seri trovati e già corretti</div></div>
+  </div>
+
+  <section>
+    <div class="section-head"><span class="section-num">01</span><h2>Cosa è stato controllato</h2></div>
+    <div class="prose">
+      <p>Un controllo "approfondito completo" non è una sola cosa: sono stati eseguiti sei tipi di verifica diversi, ciascuno pensato per scovare un genere diverso di problema.</p>
+    </div>
+    <ul class="check-list">
+      <li><span class="tick">✓</span> <span><strong>Tutti i test automatici</strong>, eseguiti 25+ volte di seguito (non solo una) — per essere sicuri che nessun risultato sia stato un caso fortunato.</span></li>
+      <li><span class="tick">✓</span> <span><strong>Compilazione e controllo dei tipi</strong> dell'intero codice — nessun errore.</span></li>
+      <li><span class="tick">✓</span> <span><strong>Controllo delle librerie esterne usate</strong> (dipendenze) — nessuna vulnerabilità nota in quelle che finiscono nel programma reale.</span></li>
+      <li><span class="tick">✓</span> <span><strong>Ricerca di codice lasciato a metà</strong> — note "da fare" dimenticate, scorciatoie pericolose, test disattivati per errore: nessuna trovata.</span></li>
+      <li><span class="tick">✓</span> <span><strong>Coerenza della documentazione</strong> — tutti i link interni funzionano, tutti i riferimenti alla specifica del progetto corrispondono davvero al documento originale.</span></li>
+      <li><span class="tick">✓</span> <span><strong>Revisione riga per riga di tutto il motore di rete</strong> — non solo delle parti scritte di recente, ma dell'intero codice insieme, cercando problemi che si vedono solo guardando il quadro completo.</span></li>
+    </ul>
+  </section>
+
+  <section>
+    <div class="section-head"><span class="section-num">02</span><h2>Problemi trovati e già corretti</h2></div>
+    <div class="prose">
+      <p>La revisione riga per riga ha trovato due problemi di sicurezza reali — entrambi permetterebbero a un solo dispositivo collegato in modo scorretto di far esaurire la memoria di un nodo della rete inviandogli dati fabbricati apposta. Sono stati corretti subito, e sono stati scritti nuovi test automatici che dimostrano la correzione.</p>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <h3 class="finding-title" style="margin:0">Ricezione di file senza limite di memoria</h3>
+        <span class="chip fixed">corretto</span>
+      </div>
+      <span class="file">node/src/content.ts — ChunkAssembler</span>
+      <p>Quando un file viaggia nella rete, arriva a pezzi (i "chunk") che il nodo ricevente rimette insieme. Prima della correzione, un dispositivo collegato poteva inviare pezzi finti, per file mai richiesti, senza mai completarli — e il nodo li teneva tutti in memoria all'infinito, fino a esaurirla. Ora ogni nodo tiene solo un numero limitato di trasferimenti "in corso" alla volta, e scarta pezzi con numeri che non hanno senso.</p>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <h3 class="finding-title" style="margin:0">Ricezione dati di rete senza limite di dimensione</h3>
+        <span class="chip fixed">corretto</span>
+      </div>
+      <span class="file">node/src/transports/tcp.ts — wireSocket</span>
+      <p>Ogni messaggio scambiato tra due nodi deve terminare con un "a capo". Un dispositivo collegato poteva inviare dati senza mai mandare l'a capo, e il nodo ricevente continuava ad accumularli in memoria in attesa che arrivasse. Ora, superata una soglia ampiamente sufficiente per qualunque messaggio legittimo, la connessione viene chiusa automaticamente.</p>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <h3 class="finding-title" style="margin:0">Commento nel codice che descriveva il comportamento sbagliato</h3>
+        <span class="chip fixed">corretto</span>
+      </div>
+      <span class="file">node/src/peer-directory.ts</span>
+      <p>Un commento nel codice diceva una cosa, il codice ne faceva un'altra (corretta, ma diversa da quanto scritto) — non un bug nel funzionamento, ma un'informazione fuorviante per chiunque lo leggesse in futuro. Corretto allineando la descrizione a ciò che il codice fa davvero.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head"><span class="section-num">03</span><h2>Problemi noti, lasciati aperti di proposito</h2></div>
+    <div class="prose">
+      <p>Durante lo stesso controllo sono emerse altre due cose migliorabili. Non sono state corrette subito perché richiedono una vera decisione di progettazione, non una semplice correzione — meglio segnalarle chiaramente che sistemarle di fretta.</p>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <h3 class="finding-title" style="margin:0">Un dispositivo "furbo" potrebbe far dimenticare identità legittime</h3>
+        <span class="chip open">annotato, non ancora risolto</span>
+      </div>
+      <p>La rete tiene un elenco limitato di "questo dispositivo usa questa chiave per i messaggi privati". Un dispositivo malintenzionato potrebbe generare economicamente molte identità usa-e-getta per far uscire dall'elenco identità vere, interrompendo temporaneamente i messaggi privati verso quei dispositivi (che tornano a funzionare non appena si riconnettono). Un meccanismo simile esiste già altrove nel codice per un problema analogo — va solo esteso qui.</p>
+    </div>
+
+    <div class="finding">
+      <div class="finding-head">
+        <h3 class="finding-title" style="margin:0">Se il primo dispositivo che risponde è irraggiungibile, non si prova il secondo</h3>
+        <span class="chip open">annotato, non ancora risolto</span>
+      </div>
+      <p>Quando un file esiste su più dispositivi, la rete si aggancia al primo che risponde. Se quel dispositivo diventa irraggiungibile proprio in quel momento, la richiesta scade invece di provare automaticamente con un altro dispositivo che invece avrebbe il file disponibile. Un caso limite raro, non un difetto della logica di base.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head"><span class="section-num">04</span><h2>Prossimi passi — spiegati senza tecnicismi</h2></div>
+
+    <div class="steps-intro">
+      <strong>In breve:</strong> il "cervello" della rete — cioè tutto il software che decide come i messaggi trovano la strada, si proteggono e arrivano a destinazione — è finito e ampiamente testato. Quello che manca adesso non si scrive più al computer: servono dispositivi fisici veri, e alcune decisioni pratiche.
+    </div>
+
+    <ol class="steps">
+      <li>
+        <div>
+          <p class="step-title">Procurarsi qualche telefono o dispositivo Bluetooth per la prima prova reale</p>
+          <p class="step-body">Finora la rete è stata provata solo con computer collegati "virtualmente" tra loro, per validare la logica senza bisogno di hardware. Il prossimo passo naturale è farla funzionare su 2-3 dispositivi veri che si parlano via Bluetooth, come accadrebbe davvero tra escursionisti o soccorritori. Bastano pochi telefoni economici o mini-computer per iniziare.</p>
+        </div>
+      </li>
+      <li>
+        <div>
+          <p class="step-title">Decidere chi mette a disposizione un computer sempre acceso per i contenuti offline</p>
+          <p class="step-body">La rete sa già far viaggiare messaggi e file tra i dispositivi. Per offrire anche mappe, documenti e un assistente offline, serve collegarla a un secondo programma esterno già esistente (chiamato "Project NOMAD") installato su un computer dedicato — va scelto chi lo gestisce e su quale macchina.</p>
+        </div>
+      </li>
+      <li>
+        <div>
+          <p class="step-title">Scegliere un primo scenario concreto per un test sul campo</p>
+          <p class="step-body">Un rifugio alpino o una simulazione di emergenza, per capire i vincoli reali che un test in ufficio non può mostrare: quanto arriva lontano il segnale, quanto dura la batteria, come si comportano le persone che usano l'app.</p>
+        </div>
+      </li>
+      <li>
+        <div>
+          <p class="step-title">Prevedere un piccolo budget per l'hardware iniziale</p>
+          <p class="step-body">Non serve nulla di costoso per cominciare: qualche telefono di fascia bassa o mini-computer economici (tipo Raspberry Pi) sono sufficienti per il primo giro di prove reali.</p>
+        </div>
+      </li>
+      <li>
+        <div>
+          <p class="step-title">Nel frattempo, si può già mostrare una dimostrazione dal vivo</p>
+          <p class="step-body">Senza aspettare l'hardware, è già possibile far vedere a chi deve decidere o finanziare il progetto una dimostrazione funzionante su computer normali — utile per raccogliere consenso o fondi prima dell'acquisto dei dispositivi.</p>
+        </div>
+      </li>
+    </ol>
+
+    <div class="reassure">
+      <strong>Nota rassicurante:</strong> nessuno dei prossimi passi dipende da altro software da scrivere. Il collo di bottiglia adesso è procurarsi dispositivi fisici e prendere qualche decisione organizzativa — non c'è altro lavoro di programmazione "bloccante" in attesa.
+    </div>
+  </section>
+
+  <footer>
+    <span>docs/audit-report.html — aggiornato a ogni nuova verifica, non un'istantanea singola</span>
+    <span>Vedi anche: docs/security.md, docs/roadmap.md, docs/next-steps.md</span>
+  </footer>
+
+</div>

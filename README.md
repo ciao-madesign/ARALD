@@ -22,6 +22,7 @@ L'utente non deve sapere quale dispositivo possiede il contenuto, quanti hop ser
 - [`docs/deployment.md`](docs/deployment.md) — scenari di deployment target (rifugio, emergenza)
 - [`docs/roadmap.md`](docs/roadmap.md) — stato delle milestone
 - [`docs/next-steps.md`](docs/next-steps.md) — piani d'azione concreti per le milestone candidate come prossimo passo
+- [`docs/audit-report.html`](docs/audit-report.html) — report di verifica del progetto (test, sicurezza, prossimi passi in linguaggio semplice), aggiornato a ogni nuovo controllo
 
 ## Stato del progetto
 
