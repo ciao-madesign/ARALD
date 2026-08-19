@@ -14,4 +14,6 @@ export * from "./relay-policy.js";
 export * from "./encryption.js";
 export * from "./peer-directory.js";
 export * from "./routing-table.js";
+export * from "./service.js";
+export * from "./service-directory.js";
 export { TcpTransport } from "./transports/tcp.js";

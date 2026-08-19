@@ -73,4 +73,14 @@ describe("malformed packet payloads never crash the node", () => {
   it("survives a SYNC_RESPONSE with a missing entries array", () => expectSurvives(MessageType.SYNC_RESPONSE, {}));
   it("survives a SYNC_RESPONSE with a garbage entries array", () =>
     expectSurvives(MessageType.SYNC_RESPONSE, { entries: [null, 42, "nope"] }));
+  it("survives a SERVICE_ANNOUNCE with a missing announcement", () => expectSurvives(MessageType.SERVICE_ANNOUNCE, {}));
+  it("survives a SERVICE_ANNOUNCE with a garbage announcement", () =>
+    expectSurvives(MessageType.SERVICE_ANNOUNCE, { announcement: { serviceId: 42, providerId: null } }));
+  it("survives a SERVICE_QUERY with a missing serviceId", () => expectSurvives(MessageType.SERVICE_QUERY, {}));
+  it("survives a SERVICE_REQUEST with no payload fields at all — this used to crash the process", () =>
+    expectSurvives(MessageType.SERVICE_REQUEST, undefined));
+  it("survives a SERVICE_REQUEST with a missing serviceId", () => expectSurvives(MessageType.SERVICE_REQUEST, { payload: {} }));
+  it("survives a SERVICE_RESPONSE with no payload fields at all", () => expectSurvives(MessageType.SERVICE_RESPONSE, {}));
+  it("survives a SERVICE_RESPONSE with a garbage announcement", () =>
+    expectSurvives(MessageType.SERVICE_RESPONSE, { serviceId: "x", announcement: { serviceId: null } }));
 });

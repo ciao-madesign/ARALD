@@ -27,6 +27,8 @@ import {
 } from "./encryption.js";
 import { PeerDirectory } from "./peer-directory.js";
 import { RoutingTable } from "./routing-table.js";
+import { ServiceDirectory } from "./service-directory.js";
+import { serviceSigningPayload, verifyServiceAnnouncement, type ServiceAnnouncement, type ServiceHandler } from "./service.js";
 import type { PeerAddress, Transport } from "./transport.js";
 
 export interface NomadNodeOptions {
@@ -76,6 +78,8 @@ export interface NomadNodeOptions {
   maxChunkAssemblyEntries?: number;
   /** Max chunks a single content id may claim during reassembly; also bounds the largest content this node will attempt to reassemble. */
   maxChunksPerContent?: number;
+  /** Max (serviceId, providerId) entries tracked in the remote service directory at once (spec §57 resource limits). */
+  maxServiceDirectoryEntries?: number;
 }
 
 interface ContentWaiter {
@@ -184,6 +188,39 @@ interface RouteAnnouncePayload {
   routes: Array<{ destination: string; cost: number | null }>;
 }
 
+/** Proactive broadcast of a locally-offered service (spec §35) — flooded like CONTENT_QUERY, delivered to and re-forwarded by every relay along the way, so the whole mesh eventually learns of it without needing to ask. */
+interface ServiceAnnouncePayload {
+  announcement: ServiceAnnouncement;
+}
+
+/** "Who offers serviceId?" — broadcast fallback for a service this node hasn't already learned of via SERVICE_ANNOUNCE (spec §35), mirrors CONTENT_QUERY. */
+interface ServiceQueryPayload {
+  serviceId: string;
+}
+
+/** Actual invocation ("CALL service://ai", spec §37) of a specific known provider's service — unicast, unlike the two broadcast discovery packets above. */
+interface ServiceRequestPayload {
+  serviceId: string;
+  payload: unknown;
+}
+
+/**
+ * Serves two distinct replies with one packet type, matching spec §49's
+ * minimal 4-type service protocol: a reply to SERVICE_QUERY carries
+ * `queryId` + `announcement` (mirrors CONTENT_FOUND); a reply to
+ * SERVICE_REQUEST carries `requestId` + exactly one of `result`/`error`
+ * (mirrors CONTENT_COMPLETE, but without chunking — a service call/result
+ * is assumed to fit in one packet, unlike arbitrary-size content).
+ */
+interface ServiceResponsePayload {
+  serviceId: string;
+  queryId?: string;
+  announcement?: ServiceAnnouncement;
+  requestId?: string;
+  result?: unknown;
+  error?: string;
+}
+
 /**
  * A Nomad-Net mesh node (spec §7): wires identity, peer table, one or more
  * transports, controlled-flooding routing and the content-centric protocol
@@ -216,6 +253,8 @@ export class NomadNode extends EventEmitter {
   private readonly ownAnnouncement: IdentityAnnouncement;
   /** Best known {nextHop, cost} per destination (spec §22), learned via ROUTE_ANNOUNCE. Unicast sends prefer a known route; flooding remains the fallback/bootstrap and is still used for broadcasts. */
   readonly routingTable: RoutingTable;
+  /** Services known to exist elsewhere in the mesh (spec §35), via SERVICE_ANNOUNCE or a SERVICE_QUERY reply — analogous to remoteCatalog for content. */
+  readonly services: ServiceDirectory;
 
   private readonly defaultTtl: number;
   private readonly contentRequestTimeoutMs: number;
@@ -230,6 +269,13 @@ export class NomadNode extends EventEmitter {
   private readonly pendingDeliveries: PendingDeliveryQueue;
   private readonly rateLimiter: RateLimiter;
   private readonly relayPolicy: RelayPolicy;
+  /** Services this node itself offers (spec §35), registered via `registerService()` — never network-fed, so unlike `services` this needs no bound. */
+  private readonly localServices = new Map<string, { announcement: ServiceAnnouncement; handler: ServiceHandler }>();
+  /** In-flight `callService()` invocations awaiting their SERVICE_RESPONSE, keyed by the SERVICE_REQUEST packet's own id. */
+  private readonly pendingServiceCalls = new Map<
+    string,
+    { providerId: string; resolve: (result: unknown) => void; reject: (err: Error) => void; timeout: NodeJS.Timeout }
+  >();
   private started = false;
 
   constructor(options: NomadNodeOptions = {}) {
@@ -266,6 +312,10 @@ export class NomadNode extends EventEmitter {
     const assemblerOptions = { maxEntries: options.maxChunkAssemblyEntries, maxChunksPerEntry: options.maxChunksPerContent };
     this.requesterAssembler = new ChunkAssembler(assemblerOptions);
     this.relayAssembler = new ChunkAssembler(assemblerOptions);
+    this.services = new ServiceDirectory({
+      maxSize: options.maxServiceDirectoryEntries,
+      trustRank: (providerId) => trustRank(this.trust.get(providerId)),
+    });
   }
 
   get nodeId(): string {
@@ -322,6 +372,17 @@ export class NomadNode extends EventEmitter {
   async stop(): Promise<void> {
     for (const transport of this.transports) await transport.stop();
     this.started = false;
+    // Otherwise each in-flight callService() invocation (past the discovery stage) would keep its
+    // promise, closures and setTimeout alive for up to its own full timeoutMs after the node — and
+    // its transports — have already stopped, since no more SERVICE_RESPONSE can ever arrive to
+    // settle it. Known gap this doesn't cover: a call still inside discoverService() (i.e. not yet
+    // in pendingServiceCalls) has the same unaddressed leak shape as the pre-existing
+    // waitForPeerKey()/pendingContentRequests waiters — out of scope here, see docs/security.md.
+    for (const pending of this.pendingServiceCalls.values()) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error("node stopped while the service call was still in flight"));
+    }
+    this.pendingServiceCalls.clear();
   }
 
   async connect(address: PeerAddress, transportId?: string): Promise<string> {
@@ -480,6 +541,141 @@ export class NomadNode extends EventEmitter {
         if (key) resolve(key);
       };
       this.on("identity:synced", handler);
+    });
+  }
+
+  /**
+   * Registers a locally-provided service (spec §35, e.g. `service://translation`)
+   * and floods a SERVICE_ANNOUNCE so the mesh learns of it proactively,
+   * without waiting to be asked via SERVICE_QUERY. `handler` is invoked for
+   * every SERVICE_REQUEST this node receives for `serviceId` — see
+   * `ServiceHandler` (service.ts). Registering the same `serviceId` again
+   * replaces both the handler and the announcement (re-signed with a fresh
+   * `createdAt`, so it also supersedes the previous one in any peer's
+   * `ServiceDirectory`).
+   */
+  registerService(
+    serviceId: string,
+    version: string,
+    capabilities: string[],
+    handler: ServiceHandler,
+    options: { resourceRequirements?: string; availability?: boolean } = {},
+  ): ServiceAnnouncement {
+    const announcement = this.signOwnServiceAnnouncement(
+      serviceId,
+      version,
+      capabilities,
+      options.resourceRequirements,
+      options.availability ?? true,
+    );
+    this.localServices.set(serviceId, { announcement, handler });
+    void this.floodExcept(
+      this.originate<ServiceAnnouncePayload>(MessageType.SERVICE_ANNOUNCE, { announcement }, { priority: Priority.SERVICE }),
+    );
+    return announcement;
+  }
+
+  /**
+   * Updates the availability of an already-registered local service and
+   * re-announces it (spec §35 "availability") — e.g. a node temporarily
+   * pulling its AI service out of rotation because it's overloaded, without
+   * having to unregister and re-register the handler itself. Throws if
+   * `serviceId` was never registered on this node.
+   */
+  setServiceAvailability(serviceId: string, availability: boolean): ServiceAnnouncement {
+    const local = this.localServices.get(serviceId);
+    if (!local) throw new Error(`service ${serviceId} is not registered on this node`);
+    const { version, capabilities, resourceRequirements } = local.announcement;
+    const announcement = this.signOwnServiceAnnouncement(serviceId, version, capabilities, resourceRequirements, availability);
+    local.announcement = announcement;
+    void this.floodExcept(
+      this.originate<ServiceAnnouncePayload>(MessageType.SERVICE_ANNOUNCE, { announcement }, { priority: Priority.SERVICE }),
+    );
+    return announcement;
+  }
+
+  private signOwnServiceAnnouncement(
+    serviceId: string,
+    version: string,
+    capabilities: string[],
+    resourceRequirements: string | undefined,
+    availability: boolean,
+  ): ServiceAnnouncement {
+    const providerId = this.nodeId;
+    const createdAt = Date.now();
+    const signature = this.identity
+      .sign(serviceSigningPayload({ serviceId, version, capabilities, providerId, resourceRequirements, availability, createdAt }))
+      .toString("hex");
+    return { serviceId, version, capabilities, providerId, resourceRequirements, availability, createdAt, signature };
+  }
+
+  /**
+   * Resolves once a provider for `serviceId` is known — immediately from a
+   * local registration or an already-recorded announcement, otherwise after
+   * flooding a SERVICE_QUERY and waiting for the first SERVICE_RESPONSE
+   * (spec §35). Rejects after `timeoutMs` if nobody answers.
+   */
+  discoverService(serviceId: string, options: { timeoutMs?: number } = {}): Promise<ServiceAnnouncement> {
+    // Only a genuinely available local registration short-circuits discovery — an unavailable one
+    // (setServiceAvailability(id, false)) must fall through to the same providersFor()/query path
+    // a remote caller would take, or a call could get "discovered" onto a provider that will just
+    // turn around and refuse it, instead of finding another one that's actually available.
+    const local = this.localServices.get(serviceId);
+    if (local && local.announcement.availability) return Promise.resolve(local.announcement);
+    const known = this.services.providersFor(serviceId)[0];
+    if (known) return Promise.resolve(known);
+
+    return new Promise((resolve, reject) => {
+      const timeoutMs = options.timeoutMs ?? this.contentRequestTimeoutMs;
+      const timer = setTimeout(() => {
+        this.off("service:announced", handler);
+        reject(new Error(`no provider found for service ${serviceId} within the mesh`));
+      }, timeoutMs);
+      const handler = (announcedServiceId: string): void => {
+        if (announcedServiceId !== serviceId) return;
+        const provider = this.services.providersFor(serviceId)[0];
+        if (!provider) return; // an announcement fired for this serviceId, but not one that's actually available yet
+        clearTimeout(timer);
+        this.off("service:announced", handler);
+        resolve(provider);
+      };
+      this.on("service:announced", handler);
+
+      const query = this.originate<ServiceQueryPayload>(MessageType.SERVICE_QUERY, { serviceId }, { priority: Priority.SERVICE });
+      void this.floodExcept(query);
+    });
+  }
+
+  /**
+   * Invokes `serviceId` (spec §36-37, e.g. `CALL service://ai`) — served
+   * in-process with no network round trip at all if this node registered
+   * the service itself, otherwise discovers a provider (as `discoverService()`
+   * would) and sends it a SERVICE_REQUEST, resolving with the provider's
+   * result or rejecting with its declared error / a timeout.
+   */
+  async callService(serviceId: string, payload: unknown, options: { timeoutMs?: number } = {}): Promise<unknown> {
+    const local = this.localServices.get(serviceId);
+    if (local && local.announcement.availability) {
+      return local.handler(payload, this.nodeId);
+    }
+    const timeoutMs = options.timeoutMs ?? this.contentRequestTimeoutMs;
+    const provider = await this.discoverService(serviceId, { timeoutMs });
+    return this.invokeService(provider.providerId, serviceId, payload, timeoutMs);
+  }
+
+  private invokeService(providerId: string, serviceId: string, payload: unknown, timeoutMs: number): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      const request = this.originate<ServiceRequestPayload>(
+        MessageType.SERVICE_REQUEST,
+        { serviceId, payload },
+        { destination: providerId, priority: Priority.SERVICE },
+      );
+      const timer = setTimeout(() => {
+        this.pendingServiceCalls.delete(request.id);
+        reject(new Error(`service call to ${providerId} for ${serviceId} timed out`));
+      }, timeoutMs);
+      this.pendingServiceCalls.set(request.id, { providerId, resolve, reject, timeout: timer });
+      void this.floodExcept(request);
     });
   }
 
@@ -805,6 +1001,22 @@ export class NomadNode extends EventEmitter {
 
       case MessageType.ROUTE_ANNOUNCE:
         this.handleRouteAnnounce(packet as Packet<RouteAnnouncePayload>, fromPeerId);
+        break;
+
+      case MessageType.SERVICE_ANNOUNCE:
+        this.handleServiceAnnounce(packet as Packet<ServiceAnnouncePayload>);
+        break;
+
+      case MessageType.SERVICE_QUERY:
+        this.handleServiceQuery(packet as Packet<ServiceQueryPayload>);
+        break;
+
+      case MessageType.SERVICE_REQUEST:
+        this.handleServiceRequest(packet as Packet<ServiceRequestPayload>);
+        break;
+
+      case MessageType.SERVICE_RESPONSE:
+        this.handleServiceResponse(packet as Packet<ServiceResponsePayload>);
         break;
 
       default:
@@ -1142,5 +1354,87 @@ export class NomadNode extends EventEmitter {
     } catch (err) {
       this.emit("private-message:failed", packet.source, (err as Error).message);
     }
+  }
+
+  /** Records a (verified) SERVICE_ANNOUNCE broadcast — see `ServiceDirectory.record()` for why a later announcement for the same (serviceId, providerId) wins, unlike content's catalog. */
+  private handleServiceAnnounce(packet: Packet<ServiceAnnouncePayload>): void {
+    this.recordServiceAnnouncement(packet.payload?.announcement);
+  }
+
+  /** Shared by handleServiceAnnounce and handleServiceResponse's query-reply branch — both carry the same self-verifying announcement shape. */
+  private recordServiceAnnouncement(announcement: ServiceAnnouncement | undefined): void {
+    if (!announcement || typeof announcement.serviceId !== "string" || typeof announcement.providerId !== "string") return;
+    if (!verifyServiceAnnouncement(announcement)) return; // unsigned or forged claim — never trust it
+    this.services.record(announcement);
+    this.trust.markVerified(announcement.providerId);
+    this.emit("service:announced", announcement.serviceId);
+  }
+
+  /** Replies SERVICE_RESPONSE (with this node's own announcement) for every locally-registered, currently-available service matching `serviceId` (spec §35). */
+  private handleServiceQuery(packet: Packet<ServiceQueryPayload>): void {
+    const local = this.localServices.get(packet.payload?.serviceId);
+    if (!local || !local.announcement.availability) return;
+    const response = this.originate<ServiceResponsePayload>(
+      MessageType.SERVICE_RESPONSE,
+      { serviceId: local.announcement.serviceId, queryId: packet.id, announcement: local.announcement },
+      { destination: packet.source, priority: Priority.SERVICE },
+    );
+    void this.floodExcept(response);
+  }
+
+  /**
+   * Invokes the local handler for a SERVICE_REQUEST (spec §36-37) and
+   * replies with its result — or with `error` if the service isn't
+   * registered/available here, or if the handler itself throws/rejects.
+   * Either way a reply is always sent, so `callService()` on the other end
+   * never hangs waiting on a provider that simply couldn't serve it.
+   */
+  private handleServiceRequest(packet: Packet<ServiceRequestPayload>): void {
+    // decodePacket() (packet.ts) validates the packet envelope but never its payload shape, so a
+    // malformed SERVICE_REQUEST (e.g. missing `payload` entirely) reaches here with
+    // packet.payload possibly undefined — every access below stays behind `?.`/a resolved local
+    // `serviceId` so that can never throw and crash the process.
+    const serviceId = packet.payload?.serviceId;
+    const local = typeof serviceId === "string" ? this.localServices.get(serviceId) : undefined;
+    const respond = (result: unknown, error: string | undefined): void => {
+      const response = this.originate<ServiceResponsePayload>(
+        MessageType.SERVICE_RESPONSE,
+        { serviceId: serviceId ?? "", requestId: packet.id, result, error },
+        { destination: packet.source, priority: Priority.SERVICE },
+      );
+      void this.floodExcept(response);
+    };
+    if (!local || !local.announcement.availability) {
+      respond(undefined, `service ${serviceId} is not available on this node`);
+      return;
+    }
+    Promise.resolve()
+      .then(() => local.handler(packet.payload.payload, packet.source))
+      .then((result) => respond(result, undefined))
+      .catch((err) => respond(undefined, err instanceof Error ? err.message : "service handler failed"));
+  }
+
+  /**
+   * Handles both roles SERVICE_RESPONSE can carry (spec §49's minimal
+   * 4-type service protocol): a discovery reply (`announcement` present,
+   * recorded the same way a SERVICE_ANNOUNCE would be) and/or a call result
+   * (`requestId` present, resolving the matching `callService()` promise).
+   * The `requestId` branch is gated on `packet.source` matching the
+   * provider that specific pending call was actually sent to — the same
+   * trust boundary `handleContentChunk`/`handleContentComplete` apply to
+   * content transfers, so a reply claiming a `requestId` it was never
+   * asked to answer can't hijack an in-flight call.
+   */
+  private handleServiceResponse(packet: Packet<ServiceResponsePayload>): void {
+    if (packet.payload?.announcement) this.recordServiceAnnouncement(packet.payload.announcement);
+
+    const requestId = packet.payload?.requestId;
+    if (requestId === undefined) return;
+    const pending = this.pendingServiceCalls.get(requestId);
+    if (!pending || packet.source !== pending.providerId) return;
+    this.pendingServiceCalls.delete(requestId);
+    clearTimeout(pending.timeout);
+    if (packet.payload.error !== undefined) pending.reject(new Error(packet.payload.error));
+    else pending.resolve(packet.payload.result);
   }
 }
