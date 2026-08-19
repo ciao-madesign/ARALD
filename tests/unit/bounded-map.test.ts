@@ -29,6 +29,44 @@ describe("BoundedFifoMap", () => {
     expect(map.set("b", 2)).toBe("a");
   });
 
+  it("evicts by evictionScore instead of insertion order, when given one", () => {
+    // Higher score = more valuable = survives longer. "b" is oldest but scores highest.
+    const scores: Record<string, number> = { a: 1, b: 10, c: 1 };
+    const map = new BoundedFifoMap<string, number>({ maxSize: 2, evictionScore: (key) => scores[key] });
+    map.set("a", 1);
+    map.set("b", 2);
+    map.set("c", 3); // must evict the lowest-scoring entry (a or c, tied) — not "a" just for being oldest
+
+    expect(map.size).toBe(2);
+    expect(map.has("b")).toBe(true); // highest score always survives
+    expect(map.has("a")).toBe(false); // tied with "c" at the lowest score, but inserted first
+    expect(map.has("c")).toBe(true);
+  });
+
+  it("breaks evictionScore ties in favor of evicting the entry inserted earlier", () => {
+    const map = new BoundedFifoMap<string, number>({ maxSize: 2, evictionScore: () => 0 }); // every entry ties
+    map.set("a", 1);
+    map.set("b", 2);
+    map.set("c", 3);
+
+    expect(map.has("a")).toBe(false); // oldest among the tied entries
+    expect(map.has("b")).toBe(true);
+    expect(map.has("c")).toBe(true);
+  });
+
+  it("evaluates evictionScore fresh at eviction time, not cached from insertion", () => {
+    const scores: Record<string, number> = { a: 100, b: 1 };
+    const map = new BoundedFifoMap<string, number>({ maxSize: 2, evictionScore: (key) => scores[key] });
+    map.set("a", 1); // inserted while high-scoring
+    map.set("b", 2);
+    scores.a = 0; // "a"'s score drops after insertion — must be re-read, not assumed unchanged
+
+    map.set("c", 3);
+    expect(map.has("a")).toBe(false); // now the lowest score, evicted despite being high-scoring at insert time
+    expect(map.has("b")).toBe(true);
+    expect(map.has("c")).toBe(true);
+  });
+
   it("holds nothing at all with maxSize 0 — the very first insert has no prior entry to evict", () => {
     const map = new BoundedFifoMap<string, number>({ maxSize: 0 });
     expect(map.set("a", 1)).toBe("a");

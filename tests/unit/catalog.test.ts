@@ -30,7 +30,7 @@ describe("RemoteCatalog", () => {
     expect(catalog.get("a")?.name).toBe("a.txt");
   });
 
-  it("evicts the oldest entry once maxSize is exceeded", () => {
+  it("evicts the oldest entry once maxSize is exceeded, when no trustRank is given", () => {
     const catalog = new RemoteCatalog({ maxSize: 2 });
     catalog.record(metadata("a"));
     catalog.record(metadata("b"));
@@ -38,6 +38,19 @@ describe("RemoteCatalog", () => {
 
     expect(catalog.size).toBe(2);
     expect(catalog.has("a")).toBe(false);
+    expect(catalog.has("c")).toBe(true);
+  });
+
+  it("with trustRank given, evicts the entry from the least-trusted publisher instead of the oldest", () => {
+    const trust: Record<string, number> = { alice: 5, bob: 0 };
+    const catalog = new RemoteCatalog({ maxSize: 2, trustRank: (publisherId) => trust[publisherId] ?? 0 });
+
+    catalog.record({ ...metadata("a"), publisherId: "alice" }); // trusted, oldest — must still survive
+    catalog.record({ ...metadata("b"), publisherId: "bob" }); // untrusted
+    catalog.record({ ...metadata("c"), publisherId: "bob" }); // untrusted, newer than "b" — "b" evicted, not "a"
+
+    expect(catalog.has("a")).toBe(true);
+    expect(catalog.has("b")).toBe(false);
     expect(catalog.has("c")).toBe(true);
   });
 });

@@ -14,7 +14,7 @@ import { RemoteCatalog } from "./catalog.js";
 import { SeenCache, decideForward } from "./routing.js";
 import { PendingDeliveryQueue } from "./store-and-forward.js";
 import { RateLimiter } from "./rate-limit.js";
-import { TrustLevel, TrustManager, meetsTrustLevel } from "./trust.js";
+import { TrustLevel, TrustManager, meetsTrustLevel, trustRank } from "./trust.js";
 import { RelayPolicy, type RelayPolicyOptions } from "./relay-policy.js";
 import {
   EncryptionIdentity,
@@ -231,15 +231,23 @@ export class NomadNode extends EventEmitter {
       ttlMs: options.storeAndForwardTtlMs,
       maxSize: options.maxPendingDeliveries,
     });
-    this.remoteCatalog = new RemoteCatalog({ maxSize: options.maxRemoteCatalogEntries });
     this.trust = new TrustManager({ maxSize: options.maxTrustEntries });
+    // A full catalog/directory evicts the least-trusted entry first, not just the oldest — the
+    // same defense TrustManager already applies to itself (spec §57, docs/security.md).
+    this.remoteCatalog = new RemoteCatalog({
+      maxSize: options.maxRemoteCatalogEntries,
+      trustRank: (publisherId) => trustRank(this.trust.get(publisherId)),
+    });
     this.rateLimiter = new RateLimiter({
       maxPacketsPerWindow: options.maxPacketsPerWindow,
       windowMs: options.rateLimitWindowMs,
     });
     this.relayPolicy = new RelayPolicy(options.relayPolicy);
     this.encryptionIdentity = options.encryptionIdentity ?? EncryptionIdentity.generate();
-    this.peerDirectory = new PeerDirectory({ maxSize: options.maxPeerDirectoryEntries });
+    this.peerDirectory = new PeerDirectory({
+      maxSize: options.maxPeerDirectoryEntries,
+      trustRank: (nodeId) => trustRank(this.trust.get(nodeId)),
+    });
     this.ownAnnouncement = signIdentityAnnouncement(this.identity, this.encryptionIdentity);
     this.routingTable = new RoutingTable({ maxSize: options.maxRoutingTableEntries, maxCost: options.maxRouteCost });
     const assemblerOptions = { maxEntries: options.maxChunkAssemblyEntries, maxChunksPerEntry: options.maxChunksPerContent };

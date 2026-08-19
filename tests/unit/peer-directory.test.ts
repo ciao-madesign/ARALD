@@ -30,7 +30,7 @@ describe("PeerDirectory", () => {
     expect(directory.getKey(first.nodeId)).toBe(first.encryptionPublicKey);
   });
 
-  it("evicts the oldest entry once maxSize is exceeded", () => {
+  it("evicts the oldest entry once maxSize is exceeded, when no trustRank is given", () => {
     const directory = new PeerDirectory({ maxSize: 2 });
     const a = makeAnnouncement();
     const b = makeAnnouncement();
@@ -43,6 +43,22 @@ describe("PeerDirectory", () => {
     expect(directory.size).toBe(2);
     expect(directory.has(a.nodeId)).toBe(false);
     expect(directory.has(c.nodeId)).toBe(true);
+  });
+
+  it("with trustRank given, evicts a low-trust entry instead of a legitimately-learned older one", () => {
+    const trusted = makeAnnouncement();
+    const trust = new Map<string, number>([[trusted.nodeId, 5]]); // everyone else defaults to 0
+    const directory = new PeerDirectory({ maxSize: 2, trustRank: (nodeId) => trust.get(nodeId) ?? 0 });
+
+    directory.record(trusted); // oldest, but the most trusted — must survive
+    const throwaway1 = makeAnnouncement();
+    const throwaway2 = makeAnnouncement();
+    directory.record(throwaway1);
+    directory.record(throwaway2); // an attacker's fresh throwaway identity, flooding the directory
+
+    expect(directory.has(trusted.nodeId)).toBe(true);
+    expect(directory.has(throwaway1.nodeId)).toBe(false);
+    expect(directory.has(throwaway2.nodeId)).toBe(true);
   });
 
   it("lists every recorded announcement", () => {

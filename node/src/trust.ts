@@ -20,6 +20,11 @@ export function meetsTrustLevel(level: TrustLevel, threshold: TrustLevel): boole
   return RANK[level] >= RANK[threshold];
 }
 
+/** Numeric rank of a trust level — lower is less trusted. Exposed so other bounded stores can rank *their* entries by the trust of the node id behind them (e.g. `PeerDirectory`, `RemoteCatalog`), the same eviction preference `TrustManager` already applies to itself. */
+export function trustRank(level: TrustLevel): number {
+  return RANK[level];
+}
+
 export interface TrustManagerOptions {
   /** Bounds memory (spec §57): once full, the oldest entry from the lowest trust tier present is evicted first. */
   maxSize?: number;

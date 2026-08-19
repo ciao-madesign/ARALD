@@ -2,8 +2,16 @@ import { BoundedFifoMap } from "./bounded-map.js";
 import type { ContentMetadata } from "./content.js";
 
 export interface RemoteCatalogOptions {
-  /** Bounds memory: oldest entry is evicted once the catalog is full (spec §57 resource limits). */
+  /** Bounds memory: an existing entry is evicted once the catalog is full to make room for a new one (spec §57 resource limits) — see `trustRank`. */
   maxSize?: number;
+  /**
+   * Ranks a publisher's trust for eviction purposes (higher survives
+   * longer) — pass `(publisherId) => trustRank(trustManager.get(publisherId))`
+   * (trust.ts) so a full catalog evicts the entry from the least-trusted
+   * publisher first, instead of always the oldest. Omit for plain FIFO
+   * eviction.
+   */
+  trustRank?: (publisherId: string) => number;
 }
 
 const DEFAULT_MAX_SIZE = 4096;
@@ -26,13 +34,18 @@ const DEFAULT_MAX_SIZE = 4096;
  * (`NomadNode.handleSyncResponse`) must call
  * `verifyContentSignature()` (content.ts) before recording anything here,
  * the same trust boundary `ContentStore.putVerified()` applies to actual
- * content bytes. This class only handles storage/eviction, not trust.
+ * content bytes. This class doesn't track trust itself — it only optionally
+ * *consults* it (via `trustRank`) to decide what to evict when full.
  */
 export class RemoteCatalog {
   private readonly entries: BoundedFifoMap<string, ContentMetadata>;
 
   constructor(options: RemoteCatalogOptions = {}) {
-    this.entries = new BoundedFifoMap({ maxSize: options.maxSize ?? DEFAULT_MAX_SIZE });
+    const trustRank = options.trustRank;
+    this.entries = new BoundedFifoMap({
+      maxSize: options.maxSize ?? DEFAULT_MAX_SIZE,
+      evictionScore: trustRank ? (_contentId, metadata) => trustRank(metadata.publisherId ?? "") : undefined,
+    });
   }
 
   /**

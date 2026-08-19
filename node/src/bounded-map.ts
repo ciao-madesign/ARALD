@@ -1,27 +1,42 @@
-export interface BoundedFifoMapOptions {
+export interface BoundedFifoMapOptions<K, V> {
   maxSize?: number;
+  /**
+   * Ranks an entry for eviction purposes — the entry with the *lowest*
+   * score is evicted first (ties broken in favor of evicting whichever was
+   * inserted earlier). Omit for plain FIFO eviction (oldest entry first),
+   * the default every caller used before this option existed. Evaluated
+   * fresh at eviction time, not cached at insert time, so it reflects each
+   * entry's *current* state (e.g. `PeerDirectory`/`RemoteCatalog` rank by
+   * the live trust level of the node id behind an entry, which can change
+   * after the entry was recorded).
+   */
+  evictionScore?: (key: K, value: V) => number;
 }
 
 /**
- * A `Map` that silently evicts its oldest entry (insertion order) once a
- * *new* key would push it past `maxSize` (spec §57 resource limits) — the
- * FIFO eviction-on-capacity pattern shared by every bounded store in this
- * codebase fed by untrusted network input (`SeenCache`, `RemoteCatalog`,
- * `PeerDirectory`, `RoutingTable`, `PendingDeliveryQueue`). Extracted so a
- * future change to the eviction strategy (e.g. trust-aware eviction) has
- * one place to change instead of five near-identical reimplementations.
+ * A `Map` that silently evicts one entry once a *new* key would push it
+ * past `maxSize` (spec §57 resource limits) — the bounded-eviction pattern
+ * shared by every bounded store in this codebase fed by untrusted network
+ * input (`SeenCache`, `RemoteCatalog`, `PeerDirectory`, `RoutingTable`,
+ * `PendingDeliveryQueue`). Extracted so a change to the eviction strategy
+ * has one place to change instead of five near-identical
+ * reimplementations — which is exactly what `evictionScore` is for: it
+ * generalizes plain FIFO into "evict whichever entry matters least right
+ * now" without each caller needing its own eviction-scanning code.
  *
- * Deliberately minimal — just enough `Map` surface for those five callers,
- * not a general-purpose collection. Updating an *existing* key never
- * evicts anything, matching every caller's own "immutable once recorded"
- * or "refresh in place" semantics.
+ * Deliberately minimal — just enough `Map` surface for its callers, not a
+ * general-purpose collection. Updating an *existing* key never evicts
+ * anything, matching every caller's own "immutable once recorded" or
+ * "refresh in place" semantics.
  */
 export class BoundedFifoMap<K, V> {
   private readonly map = new Map<K, V>();
   private readonly maxSize: number;
+  private readonly evictionScore?: (key: K, value: V) => number;
 
-  constructor(options: BoundedFifoMapOptions = {}) {
+  constructor(options: BoundedFifoMapOptions<K, V> = {}) {
     this.maxSize = options.maxSize ?? Infinity;
+    this.evictionScore = options.evictionScore;
   }
 
   has(key: K): boolean {
@@ -38,24 +53,38 @@ export class BoundedFifoMap<K, V> {
 
   /**
    * Inserts or overwrites `key`. If `key` is new and the map is already at
-   * capacity, the oldest entry is evicted first. Returns the evicted key,
-   * if any. A `maxSize` of 0 refuses to hold anything at all — there's no
-   * "oldest entry" to evict on the very first insert into an empty map, so
-   * that edge case needs its own guard rather than falling out of the
-   * general eviction check below.
+   * capacity, one entry is evicted first — chosen by `evictionScore` if
+   * given, otherwise the oldest. Returns the evicted key, if any. A
+   * `maxSize` of 0 refuses to hold anything at all — there's no entry to
+   * evict on the very first insert into an empty map, so that edge case
+   * needs its own guard rather than falling out of the eviction check below.
    */
   set(key: K, value: V): K | undefined {
     if (this.maxSize <= 0) return key;
     let evicted: K | undefined;
     if (!this.map.has(key) && this.map.size >= this.maxSize) {
-      const oldestKey = this.map.keys().next().value;
-      if (oldestKey !== undefined) {
-        this.map.delete(oldestKey);
-        evicted = oldestKey;
+      const victim = this.pickEvictionCandidate();
+      if (victim !== undefined) {
+        this.map.delete(victim);
+        evicted = victim;
       }
     }
     this.map.set(key, value);
     return evicted;
+  }
+
+  private pickEvictionCandidate(): K | undefined {
+    if (!this.evictionScore) return this.map.keys().next().value; // plain FIFO: oldest entry
+    let bestKey: K | undefined;
+    let bestScore = Infinity;
+    for (const [key, value] of this.map) {
+      const score = this.evictionScore(key, value);
+      if (score < bestScore) {
+        bestScore = score;
+        bestKey = key;
+      }
+    }
+    return bestKey;
   }
 
   keys(): IterableIterator<K> {

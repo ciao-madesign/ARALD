@@ -2,15 +2,18 @@ import { BoundedFifoMap } from "./bounded-map.js";
 import type { IdentityAnnouncement } from "./encryption.js";
 
 export interface PeerDirectoryOptions {
+  /** Bounds memory (spec §57): once full, room is made for a new node id by evicting an existing entry — see `trustRank`. */
+  maxSize?: number;
   /**
-   * Bounds memory (spec §57): once full, the oldest entry is evicted to
-   * make room for a new node id, matching `RemoteCatalog`/`RoutingTable`.
-   * Known trade-off: unlike `TrustManager` (which evicts its lowest-trust
-   * entry first specifically to resist this), a peer can cheaply mint
-   * throwaway keypairs and self-sign fresh `IdentityAnnouncement`s to evict
+   * Ranks a node id's trust for eviction purposes (higher survives longer)
+   * — pass `(nodeId) => trustRank(trustManager.get(nodeId))` (trust.ts) to
+   * make eviction prefer removing the least-trusted entry, the same
+   * defense `TrustManager` already applies to itself. Omit for plain FIFO
+   * eviction (oldest first): a peer can then cheaply mint throwaway
+   * keypairs and self-sign fresh `IdentityAnnouncement`s to evict
    * legitimately-learned entries — see docs/security.md.
    */
-  maxSize?: number;
+  trustRank?: (nodeId: string) => number;
 }
 
 const DEFAULT_MAX_SIZE = 4096;
@@ -32,7 +35,11 @@ export class PeerDirectory {
   private readonly entries: BoundedFifoMap<string, IdentityAnnouncement>;
 
   constructor(options: PeerDirectoryOptions = {}) {
-    this.entries = new BoundedFifoMap({ maxSize: options.maxSize ?? DEFAULT_MAX_SIZE });
+    const trustRank = options.trustRank;
+    this.entries = new BoundedFifoMap({
+      maxSize: options.maxSize ?? DEFAULT_MAX_SIZE,
+      evictionScore: trustRank ? (nodeId) => trustRank(nodeId) : undefined,
+    });
   }
 
   /** Records a (caller-verified) announcement. Returns false only if it was already known (a no-op, not an error). */
