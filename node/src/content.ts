@@ -5,8 +5,7 @@ import { Identity } from "./identity.js";
  * Content metadata (spec §24). `publisherId`/`signature` (spec §55) are
  * present once content has gone through `NomadNode.publishContent()`, which
  * signs it — left undefined for content stored directly via `put()`
- * (a local/trusted path, e.g. test fixtures). Expiry is still not
- * implemented — see docs/security.md.
+ * (a local/trusted path, e.g. test fixtures).
  */
 export interface ContentMetadata {
   contentId: string;
@@ -18,10 +17,21 @@ export interface ContentMetadata {
   publisherId?: string;
   /** Ed25519 signature (hex), by publisherId, over `contentSigningPayload()` (spec §55). */
   signature?: string;
+  /**
+   * Absolute epoch ms after which this content is no longer valid/servable
+   * (spec §24 "expiry") — undefined means it never expires. Covered by the
+   * publisher's signature (see `SignableContentFields`) so a relay can't
+   * tamper with it to keep stale content alive past its intended lifetime,
+   * or cut a legitimate one short.
+   */
+  expiresAt?: number;
 }
 
 /** The fields a publisher's signature actually commits to — everything a relay could otherwise tamper with while keeping the same bytes. */
-export type SignableContentFields = Pick<ContentMetadata, "contentId" | "name" | "mimeType" | "size" | "publisherId">;
+export type SignableContentFields = Pick<
+  ContentMetadata,
+  "contentId" | "name" | "mimeType" | "size" | "publisherId" | "expiresAt"
+>;
 
 /**
  * Canonical bytes a publisher signs (spec §55). Deliberately covers more
@@ -39,6 +49,7 @@ export function contentSigningPayload(fields: SignableContentFields): Buffer {
       mimeType: fields.mimeType,
       size: fields.size,
       publisherId: fields.publisherId,
+      expiresAt: fields.expiresAt,
     }),
   );
 }
@@ -82,13 +93,14 @@ export function computeContentId(data: Buffer): string {
 export class ContentStore {
   private readonly items = new Map<string, StoredContent>();
 
-  put(name: string, mimeType: string, data: Buffer): ContentMetadata {
+  put(name: string, mimeType: string, data: Buffer, options: { ttlMs?: number } = {}): ContentMetadata {
     const metadata: ContentMetadata = {
       contentId: computeContentId(data),
       name,
       mimeType,
       size: data.length,
       createdAt: Date.now(),
+      expiresAt: options.ttlMs !== undefined ? Date.now() + options.ttlMs : undefined,
     };
     this.items.set(metadata.contentId, { metadata, data });
     return metadata;
@@ -97,33 +109,38 @@ export class ContentStore {
   /**
    * Stores content received from the mesh (a relay caching passively, or a
    * requester completing a transfer) only if it passes both integrity
-   * checks from spec §55: the bytes actually hash to the claimed content
-   * id, AND the metadata carries a valid publisher signature over that id.
-   * This is the trust boundary for anything not authored locally by this
-   * node — see docs/security.md.
+   * checks from spec §55 — the bytes actually hash to the claimed content
+   * id, AND the metadata carries a valid publisher signature over that id —
+   * and has not already expired (spec §24 "expiry"): there is no value in
+   * caching content that's already dead on arrival, and a relay that let it
+   * through anyway would just be helping it linger past its own publisher's
+   * intent. This is the trust boundary for anything not authored locally by
+   * this node — see docs/security.md.
    */
   putVerified(metadata: ContentMetadata, data: Buffer): boolean {
     if (computeContentId(data) !== metadata.contentId) return false;
     if (!verifyContentSignature(metadata)) return false;
+    if (metadata.expiresAt !== undefined && metadata.expiresAt <= Date.now()) return false;
     this.items.set(metadata.contentId, { metadata, data });
     return true;
   }
 
   get(contentId: string): StoredContent | undefined {
-    return this.items.get(contentId);
+    return this.readLive(contentId);
   }
 
   has(contentId: string): boolean {
-    return this.items.has(contentId);
+    return this.readLive(contentId) !== undefined;
   }
 
-  /** Metadata for everything actually stored locally (bytes included) — the basis of this node's half of a catalog sync (spec §33). */
+  /** Metadata for everything actually stored locally (bytes included) — the basis of this node's half of a catalog sync (spec §33). Expired entries are purged first, never listed. */
   list(): ContentMetadata[] {
+    this.purgeExpired();
     return Array.from(this.items.values(), (item) => item.metadata);
   }
 
   chunksFor(contentId: string): Buffer[] {
-    const item = this.items.get(contentId);
+    const item = this.readLive(contentId);
     if (!item) return [];
     if (item.data.length === 0) return [Buffer.alloc(0)];
     const chunks: Buffer[] = [];
@@ -134,7 +151,26 @@ export class ContentStore {
   }
 
   get size(): number {
+    this.purgeExpired();
     return this.items.size;
+  }
+
+  /** Looks up `contentId`, transparently evicting and treating it as absent if its expiry has passed (spec §24). */
+  private readLive(contentId: string): StoredContent | undefined {
+    const item = this.items.get(contentId);
+    if (!item) return undefined;
+    if (item.metadata.expiresAt !== undefined && item.metadata.expiresAt <= Date.now()) {
+      this.items.delete(contentId);
+      return undefined;
+    }
+    return item;
+  }
+
+  private purgeExpired(): void {
+    const now = Date.now();
+    for (const [contentId, item] of this.items) {
+      if (item.metadata.expiresAt !== undefined && item.metadata.expiresAt <= now) this.items.delete(contentId);
+    }
   }
 }
 

@@ -69,23 +69,43 @@ export class RemoteCatalog {
    * recorded, would have passed signature verification).
    */
   record(metadata: ContentMetadata): void {
-    if (this.entries.has(metadata.contentId)) return;
+    // Uses this class's own (expiry-aware) has(), not the raw map's — otherwise an already-expired
+    // entry nobody has purged yet would block a fresh re-announcement of the same content id from
+    // ever being recorded, silently keeping the stale entry around forever.
+    if (this.has(metadata.contentId)) return;
     this.entries.set(metadata.contentId, metadata);
   }
 
   has(contentId: string): boolean {
-    return this.entries.has(contentId);
+    return this.get(contentId) !== undefined;
   }
 
+  /** Looks up `contentId`, transparently evicting and treating it as absent once its publisher-signed expiry has passed (spec §24, mirrors `ContentStore`). */
   get(contentId: string): ContentMetadata | undefined {
-    return this.entries.get(contentId);
+    const metadata = this.entries.get(contentId);
+    if (!metadata) return undefined;
+    if (metadata.expiresAt !== undefined && metadata.expiresAt <= Date.now()) {
+      this.entries.delete(contentId);
+      return undefined;
+    }
+    return metadata;
   }
 
+  /** Expired entries are purged as encountered, never listed — an expired claim is stale info, not something worth re-advertising to the next peer. */
   list(): ContentMetadata[] {
+    this.purgeExpired();
     return Array.from(this.entries.values());
   }
 
   get size(): number {
+    this.purgeExpired();
     return this.entries.size;
+  }
+
+  private purgeExpired(): void {
+    const now = Date.now();
+    for (const [contentId, metadata] of this.entries) {
+      if (metadata.expiresAt !== undefined && metadata.expiresAt <= now) this.entries.delete(contentId);
+    }
   }
 }

@@ -31,6 +31,7 @@ Implementato in `node/src/packet.ts`. Framing su TCP: un pacchetto JSON per riga
 | `ACK` | conferma di ricezione di un `DATA` | Milestone 2 |
 | `CONTENT_QUERY` | "chi ha `content_id`?" | Milestone 4 |
 | `CONTENT_FOUND` | risposta positiva alla query, dal nodo che possiede il contenuto | Milestone 4 |
+| `CONTENT_NOT_FOUND` | risposta esplicita a un `CONTENT_REQUEST` per contenuto che il nodo non ha (più) — evitato o scaduto (§24) dal momento in cui aveva risposto `CONTENT_FOUND` | Milestone 4 (seguito audit) |
 | `CONTENT_REQUEST` | richiesta esplicita del contenuto trovato | Milestone 4 |
 | `CONTENT_CHUNK` | un chunk del contenuto (§26) | Milestone 4 |
 | `CONTENT_COMPLETE` | fine trasferimento, contiene l'hash finale da verificare | Milestone 4 |
@@ -41,7 +42,11 @@ Implementato in `node/src/packet.ts`. Framing su TCP: un pacchetto JSON per riga
 | `PRIVATE_MESSAGE` | payload applicativo cifrato end-to-end (AES-256-GCM su chiave derivata via ECDH X25519), instradato per `destination`; porta con sé l'`IdentityAnnouncement` del mittente | Milestone 15 |
 | `ROUTE_ANNOUNCE` | annuncio distance-vector (`{destination, cost}` o `cost: null` per un ritiro) scambiato tra vicini diretti | Milestone 16 |
 
-Non esiste un pacchetto esplicito `CONTENT_NOT_FOUND`: l'assenza di un contenuto è segnalata implicitamente dal timeout lato richiedente (nessun `CONTENT_FOUND` ricevuto entro `contentRequestTimeoutMs` mentre il flood si esaurisce per TTL, §21). Un pacchetto `CONTENT_NOT_FOUND` esplicito è un possibile miglioramento futuro, non necessario per gli obiettivi §90-92.
+Un `CONTENT_QUERY` senza risposta resta comunque segnalato solo implicitamente (nessun `CONTENT_FOUND` entro `contentRequestTimeoutMs`, mentre il flood si esaurisce per TTL, §21) — nessun nodo può dichiarare "non esiste da nessuna parte" per l'intera mesh. `CONTENT_NOT_FOUND` copre invece il caso più mirato e frequente: un nodo specifico che aveva risposto `CONTENT_FOUND` non ha più il contenuto al momento del `CONTENT_REQUEST` (evitato da una cache limitata, o scaduto — §24, vedi "Scadenza dei contenuti" sotto). `NomadNode.handleContentNotFound()` (node.ts) fa fallire immediatamente la richiesta pendente sul prossimo candidato noto invece di aspettare che `contentProviderTimeoutMs` scada su un fornitore che non risponderà mai — solo una risposta dal fornitore attualmente attivo viene onorata, stessa logica di `handleContentChunk`/`handleContentComplete`.
+
+## Scadenza dei contenuti (§24)
+
+`ContentMetadata` porta un campo opzionale `expiresAt` (epoch ms assoluto) — assente per contenuto che non scade mai. Coperto dalla firma del publisher (`contentSigningPayload`, spec §55) insieme agli altri campi, così un relay non può manometterlo per tenere in vita contenuto scaduto oltre l'intenzione del publisher, né per accorciarne la vita. `NomadNode.publishContent(name, mimeType, data, { ttlMs })` imposta `expiresAt = Date.now() + ttlMs`; senza `ttlMs` il contenuto non scade. `ContentStore` e `RemoteCatalog` applicano entrambi una scadenza "pigra": ogni lettura (`get`/`has`/`list`/`chunksFor`/`size`) tratta una voce scaduta come assente e la elimina in quel momento, senza un timer di sweep in background. `ContentStore.putVerified()` rifiuta contenuto già scaduto al momento dell'arrivo (spec §24: non ha senso metterlo in cache), e `handleSyncResponse()` scarta allo stesso modo una voce di catalogo già scaduta ricevuta via sync.
 
 `SYNC_REQUEST`/`SYNC_RESPONSE`, `IDENTITY_REQUEST`/`IDENTITY_RESPONSE` e `ROUTE_ANNOUNCE` sono tutti scambiati direttamente peer-a-peer (un solo hop, come `HELLO`) — non vengono mai inoltrati/floodati oltre i due nodi coinvolti. I primi due si scambiano ogni volta che due nodi si connettono (vedi `docs/roadmap.md` milestone 13); `ROUTE_ANNOUNCE` in aggiunta ogni volta che la tabella di instradamento locale cambia (triggered update, non solo alla connessione) — vedi `docs/roadmap.md` milestone 16. `PRIVATE_MESSAGE`, a differenza di questi, **è** instradato/floodato come `DATA` (per `destination`, non un solo hop) — un relay lo inoltra senza poterlo decifrare.
 

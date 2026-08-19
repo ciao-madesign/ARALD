@@ -114,6 +114,19 @@ interface ContentFoundPayload {
   metadata: ContentMetadata;
 }
 
+/**
+ * Explicit "I no longer have this" reply to a CONTENT_REQUEST (spec §25),
+ * sent by a provider that answered CONTENT_FOUND a moment ago but has since
+ * lost the content — evicted from a bounded cache, or expired (spec §24) —
+ * by the time the requester actually asked for the bytes. Lets the
+ * requester fail over to the next known candidate immediately instead of
+ * silently waiting out `contentProviderTimeoutMs` on a provider that will
+ * never answer.
+ */
+interface ContentNotFoundPayload {
+  contentId: string;
+}
+
 interface ContentChunkPayload {
   contentId: string;
   chunkIndex: number;
@@ -328,15 +341,26 @@ export class NomadNode extends EventEmitter {
    * relay along the way. Goes through the same `putVerified` trust gate as
    * content received from the network, rather than a separate
    * "local, unchecked" path.
+   *
+   * `options.ttlMs`, if given, sets the content's expiry (spec §24) —
+   * signed alongside the rest of the metadata so no relay can tamper with
+   * it later. Omitted means the content never expires. Note that an
+   * extremely small `ttlMs` can in principle race `putVerified()`'s own
+   * expiry check below (both read `Date.now()`, moments apart) — pick a
+   * value that comfortably outlives a single synchronous call if the
+   * content actually needs to be servable at all after publishing.
    */
-  publishContent(name: string, mimeType: string, data: Buffer): ContentMetadata {
+  publishContent(name: string, mimeType: string, data: Buffer, options: { ttlMs?: number } = {}): ContentMetadata {
     const contentId = computeContentId(data);
     const size = data.length;
     const publisherId = this.nodeId;
-    const signature = this.identity.sign(contentSigningPayload({ contentId, name, mimeType, size, publisherId })).toString("hex");
-    const metadata: ContentMetadata = { contentId, name, mimeType, size, createdAt: Date.now(), publisherId, signature };
+    const expiresAt = options.ttlMs !== undefined ? Date.now() + options.ttlMs : undefined;
+    const signature = this.identity
+      .sign(contentSigningPayload({ contentId, name, mimeType, size, publisherId, expiresAt }))
+      .toString("hex");
+    const metadata: ContentMetadata = { contentId, name, mimeType, size, createdAt: Date.now(), publisherId, signature, expiresAt };
     if (!this.contentStore.putVerified(metadata, data)) {
-      throw new Error("internal error: freshly signed content failed its own signature verification");
+      throw new Error("internal error: freshly signed content failed its own verification (bad signature, or ttlMs too small to survive publishing)");
     }
     return metadata;
   }
@@ -743,6 +767,10 @@ export class NomadNode extends EventEmitter {
         this.handleContentFound(packet as Packet<ContentFoundPayload>);
         break;
 
+      case MessageType.CONTENT_NOT_FOUND:
+        this.handleContentNotFound(packet as Packet<ContentNotFoundPayload>);
+        break;
+
       case MessageType.CONTENT_REQUEST:
         this.handleContentRequest(packet as Packet<ContentQueryPayload>);
         break;
@@ -812,6 +840,24 @@ export class NomadNode extends EventEmitter {
     this.requestFromProvider(entry, packet.source);
   }
 
+  /**
+   * The provider we're actively waiting on just told us explicitly it no
+   * longer has this content (CONTENT_NOT_FOUND) — fail over to the next
+   * candidate immediately rather than waiting for `providerTimer` to expire
+   * on a request that will never get a CONTENT_CHUNK/COMPLETE. A reply from
+   * anyone other than the currently-active provider is ignored: it can only
+   * be stale (about a provider we've already moved on from) or forged, and
+   * either way must never interrupt whichever attempt is genuinely in
+   * flight — same trust boundary as handleContentChunk/handleContentComplete.
+   */
+  private handleContentNotFound(packet: Packet<ContentNotFoundPayload>): void {
+    const entry = this.pendingContentRequests.get(packet.payload.contentId);
+    if (!entry) return; // not waiting on this
+    if (packet.source !== entry.activeProvider) return;
+    if (entry.providerTimer) clearTimeout(entry.providerTimer);
+    this.retryNextProvider(entry.contentId);
+  }
+
   /** Sends CONTENT_REQUEST to `providerId` and arms the retry timer that falls through to the next known candidate if it stays silent. */
   private requestFromProvider(entry: PendingContentEntry, providerId: string): void {
     entry.activeProvider = providerId;
@@ -846,7 +892,19 @@ export class NomadNode extends EventEmitter {
 
   private handleContentRequest(packet: Packet<ContentQueryPayload>): void {
     const stored = this.contentStore.get(packet.payload.contentId);
-    if (!stored) return;
+    if (!stored) {
+      // We advertised this a moment ago via CONTENT_FOUND (or the requester assumed we still had
+      // it) but don't any more — evicted, or expired (spec §24) in the meantime. Say so explicitly
+      // rather than staying silent, so the requester can move on to its next candidate right away
+      // instead of waiting out contentProviderTimeoutMs on a request we'll never answer.
+      const notFound = this.originate<ContentNotFoundPayload>(
+        MessageType.CONTENT_NOT_FOUND,
+        { contentId: packet.payload.contentId },
+        { destination: packet.source, priority: Priority.CONTENT },
+      );
+      void this.floodExcept(notFound);
+      return;
+    }
     const chunks = this.contentStore.chunksFor(packet.payload.contentId);
     for (const [chunkIndex, chunk] of chunks.entries()) {
       const chunkPacket = this.originate<ContentChunkPayload>(
@@ -900,7 +958,7 @@ export class NomadNode extends EventEmitter {
         this.pendingContentRequests.delete(contentId);
         const error = new Error(
           data
-            ? `content signature invalid or untrusted publisher: ${contentId}`
+            ? `content signature invalid, untrusted publisher, or already expired: ${contentId}`
             : `content hash mismatch or incomplete transfer: ${contentId}`,
         );
         for (const waiter of entry.waiters) {
@@ -973,6 +1031,7 @@ export class NomadNode extends EventEmitter {
       if (!metadata || typeof metadata.contentId !== "string") continue; // malformed entry — never trust it
       if (this.contentStore.has(metadata.contentId)) continue; // we already hold the actual bytes
       if (!verifyContentSignature(metadata)) continue; // unsigned or forged claim — never trust it
+      if (metadata.expiresAt !== undefined && metadata.expiresAt <= Date.now()) continue; // dead on arrival (spec §24) — not worth recording
       this.remoteCatalog.record(metadata);
       if (metadata.publisherId) this.trust.markVerified(metadata.publisherId);
       accepted.push(metadata);

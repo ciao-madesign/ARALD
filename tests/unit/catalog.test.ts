@@ -6,6 +6,10 @@ function metadata(contentId: string, createdAt = Date.now()): ContentMetadata {
   return { contentId, name: `${contentId}.txt`, mimeType: "text/plain", size: 10, createdAt };
 }
 
+function expiredMetadata(contentId: string): ContentMetadata {
+  return { ...metadata(contentId), expiresAt: Date.now() - 1000 };
+}
+
 describe("RemoteCatalog", () => {
   it("records and lists entries it has learned about", () => {
     const catalog = new RemoteCatalog();
@@ -52,5 +56,37 @@ describe("RemoteCatalog", () => {
     expect(catalog.has("a")).toBe(true);
     expect(catalog.has("b")).toBe(false);
     expect(catalog.has("c")).toBe(true);
+  });
+});
+
+describe("RemoteCatalog expiry (spec §24)", () => {
+  it("treats already-expired entries as absent from get()/has()/list(), and purges them on access", () => {
+    const catalog = new RemoteCatalog();
+    catalog.record(metadata("fresh"));
+    catalog.record(expiredMetadata("stale"));
+
+    expect(catalog.has("stale")).toBe(false);
+    expect(catalog.get("stale")).toBeUndefined();
+    expect(catalog.list().map((m) => m.contentId)).toEqual(["fresh"]);
+    expect(catalog.size).toBe(1);
+  });
+
+  it("record() accepts a fresh re-announcement of a content id whose previous entry already expired", () => {
+    // Not just "the expired entry is invisible" — a later, still-valid claim for the same id must
+    // actually be recordable, not silently dropped because the (stale) raw map slot was still occupied.
+    const catalog = new RemoteCatalog();
+    catalog.record(expiredMetadata("a"));
+    expect(catalog.has("a")).toBe(false);
+
+    catalog.record(metadata("a")); // fresh claim, no expiry
+    expect(catalog.has("a")).toBe(true);
+    expect(catalog.get("a")?.expiresAt).toBeUndefined();
+  });
+
+  it("entries that haven't expired yet are unaffected", () => {
+    const catalog = new RemoteCatalog();
+    catalog.record({ ...metadata("a"), expiresAt: Date.now() + 60 * 60 * 1000 });
+    expect(catalog.has("a")).toBe(true);
+    expect(catalog.list().map((m) => m.contentId)).toEqual(["a"]);
   });
 });

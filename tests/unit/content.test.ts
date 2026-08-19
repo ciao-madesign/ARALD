@@ -42,6 +42,66 @@ describe("ContentStore", () => {
   });
 });
 
+describe("ContentStore expiry (spec §24)", () => {
+  it("put() without ttlMs never expires", () => {
+    const store = new ContentStore();
+    const metadata = store.put("x.txt", "text/plain", Buffer.from("x"));
+    expect(metadata.expiresAt).toBeUndefined();
+    expect(store.has(metadata.contentId)).toBe(true);
+  });
+
+  it("get()/has()/chunksFor() treat already-expired content as absent, and purge it on access", () => {
+    const store = new ContentStore();
+    const data = Buffer.from("stale bulletin");
+    const metadata = store.put("b.txt", "text/plain", data, { ttlMs: -1 }); // already in the past
+    expect(metadata.expiresAt).toBeLessThan(Date.now());
+
+    expect(store.has(metadata.contentId)).toBe(false);
+    expect(store.get(metadata.contentId)).toBeUndefined();
+    expect(store.chunksFor(metadata.contentId)).toEqual([]);
+  });
+
+  it("list() and size exclude expired entries and purge them as a side effect", () => {
+    const store = new ContentStore();
+    store.put("fresh.txt", "text/plain", Buffer.from("fresh"));
+    const stale = store.put("stale.txt", "text/plain", Buffer.from("stale"), { ttlMs: -1 });
+
+    const listed = store.list();
+    expect(listed.map((m) => m.name)).toEqual(["fresh.txt"]);
+    expect(store.size).toBe(1);
+    expect(store.has(stale.contentId)).toBe(false);
+  });
+
+  it("content that hasn't expired yet is still served normally", () => {
+    const store = new ContentStore();
+    const data = Buffer.from("valid for another hour");
+    const metadata = store.put("ok.txt", "text/plain", data, { ttlMs: 60 * 60 * 1000 });
+
+    expect(store.has(metadata.contentId)).toBe(true);
+    expect(store.get(metadata.contentId)?.data).toEqual(data);
+    expect(store.list().map((m) => m.contentId)).toContain(metadata.contentId);
+  });
+
+  it("putVerified() refuses to store metadata whose expiry has already passed, even if the signature is genuine", () => {
+    const publisher = Identity.generate();
+    const data = Buffer.from("already dead on arrival");
+    const contentId = computeContentId(data);
+    const name = "n";
+    const mimeType = "text/plain";
+    const size = data.length;
+    const publisherId = publisher.nodeId;
+    const expiresAt = Date.now() - 1000;
+    const signature = publisher
+      .sign(contentSigningPayload({ contentId, name, mimeType, size, publisherId, expiresAt }))
+      .toString("hex");
+    const metadata: ContentMetadata = { contentId, name, mimeType, size, createdAt: Date.now(), publisherId, signature, expiresAt };
+
+    const store = new ContentStore();
+    expect(store.putVerified(metadata, data)).toBe(false);
+    expect(store.has(contentId)).toBe(false);
+  });
+});
+
 describe("ContentStore publisher signature verification (spec §55)", () => {
   function signedMetadata(
     identity: Identity,
