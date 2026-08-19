@@ -57,14 +57,16 @@ describe("network simulator", () => {
       // Documents the tradeoff exercised above, deterministically, with numbers checked
       // empirically rather than derived by hand (the round trip involves more than one packet
       // type, each getting its own fresh TTL budget, so "distance <= TTL" is not quite the whole
-      // story; distance-vector routing (spec §22) also speeds up how fast opportunistic caching
-      // reaches intermediate nodes, which recalibrates the margin further vs. flooding alone).
-      // With defaultTtl=8 on a chain, empirically the farthest node still occasionally succeeds
-      // via a cached copy up to distance 17 — a 20-node chain (max distance 19) gives a
-      // comfortable, non-flaky margin past that cutoff. Expected protocol behavior (spec §19,
-      // §21), not a bug.
-      const result = await runSimulation({ nodeCount: 20, topology: "chain", getContentTimeoutMs: 1500, defaultTtl: 8 });
-      expect(result.deliveries).toHaveLength(19);
+      // story; every feature that makes content propagation more efficient — distance-vector
+      // routing (spec §22), content-provider retry — also speeds up how fast opportunistic
+      // caching reaches intermediate nodes, which has already pushed this cutoff out twice.
+      // Rather than re-chase the exact boundary a third time, this uses a distance (~5x the TTL)
+      // deliberately far beyond anything a caching effect could plausibly close — if this ever
+      // starts flaking again, the fix is a materially different test design (e.g. disabling
+      // opportunistic caching for this specific scenario), not another incremental bump.
+      // Expected protocol behavior (spec §19, §21), not a bug.
+      const result = await runSimulation({ nodeCount: 40, topology: "chain", getContentTimeoutMs: 1500, defaultTtl: 8 });
+      expect(result.deliveries).toHaveLength(39);
       expect(result.deliveryRatio).toBeLessThan(1);
       const farthest = result.deliveries[result.deliveries.length - 1];
       expect(farthest.success).toBe(false);

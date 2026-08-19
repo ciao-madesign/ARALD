@@ -34,6 +34,8 @@ export interface NomadNodeOptions {
   identity?: Identity;
   defaultTtl?: number;
   contentRequestTimeoutMs?: number;
+  /** How long a content provider may stay silent before getContent() tries the next known candidate, instead of waiting out contentRequestTimeoutMs on one unresponsive provider. */
+  contentProviderTimeoutMs?: number;
   /** How long an undeliverable unicast packet is held before being dropped (spec §30, milestone 12). */
   storeAndForwardTtlMs?: number;
   /** Max packets held in the store-and-forward queue at once (spec §57 resource limits). */
@@ -82,12 +84,23 @@ interface ContentWaiter {
   timeout: NodeJS.Timeout;
 }
 
+/** Bounds how many alternate providers a single content request will remember (spec §57 resource limits). */
+const MAX_CONTENT_CANDIDATES = 16;
+
 interface PendingContentEntry {
   contentId: string;
   /** True once a CONTENT_QUERY has been flooded for this content id, so concurrent local callers don't re-flood. */
   queried: boolean;
-  /** True once a CONTENT_REQUEST has been sent to a specific provider, so multiple CONTENT_FOUND replies only trigger one request. */
-  requested: boolean;
+  /** Node id of the provider a CONTENT_REQUEST is currently outstanding to, if any. */
+  activeProvider?: string;
+  /**
+   * Other providers that replied CONTENT_FOUND while `activeProvider` was already being tried —
+   * tried in arrival order if the active one goes silent (spec §90-92: a peer that answered a
+   * moment ago isn't guaranteed to still be reachable in an unreliable mesh).
+   */
+  candidates: string[];
+  /** Retries the next candidate once the active provider has made no progress for this long — refreshed on each chunk received, cleared on success, `undefined` once candidates run out. */
+  providerTimer?: NodeJS.Timeout;
   waiters: ContentWaiter[];
 }
 
@@ -193,6 +206,7 @@ export class NomadNode extends EventEmitter {
 
   private readonly defaultTtl: number;
   private readonly contentRequestTimeoutMs: number;
+  private readonly contentProviderTimeoutMs: number;
   private readonly minTrustToRelay?: TrustLevel;
   private readonly seenCache = new SeenCache();
   private readonly requesterAssembler: ChunkAssembler;
@@ -211,6 +225,7 @@ export class NomadNode extends EventEmitter {
     this.displayName = options.displayName ?? `NODE-${this.identity.nodeId.slice(0, 8)}`;
     this.defaultTtl = options.defaultTtl ?? 8;
     this.contentRequestTimeoutMs = options.contentRequestTimeoutMs ?? 3000;
+    this.contentProviderTimeoutMs = options.contentProviderTimeoutMs ?? 1200;
     this.minTrustToRelay = options.minTrustToRelay;
     this.pendingDeliveries = new PendingDeliveryQueue({
       ttlMs: options.storeAndForwardTtlMs,
@@ -345,7 +360,7 @@ export class NomadNode extends EventEmitter {
 
       let entry = this.pendingContentRequests.get(contentId);
       if (!entry) {
-        entry = { contentId, queried: false, requested: false, waiters: [] };
+        entry = { contentId, queried: false, candidates: [], waiters: [] };
         this.pendingContentRequests.set(contentId, entry);
       }
       const activeEntry = entry;
@@ -355,7 +370,10 @@ export class NomadNode extends EventEmitter {
         reject,
         timeout: setTimeout(() => {
           activeEntry.waiters = activeEntry.waiters.filter((w) => w !== waiter);
-          if (activeEntry.waiters.length === 0) this.pendingContentRequests.delete(contentId);
+          if (activeEntry.waiters.length === 0) {
+            if (activeEntry.providerTimer) clearTimeout(activeEntry.providerTimer);
+            this.pendingContentRequests.delete(contentId);
+          }
           reject(new Error(`content not found within mesh: ${contentId}`));
         }, timeoutMs),
       };
@@ -771,14 +789,51 @@ export class NomadNode extends EventEmitter {
 
   private handleContentFound(packet: Packet<ContentFoundPayload>): void {
     const entry = this.pendingContentRequests.get(packet.payload.contentId);
-    if (!entry || entry.requested) return; // Not waiting on this, or already requested from an earlier reply.
-    entry.requested = true;
+    if (!entry) return; // not waiting on this
+    if (entry.activeProvider === packet.source) return; // already trying (or already gave up on) exactly this one
+    if (entry.activeProvider && entry.providerTimer) {
+      // Actively trying someone else with a live retry timer running — remember this one as a
+      // fallback candidate rather than requesting from it immediately.
+      if (!entry.candidates.includes(packet.source) && entry.candidates.length < MAX_CONTENT_CANDIDATES) {
+        entry.candidates.push(packet.source);
+      }
+      return;
+    }
+    // Either nobody's been tried yet, or every known candidate was already exhausted and the retry
+    // timer isn't running any more — this reply is immediately usable either way.
+    this.requestFromProvider(entry, packet.source);
+  }
+
+  /** Sends CONTENT_REQUEST to `providerId` and arms the retry timer that falls through to the next known candidate if it stays silent. */
+  private requestFromProvider(entry: PendingContentEntry, providerId: string): void {
+    entry.activeProvider = providerId;
     const request = this.originate<ContentQueryPayload>(
       MessageType.CONTENT_REQUEST,
-      { contentId: packet.payload.contentId },
-      { destination: packet.source, priority: Priority.CONTENT },
+      { contentId: entry.contentId },
+      { destination: providerId, priority: Priority.CONTENT },
     );
     void this.floodExcept(request);
+
+    if (entry.providerTimer) clearTimeout(entry.providerTimer);
+    entry.providerTimer = setTimeout(() => this.retryNextProvider(entry.contentId), this.contentProviderTimeoutMs);
+  }
+
+  /**
+   * Fires when the active provider has been silent for `contentProviderTimeoutMs` without
+   * completing the transfer. A peer that replied CONTENT_FOUND a moment ago isn't guaranteed to
+   * still be reachable in an unreliable mesh (spec §90-92) — rather than burning the caller's
+   * whole `getContent()` timeout on one unresponsive provider, move on to the next candidate that
+   * already offered this content. Discards whatever the abandoned provider sent so far: mixing its
+   * (possibly wrong/incomplete) chunks with the next attempt's would corrupt the reassembly.
+   */
+  private retryNextProvider(contentId: string): void {
+    const entry = this.pendingContentRequests.get(contentId);
+    if (!entry) return;
+    entry.providerTimer = undefined; // this firing already consumed it — a late CONTENT_FOUND arriving now must be tried immediately, not just queued
+    if (entry.candidates.length === 0) return; // nothing left to try right now — the outer per-waiter timeout is the backstop
+    this.requesterAssembler.discard(contentId);
+    const next = entry.candidates.shift()!;
+    this.requestFromProvider(entry, next);
   }
 
   private handleContentRequest(packet: Packet<ContentQueryPayload>): void {
@@ -803,12 +858,27 @@ export class NomadNode extends EventEmitter {
 
   private handleContentChunk(packet: Packet<ContentChunkPayload>): void {
     const { contentId, chunkIndex, totalChunks, data } = packet.payload;
+    const entry = this.pendingContentRequests.get(contentId);
+    // A stale chunk from a provider we've since abandoned (retryNextProvider already discarded
+    // its partial data) — accepting it now would just corrupt the current attempt again.
+    if (entry && packet.source !== entry.activeProvider) return;
+    if (entry) {
+      // Real progress from the active provider — it isn't silent, just possibly slow. Give it a
+      // fresh window instead of abandoning an in-progress transfer mid-flight (contentProviderTimeoutMs
+      // measures time since the *last* chunk, not a hard deadline on the whole transfer).
+      if (entry.providerTimer) clearTimeout(entry.providerTimer);
+      entry.providerTimer = setTimeout(() => this.retryNextProvider(contentId), this.contentProviderTimeoutMs);
+    }
     this.requesterAssembler.addChunk(contentId, chunkIndex, totalChunks, Buffer.from(data, "base64"));
   }
 
   private handleContentComplete(packet: Packet<ContentCompletePayload>): void {
     const { contentId, metadata } = packet.payload;
     const entry = this.pendingContentRequests.get(contentId);
+    // Same reasoning as handleContentChunk: a late COMPLETE from an abandoned provider must never
+    // be allowed to reject a retry that's currently in progress with a different, active one.
+    if (entry && packet.source !== entry.activeProvider) return;
+    if (entry?.providerTimer) clearTimeout(entry.providerTimer);
     const data = this.requesterAssembler.tryComplete(contentId, metadata);
 
     // putVerified() re-checks the hash (redundant with tryComplete's own check, harmless) and —
