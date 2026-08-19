@@ -1,6 +1,7 @@
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { createInterface } from "node:readline";
-import { MessageType, createPacket, decodePacket, encodePacket, type Packet } from "../packet.js";
+import { MessageType, PRIORITY_LEVEL_COUNT, createPacket, decodePacket, encodePacket, type Packet } from "../packet.js";
+import { PriorityQueue } from "../priority-queue.js";
 import type {
   PacketHandler,
   PeerAddress,
@@ -10,6 +11,12 @@ import type {
 } from "../transport.js";
 
 const CONNECT_TIMEOUT_MS = 5000;
+
+/** Sized from `Priority` itself (packet.ts, spec §50) so it can never drift out of sync with the enum. */
+const PRIORITY_LEVELS = PRIORITY_LEVEL_COUNT;
+
+/** Bounds memory per peer if sends are produced faster than a socket can drain them (spec §57). */
+const MAX_QUEUED_SENDS_PER_PEER = 500;
 
 /**
  * `readline`'s Interface has no maximum line length — it buffers indefinitely
@@ -22,9 +29,17 @@ const CONNECT_TIMEOUT_MS = 5000;
  */
 const MAX_LINE_BYTES = 2 * 1024 * 1024;
 
+interface QueuedSend {
+  packet: Packet;
+  resolve: () => void;
+  reject: (err: Error) => void;
+}
+
 interface SocketEntry {
   socket: Socket;
   peerId: string;
+  queue: PriorityQueue<QueuedSend>;
+  draining: boolean;
 }
 
 /**
@@ -142,18 +157,63 @@ export class TcpTransport implements Transport {
     });
   }
 
+  /**
+   * Queues `packet` for `peerId`, ordered by `packet.priority` (spec §50)
+   * ahead of anything already queued at a lower priority — a burst of
+   * traffic to the same peer (e.g. a chunked transfer in flight) no longer
+   * makes an EMERGENCY packet wait its turn behind BULK ones just because
+   * they were queued first. Resolves once *this* packet has actually been
+   * written, which can be later than the call if higher-priority sends
+   * jumped ahead of it in the meantime.
+   */
   async send(peerId: string, packet: Packet): Promise<void> {
     const entry = this.sockets.get(peerId);
     if (!entry || entry.socket.destroyed || !entry.socket.writable) {
       throw new Error(`no active TCP connection to peer ${peerId}`);
     }
-    const socket = entry.socket;
-    // A write can fail three different ways once a socket is dying (e.g. the remote end closed
-    // moments after the liveness check above): a synchronous throw, an error passed to the write
-    // callback, or — for some libuv-level failures like a broken pipe — an 'error' event instead of
-    // (or alongside) that callback. All three must resolve this promise, or the failure surfaces as
-    // an unhandled exception instead of a normal rejection the caller's try/catch already handles.
+    if (entry.queue.size >= MAX_QUEUED_SENDS_PER_PEER) {
+      throw new Error(`send queue full for peer ${peerId}`);
+    }
     await new Promise<void>((resolve, reject) => {
+      entry.queue.enqueue(packet.priority, { packet, resolve, reject });
+      this.drainQueue(entry);
+    });
+  }
+
+  /** Writes queued packets for `entry` in priority order until the queue is empty or the socket dies. Safe to call repeatedly — a no-op while already draining. */
+  private drainQueue(entry: SocketEntry): void {
+    if (entry.draining) return;
+    entry.draining = true;
+    void (async () => {
+      let next: QueuedSend | undefined;
+      while ((next = entry.queue.dequeue())) {
+        if (entry.socket.destroyed || !entry.socket.writable) {
+          const err = new Error(`no active TCP connection to peer ${entry.peerId}`);
+          next.reject(err);
+          continue; // drain the rest too, rejecting each — a dead socket won't come back to life mid-loop
+        }
+        try {
+          await this.writePacket(entry.socket, next.packet);
+          next.resolve();
+        } catch (err) {
+          next.reject(err as Error);
+        }
+      }
+      entry.draining = false;
+    })();
+  }
+
+  /**
+   * A write can fail three different ways once a socket is dying (e.g. the
+   * remote end closed moments after the liveness check above): a
+   * synchronous throw, an error passed to the write callback, or — for some
+   * libuv-level failures like a broken pipe — an 'error' event instead of
+   * (or alongside) that callback. All three must resolve this promise, or
+   * the failure surfaces as an unhandled exception instead of a normal
+   * rejection the caller's try/catch already handles.
+   */
+  private writePacket(socket: Socket, packet: Packet): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
       let settled = false;
       const onError = (err: Error): void => {
         if (settled) return;
@@ -204,10 +264,10 @@ export class TcpTransport implements Transport {
   }
 
   private wireSocket(socket: Socket, address: PeerAddress | undefined, onIdentified?: (peerId: string) => void): void {
-    // send() attaches a transient 'error' listener per in-flight write (see above); a legitimate
-    // burst of concurrent sends to one peer (connect-time sync, chunked content transfer) can
-    // exceed Node's default 10-listener heuristic even though every listener is self-removing and
-    // nothing actually leaks — raise the threshold rather than let that print spurious warnings.
+    // writePacket() attaches a transient, self-removing 'error' listener per write; drainQueue()
+    // serializes writes to at most one in flight per socket, so this alone never approaches Node's
+    // default 10-listener heuristic. Other long-lived listeners are wired below (readline, socket
+    // 'data'/'close'/'error'), so raise the threshold as a margin rather than chase an exact count.
     socket.setMaxListeners(64);
     const rl = createInterface({ input: socket });
     // readline's Interface is its own EventEmitter and re-emits a broken underlying socket (e.g. a
@@ -255,7 +315,7 @@ export class TcpTransport implements Transport {
           existing.socket.destroy();
         }
 
-        this.sockets.set(peerId, { socket, peerId });
+        this.sockets.set(peerId, { socket, peerId, queue: new PriorityQueue(PRIORITY_LEVELS), draining: false });
         onIdentified?.(peerId);
         for (const handler of this.connectedHandlers) handler(peerId, address);
       }

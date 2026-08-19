@@ -21,7 +21,12 @@ export enum MessageType {
   ROUTE_ANNOUNCE = "ROUTE_ANNOUNCE",
 }
 
-/** Traffic priority classes (spec §50). Carried as data only in the prototype — no differentiated scheduling yet. */
+/**
+ * Traffic priority classes (spec §50), lowest number = highest priority.
+ * TcpTransport (transports/tcp.ts) schedules per-peer sends by this exact
+ * numeric ordering and count (PriorityQueue) — adding, removing, or
+ * reordering a level here must be reflected there.
+ */
 export enum Priority {
   EMERGENCY = 0,
   CONTROL = 1,
@@ -30,6 +35,9 @@ export enum Priority {
   CONTENT = 4,
   BULK = 5,
 }
+
+/** Number of distinct Priority levels — derived so it can never drift out of sync with the enum above. */
+export const PRIORITY_LEVEL_COUNT = Object.values(Priority).filter((v) => typeof v === "number").length;
 
 export const PROTOCOL_VERSION = 1;
 export const DEFAULT_TTL = 8;
