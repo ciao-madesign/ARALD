@@ -1,3 +1,5 @@
+import { BoundedFifoMap } from "./bounded-map.js";
+
 export interface RouteEntry {
   nextHop: string;
   cost: number;
@@ -22,12 +24,11 @@ const DEFAULT_MAX_COST = 64;
  * connection topology, so it's what's implemented here.
  */
 export class RoutingTable {
-  private readonly routes = new Map<string, RouteEntry>();
-  private readonly maxSize: number;
+  private readonly routes: BoundedFifoMap<string, RouteEntry>;
   private readonly maxCost: number;
 
   constructor(options: RoutingTableOptions = {}) {
-    this.maxSize = options.maxSize ?? DEFAULT_MAX_SIZE;
+    this.routes = new BoundedFifoMap({ maxSize: options.maxSize ?? DEFAULT_MAX_SIZE });
     this.maxCost = options.maxCost ?? DEFAULT_MAX_COST;
   }
 
@@ -50,12 +51,9 @@ export class RoutingTable {
       } else if (existing.cost <= cost) {
         return false; // a different next hop only takes over with a strictly better cost
       }
-    } else if (this.routes.size >= this.maxSize) {
-      const oldestKey = this.routes.keys().next().value;
-      if (oldestKey !== undefined) this.routes.delete(oldestKey);
     }
 
-    this.routes.set(destination, { nextHop, cost });
+    this.routes.set(destination, { nextHop, cost }); // evicts the oldest route only when `destination` is genuinely new
     return true;
   }
 

@@ -1,3 +1,4 @@
+import { BoundedFifoMap } from "./bounded-map.js";
 import type { Packet } from "./packet.js";
 
 export interface PendingDeliveryQueueOptions {
@@ -41,13 +42,12 @@ const DEFAULT_MAX_SIZE = 256;
  *   eviction policies to be coordinated, which is out of scope here.
  */
 export class PendingDeliveryQueue {
-  private readonly entries = new Map<string, Entry>();
+  private readonly entries: BoundedFifoMap<string, Entry>;
   private readonly ttlMs: number;
-  private readonly maxSize: number;
 
   constructor(options: PendingDeliveryQueueOptions = {}) {
     this.ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
-    this.maxSize = options.maxSize ?? DEFAULT_MAX_SIZE;
+    this.entries = new BoundedFifoMap({ maxSize: options.maxSize ?? DEFAULT_MAX_SIZE });
   }
 
   has(packetId: string): boolean {
@@ -56,10 +56,6 @@ export class PendingDeliveryQueue {
 
   enqueue(packet: Packet, exceptPeerId?: string): void {
     if (this.entries.has(packet.id)) return;
-    if (this.entries.size >= this.maxSize) {
-      const oldestKey = this.entries.keys().next().value;
-      if (oldestKey !== undefined) this.entries.delete(oldestKey);
-    }
     this.entries.set(packet.id, { packet, exceptPeerId, expiresAt: Date.now() + this.ttlMs });
   }
 

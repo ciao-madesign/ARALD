@@ -1,10 +1,13 @@
+import { BoundedFifoMap } from "./bounded-map.js";
 import type { Packet } from "./packet.js";
 
 /** Bounded "seen packet id" cache used for deduplication (spec §20-21). */
 export class SeenCache {
-  private readonly seen = new Map<string, number>();
+  private readonly seen: BoundedFifoMap<string, number>;
 
-  constructor(private readonly maxSize = 4096) {}
+  constructor(maxSize = 4096) {
+    this.seen = new BoundedFifoMap({ maxSize });
+  }
 
   hasSeen(id: string): boolean {
     return this.seen.has(id);
@@ -13,10 +16,6 @@ export class SeenCache {
   markSeen(id: string): void {
     if (this.seen.has(id)) return;
     this.seen.set(id, Date.now());
-    if (this.seen.size > this.maxSize) {
-      const oldest = this.seen.keys().next().value;
-      if (oldest !== undefined) this.seen.delete(oldest);
-    }
   }
 
   get size(): number {

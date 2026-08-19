@@ -1,3 +1,4 @@
+import { BoundedFifoMap } from "./bounded-map.js";
 import type { IdentityAnnouncement } from "./encryption.js";
 
 export interface PeerDirectoryOptions {
@@ -28,20 +29,15 @@ const DEFAULT_MAX_SIZE = 4096;
  * signed binding for a node id is authoritative for that node's lifetime.
  */
 export class PeerDirectory {
-  private readonly entries = new Map<string, IdentityAnnouncement>();
-  private readonly maxSize: number;
+  private readonly entries: BoundedFifoMap<string, IdentityAnnouncement>;
 
   constructor(options: PeerDirectoryOptions = {}) {
-    this.maxSize = options.maxSize ?? DEFAULT_MAX_SIZE;
+    this.entries = new BoundedFifoMap({ maxSize: options.maxSize ?? DEFAULT_MAX_SIZE });
   }
 
   /** Records a (caller-verified) announcement. Returns false only if it was already known (a no-op, not an error). */
   record(announcement: IdentityAnnouncement): boolean {
     if (this.entries.has(announcement.nodeId)) return false;
-    if (this.entries.size >= this.maxSize) {
-      const oldestKey = this.entries.keys().next().value;
-      if (oldestKey !== undefined) this.entries.delete(oldestKey);
-    }
     this.entries.set(announcement.nodeId, announcement);
     return true;
   }

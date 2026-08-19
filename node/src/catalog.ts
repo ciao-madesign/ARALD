@@ -1,3 +1,4 @@
+import { BoundedFifoMap } from "./bounded-map.js";
 import type { ContentMetadata } from "./content.js";
 
 export interface RemoteCatalogOptions {
@@ -28,11 +29,10 @@ const DEFAULT_MAX_SIZE = 4096;
  * content bytes. This class only handles storage/eviction, not trust.
  */
 export class RemoteCatalog {
-  private readonly entries = new Map<string, ContentMetadata>();
-  private readonly maxSize: number;
+  private readonly entries: BoundedFifoMap<string, ContentMetadata>;
 
   constructor(options: RemoteCatalogOptions = {}) {
-    this.maxSize = options.maxSize ?? DEFAULT_MAX_SIZE;
+    this.entries = new BoundedFifoMap({ maxSize: options.maxSize ?? DEFAULT_MAX_SIZE });
   }
 
   /**
@@ -57,10 +57,6 @@ export class RemoteCatalog {
    */
   record(metadata: ContentMetadata): void {
     if (this.entries.has(metadata.contentId)) return;
-    if (this.entries.size >= this.maxSize) {
-      const oldestKey = this.entries.keys().next().value;
-      if (oldestKey !== undefined) this.entries.delete(oldestKey);
-    }
     this.entries.set(metadata.contentId, metadata);
   }
 

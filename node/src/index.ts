@@ -4,6 +4,7 @@ export { PeerTable, type PeerInfo } from "./peer.js";
 export * from "./packet.js";
 export * from "./transport.js";
 export * from "./routing.js";
+export * from "./bounded-map.js";
 export * from "./content.js";
 export * from "./catalog.js";
 export * from "./store-and-forward.js";
