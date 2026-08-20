@@ -56,6 +56,16 @@ npm run dev -w node -- --id A --port 9001 --web-port 8080
 
 Poi `http://127.0.0.1:8080` per lo stato del nodo (peer, servizi, percentuale di contenuto in cache) e la ricerca. Nessuna autenticazione: resta volutamente bound solo su `127.0.0.1` (`node/src/web-ui.ts`), non pensata per essere esposta oltre la macchina locale.
 
+## Gateway NOMAD mockato (§37, seguito audit — Slice 9)
+
+Nessuna istanza Docker/Project NOMAD reale necessaria — la demo avvia anche un `FakeNomadServer` locale con due articoli d'esempio:
+
+```bash
+npm run gateway:demo
+```
+
+Espone lo stesso `NomadNode` (transport TCP) con il catalogo NOMAD pubblicato via `syncCatalog()` e `service://kiwix-search` registrato — connettiti come a qualunque altro nodo (`npm run dev -w node -- --connect 127.0.0.1:<porta>`) per recuperare gli articoli o chiamare il servizio di ricerca. `--nomad-url <url>` punta invece a un'istanza NOMAD/Kiwix reale già in esecuzione, se disponibile, al posto del fake server. Vedi `gateway/nomad/kiwix-gateway.ts` e `docs/next-steps.md` Opzione B per il dettaglio.
+
 ## Test (§17-18, §90-92)
 
 ```bash

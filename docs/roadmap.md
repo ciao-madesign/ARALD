@@ -18,8 +18,8 @@ Stato al 14 agosto 2026, versione specifica 0.1.
 | 7 | Cache | ✅ Fatto | `tests/integration/cache-replication.test.ts` |
 | 8 | BLE | ✅ Simulato (seguito audit, Slice 8) — hardware reale ⏳ bloccato | `node/src/transports/ble.ts`, dietro l'interfaccia `Transport` esistente, nessun radio reale |
 | 9 | Smartphone (app mobile minimale) | ⏳ Non iniziato | `mobile/android` prioritario su `mobile/ios` (§47) |
-| 10 | NOMAD integration | ⏳ Non iniziato | richiede Project NOMAD in esecuzione (Docker, Debian-based) |
-| 11 | Gateway (`gateway/nomad/`) | ⏳ Non iniziato | traduzione richieste Nomad-Net → API NOMAD |
+| 10 | NOMAD integration | ✅ Mockato (seguito audit, Slice 9) — Project NOMAD reale ⏳ bloccato | richiede Docker + Project NOMAD in esecuzione per la forma finale reale |
+| 11 | Gateway (`gateway/nomad/`) | ✅ Mockato (seguito audit, Slice 9) — Docker reale ⏳ bloccato | `gateway/nomad/kiwix-gateway.ts`, traduzione richieste Nomad-Net → API NOMAD, verificata contro `FakeNomadServer` |
 | 12 | Store-and-forward | ✅ Fatto (scope: pacchetti unicast) | `node/src/store-and-forward.ts`, `tests/integration/store-and-forward.test.ts` — vedi limitazione nota sotto |
 | 13 | Partition synchronization | ✅ Fatto | `node/src/catalog.ts`, `tests/integration/partition-sync.test.ts` |
 | 14 | Wi-Fi high bandwidth | ⏳ Bloccato — richiede hardware/OS Wi-Fi Direct reale | `node/src/transports/wifi.ts` |
@@ -86,13 +86,13 @@ Con le Milestone 12, 13, 15, 16 e 20 completate, è stato eseguito un audit tecn
 | 6 | Protocollo di service discovery (`SERVICE_*`) | ✅ Fatto |
 | 7 | Interfaccia web locale di stato/ricerca (spec §59) | ✅ Fatto |
 | 8 | Transport BLE **simulato** (Milestone 8 senza hardware reale) | ✅ Fatto |
-| 9 | Gateway NOMAD mockato contro un fake server locale (Milestone 11 senza Docker) | ⏳ Da fare |
+| 9 | Gateway NOMAD mockato contro un fake server locale (Milestone 11 senza Docker) | ✅ Fatto |
 
-Le Slice 8 e 9 dimostrano che una parte di Milestone 8 e 11 *è* realizzabile in puro software: un transport BLE simulato (stessa interfaccia `Transport`, vincoli di MTU/frammentazione realistici, nessun radio reale) e un adapter gateway contro un server HTTP fittizio locale invece di Project NOMAD vero. Non sostituiscono la validazione con hardware/Docker reali (restano comunque necessarie prima di un deployment vero), ma permettono di validare la logica applicativa adesso.
+Le Slice 8 e 9 dimostrano che una parte di Milestone 8 e 11 *è* realizzabile in puro software: un transport BLE simulato (stessa interfaccia `Transport`, vincoli di MTU/frammentazione realistici, nessun radio reale) e un adapter gateway contro un server HTTP fittizio locale invece di Project NOMAD vero. Non sostituiscono la validazione con hardware/Docker reali (restano comunque necessarie prima di un deployment vero), ma permettono di validare la logica applicativa adesso — entrambe le slice sono ora completate, chiudendo il secondo giro post-audit di 9 slice.
 
 ## Ordine di lavoro consigliato per i prossimi passi
 
-Dopo la Slice 9, quello che resta è bloccato su uno dei due prerequisiti esterni veri e propri:
+Dopo la Slice 9 (l'ultima delle 9 pianificate), quello che resta è bloccato su uno dei due prerequisiti esterni veri e propri:
 
 - **Milestone 8/9** (BLE/hardware reale, app mobile) richiedono dispositivi fisici per i test end-to-end.
 - **Milestone 10/11** (integrazione e gateway NOMAD reali) richiedono Docker e un'istanza di Project NOMAD raggiungibile.

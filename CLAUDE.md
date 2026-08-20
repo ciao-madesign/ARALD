@@ -30,15 +30,15 @@ Dopo il completamento delle milestone sopra è stato eseguito un **audit tecnico
 | 6 | Protocollo di service discovery (`SERVICE_*`) | ✅ Fatto |
 | 7 | Interfaccia web locale di stato/ricerca (spec §59) | ✅ Fatto |
 | 8 | Transport BLE simulato | ✅ Fatto |
-| 9 | Gateway NOMAD mockato (contro un fake server locale) | ⏳ Prossimo |
+| 9 | Gateway NOMAD mockato (contro un fake server locale) | ✅ Fatto |
 
-Ogni slice completata è documentata in dettaglio in `docs/security.md` (numerate progressivamente, es. bug #11-17) e spesso anche in `docs/protocol.md`. **Leggi quelle voci prima di toccare il codice corrispondente** — spiegano non solo cosa è stato fatto ma perché, inclusi i bug trovati dalla revisione e corretti prima di considerare ogni slice conclusa.
+**Le 9 slice pianificate sono tutte completate.** Ogni slice è documentata in dettaglio in `docs/security.md` (numerate progressivamente, bug #11-19) e spesso anche in `docs/protocol.md`. **Leggi quelle voci prima di toccare il codice corrispondente** — spiegano non solo cosa è stato fatto ma perché, inclusi i bug trovati dalla revisione e corretti prima di considerare ogni slice conclusa.
 
-`docs/roadmap.md` e `README.md` contengono ancora, in alcuni punti, la dicitura "non restano candidati aperti in puro software" ereditata da prima che questo arco di 9 slice iniziasse — è imprecisa per lo stato attuale (Slice 8 dimostra che un transport BLE *simulato* è comunque puro software) e viene aggiornata progressivamente.
+Con la Slice 9 chiusa, non restano candidati aperti realizzabili in puro software oltre a un'eventuale ulteriore passata di qualità/sicurezza sul codice esistente — `docs/roadmap.md`, `docs/next-steps.md` e `README.md` sono stati allineati di conseguenza. Le uniche milestone ancora aperte (8/9/10/11/14/17/18/19 nella loro forma *reale*, vedi `docs/roadmap.md`) sono bloccate su prerequisiti esterni (hardware fisico, Docker + Project NOMAD raggiungibile) non disponibili in questo ambiente — non c'è un "prossimo passo" software ovvio senza indicazione dell'utente su quale di questi prerequisiti diventa disponibile, o su un'altra direzione (es. un'ulteriore passata di code-review/qualità sul codice esistente).
 
-## Come continuare il lavoro sulle slice rimanenti
+## Workflow da riusare per lavoro futuro (slice, feature, o passate di qualità)
 
-Il workflow concordato con l'utente per ogni slice, da ripetere identico:
+Il workflow concordato con l'utente, usato per ognuna delle 9 slice sopra e da riapplicare identico a qualunque lavoro sostanziale futuro in questo repository:
 
 1. Implementa la feature.
 2. Scrivi/aggiorna i test (unit + integration, seguendo le convenzioni esistenti — vedi sotto).
@@ -48,7 +48,7 @@ Il workflow concordato con l'utente per ogni slice, da ripetere identico:
 6. Aggiorna `docs/security.md` (nuova voce numerata) e `docs/protocol.md`/altri doc pertinenti.
 7. `npx tsc --noEmit -p node/tsconfig.json` e `npm run build -w node` puliti.
 8. Commit con messaggio dettagliato (cosa, perché, cosa ha trovato la revisione), push su **sia** `claude/nomad-net-project-spec-lcnbqt` **sia** `main`.
-9. Report all'utente in italiano, **poi fermati e aspetta un "ok" esplicito prima di iniziare la slice successiva** — istruzione esplicita data dall'utente all'inizio di questo arco di lavoro ("Dopo ogni step aggiornami e chiedimi ok per proseguire"), tuttora in vigore.
+9. Report all'utente in italiano, **poi fermati e aspetta un "ok" esplicito prima di iniziare il prossimo pezzo di lavoro** — istruzione esplicita data dall'utente all'inizio dell'arco di 9 slice ("Dopo ogni step aggiornami e chiedimi ok per proseguire"), non legata alla singola serie di slice ormai conclusa: vale per qualunque lavoro sostanziale futuro allo stesso modo.
 
 Non saltare il passaggio di code-review nemmeno quando il codice "sembra ovviamente corretto": in ogni slice fatta finora ha trovato almeno un problema reale (spesso più di uno) prima di considerare la slice conclusa — inclusi almeno due crash-DoS reali (accesso non protetto a un campo di payload potenzialmente assente) e diverse race condition/edge case di conteggio.
 
@@ -60,7 +60,7 @@ nomad-net/
 ├─ node/src/        nomad-node: il runtime di rete (unico package con codice reale)
 ├─ tests/           unit/, integration/, network/ (vitest)
 ├─ tools/simulator/ simulatore di rete a scala (usato anche da `npm run simulate`)
-├─ gateway/         segnaposto per il gateway NOMAD/Internet — non ancora implementato (Slice 9 lo mocka)
+├─ gateway/nomad/   gateway NOMAD (Slice 9): KiwixGateway, FakeNomadServer, cli.ts — mockato, non nel workspace npm
 ├─ mobile/          segnaposto app Android/iOS — non ancora implementato
 └─ protocol/        segnaposto definizioni di protocollo condivise — non contiene codice reale
 ```
@@ -71,7 +71,7 @@ Tutto il codice reale vive sotto `node/src/`. `gateway/`, `mobile/`, `protocol/`
 
 - `identity.ts` — identità Ed25519 per nodo (`Identity`), firma/verifica.
 - `packet.ts` — `MessageType` enum, formato pacchetto, `Priority` enum (spec §50), encode/decode newline-JSON.
-- `transport.ts` — interfaccia `Transport` astratta; `transports/tcp.ts` è l'unica implementazione reale finora (Slice 8 ne aggiunge una simulata per BLE).
+- `transport.ts` — interfaccia `Transport` astratta; `transports/tcp.ts` è l'unica implementazione reale finora; `transports/ble.ts` (Slice 8) ne è una simulata, zero radio reale, dietro la stessa interfaccia.
 - `routing.ts` — `SeenCache` (dedup) + `decideForward()`, il cuore del controlled flooding (spec §21).
 - `routing-table.ts` — routing a costo distance-vector (spec §22), alternativa/complemento al flooding per traffico unicast.
 - `content.ts` — `ContentStore`, firma/verifica dei contenuti, `ChunkAssembler`, scadenza (`expiresAt`).
@@ -86,8 +86,11 @@ Tutto il codice reale vive sotto `node/src/`. `gateway/`, `mobile/`, `protocol/`
 - `bounded-map.ts` — `BoundedFifoMap<K,V>`, struttura dati limitata condivisa (con eviction opzionale pesata su uno score, es. la fiducia) usata da quasi tutte le strutture sopra che vengono alimentate dalla rete.
 - `priority-queue.ts` — coda a bucket per priorità (6 livelli), usata da `transports/tcp.ts` per lo scheduling reale degli invii.
 - `web-ui.ts` — interfaccia web locale di stato/ricerca (spec §59), server `node:http` minimale.
+- `loopback-http-server.ts` — bootstrap HTTP condiviso (`start()`/`stop()`/`port` getter) estratto da `web-ui.ts` e da `gateway/nomad/fake-nomad-server.ts` (Slice 9) quando la stessa boilerplate è comparsa una seconda volta.
 - `node.ts` — `NomadNode`, la classe che orchestra tutto il resto; qui vivono i pacchetti-handler (`handleContentQuery`, `handleServiceRequest`, ecc.) e i metodi pubblici (`getContent`, `callService`, `publishContent`, ...).
 - `cli.ts` — entry point eseguibile (`npm run dev -w node --`).
+
+`gateway/nomad/` (Slice 9, non nel workspace npm — importa `node/src/*` con percorsi relativi, stesso precedente di `tools/simulator/`): `kiwix-gateway.ts` (`KiwixGateway`, traduce `content://...`/`service://...` verso l'HTTP di NOMAD), `fake-nomad-server.ts` (`FakeNomadServer`, sostituisce Project NOMAD/Docker reale nei test/demo), `cli.ts` (demo eseguibile, `npm run gateway:demo`).
 
 ## Convenzioni consolidate (da rispettare per coerenza, non da riscoprire)
 

@@ -17,5 +17,6 @@ export * from "./routing-table.js";
 export * from "./service.js";
 export * from "./service-directory.js";
 export * from "./web-ui.js";
+export * from "./loopback-http-server.js";
 export { TcpTransport } from "./transports/tcp.js";
 export { BleSimulatedTransport, BleMedium, type BleSimulatedTransportOptions } from "./transports/ble.js";

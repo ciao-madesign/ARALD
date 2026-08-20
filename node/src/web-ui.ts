@@ -1,4 +1,5 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { LoopbackHttpServer } from "./loopback-http-server.js";
 import type { NomadNode } from "./node.js";
 
 export interface WebUiOptions {
@@ -212,40 +213,29 @@ function sendJson(res: ServerResponse, statusCode: number, body: unknown): void 
  */
 export class WebUiServer {
   private readonly node: NomadNode;
-  private readonly requestedPort: number;
-  private readonly host: string;
   private readonly internetStatus: () => "ONLINE" | "OFFLINE";
-  private server: Server | undefined;
-  private boundPort: number | undefined;
+  private readonly httpServer: LoopbackHttpServer;
 
   constructor(node: NomadNode, options: WebUiOptions = {}) {
     this.node = node;
-    this.requestedPort = options.port ?? 0;
-    this.host = options.host ?? "127.0.0.1";
     this.internetStatus = options.internetStatus ?? (() => "OFFLINE");
+    this.httpServer = new LoopbackHttpServer((req, res) => this.handleRequest(req, res), {
+      port: options.port,
+      host: options.host,
+    });
   }
 
   /** Actual bound port once started (useful when constructed with port 0, e.g. in tests); the requested port before that. */
   get port(): number {
-    return this.boundPort ?? this.requestedPort;
+    return this.httpServer.port;
   }
 
   async start(): Promise<void> {
-    this.server = createServer((req, res) => this.handleRequest(req, res));
-    await new Promise<void>((resolve, reject) => {
-      this.server!.once("error", reject);
-      this.server!.listen(this.requestedPort, this.host, () => {
-        const address = this.server!.address();
-        this.boundPort = typeof address === "object" && address !== null ? address.port : this.requestedPort;
-        resolve();
-      });
-    });
+    await this.httpServer.start();
   }
 
   async stop(): Promise<void> {
-    if (!this.server) return;
-    await new Promise<void>((resolve) => this.server!.close(() => resolve()));
-    this.server = undefined;
+    await this.httpServer.stop();
   }
 
   private handleRequest(req: IncomingMessage, res: ServerResponse): void {
