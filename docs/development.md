@@ -54,7 +54,7 @@ Spenta di default (apre una seconda porta anche se in ascolto solo su loopback).
 npm run dev -w node -- --id A --port 9001 --web-port 8080
 ```
 
-Poi `http://127.0.0.1:8080` per lo stato del nodo (peer, servizi, percentuale di contenuto in cache) e la ricerca. Nessuna autenticazione: resta volutamente bound solo su `127.0.0.1` (`node/src/web-ui.ts`), non pensata per essere esposta oltre la macchina locale.
+Poi `http://127.0.0.1:8080` mostra lo stato del nodo (vicini connessi con trust level, servizi conosciuti con provider e capability, percentuale di contenuto in cache, se il relay è attivo) e una ricerca "live" sui contenuti — pagina a card, non più la lista minimale delle prime versioni. Nessuna autenticazione: resta volutamente bound solo su `127.0.0.1` (`node/src/web-ui.ts`), non pensata per essere esposta oltre la macchina locale. Endpoint JSON disponibili se serve leggerli programmaticamente: `/api/status`, `/api/peers`, `/api/services`, `/api/content` (tutto il conosciuto), `/api/search?q=...` (filtrato — query vuota restituisce sempre `[]`, per design).
 
 ## Gateway NOMAD mockato (§37, seguito audit — Slice 9-10)
 

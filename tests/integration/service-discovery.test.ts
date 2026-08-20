@@ -1,6 +1,10 @@
+import { createConnection } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { NomadNode } from "../../node/src/node.js";
 import { TcpTransport } from "../../node/src/transports/tcp.js";
+import { MessageType, createPacket, encodePacket } from "../../node/src/packet.js";
+import { Identity } from "../../node/src/identity.js";
+import { serviceSigningPayload } from "../../node/src/service.js";
 
 /**
  * Spec §35-37: services are discoverable and callable the same way content
@@ -186,5 +190,42 @@ describe("service discovery and invocation", () => {
       // even if the assertion throws, so a failing run doesn't leak an open TCP server/port.
       await caller.node.stop().catch(() => undefined);
     }
+  });
+
+  it("rejects a validly-signed SERVICE_ANNOUNCE whose capabilities isn't an array, instead of storing it for a later consumer (e.g. the web UI) to crash on", async () => {
+    // Regression test: a valid Ed25519 signature only proves the claimed providerId produced this
+    // exact JSON — it says nothing about the shape of the fields inside. An attacker who generates
+    // their own (trivially cheap) keypair can self-sign a `capabilities` field of any type and pass
+    // verifyServiceAnnouncement() cleanly. node.ts's recordServiceAnnouncement() must reject this at
+    // the trust boundary, the same way it already rejects a non-string serviceId/providerId.
+    const victim = makeNode("victim");
+    nodes.push(victim.node);
+    await victim.node.start();
+
+    const attacker = Identity.generate();
+    const fields = {
+      serviceId: "service://ai",
+      version: "1.0.0",
+      capabilities: "not-an-array" as unknown as string[],
+      providerId: attacker.nodeId,
+      resourceRequirements: undefined,
+      availability: true,
+      createdAt: Date.now(),
+    };
+    const announcement = { ...fields, signature: attacker.sign(serviceSigningPayload(fields)).toString("hex") };
+
+    const socket = createConnection({ host: "127.0.0.1", port: victim.transport.port });
+    await new Promise<void>((resolve, reject) => {
+      socket.once("connect", () => resolve());
+      socket.once("error", reject);
+    });
+    socket.write(encodePacket(createPacket({ type: MessageType.HELLO, source: attacker.nodeId, payload: {} })));
+    socket.write(
+      encodePacket(createPacket({ type: MessageType.SERVICE_ANNOUNCE, source: attacker.nodeId, payload: { announcement } })),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(victim.node.services.providersFor("service://ai")).toHaveLength(0);
+    socket.destroy();
   });
 });

@@ -458,6 +458,11 @@ export class NomadNode extends EventEmitter {
     return Array.from(merged.values());
   }
 
+  /** Whether this node is currently willing to relay traffic for others (spec §51/§58) — `relayPolicy` itself is private, so read-only surfaces like the web UI (spec §59) go through this instead of reaching in directly. Never reflects whether this node answers requests addressed to itself or serves its own content, only whether it forwards other peers' traffic (see `relayGateFor()`). */
+  canRelayNow(): boolean {
+    return this.relayPolicy.canRelayNow();
+  }
+
   /**
    * Resolves a content id to its bytes: served from local cache if present,
    * otherwise discovered and retrieved through the mesh (spec §90-92,
@@ -1383,6 +1388,11 @@ export class NomadNode extends EventEmitter {
   /** Shared by handleServiceAnnounce and handleServiceResponse's query-reply branch — both carry the same self-verifying announcement shape. */
   private recordServiceAnnouncement(announcement: ServiceAnnouncement | undefined): void {
     if (!announcement || typeof announcement.serviceId !== "string" || typeof announcement.providerId !== "string") return;
+    // A valid signature only proves the claimed providerId produced this exact JSON, never that its
+    // shape is sane — a peer that controls its own (trivially generated) keypair can self-sign a
+    // `capabilities` of any type. Left unchecked, that reaches every consumer of services.list()/
+    // listKnownServices(), including WebUiServer's /api/services -> the browser's `.map()` over it.
+    if (!Array.isArray(announcement.capabilities)) return;
     if (!verifyServiceAnnouncement(announcement)) return; // unsigned or forged claim — never trust it
     this.services.record(announcement);
     this.trust.markVerified(announcement.providerId);

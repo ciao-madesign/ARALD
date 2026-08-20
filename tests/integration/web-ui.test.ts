@@ -171,6 +171,71 @@ describe("WebUiServer (spec §59)", () => {
     expect(results[0].availableThrough).toBe("next hop: NODE-next-hop");
   });
 
+  it("/api/status reports relaying reflecting RelayPolicy's current decision", async () => {
+    node = new NomadNode({ displayName: "N", relayPolicy: { mode: "off" } });
+    webUi = new WebUiServer(node, { port: 0 });
+    await webUi.start();
+
+    const status = await (await fetch(`${baseUrl()}/api/status`)).json();
+    expect(status.relaying).toBe(false);
+  });
+
+  it("/api/peers lists connected peers with a short label and their current trust level", async () => {
+    node = new NomadNode({ displayName: "N" });
+    const transport = new TcpTransport(node.nodeId, 0);
+    node.addTransport(transport);
+    await node.start();
+
+    const other = new NomadNode({ displayName: "Other" });
+    const otherTransport = new TcpTransport(other.nodeId, 0);
+    other.addTransport(otherTransport);
+    await other.start();
+    await other.connect({ host: "127.0.0.1", port: transport.port });
+    await new Promise((resolve) => setTimeout(resolve, 50)); // let the HELLO round trip settle on both sides
+
+    webUi = new WebUiServer(node, { port: 0 });
+    await webUi.start();
+
+    const peers = await (await fetch(`${baseUrl()}/api/peers`)).json();
+    expect(peers).toHaveLength(1);
+    // Normal HELLO handshake exchanges a signed IdentityAnnouncement (peer-directory.ts), so a
+    // freshly-connected peer is already past SEEN by the time both sides have processed it.
+    expect(peers[0]).toMatchObject({ nodeId: other.nodeId, shortLabel: `NODE-${other.nodeId.slice(0, 8)}`, trustLevel: "VERIFIED" });
+    expect(typeof peers[0].connectedAt).toBe("number");
+    expect(typeof peers[0].lastSeen).toBe("number");
+
+    await other.stop();
+  });
+
+  it("/api/services lists every known service, including unavailable ones, marking which are offered locally", async () => {
+    node = new NomadNode({ displayName: "N" });
+    node.registerService("service://kiwix-search", "1.0.0", ["search"], () => ({}));
+    node.registerService("service://ai", "1.0.0", ["chat"], () => ({}), { availability: false });
+
+    webUi = new WebUiServer(node, { port: 0 });
+    await webUi.start();
+
+    const services = await (await fetch(`${baseUrl()}/api/services`)).json();
+    expect(services).toHaveLength(2);
+    const search = services.find((s: { serviceId: string }) => s.serviceId === "service://kiwix-search");
+    expect(search).toMatchObject({ isLocal: true, providerLabel: "Questo nodo", availability: true, capabilities: ["search"] });
+    const ai = services.find((s: { serviceId: string }) => s.serviceId === "service://ai");
+    expect(ai).toMatchObject({ availability: false });
+  });
+
+  it("/api/content lists everything known without needing a search query, unlike /api/search", async () => {
+    node = new NomadNode({ displayName: "N" });
+    node.publishContent("Guida Rifugio.pdf", "application/pdf", Buffer.from("contenuto"));
+
+    webUi = new WebUiServer(node, { port: 0 });
+    await webUi.start();
+
+    expect(await (await fetch(`${baseUrl()}/api/search?q=`)).json()).toEqual([]);
+    const all = await (await fetch(`${baseUrl()}/api/content`)).json();
+    expect(all).toHaveLength(1);
+    expect(all[0]).toMatchObject({ name: "Guida Rifugio.pdf", availableLocally: true });
+  });
+
   it("returns 404 for an unknown path and 405 for a non-GET method", async () => {
     node = new NomadNode({ displayName: "N" });
     webUi = new WebUiServer(node, { port: 0 });

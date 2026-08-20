@@ -37,6 +37,8 @@ Dopo il completamento delle milestone sopra è stato eseguito un **audit tecnico
 
 Con la Slice 10 chiusa, non restano candidati aperti realizzabili in puro software oltre a un'eventuale ulteriore passata di qualità/sicurezza sul codice esistente — `docs/roadmap.md`, `docs/next-steps.md`, `docs/audit-report.html` e `README.md` sono stati allineati di conseguenza. Le uniche milestone ancora aperte (8/9/10/11/14/17/18/19 nella loro forma *reale*, vedi `docs/roadmap.md`) sono bloccate su prerequisiti esterni (hardware fisico, Docker + Project NOMAD raggiungibile) non disponibili in questo ambiente — non c'è un "prossimo passo" software ovvio senza indicazione dell'utente su quale di questi prerequisiti diventa disponibile, o su un'altra direzione (es. un'ulteriore passata di code-review/qualità sul codice esistente).
 
+Dopo la Slice 10, su richiesta esplicita dell'utente, l'interfaccia web locale (spec §59) è stata ampliata da semplici conteggi a un pannello completo (vicini con trust level, servizi con provider/capability, contenuti sfogliabili, stato del relay) — stesso workflow a doppio check, documentato come voce #21 in `docs/security.md` (non una nuova slice numerata, ma segue lo stesso schema).
+
 ## Workflow da riusare per lavoro futuro (slice, feature, o passate di qualità)
 
 Il workflow concordato con l'utente, usato per ognuna delle 10 slice sopra e da riapplicare identico a qualunque lavoro sostanziale futuro in questo repository:
@@ -86,7 +88,7 @@ Tutto il codice reale vive sotto `node/src/`. `gateway/`, `mobile/`, `protocol/`
 - `peer-directory.ts` — propagazione delle chiavi di cifratura tra peer.
 - `bounded-map.ts` — `BoundedFifoMap<K,V>`, struttura dati limitata condivisa (con eviction opzionale pesata su uno score, es. la fiducia) usata da quasi tutte le strutture sopra che vengono alimentate dalla rete.
 - `priority-queue.ts` — coda a bucket per priorità (6 livelli), usata da `transports/tcp.ts` per lo scheduling reale degli invii.
-- `web-ui.ts` — interfaccia web locale di stato/ricerca (spec §59), server `node:http` minimale.
+- `web-ui.ts` — interfaccia web locale di stato/ricerca (spec §59), server `node:http` minimale. Endpoint di sola lettura: `/api/status` (include `relaying`, da `NomadNode.canRelayNow()`), `/api/peers`, `/api/services`, `/api/content` (tutto il conosciuto), `/api/search?q=...` (filtrato).
 - `loopback-http-server.ts` — bootstrap HTTP condiviso (`start()`/`stop()`/`port` getter, più `sendJson()`) estratto da `web-ui.ts` e `gateway/nomad/fake-nomad-server.ts` (Slice 9), poi riusato anche da `gateway/nomad/fake-ollama-server.ts` (Slice 10) quando `sendJson()` è comparsa una terza volta.
 - `node.ts` — `NomadNode`, la classe che orchestra tutto il resto; qui vivono i pacchetti-handler (`handleContentQuery`, `handleServiceRequest`, ecc.) e i metodi pubblici (`getContent`, `callService`, `publishContent`, ...).
 - `cli.ts` — entry point eseguibile (`npm run dev -w node --`).
