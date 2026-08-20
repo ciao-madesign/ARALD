@@ -29,8 +29,8 @@ Dopo il completamento delle milestone sopra è stato eseguito un **audit tecnico
 | 5 | Pacchetto `CONTENT_NOT_FOUND` + scadenza dei contenuti | ✅ Fatto |
 | 6 | Protocollo di service discovery (`SERVICE_*`) | ✅ Fatto |
 | 7 | Interfaccia web locale di stato/ricerca (spec §59) | ✅ Fatto |
-| 8 | Transport BLE simulato | ⏳ Prossimo |
-| 9 | Gateway NOMAD mockato (contro un fake server locale) | ⏳ Da fare |
+| 8 | Transport BLE simulato | ✅ Fatto |
+| 9 | Gateway NOMAD mockato (contro un fake server locale) | ⏳ Prossimo |
 
 Ogni slice completata è documentata in dettaglio in `docs/security.md` (numerate progressivamente, es. bug #11-17) e spesso anche in `docs/protocol.md`. **Leggi quelle voci prima di toccare il codice corrispondente** — spiegano non solo cosa è stato fatto ma perché, inclusi i bug trovati dalla revisione e corretti prima di considerare ogni slice conclusa.
 

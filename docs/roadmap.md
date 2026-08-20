@@ -16,7 +16,7 @@ Stato al 14 agosto 2026, versione specifica 0.1.
 | 5 | Content discovery | ✅ Fatto | `node/src/content.ts`, `tests/integration/content-retrieval.test.ts` |
 | 6 | File transfer (chunking, verifica hash) | ✅ Fatto | incluso nel content protocol, chunking a scopo dimostrativo |
 | 7 | Cache | ✅ Fatto | `tests/integration/cache-replication.test.ts` |
-| 8 | BLE | ⏳ Non iniziato | richiede `node/src/transports/ble.ts` dietro l'interfaccia `Transport` esistente |
+| 8 | BLE | ✅ Simulato (seguito audit, Slice 8) — hardware reale ⏳ bloccato | `node/src/transports/ble.ts`, dietro l'interfaccia `Transport` esistente, nessun radio reale |
 | 9 | Smartphone (app mobile minimale) | ⏳ Non iniziato | `mobile/android` prioritario su `mobile/ios` (§47) |
 | 10 | NOMAD integration | ⏳ Non iniziato | richiede Project NOMAD in esecuzione (Docker, Debian-based) |
 | 11 | Gateway (`gateway/nomad/`) | ⏳ Non iniziato | traduzione richieste Nomad-Net → API NOMAD |
@@ -85,7 +85,7 @@ Con le Milestone 12, 13, 15, 16 e 20 completate, è stato eseguito un audit tecn
 | 5 | Pacchetto `CONTENT_NOT_FOUND` + scadenza dei contenuti | ✅ Fatto |
 | 6 | Protocollo di service discovery (`SERVICE_*`) | ✅ Fatto |
 | 7 | Interfaccia web locale di stato/ricerca (spec §59) | ✅ Fatto |
-| 8 | Transport BLE **simulato** (Milestone 8 senza hardware reale) | ⏳ In corso |
+| 8 | Transport BLE **simulato** (Milestone 8 senza hardware reale) | ✅ Fatto |
 | 9 | Gateway NOMAD mockato contro un fake server locale (Milestone 11 senza Docker) | ⏳ Da fare |
 
 Le Slice 8 e 9 dimostrano che una parte di Milestone 8 e 11 *è* realizzabile in puro software: un transport BLE simulato (stessa interfaccia `Transport`, vincoli di MTU/frammentazione realistici, nessun radio reale) e un adapter gateway contro un server HTTP fittizio locale invece di Project NOMAD vero. Non sostituiscono la validazione con hardware/Docker reali (restano comunque necessarie prima di un deployment vero), ma permettono di validare la logica applicativa adesso.

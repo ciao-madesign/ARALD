@@ -25,9 +25,23 @@ Definita in `node/src/transport.ts`. Il routing engine (`node/src/routing.ts`) e
 |---|---|---|
 | TCP | Implementato (Milestone 1-5) | `node/src/transports/tcp.ts` |
 | WebSocket | Non implementato — alternativa equivalente a TCP per il prototipo, non necessaria avendo già TCP | — |
-| BLE | Non implementato — Milestone 8 | `node/src/transports/ble.ts` (da creare) |
+| BLE (simulato) | Implementato — Milestone 8, seguito audit, Slice 8 (vedi sotto) | `node/src/transports/ble.ts` |
+| BLE (hardware reale) | Non implementato — bloccato su hardware fisico | `node/src/transports/ble.ts` (stesso file, un adapter reale andrebbe dietro la stessa interfaccia `Transport`) |
 | Wi-Fi (LAN / Direct) | Non implementato — Milestone 14 | `node/src/transports/wifi.ts` (da creare) |
 | LoRa | Fuori scope MVP (§45) — riferimento di ricerca futuro, non dipendenza software | — |
+
+## Transport BLE simulato (`node/src/transports/ble.ts`)
+
+Nessun radio reale, nessuna libreria `noble`/`bleno`: `BleSimulatedTransport` implementa la stessa interfaccia `Transport` di sopra usando solo oggetti JS e `setTimeout` in-process, con le proprietà reali di BLE che contano per validare la logica applicativa:
+
+- **MTU piccola con frammentazione a livello di transport**: 20 byte di default (l'MTU ATT non negoziata — il caso peggiore reale, non un valore comodo scelto per far funzionare i test), ben sotto `CHUNK_SIZE` (4096 byte, `content.ts`) — un singolo `CONTENT_CHUNK` richiede centinaia di frammenti. Ogni pacchetto viene frammentato in `transmit()` e riassemblato da una `FragmentReassembler` per connessione (stesso schema di bounding di `ChunkAssembler`, riusando `BoundedFifoMap`).
+- **Limite di connessioni simultanee** (`maxConnections`, default 7): applicato solo ai peer effettivamente identificati — un tentativo di handshake in corso non conta contro il limite, altrimenti un legittimo *reconnect* da un peer già connesso (courier, spec §32) verrebbe rifiutato solo perché la sua vecchia connessione non era ancora stata chiusa. Vedi `docs/security.md` per il bug reale trovato dalla revisione su questo punto.
+- **Latenza per-frammento simulata** (`latencyMs`, default 5ms): la consegna è genuinamente asincrona rispetto a `send()`, non nello stesso tick.
+- **`BleMedium`**: un registro condiviso in-process che simula la "prossimità fisica" — un `BleMedium` dedicato per due gruppi di transport simula due mesh BLE fuori portata l'una dall'altra (stesso concetto del partition sync su TCP).
+
+Semplificazioni deliberate rispetto a BLE reale (fuori scope per ciò che questo transport deve dimostrare): nessuna asimmetria di ruolo central/peripheral (`connect()`/`start()` si comportano simmetricamente, come `TcpTransport`); nessuno scheduling per priorità lato invio (`PriorityQueue`, già validato a livello TCP nella Slice 4).
+
+Handshake identico a `TcpTransport`: entrambi i lati inviano un `HELLO` (anch'esso frammentato) il cui `source` rivela il proprio node id — con una differenza voluta: il lato che *accetta* una connessione ritarda l'invio del proprio `HELLO` finché non ha effettivamente deciso di accettarla (dopo aver verificato il limite di connessioni), altrimenti chi si connette potrebbe identificare l'altro lato e risolvere `connect()` con successo anche in un caso in cui l'altro lato sta per rifiutare la connessione — vedi `docs/security.md` per il dettaglio.
 
 ## Perché si parte da TCP e non da BLE (§16)
 
