@@ -308,6 +308,47 @@ describe("WebUiServer POST /api/call", () => {
     expect(res.status).toBe(404);
   });
 
+  it("carries no CORS header at all when allowServiceCalls is off, unchanged from before this feature existed", async () => {
+    node = new NomadNode({ displayName: "N" });
+    webUi = new WebUiServer(node, { port: 0 });
+    await webUi.start();
+
+    const res = await fetch(`${baseUrl()}/api/status`);
+    expect(res.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it("adds Access-Control-Allow-Origin to every response once allowServiceCalls is on, so a mobile client on a different origin can read it", async () => {
+    node = new NomadNode({ displayName: "N" });
+    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, pairingToken: TOKEN });
+    await webUi.start();
+
+    const status = await fetch(`${baseUrl()}/api/status`);
+    expect(status.headers.get("access-control-allow-origin")).toBe("*");
+    const notFound = await fetch(`${baseUrl()}/nope`);
+    expect(notFound.status).toBe(404);
+    expect(notFound.headers.get("access-control-allow-origin")).toBe("*");
+  });
+
+  it("answers an OPTIONS preflight for the CORS-sensitive POST /api/call once allowServiceCalls is on", async () => {
+    node = new NomadNode({ displayName: "N" });
+    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, pairingToken: TOKEN });
+    await webUi.start();
+
+    const res = await fetch(`${baseUrl()}/api/call`, { method: "OPTIONS" });
+    expect(res.status).toBe(204);
+    expect(res.headers.get("access-control-allow-origin")).toBe("*");
+    expect(res.headers.get("access-control-allow-headers")).toMatch(/authorization/i);
+  });
+
+  it("an OPTIONS request 404s when allowServiceCalls is off", async () => {
+    node = new NomadNode({ displayName: "N" });
+    webUi = new WebUiServer(node, { port: 0 });
+    await webUi.start();
+
+    const res = await fetch(`${baseUrl()}/api/call`, { method: "OPTIONS" });
+    expect(res.status).toBe(404);
+  });
+
   it("invokes a registered service and returns its result, given a valid pairing token", async () => {
     node = new NomadNode({ displayName: "N" });
     node.registerService("service://echo", "1.0.0", [], (payload) => ({ echoed: payload }));

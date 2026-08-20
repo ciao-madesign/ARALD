@@ -503,6 +503,34 @@ export class WebUiServer {
   }
 
   private handleRequest(req: IncomingMessage, res: ServerResponse): void {
+    // A mobile client (docs/next-steps.md Opzione H) is a separate origin from this server (a
+    // Capacitor WebView, not a page this server itself served), so its fetch()es are cross-origin
+    // and blocked by the browser/WebView's own CORS enforcement unless this response explicitly
+    // allows it — tied to allowServiceCalls specifically, the same flag that already opts a
+    // deployment into "an external client is expected to talk to this", rather than a separate
+    // toggle. Applied uniformly up front (every response, including 404s) instead of sprinkled
+    // through each branch below.
+    if (this.allowServiceCalls) {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+    }
+
+    if (req.method === "OPTIONS") {
+      // A cross-origin POST with a custom `Authorization` header and a JSON Content-Type is a
+      // "non-simple" request, so a real browser/WebView sends this preflight before the actual
+      // POST /api/call — only relevant (and only answered) when that endpoint is actually reachable.
+      if (this.allowServiceCalls) {
+        res.writeHead(204, {
+          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization",
+          "Access-Control-Max-Age": "600",
+        });
+      } else {
+        res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      }
+      res.end();
+      return;
+    }
+
     if (req.method === "POST") {
       const url = new URL(req.url ?? "/", "http://localhost");
       if (url.pathname === "/api/call") {
