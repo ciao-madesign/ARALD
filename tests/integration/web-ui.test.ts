@@ -289,9 +289,9 @@ describe("WebUiServer POST /api/call", () => {
     return `http://127.0.0.1:${webUi!.port}`;
   }
 
-  it("constructing with allowServiceCalls but no pairingToken throws immediately", () => {
+  it("constructing with allowServiceCalls but no networkPassword throws immediately", () => {
     node = new NomadNode({ displayName: "N" });
-    expect(() => new WebUiServer(node!, { port: 0, allowServiceCalls: true })).toThrow(/pairingToken/);
+    expect(() => new WebUiServer(node!, { port: 0, allowServiceCalls: true })).toThrow(/networkPassword/);
     node = undefined; // never started, nothing for afterEach to stop
   });
 
@@ -319,7 +319,7 @@ describe("WebUiServer POST /api/call", () => {
 
   it("adds Access-Control-Allow-Origin to every response once allowServiceCalls is on, so a mobile client on a different origin can read it", async () => {
     node = new NomadNode({ displayName: "N" });
-    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, pairingToken: TOKEN });
+    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, networkPassword: TOKEN });
     await webUi.start();
 
     const status = await fetch(`${baseUrl()}/api/status`);
@@ -331,7 +331,7 @@ describe("WebUiServer POST /api/call", () => {
 
   it("answers an OPTIONS preflight for the CORS-sensitive POST /api/call once allowServiceCalls is on", async () => {
     node = new NomadNode({ displayName: "N" });
-    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, pairingToken: TOKEN });
+    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, networkPassword: TOKEN });
     await webUi.start();
 
     const res = await fetch(`${baseUrl()}/api/call`, { method: "OPTIONS" });
@@ -352,7 +352,7 @@ describe("WebUiServer POST /api/call", () => {
   it("invokes a registered service and returns its result, given a valid pairing token", async () => {
     node = new NomadNode({ displayName: "N" });
     node.registerService("service://echo", "1.0.0", [], (payload) => ({ echoed: payload }));
-    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, pairingToken: TOKEN });
+    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, networkPassword: TOKEN });
     await webUi.start();
 
     const res = await fetch(`${baseUrl()}/api/call`, {
@@ -371,7 +371,7 @@ describe("WebUiServer POST /api/call", () => {
       called = true;
       return {};
     });
-    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, pairingToken: TOKEN });
+    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, networkPassword: TOKEN });
     await webUi.start();
 
     const res = await fetch(`${baseUrl()}/api/call`, {
@@ -386,7 +386,7 @@ describe("WebUiServer POST /api/call", () => {
   it("rejects a wrong pairing token with 401", async () => {
     node = new NomadNode({ displayName: "N" });
     node.registerService("service://echo", "1.0.0", [], () => ({}));
-    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, pairingToken: TOKEN });
+    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, networkPassword: TOKEN });
     await webUi.start();
 
     const res = await fetch(`${baseUrl()}/api/call`, {
@@ -399,7 +399,7 @@ describe("WebUiServer POST /api/call", () => {
 
   it("rejects a non-string serviceId with 400 instead of forwarding it to callService()", async () => {
     node = new NomadNode({ displayName: "N" });
-    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, pairingToken: TOKEN });
+    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, networkPassword: TOKEN });
     await webUi.start();
 
     const res = await fetch(`${baseUrl()}/api/call`, {
@@ -416,7 +416,7 @@ describe("WebUiServer POST /api/call", () => {
     // mesh-wide traffic, unlike every other endpoint on this class. Restricted to services already
     // known+available, the same set /api/services already shows the caller.
     node = new NomadNode({ displayName: "N" });
-    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, pairingToken: TOKEN });
+    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, networkPassword: TOKEN });
     await webUi.start();
 
     const res = await fetch(`${baseUrl()}/api/call`, {
@@ -430,7 +430,7 @@ describe("WebUiServer POST /api/call", () => {
   it("rejects a serviceId that's known but marked unavailable, the same bar /api/status's own services count uses", async () => {
     node = new NomadNode({ displayName: "N" });
     node.registerService("service://ai", "1.0.0", ["chat"], () => ({}), { availability: false });
-    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, pairingToken: TOKEN });
+    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, networkPassword: TOKEN });
     await webUi.start();
 
     const res = await fetch(`${baseUrl()}/api/call`, {
@@ -446,7 +446,7 @@ describe("WebUiServer POST /api/call", () => {
     node.registerService("service://broken", "1.0.0", [], () => {
       throw new Error("modello non disponibile");
     });
-    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, pairingToken: TOKEN });
+    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, networkPassword: TOKEN });
     await webUi.start();
 
     const res = await fetch(`${baseUrl()}/api/call`, {
@@ -460,7 +460,7 @@ describe("WebUiServer POST /api/call", () => {
 
   it("responds 400 to a malformed JSON body instead of crashing", async () => {
     node = new NomadNode({ displayName: "N" });
-    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, pairingToken: TOKEN });
+    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, networkPassword: TOKEN });
     await webUi.start();
 
     const res = await fetch(`${baseUrl()}/api/call`, {
@@ -493,7 +493,7 @@ describe("WebUiServer POST /api/call", () => {
     provider.registerService("service://slow", "1.0.0", [], () => new Promise(() => {})); // never resolves
     await waitFor(() => node!.services.providersFor("service://slow").length > 0);
 
-    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, pairingToken: TOKEN });
+    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, networkPassword: TOKEN });
     await webUi.start();
 
     const startedAt = Date.now();
@@ -513,5 +513,70 @@ describe("WebUiServer POST /api/call", () => {
     expect(Date.now() - startedAt).toBeLessThan(3000);
 
     await provider.stop();
+  });
+});
+
+describe("WebUiServer GET /api/pairing", () => {
+  let node: NomadNode | undefined;
+  let webUi: WebUiServer | undefined;
+  const PASSWORD = "K7XM-2QRT";
+
+  afterEach(async () => {
+    if (webUi) await webUi.stop();
+    if (node) await node.stop();
+    node = undefined;
+    webUi = undefined;
+  });
+
+  function baseUrl(): string {
+    return `http://127.0.0.1:${webUi!.port}`;
+  }
+
+  it("404s when allowServiceCalls is off, same posture as POST /api/call", async () => {
+    node = new NomadNode({ displayName: "N" });
+    webUi = new WebUiServer(node, { port: 0 });
+    await webUi.start();
+
+    const res = await fetch(`${baseUrl()}/api/pairing`);
+    expect(res.status).toBe(404);
+  });
+
+  it("returns the network name and password with no Authorization header at all, unauthenticated by design", async () => {
+    node = new NomadNode({ displayName: "N" });
+    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, networkPassword: PASSWORD, networkName: "CasaBase" });
+    await webUi.start();
+
+    const res = await fetch(`${baseUrl()}/api/pairing`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ networkName: "CasaBase", networkPassword: PASSWORD });
+  });
+
+  it("defaults networkName to the node's displayName when not given explicitly", async () => {
+    node = new NomadNode({ displayName: "GatewayA" });
+    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, networkPassword: PASSWORD });
+    await webUi.start();
+
+    const res = await fetch(`${baseUrl()}/api/pairing`);
+    expect((await res.json()).networkName).toBe("GatewayA");
+  });
+
+  it("still serves pairing info when networkName is an empty string, rather than treating a falsy-but-defined name as pairing being disabled", async () => {
+    node = new NomadNode({ displayName: "" });
+    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, networkPassword: PASSWORD });
+    await webUi.start();
+
+    const res = await fetch(`${baseUrl()}/api/pairing`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ networkName: "", networkPassword: PASSWORD });
+
+    // POST /api/call's own guard doesn't touch networkName at all — an empty display name must not
+    // make the two endpoints disagree about whether pairing is enabled.
+    node.registerService("service://echo", "1.0.0", [], () => ({}));
+    const callRes = await fetch(`${baseUrl()}/api/call`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${PASSWORD}` },
+      body: JSON.stringify({ serviceId: "service://echo", payload: {} }),
+    });
+    expect(callRes.status).toBe(200);
   });
 });

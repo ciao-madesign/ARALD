@@ -54,14 +54,19 @@ input, textarea { font: inherit; }
 .setup-card code { background: var(--off-soft); padding: 0.1em 0.35em; border-radius: 0.25em; }
 #setup-form { display: flex; flex-direction: column; gap: 0.4em; }
 #setup-form label { font-size: 0.82em; color: var(--muted); margin-top: 0.6em; }
+#setup-form .hint { font-size: 0.78em; color: var(--muted); margin: 0.3em 0 0; }
 #setup-form input {
+  width: 100%;
   padding: 0.75em 0.8em;
   border-radius: 0.6em;
   border: 1px solid var(--border);
   background: var(--card);
   color: var(--ink);
 }
-#setup-form button {
+#setup-form .password-row { display: flex; align-items: center; gap: 0.6em; }
+#setup-form .password-row input { flex: 1; min-width: 0; }
+#setup-form .password-row .link-button { flex: none; padding: 0.3em 0.2em; }
+#setup-form button[type="submit"] {
   margin-top: 1.4em;
   padding: 0.85em;
   border-radius: 0.6em;
@@ -70,7 +75,8 @@ input, textarea { font: inherit; }
   color: white;
   font-weight: 600;
 }
-#setup-form button:active { opacity: 0.85; }
+#setup-form button[type="submit"]:active { opacity: 0.85; }
+#setup-form #change-address { margin-top: 0.9em; align-self: center; }
 
 /* ---------- dashboard ---------- */
 

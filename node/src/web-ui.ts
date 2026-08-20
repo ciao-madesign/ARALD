@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { timingSafeEqual } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { BodyTooLargeError, LoopbackHttpServer, readRequestBody, sendJson } from "./loopback-http-server.js";
 import type { NomadNode } from "./node.js";
 import type { ContentMetadata } from "./content.js";
@@ -33,24 +33,43 @@ export interface WebUiOptions {
    * write/action endpoint this otherwise strictly read-only interface
    * exposes, built for the mobile client (`docs/next-steps.md` Opzione H)
    * to invoke a service like `service://ai` from a phone. Off by default;
-   * when true, `pairingToken` is required (the constructor throws
+   * when true, `networkPassword` is required (the constructor throws
    * otherwise) — there is no scenario where this should be enabled without
-   * one, since it lets any caller who has the token invoke any registered
-   * service with any payload, a materially bigger risk than the read-only
-   * endpoints below it.
+   * one, since it lets any caller who has the password invoke any
+   * registered service with any payload, a materially bigger risk than the
+   * read-only endpoints below it.
    */
   allowServiceCalls?: boolean;
   /**
-   * Required when `allowServiceCalls` is true. Every `POST /api/call`
-   * request must carry this exact value as `Authorization: Bearer
-   * <token>` (compared in constant time via `node:crypto.timingSafeEqual`
-   * to avoid a timing side-channel); a mismatched or missing token gets
-   * `401`. Generate one with `crypto.randomBytes(16).toString("hex")` (see
-   * `cli.ts`'s `--allow-service-calls`) and hand it to the mobile app once,
-   * out of band — this is a pairing secret, not something this class ever
-   * serves back over HTTP itself.
+   * A human-friendly label for this node's mobile pairing "network" — the
+   * same role a Wi-Fi router's SSID plays, so a person setting up the
+   * mobile app (`docs/next-steps.md` Opzione H) thinks in terms of "join
+   * this network" rather than "enter this IP address". Purely cosmetic,
+   * never used to route or authenticate anything — served back by
+   * `/api/status` and `/api/pairing` (both only when `allowServiceCalls` is
+   * true) so the mobile app can show "Connesso a: <networkName>" instead
+   * of the raw address once paired. Defaults to `node.displayName` if
+   * `allowServiceCalls` is true and this isn't given.
    */
-  pairingToken?: string;
+  networkName?: string;
+  /**
+   * Required when `allowServiceCalls` is true — the "Wi-Fi password"
+   * equivalent for pairing a mobile client. Every `POST /api/call` request
+   * must carry this exact value as `Authorization: Bearer <password>`
+   * (compared in constant time via `node:crypto.timingSafeEqual` to avoid
+   * a timing side-channel); a mismatched or missing one gets `401`.
+   * `generateNetworkPassword()` below produces one in a short, typeable
+   * format (e.g. `K7XM-2QRT`) — deliberately not a long hex string, the
+   * same reasoning a Wi-Fi router's default WPA key is short and
+   * human-typeable rather than cryptographically maximal. Also served back
+   * by `/api/pairing` (unauthenticated — reading the password can't
+   * itself require the password) so a human standing at this node's own
+   * screen can read it off and relay it verbally, the same way a Wi-Fi
+   * password is often shared out loud or off a router sticker rather than
+   * only ever read from a terminal — see `docs/security.md` for what that
+   * implies about who can read it.
+   */
+  networkPassword?: string;
 }
 
 interface StatusPayload {
@@ -65,6 +84,13 @@ interface StatusPayload {
   cachedContentPercent: number;
   /** `NomadNode.canRelayNow()` — whether this node is currently willing to forward other peers' traffic (spec §51/§58), not whether it answers requests addressed to itself. */
   relaying: boolean;
+  /** This node's mobile-pairing "network name" (`WebUiOptions.networkName`) — present only when `allowServiceCalls` is on, since that's the only time the concept of a pairing network exists at all. */
+  networkName?: string;
+}
+
+interface PairingInfo {
+  networkName: string;
+  networkPassword: string;
 }
 
 interface PeerEntry {
@@ -103,7 +129,7 @@ interface ContentEntry {
   availableThrough?: string;
 }
 
-function buildStatus(node: NomadNode, internetStatus: () => "ONLINE" | "OFFLINE"): StatusPayload {
+function buildStatus(node: NomadNode, internetStatus: () => "ONLINE" | "OFFLINE", networkName: string | undefined): StatusPayload {
   // Uses listKnownContent()'s own dedup-by-contentId (contentStore.size + remoteCatalog.size would
   // double-count anything present in both — e.g. learned via catalog sync and later actually
   // fetched, where handleContentComplete() stores the bytes but never prunes the now-redundant
@@ -125,6 +151,7 @@ function buildStatus(node: NomadNode, internetStatus: () => "ONLINE" | "OFFLINE"
     services: node.listKnownServices().filter((announcement) => announcement.availability).length,
     cachedContentPercent,
     relaying: node.canRelayNow(),
+    networkName,
   };
 }
 
@@ -246,6 +273,11 @@ const PAGE_HTML = `<!doctype html>
   .empty { color: var(--muted); font-style: italic; padding: 0.4em 0; }
   #search-input { width: 100%; font: inherit; padding: 0.55em 0.7em; border-radius: 0.5em; border: 1px solid var(--border); background: var(--bg); color: var(--ink); margin-bottom: 0.8em; }
   #content-panel { margin-bottom: 1em; }
+  #pairing-panel { margin-bottom: 1em; border-color: var(--accent); }
+  #pairing-panel .pairing-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11em, 1fr)); gap: 1em; }
+  #pairing-panel .k { font-size: 0.78em; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.25em; }
+  #pairing-panel .v { font-size: 1.35em; font-weight: 700; font-family: ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.02em; }
+  #pairing-panel p { margin: 0.8em 0 0; font-size: 0.85em; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -258,6 +290,21 @@ const PAGE_HTML = `<!doctype html>
 </header>
 
 <div id="stats" class="stats"></div>
+
+<section class="panel" id="pairing-panel" hidden>
+  <h2>Collega un telefono</h2>
+  <div class="pairing-grid">
+    <div>
+      <div class="k">Nome rete</div>
+      <div class="v" id="pairing-name"></div>
+    </div>
+    <div>
+      <div class="k">Password</div>
+      <div class="v mono" id="pairing-password"></div>
+    </div>
+  </div>
+  <p>Apri l'app Nomad-Net sul telefono, sulla stessa rete Wi-Fi, e inserisci questi dati.</p>
+</section>
 
 <div class="panels">
   <section class="panel">
@@ -448,7 +495,19 @@ function refreshAll() {
   refreshContent();
 }
 
+// Fetched once, not on the 5s poll — the network name/password never change for the lifetime of
+// this server process (cli.ts generates a fresh one only on restart), so there's nothing to refresh.
+async function loadPairingInfo() {
+  var res = await fetch("/api/pairing");
+  if (!res.ok) return; // pairing not enabled on this node — panel stays hidden
+  var info = await res.json();
+  document.getElementById("pairing-name").textContent = info.networkName;
+  document.getElementById("pairing-password").textContent = info.networkPassword;
+  document.getElementById("pairing-panel").hidden = false;
+}
+
 refreshAll();
+loadPairingInfo();
 setInterval(refreshAll, 5000);
 </script>
 </body>
@@ -465,24 +524,29 @@ setInterval(refreshAll, 5000);
  * `POST /api/call` (`handleCall()` below), added for the mobile client
  * (`docs/next-steps.md` Opzione H) so a phone can invoke a service like
  * `service://ai`: off unless `allowServiceCalls` is explicitly set, and
- * gated by its own pairing token even when it is, regardless of whether
- * `host` is loopback or a LAN address — see `docs/security.md`.
+ * gated by its own network password even when it is, regardless of
+ * whether `host` is loopback or a LAN address — see `docs/security.md`.
+ * `GET /api/pairing` (`handlePairing()` below) shows that same network
+ * name/password back for a human to read, deliberately without requiring
+ * the password itself.
  */
 export class WebUiServer {
   private readonly node: NomadNode;
   private readonly internetStatus: () => "ONLINE" | "OFFLINE";
   private readonly allowServiceCalls: boolean;
-  private readonly pairingToken: string | undefined;
+  private readonly networkName: string | undefined;
+  private readonly networkPassword: string | undefined;
   private readonly httpServer: LoopbackHttpServer;
 
   constructor(node: NomadNode, options: WebUiOptions = {}) {
     this.node = node;
     this.internetStatus = options.internetStatus ?? (() => "OFFLINE");
     this.allowServiceCalls = options.allowServiceCalls ?? false;
-    if (this.allowServiceCalls && !options.pairingToken) {
-      throw new Error("WebUiServer: allowServiceCalls requires a pairingToken");
+    if (this.allowServiceCalls && !options.networkPassword) {
+      throw new Error("WebUiServer: allowServiceCalls requires a networkPassword");
     }
-    this.pairingToken = options.pairingToken;
+    this.networkName = this.allowServiceCalls ? (options.networkName ?? node.displayName) : undefined;
+    this.networkPassword = options.networkPassword;
     this.httpServer = new LoopbackHttpServer((req, res) => this.handleRequest(req, res), {
       port: options.port,
       host: options.host,
@@ -559,7 +623,12 @@ export class WebUiServer {
     }
 
     if (url.pathname === "/api/status") {
-      sendJson(res, 200, buildStatus(this.node, this.internetStatus));
+      sendJson(res, 200, buildStatus(this.node, this.internetStatus, this.networkName));
+      return;
+    }
+
+    if (url.pathname === "/api/pairing") {
+      this.handlePairing(res);
       return;
     }
 
@@ -588,16 +657,46 @@ export class WebUiServer {
   }
 
   /**
+   * `GET /api/pairing` — the "network name" and "network password" a human
+   * standing at this node's own screen can read off and relay to whoever
+   * is setting up the mobile app, the same way a Wi-Fi password is often
+   * shared out loud or read off a router sticker rather than only ever
+   * available to whoever has terminal access to the machine (`cli.ts`
+   * still prints both to the console too). Deliberately unauthenticated —
+   * requiring the password to read the password would be circular — so
+   * this is exactly as exposed as every other read-only endpoint on this
+   * class: anyone who can reach this LAN-bound server can read it, not
+   * just the intended human. See `docs/security.md` for that tradeoff
+   * spelled out. 404s when pairing isn't enabled, same posture as
+   * `handleCall()` below.
+   */
+  private handlePairing(res: ServerResponse): void {
+    // Checks `=== undefined` rather than falsiness for networkName specifically — the constructor
+    // only ever leaves it undefined when allowServiceCalls is false (see constructor), so an
+    // operator-chosen empty-string display name would otherwise be misread as "pairing not
+    // configured" and make this 404 even though handleCall() (whose guard doesn't touch
+    // networkName at all) is fully working, an inconsistency between the two endpoints' notion of
+    // "is pairing enabled".
+    if (!this.allowServiceCalls || this.networkName === undefined || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    const info: PairingInfo = { networkName: this.networkName, networkPassword: this.networkPassword };
+    sendJson(res, 200, info);
+  }
+
+  /**
    * `POST /api/call` — invokes `NomadNode.callService()` on behalf of the
    * caller (spec §36-37 `CALL service://...`). Not reachable at all unless
    * `allowServiceCalls` was set at construction; when it wasn't, this
    * returns a plain `404` rather than a `403`/`401`, so the endpoint's mere
    * existence isn't revealed to a caller who doesn't already know the
-   * pairing token — same "don't confirm what you're guarding" posture as
-   * refusing to distinguish "wrong token" from "no token" below.
+   * network password — same "don't confirm what you're guarding" posture
+   * as refusing to distinguish "wrong password" from "no password" below.
    */
   private async handleCall(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!this.allowServiceCalls || !this.pairingToken) {
+    if (!this.allowServiceCalls || !this.networkPassword) {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("Not Found");
       return;
@@ -605,8 +704,8 @@ export class WebUiServer {
 
     const authHeader = req.headers.authorization;
     const provided = typeof authHeader === "string" && authHeader.startsWith("Bearer ") ? authHeader.slice(7) : undefined;
-    if (!provided || !tokensMatch(provided, this.pairingToken)) {
-      sendJson(res, 401, { error: "missing or invalid pairing token" });
+    if (!provided || !timingSafeStringEqual(provided, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
       return;
     }
 
@@ -707,10 +806,37 @@ export function resolveCallTimeoutMs(requestedTimeoutMs: unknown): number {
   return Math.min(requested, MAX_CALL_TIMEOUT_MS);
 }
 
-/** Constant-time pairing-token comparison — a naive `===` would leak how many leading bytes matched through response timing. Different lengths are rejected before the timing-safe compare, since `timingSafeEqual` requires equal-length buffers and leaking the token's length is an accepted, far smaller risk than leaking its bytes. */
-function tokensMatch(provided: string, expected: string): boolean {
+/** Constant-time string comparison for the network password — a naive `===` would leak how many leading bytes matched through response timing. Different lengths are rejected before the timing-safe compare, since `timingSafeEqual` requires equal-length buffers and leaking the password's length is an accepted, far smaller risk than leaking its bytes. */
+function timingSafeStringEqual(provided: string, expected: string): boolean {
   const a = Buffer.from(provided, "utf8");
   const b = Buffer.from(expected, "utf8");
   if (a.length !== b.length) return false;
   return timingSafeEqual(a, b);
+}
+
+// Crockford's Base32 alphabet: digits 0-9 plus the 22 letters left after excluding I, L, O, U —
+// not 0/O/1/I/L as a naive reading might suggest. Excluding I/L/O (rather than also dropping 0/1)
+// is what makes this work out to exactly 32 symbols (36 alphanumerics minus 4), which is what makes
+// `randomBytes()[i] % NETWORK_PASSWORD_ALPHABET.length` free of modulo bias (256 divides evenly by
+// 32); a 0/O/1/I/L-style exclusion removes 5 characters, leaving 31, which does NOT divide 256
+// evenly and re-introduces exactly the bias this alphabet exists to avoid. The digits 0 and 1 stay
+// in — with O and I gone, neither is visually confusable with anything else in the set anymore.
+const NETWORK_PASSWORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+/**
+ * Generates a short, typeable network password (e.g. `K7XM-2QRT`) — the
+ * same spirit as a Wi-Fi router's default WPA key printed on its sticker:
+ * easy to read off a screen and type on a phone once, not a maximally
+ * strong secret. 8 symbols from a 32-symbol alphabet (`NETWORK_PASSWORD_ALPHABET`,
+ * chosen so 256 divides evenly into 32 — no modulo bias from
+ * `randomBytes()`) is exactly 40 bits of entropy, comfortably enough for a
+ * LAN-local pairing secret that a network operator regenerates per node
+ * restart (`cli.ts`), not for defending against a sustained remote
+ * attacker with unlimited guesses.
+ */
+export function generateNetworkPassword(): string {
+  const bytes = randomBytes(8);
+  let chars = "";
+  for (let i = 0; i < bytes.length; i++) chars += NETWORK_PASSWORD_ALPHABET[bytes[i] % NETWORK_PASSWORD_ALPHABET.length];
+  return `${chars.slice(0, 4)}-${chars.slice(4, 8)}`;
 }

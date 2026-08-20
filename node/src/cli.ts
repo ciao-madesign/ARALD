@@ -1,7 +1,6 @@
-import { randomBytes } from "node:crypto";
 import { NomadNode } from "./node.js";
 import { TcpTransport } from "./transports/tcp.js";
-import { WebUiServer } from "./web-ui.js";
+import { WebUiServer, generateNetworkPassword } from "./web-ui.js";
 
 function parseArgs(argv: string[]): Record<string, string> {
   const args: Record<string, string> = {};
@@ -56,21 +55,25 @@ async function main(): Promise<void> {
   let webUi: WebUiServer | undefined;
   if (args["web-port"]) {
     const allowServiceCalls = args["allow-service-calls"] === "true";
-    // Generated fresh every run, printed once below, never persisted — the mobile client (Opzione
-    // H, docs/next-steps.md) is expected to be paired by typing/scanning this each time the node
-    // restarts, the same "out of band, by the operator" trust model as any other pairing secret.
-    const pairingToken = allowServiceCalls ? randomBytes(16).toString("hex") : undefined;
+    // Generated fresh every run, printed/shown once, never persisted — the mobile client (Opzione H,
+    // docs/next-steps.md) is expected to be paired by re-entering this each time the node restarts,
+    // the same "out of band, by the operator" trust model as a Wi-Fi router's own password.
+    const networkName = allowServiceCalls ? (args["network-name"] ?? displayName) : undefined;
+    const networkPassword = allowServiceCalls ? (args["network-password"] ?? generateNetworkPassword()) : undefined;
     webUi = new WebUiServer(node, {
       port: Number(args["web-port"]),
       host: args["web-host"],
       allowServiceCalls,
-      pairingToken,
+      networkName,
+      networkPassword,
     });
     await webUi.start();
     const webHost = args["web-host"] ?? "127.0.0.1";
     console.log(`Web UI: http://${webHost}:${webUi.port}`);
     if (allowServiceCalls) {
-      console.log(`Mobile pairing token (POST /api/call, Authorization: Bearer <token>): ${pairingToken}`);
+      console.log(`Mobile network name: ${networkName}`);
+      console.log(`Mobile network password: ${networkPassword}`);
+      console.log(`(anche visibili sulla pagina web sopra, sezione "Collega un telefono")`);
       if (!args["web-host"]) {
         console.log(`Note: --web-host wasn't set, so the Web UI is still loopback-only — a phone on the same Wi-Fi can't reach it yet.`);
       }

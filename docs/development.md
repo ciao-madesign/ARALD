@@ -62,13 +62,14 @@ Poi `http://127.0.0.1:8080` mostra lo stato del nodo (vicini connessi con trust 
 npm run dev -w node -- --id A --port 9001 --web-port 8080 --web-host 0.0.0.0 --allow-service-calls
 ```
 
-`--web-host 0.0.0.0` fa il bind su tutte le interfacce (serve l'indirizzo LAN della macchina, es. `192.168.1.x`, non `127.0.0.1`, perché il telefono lo raggiunga) — da usare solo su una rete fidata, dato che gli endpoint di lettura restano senza autenticazione. `--allow-service-calls` attiva `POST /api/call` (l'unico endpoint di scrittura, per invocare un servizio come `service://ai` dal telefono) e stampa in console un **token di pairing** generato fresco a ogni avvio, da inserire una volta nell'app mobile:
+`--web-host 0.0.0.0` fa il bind su tutte le interfacce (serve l'indirizzo LAN della macchina, es. `192.168.1.x`, non `127.0.0.1`, perché il telefono lo raggiunga) — da usare solo su una rete fidata, dato che gli endpoint di lettura restano senza autenticazione. `--allow-service-calls` attiva `POST /api/call` (l'unico endpoint di scrittura, per invocare un servizio come `service://ai` dal telefono) e stampa in console un **nome rete** e una **password di rete** generati freschi a ogni avvio — stesso modello mentale di una rete Wi-Fi, non un token esadecimale — da inserire una volta nell'app mobile:
 
 ```
-Mobile pairing token (POST /api/call, Authorization: Bearer <token>): 3f9a...
+Mobile network name: NODE-9001
+Mobile network password: K7XM-2QRT
 ```
 
-`/api/call` richiede sempre quel token (anche in ascolto solo su loopback) e accetta solo `serviceId` già noti e disponibili — vedi `docs/security.md` voce #22 per il dettaglio completo delle protezioni.
+Entrambi sono visibili anche sulla pagina web del nodo stesso (`http://<host>:<web-port>`, sezione "Collega un telefono") tramite il nuovo endpoint `GET /api/pairing`, deliberatamente non autenticato — leggere la password non può richiedere la password stessa. Si possono anche fissare esplicitamente invece di generarli a ogni avvio, con `--network-name`/`--network-password`. `/api/call` richiede sempre la password di rete (anche in ascolto solo su loopback, come header `Authorization: Bearer <password>`) e accetta solo `serviceId` già noti e disponibili — vedi `docs/security.md` voce #24 (e la #22 per il disegno originale dell'endpoint) per il dettaglio completo delle protezioni.
 
 ## Gateway NOMAD mockato (§37, seguito audit — Slice 9-10)
 

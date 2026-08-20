@@ -4,7 +4,14 @@
 // capability list is untrusted input this app renders, exactly like the desktop status page does.
 
 const STORAGE_KEY_URL = "nomadnet.gatewayUrl";
-const STORAGE_KEY_TOKEN = "nomadnet.pairingToken";
+const STORAGE_KEY_PASSWORD = "nomadnet.networkPassword";
+
+// A serviceId no real service will ever register (real ones are always "service://..." per spec
+// §35-37) — used only to probe whether a network password is accepted by POST /api/call without
+// actually invoking anything. handleCall() (node/src/web-ui.ts) checks the password before it looks
+// at serviceId, so the response to this probe is 401 for a wrong password and something else (404,
+// since this id is obviously unknown) for a correct one — that's the only distinction this reads.
+const PROBE_SERVICE_ID = "__nomadnet_setup_probe__";
 
 const TRUST_LABELS = {
   UNKNOWN: "Sconosciuto",
@@ -15,7 +22,7 @@ const TRUST_LABELS = {
 };
 
 let gatewayUrl = localStorage.getItem(STORAGE_KEY_URL) || "";
-let pairingToken = localStorage.getItem(STORAGE_KEY_TOKEN) || "";
+let networkPassword = localStorage.getItem(STORAGE_KEY_PASSWORD) || "";
 let refreshTimer;
 
 // Read calls get a shorter client-side budget than POST /api/call, whose own server-side cap
@@ -54,13 +61,13 @@ async function fetchJson(path) {
   return res.json();
 }
 
-/** POST /api/call (node/src/web-ui.ts) — the one write endpoint, gated by the pairing token entered during setup. Rejects with `err.status` set when the gateway answered (as opposed to a network/timeout failure), so callers can react to e.g. a wrong pairing token (401) specifically. */
+/** POST /api/call (node/src/web-ui.ts) — the one write endpoint, gated by the network password entered during setup. Rejects with `err.status` set when the gateway answered (as opposed to a network/timeout failure), so callers can react to e.g. a wrong network password (401) specifically. */
 async function callService(serviceId, payload) {
   const res = await fetchWithTimeout(
     apiUrl("/api/call"),
     {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + pairingToken },
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + networkPassword },
       body: JSON.stringify({ serviceId, payload }),
     },
     CALL_TIMEOUT_MS,
@@ -79,6 +86,27 @@ async function callService(serviceId, payload) {
     throw err;
   }
   return body.result;
+}
+
+/**
+ * Probes whether `password` is accepted by `baseUrl`'s POST /api/call, without invoking any real
+ * service (see PROBE_SERVICE_ID above) — used during setup so a wrong network password is caught
+ * with a clear error immediately, instead of only surfacing the first time the user taps "Chiama".
+ * Returns true/false for a definite answer; throws (network/timeout failure, not a password verdict)
+ * when the gateway couldn't be reached at all — callers should treat that as "couldn't verify", not
+ * as "wrong password".
+ */
+async function validateNetworkPassword(baseUrl, password) {
+  const res = await fetchWithTimeout(
+    baseUrl + "/api/call",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + password },
+      body: JSON.stringify({ serviceId: PROBE_SERVICE_ID }),
+    },
+    READ_TIMEOUT_MS,
+  );
+  return res.status !== 401;
 }
 
 function el(tag, props, children) {
@@ -123,10 +151,32 @@ function timeAgo(ms) {
 
 // ---------- setup screen ----------
 
+// True once a gateway address is already known (from a previous successful pairing) — in that case
+// the address field stays collapsed by default and only the password is asked for, the same
+// "network already joined, just re-enter the password" experience a phone gives when a Wi-Fi
+// router's password changes but the network itself is the same one you joined before. A brand-new
+// install (no address stored yet) has no such shortcut: the address really is needed once.
+function addressFieldNeeded() {
+  return !gatewayUrl;
+}
+
 function showSetupScreen(errorMessage) {
   document.getElementById("setup-screen").hidden = false;
   document.getElementById("dashboard-screen").hidden = true;
   clearInterval(refreshTimer);
+
+  const needsAddress = addressFieldNeeded();
+  document.getElementById("address-field").hidden = !needsAddress;
+  document.getElementById("gateway-input").required = needsAddress;
+  document.getElementById("change-address").hidden = needsAddress;
+  if (!needsAddress) {
+    document.getElementById("gateway-input").value = gatewayUrl.replace(/^https?:\/\//, "");
+  }
+
+  document.getElementById("password-input").value = "";
+  document.getElementById("password-input").type = "password";
+  document.getElementById("toggle-password").textContent = "Mostra";
+
   const errorEl = document.getElementById("setup-error");
   if (errorMessage) {
     errorEl.textContent = errorMessage;
@@ -136,34 +186,87 @@ function showSetupScreen(errorMessage) {
   }
 }
 
+document.getElementById("toggle-password").addEventListener("click", () => {
+  const input = document.getElementById("password-input");
+  const showing = input.type === "text";
+  input.type = showing ? "password" : "text";
+  document.getElementById("toggle-password").textContent = showing ? "Mostra" : "Nascondi";
+});
+
+document.getElementById("change-address").addEventListener("click", () => {
+  document.getElementById("address-field").hidden = false;
+  document.getElementById("gateway-input").required = true;
+  document.getElementById("change-address").hidden = true;
+});
+
 document.getElementById("setup-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const candidateUrl = normalizeGatewayUrl(document.getElementById("gateway-input").value);
-  const candidateToken = document.getElementById("token-input").value.trim();
+  const addressVisible = !document.getElementById("address-field").hidden;
+  const candidateUrl = addressVisible ? normalizeGatewayUrl(document.getElementById("gateway-input").value) : gatewayUrl;
+  const candidatePassword = document.getElementById("password-input").value.trim();
 
   const previousUrl = gatewayUrl;
   gatewayUrl = candidateUrl;
+  let status;
   try {
-    await fetchJson("/api/status");
+    status = await fetchJson("/api/status");
   } catch (err) {
     gatewayUrl = previousUrl;
     showSetupScreen("Impossibile raggiungere il gateway a " + candidateUrl + ": " + err.message);
     return;
   }
+  // /api/status only ever includes networkName when the gateway was started with
+  // --allow-service-calls (node/src/web-ui.ts buildStatus()) — without this check, a gateway with
+  // pairing disabled entirely answers every POST /api/call with 404 regardless of Authorization,
+  // which validateNetworkPassword() below would otherwise misread as "any password is accepted"
+  // (it only distinguishes 401 from everything else).
+  if (!status.networkName) {
+    gatewayUrl = previousUrl;
+    showSetupScreen("Questo gateway non supporta ancora l'app mobile (nessuna password di rete configurata).");
+    return;
+  }
 
-  pairingToken = candidateToken;
+  let passwordOk;
+  try {
+    passwordOk = await validateNetworkPassword(candidateUrl, candidatePassword);
+  } catch (err) {
+    gatewayUrl = previousUrl;
+    showSetupScreen("Impossibile verificare la password: " + err.message);
+    return;
+  }
+  if (!passwordOk) {
+    gatewayUrl = previousUrl;
+    showSetupScreen("Password di rete errata.");
+    return;
+  }
+
+  networkPassword = candidatePassword;
   localStorage.setItem(STORAGE_KEY_URL, gatewayUrl);
-  localStorage.setItem(STORAGE_KEY_TOKEN, pairingToken);
+  localStorage.setItem(STORAGE_KEY_PASSWORD, networkPassword);
   showDashboard();
 });
 
-document.getElementById("change-gateway").addEventListener("click", () => {
+document.getElementById("forget-network").addEventListener("click", () => {
   localStorage.removeItem(STORAGE_KEY_URL);
-  localStorage.removeItem(STORAGE_KEY_TOKEN);
+  localStorage.removeItem(STORAGE_KEY_PASSWORD);
   gatewayUrl = "";
-  pairingToken = "";
+  networkPassword = "";
+  document.getElementById("gateway-input").value = ""; // showSetupScreen() only writes this field when an address is already known — a full reset has none, so it must be cleared here explicitly or a stale address would linger from before the reset
   showSetupScreen();
 });
+
+/**
+ * Called when a live service call comes back 401 (the network password was rejected — e.g. the
+ * gateway restarted and cli.ts generated a fresh one, per node/src/cli.ts). Bounces back to the
+ * setup screen in "just re-enter the password" mode (the address stays remembered) instead of
+ * leaving the user stuck with a dead dashboard — the same experience a phone gives when a known
+ * Wi-Fi network's password changes: it asks you to rejoin, it doesn't forget the network itself.
+ */
+function handlePasswordRejected() {
+  networkPassword = "";
+  localStorage.removeItem(STORAGE_KEY_PASSWORD);
+  showSetupScreen("La password di rete non è più valida. Reinseriscila.");
+}
 
 // ---------- dashboard ----------
 
@@ -197,7 +300,7 @@ function renderStats(s) {
   for (const [label, value] of entries) {
     stats.append(el("div", { className: "stat" }, [el("div", { className: "v", textContent: value }), el("div", { className: "l", textContent: label })]));
   }
-  document.getElementById("node-label").textContent = s.displayName + " (" + gatewayUrl.replace(/^https?:\/\//, "") + ")";
+  document.getElementById("node-label").textContent = "Connesso a: " + (s.networkName || s.displayName);
 }
 
 function renderPeers(peers) {
@@ -248,10 +351,13 @@ function buildCallForm(service) {
       const rendered = isAi && value && typeof value.response === "string" ? value.response : JSON.stringify(value, null, 2);
       result.textContent = rendered;
     } catch (err) {
+      if (err.status === 401) {
+        handlePasswordRejected();
+        return;
+      }
       result.hidden = false;
       result.className = "call-result is-error";
-      result.textContent =
-        err.status === 401 ? 'Token di pairing non corretto. Tocca "Cambia gateway" e reinseriscilo.' : err.message;
+      result.textContent = err.message;
     } finally {
       submit.disabled = false;
       submit.textContent = "Invia";
@@ -287,7 +393,7 @@ function renderServices(services) {
       el("div", { className: "tags" }, (Array.isArray(svc.capabilities) ? svc.capabilities : []).map((c) => el("span", { className: "tag", textContent: String(c) }))),
     ]);
     li.dataset.serviceId = svc.serviceId;
-    if (svc.availability && pairingToken) {
+    if (svc.availability && networkPassword) {
       const callButton = el("button", { className: "call-button", textContent: "Chiama" });
       callButton.addEventListener("click", () => {
         if (openCallServiceId === svc.serviceId) return;
@@ -361,9 +467,7 @@ async function refreshAll() {
 
 // ---------- boot ----------
 
-if (gatewayUrl && pairingToken) {
-  document.getElementById("gateway-input").value = gatewayUrl.replace(/^https?:\/\//, "");
-  document.getElementById("token-input").value = pairingToken;
+if (gatewayUrl && networkPassword) {
   showDashboard();
 } else {
   showSetupScreen();

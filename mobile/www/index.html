@@ -11,13 +11,21 @@
 <section id="setup-screen">
   <div class="setup-card">
     <h1>NOMAD-NET</h1>
-    <p class="lede">Connettiti a un nodo gateway sulla stessa rete Wi-Fi. Trovi indirizzo e token stampati in console quando il gateway viene avviato con <code>--web-host</code> e <code>--allow-service-calls</code>.</p>
+    <p class="lede">Connettiti alla rete Nomad-Net del tuo gateway, come faresti con una rete Wi-Fi.</p>
     <form id="setup-form">
-      <label for="gateway-input">Indirizzo del gateway</label>
-      <input id="gateway-input" type="text" placeholder="192.168.1.5:8080" autocomplete="off" autocapitalize="off" spellcheck="false" required>
-      <label for="token-input">Token di pairing</label>
-      <input id="token-input" type="text" placeholder="3f9a2b..." autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      <div id="address-field">
+        <label for="gateway-input">Indirizzo del gateway</label>
+        <input id="gateway-input" type="text" placeholder="192.168.1.5:8080" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <p class="hint">Te lo fornisce chi gestisce il gateway. Serve solo la prima volta: dopo basteranno nome rete e password.</p>
+      </div>
+      <label for="password-input">Password di rete</label>
+      <div class="password-row">
+        <input id="password-input" type="password" placeholder="K7XM-2QRT" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+        <button type="button" id="toggle-password" class="link-button">Mostra</button>
+      </div>
+      <p class="hint">Nome rete e password si trovano sulla pagina web del gateway, sezione "Collega un telefono".</p>
       <button type="submit">Connetti</button>
+      <button type="button" id="change-address" class="link-button" hidden>Non è la rete giusta? Cambia indirizzo</button>
       <p id="setup-error" class="error" hidden></p>
     </form>
   </div>
@@ -29,7 +37,7 @@
       <h1>NOMAD-NET</h1>
       <div id="node-label" class="mono muted"></div>
     </div>
-    <button id="change-gateway" class="link-button">Cambia gateway</button>
+    <button id="forget-network" class="link-button">Cambia rete</button>
   </header>
 
   <div id="stats" class="stats"></div>
