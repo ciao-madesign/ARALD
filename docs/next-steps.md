@@ -86,6 +86,45 @@ Realizza sia la parte energy-aware di spec §51/§58 ("Relay OFF / Relay when ch
 
 `tools/simulator/simulate.ts` collega N nodi reali in una topologia configurabile e misura consegna/latenza a scala (§76-80), utilizzabile anche da riga di comando. Il suo sviluppo ha scovato un bug reale nel transport TCP di base (due connessioni simultanee tra la stessa coppia di nodi bloccavano per sempre la chiusura di un nodo) — corretto con test di regressione dedicato, vedi `docs/roadmap.md` milestone 20.
 
+## Opzione H — App mobile (roadmap Milestone 9) — pianificazione, su richiesta esplicita dell'utente
+
+**Decisioni già prese con l'utente** (non da rimettere in discussione senza un motivo nuovo):
+1. **Client leggero verso un gateway**, non un nodo Nomad-Net completo sul telefono: l'app non reimplementa routing/cache/firma — si connette a un nodo Nomad-Net già esistente (il computer che oggi fa da gateway, con la web UI di spec §59 già costruita) e ne è un'interfaccia, più uno stack di connettività.
+2. **Raggiungibilità sia via Wi-Fi/rete locale sia via Bluetooth** — non solo Wi-Fi.
+3. **Framework ibrido** (React Native o Capacitor), non nativo Android puro, con la precisazione tecnica seguente sul perché è una scelta valida per *questo* scope e non lo sarebbe per il modello finale a mesh completa.
+
+**Perché ibrido è adeguato a questo scope ma non al modello finale**: BLE ha due ruoli, centrale (scansiona e si connette ad altri) e periferica (si fa scoprire, accetta connessioni). Un nodo mesh reale deve fare entrambi contemporaneamente — è quello che rende possibile il "passaparola" invece di una stella con un centro fisso. Le librerie BLE per framework ibridi coprono bene solo il ruolo centrale; il ruolo periferica richiede comunque un modulo nativo su misura. Siccome qui il telefono si connette *a* un gateway (ruolo centrale, il gateway è la periferica) e non deve farsi scoprire da altri telefoni, l'ibrido è pienamente adeguato — la scelta andrà rivista se in futuro si vorrà far parlare due telefoni direttamente tra loro senza gateway in mezzo.
+
+**Scoperta importante, da tenere presente prima di stimare tempi**: la connettività "anche via Bluetooth" richiede *due* pezzi, non uno solo — un client BLE sul telefono (nuovo lavoro, oggetto di questa opzione) **e** un vero peer BLE periferica dal lato gateway che parli il protocollo Nomad-Net su radio reale. Quel secondo pezzo non esiste ancora: `node/src/transports/ble.ts` (Slice 8) è una simulazione **interamente software**, senza alcun accesso a hardware radio — esattamente il gap che l'Opzione A sopra descrive come bloccato su hardware BLE reale. Le due opzioni sono quindi accoppiate: il ramo "via Bluetooth" di questo piano non è testabile end-to-end finché anche l'Opzione A non ha una controparte reale, non solo simulata. Il piano sotto è strutturato in due fasi proprio per isolare cosa si può fare subito da cosa resta bloccato sullo stesso hardware già noto.
+
+### Fase 1 — Client Wi-Fi/TCP verso un gateway esistente (nessun nuovo blocco hardware)
+
+**Cosa costruire**: un'app Capacitor (wrapper nativo minimale attorno a un'app web) che si connette via TCP/WebSocket a un nodo Nomad-Net già in esecuzione sulla stessa rete locale — concettualmente la web UI di spec §59 già costruita, adattata a schermo di telefono (touch, layout verticale) invece che essere solo letta da un browser desktop. Aggiunge, oltre a quanto la web UI già mostra, la possibilità di *chiamare* un servizio (es. `service://ai`, `service://kiwix-search`) direttamente dal telefono — cosa che la web UI attuale non fa, essendo deliberatamente di sola lettura (spec §59 "l'utente non deve essere costretto a capire il routing", non un pannello di controllo).
+
+**File coinvolti**: nuova directory `mobile/` (oggi un segnaposto vuoto, spec-mandated ma senza codice — vedi `CLAUDE.md`), un progetto Capacitor separato che consuma l'API HTTP già esistente di `WebUiServer` più un endpoint nuovo (assente oggi, perché la web UI è sola lettura per design) per invocare un servizio: qualcosa come `POST /api/call` che fa da ponte verso `NomadNode.callService()` — decisione di design da prendere insieme prima di scriverlo, perché rompe deliberatamente il principio "sola lettura" documentato in `web-ui.ts` e quindi va delimitato con attenzione (es. bindabile solo su richiesta esplicita, non acceso di default).
+
+**Prerequisiti**: nessuno oltre a un telefono Android per il test reale (anche un emulatore basta per validare l'interfaccia; il test end-to-end "il telefono vede davvero il gateway" richiede la stessa rete Wi-Fi). **Stato: realizzabile subito, non bloccata.**
+
+**Criteri di accettazione**: un telefono Android (reale o emulato) sulla stessa rete Wi-Fi di un nodo Nomad-Net gateway vede lo stato della mesh (vicini, servizi, contenuti — stessi dati di `/api/status`, `/api/peers`, `/api/services`, `/api/content`), cerca un contenuto, e invoca `service://ai` ricevendo una risposta, tutto dall'interfaccia touch.
+
+**Rischi principali**: nessuno tecnico rilevante — è essenzialmente il lavoro già fatto (web UI) impacchettato diversamente, più un endpoint di scrittura nuovo che va progettato con lo stesso rigore di sicurezza del resto (autenticazione/consenso prima di esporlo, spec §59 non lo prevede ma questa estensione sì).
+
+**Sforzo relativo**: **basso-medio** — riusa quasi interamente `node/src/web-ui.ts` e il protocollo esistente; il lavoro nuovo è il wrapper Capacitor e l'endpoint di invocazione servizi.
+
+### Fase 2 — Connettività Bluetooth dal telefono (bloccata sullo stesso hardware dell'Opzione A)
+
+**Cosa costruire**: uno stack BLE-centrale nell'app (plugin Capacitor tipo `@capacitor-community/bluetooth-le`) che scopre e si connette a un gateway raggiungibile via Bluetooth invece che Wi-Fi, riusando lo stesso protocollo a pacchetti (framing/frammentazione già progettati per BLE nella Slice 8, solo applicati a un client reale invece che a due lati entrambi simulati).
+
+**Prerequisiti**: la stessa cosa già segnalata come bloccata nell'Opzione A — un dispositivo con hardware BLE reale **dal lato gateway** che parli Nomad-Net (non necessariamente un secondo telefono: potrebbe essere un Raspberry Pi/mini-PC con supporto BlueZ). **Stato: bloccata — stesso prerequisito hardware dell'Opzione A, non uno nuovo.**
+
+**Criteri di accettazione**: gli stessi della Fase 1, ma il telefono raggiunge il gateway via Bluetooth con il Wi-Fi disattivato — la dimostrazione "vera" dello scenario rifugio/emergenza che la spec descrive.
+
+**Sforzo relativo**: **alto**, e non stimabile con precisione finché non si decide come/quando procurarsi l'hardware per l'Opzione A — le due stime sono la stessa stima.
+
+### Come procedere
+
+La Fase 1 è pronta per essere pianificata in dettaglio e avviata senza aspettare nulla. La Fase 2 conviene accantonarla fino a quando non si decide cosa fare per l'hardware BLE reale (stesso punto di decisione dell'Opzione A) — costruirla prima sarebbe codice che nessuno può testare davvero.
+
 ## Cosa resta possibile in puro software, se si vuole andare oltre
 
 Le versioni **hardware/Docker reali** di BLE (Opzione A) e del gateway NOMAD (Opzione B) restano gli unici due candidati bloccati su prerequisiti esterni. Le loro **versioni simulate/mockate** (Slice 8 e 9 del secondo giro post-audit, vedi le note in coda a ciascuna opzione sopra e `docs/security.md`) sono realizzabili in puro software e sono ora entrambe **completate**. Non restano altri candidati aperti in puro software oltre a un'eventuale ulteriore passata di qualità/sicurezza sul codice esistente.

@@ -17,7 +17,7 @@ Stato al 14 agosto 2026, versione specifica 0.1.
 | 6 | File transfer (chunking, verifica hash) | ✅ Fatto | incluso nel content protocol, chunking a scopo dimostrativo |
 | 7 | Cache | ✅ Fatto | `tests/integration/cache-replication.test.ts` |
 | 8 | BLE | ✅ Simulato (seguito audit, Slice 8) — hardware reale ⏳ bloccato | `node/src/transports/ble.ts`, dietro l'interfaccia `Transport` esistente, nessun radio reale |
-| 9 | Smartphone (app mobile minimale) | ⏳ Non iniziato | `mobile/android` prioritario su `mobile/ios` (§47) |
+| 9 | Smartphone (app mobile minimale) | ⏳ Pianificata, non avviata | Piano in due fasi in `docs/next-steps.md` Opzione H — client leggero ibrido (Capacitor) verso un gateway; Fase 1 (Wi-Fi/TCP) subito realizzabile, Fase 2 (Bluetooth) bloccata sullo stesso hardware dell'Opzione A |
 | 10 | NOMAD integration | ✅ Mockato (seguito audit, Slice 9-10) — Project NOMAD reale ⏳ bloccato | richiede Docker + Project NOMAD in esecuzione per la forma finale reale |
 | 11 | Gateway (`gateway/nomad/`) | ✅ Mockato (seguito audit, Slice 9-10) — Docker reale ⏳ bloccato | `kiwix-gateway.ts` (`content://`, `service://kiwix-search`) + `ai-gateway.ts` (`service://ai`), verificati contro `FakeNomadServer`/`FakeOllamaServer` |
 | 12 | Store-and-forward | ✅ Fatto (scope: pacchetti unicast) | `node/src/store-and-forward.ts`, `tests/integration/store-and-forward.test.ts` — vedi limitazione nota sotto |
