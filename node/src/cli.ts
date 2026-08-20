@@ -1,5 +1,6 @@
 import { NomadNode } from "./node.js";
 import { TcpTransport } from "./transports/tcp.js";
+import { WebUiServer } from "./web-ui.js";
 
 function parseArgs(argv: string[]): Record<string, string> {
   const args: Record<string, string> = {};
@@ -49,7 +50,17 @@ async function main(): Promise<void> {
   node.on("peer:connected", (peerId: string) => console.log(`[PEER] connected: ${peerId}`));
   node.on("peer:disconnected", (peerId: string) => console.log(`[PEER] disconnected: ${peerId}`));
 
+  // Off by default (spec §59 web interface) — only started when explicitly requested, since it
+  // opens a second listening socket even though it's loopback-bound by default (web-ui.ts).
+  let webUi: WebUiServer | undefined;
+  if (args["web-port"]) {
+    webUi = new WebUiServer(node, { port: Number(args["web-port"]) });
+    await webUi.start();
+    console.log(`Web UI: http://127.0.0.1:${webUi.port}`);
+  }
+
   const shutdown = async (): Promise<void> => {
+    if (webUi) await webUi.stop();
     await node.stop();
     process.exit(0);
   };

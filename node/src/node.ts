@@ -440,6 +440,25 @@ export class NomadNode extends EventEmitter {
   }
 
   /**
+   * Everything this node can currently tell a user about services (spec
+   * §35, §59 "Services" count): those registered locally plus those known
+   * to exist elsewhere via SERVICE_ANNOUNCE/SERVICE_QUERY (`services`).
+   * Unlike `listKnownContent()`, a distinct provider of the same
+   * `serviceId` is a distinct entry here (mirrors `ServiceDirectory`'s own
+   * (serviceId, providerId) keying) — the same service offered by two
+   * different nodes is genuinely two independent offerings, not a
+   * duplicate to collapse.
+   */
+  listKnownServices(): ServiceAnnouncement[] {
+    const merged = new Map<string, ServiceAnnouncement>();
+    for (const announcement of this.services.list()) merged.set(`${announcement.serviceId} ${announcement.providerId}`, announcement);
+    for (const { announcement } of this.localServices.values()) {
+      merged.set(`${announcement.serviceId} ${announcement.providerId}`, announcement);
+    }
+    return Array.from(merged.values());
+  }
+
+  /**
    * Resolves a content id to its bytes: served from local cache if present,
    * otherwise discovered and retrieved through the mesh (spec §90-92,
    * "first/second/third technical objective").

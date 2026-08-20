@@ -46,6 +46,16 @@ Node ID: 7f3a...
 Status: ONLINE
 ```
 
+## Interfaccia web locale (§59)
+
+Spenta di default (apre una seconda porta anche se in ascolto solo su loopback). Per abilitarla:
+
+```bash
+npm run dev -w node -- --id A --port 9001 --web-port 8080
+```
+
+Poi `http://127.0.0.1:8080` per lo stato del nodo (peer, servizi, percentuale di contenuto in cache) e la ricerca. Nessuna autenticazione: resta volutamente bound solo su `127.0.0.1` (`node/src/web-ui.ts`), non pensata per essere esposta oltre la macchina locale.
+
 ## Test (§17-18, §90-92)
 
 ```bash
