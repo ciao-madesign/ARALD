@@ -39,4 +39,12 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- QR pairing scanner (mobile/www/app.js, getUserMedia + BarcodeDetector) — declaring this lets
+         the WebView's runtime permission prompt for camera access actually succeed; without it,
+         getUserMedia() would be denied outright before the user is ever asked. The <uses-feature>
+         is explicitly required="false" so the Play Store still offers this app on a camera-less
+         device (e.g. some tablets) — the QR button is a feature-detected shortcut, never a
+         requirement, since manual "nome rete"/password entry (mobile/README.md) always works. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 </manifest>

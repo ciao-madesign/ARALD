@@ -13,6 +13,28 @@ const STORAGE_KEY_PASSWORD = "nomadnet.networkPassword";
 // since this id is obviously unknown) for a correct one — that's the only distinction this reads.
 const PROBE_SERVICE_ID = "__nomadnet_setup_probe__";
 
+// Matches the URI node/src/web-ui.ts's GET /api/pairing builds and QR-encodes (buildPairingUri()) —
+// keep in sync if that format ever changes.
+const PAIRING_URI_PREFIX = "nomadnet://pair?";
+
+/**
+ * Parses a scanned QR payload back into {host, password}, or null if it isn't one of ours. The `n`
+ * (network name) param the QR also carries is cosmetic only — nothing in this app displays it
+ * mid-scan, so it's intentionally not extracted here rather than kept as unused parsed state; add it
+ * back if a "hai scansionato: <nome>" confirmation step is ever built. Never trusts the content
+ * beyond this — the caller still runs it through the exact same validateNetworkPassword() probe as
+ * manually-typed credentials before saving anything, since a QR is just a faster way to fill the
+ * form, not a bypass of the checks that apply to filling it by hand.
+ */
+function parsePairingUri(text) {
+  if (typeof text !== "string" || !text.startsWith(PAIRING_URI_PREFIX)) return null;
+  const params = new URLSearchParams(text.slice(PAIRING_URI_PREFIX.length));
+  const host = params.get("h");
+  const password = params.get("p");
+  if (!host || !password) return null;
+  return { host, password };
+}
+
 const TRUST_LABELS = {
   UNKNOWN: "Sconosciuto",
   SEEN: "Visto",
@@ -245,6 +267,104 @@ document.getElementById("setup-form").addEventListener("submit", async (event) =
   localStorage.setItem(STORAGE_KEY_PASSWORD, networkPassword);
   showDashboard();
 });
+
+// ---------- QR scanner ----------
+//
+// Uses the browser's native BarcodeDetector API (Shape Detection API) — zero dependencies, ships in
+// Chrome/Android WebView (which is what a Capacitor app on Android actually runs on) since Chrome
+// 83, but not in Firefox or Safari, so the button is only ever shown when the API is actually
+// present. This app has no way to verify BarcodeDetector's live decode path in this development
+// environment (the sandboxed headless Chromium used for automated verification here doesn't
+// implement it either — confirmed directly, not assumed), so this is the same class of "written to
+// spec, can't fully verify end-to-end in this environment" limitation as the native Android build
+// itself (see mobile/README.md) — parsePairingUri() above is covered by feeding it synthetic input
+// directly, independent of whether a camera or detector is present.
+const hasBarcodeDetector = "BarcodeDetector" in window;
+if (hasBarcodeDetector) document.getElementById("scan-qr").hidden = false;
+
+let scannerStream = null;
+let scannerRafId = null;
+// Bumped by stopScanner() every time it runs (including the very first "annulla" tap before any
+// camera was ever granted). getUserMedia() can take a while to resolve (the OS permission prompt,
+// slow hardware init) — without this, tapping "Annulla" while that's still pending was a no-op (both
+// scannerStream and scannerRafId are still null then), so the camera would be attached and the scan
+// loop started anyway the moment getUserMedia() finally resolved, well after the user cancelled.
+let scannerSessionId = 0;
+
+function stopScanner() {
+  scannerSessionId++;
+  if (scannerRafId !== null) cancelAnimationFrame(scannerRafId);
+  scannerRafId = null;
+  if (scannerStream) {
+    scannerStream.getTracks().forEach((track) => track.stop());
+    scannerStream = null;
+  }
+  document.getElementById("scanner-overlay").hidden = true;
+}
+
+function applyScannedPairing(pairing) {
+  document.getElementById("address-field").hidden = false;
+  document.getElementById("gateway-input").required = true;
+  document.getElementById("change-address").hidden = true;
+  document.getElementById("gateway-input").value = pairing.host;
+  document.getElementById("password-input").value = pairing.password;
+  // Goes through the exact same submit handler (reachability + password probe) as manual entry —
+  // see parsePairingUri()'s doc comment above for why this never shortcuts that validation.
+  document.getElementById("setup-form").requestSubmit();
+}
+
+async function startScanner() {
+  const overlay = document.getElementById("scanner-overlay");
+  const video = document.getElementById("scanner-video");
+  const errorEl = document.getElementById("scanner-error");
+  errorEl.hidden = true;
+  overlay.hidden = false;
+
+  const mySessionId = ++scannerSessionId;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+  } catch (err) {
+    if (mySessionId !== scannerSessionId) return; // cancelled while the permission prompt was still up
+    errorEl.textContent = "Impossibile accedere alla fotocamera: " + err.message;
+    errorEl.hidden = false;
+    return;
+  }
+  if (mySessionId !== scannerSessionId) {
+    // Cancelled while getUserMedia() was still pending — the user already dismissed the scanner,
+    // so don't attach a camera stream or start polling it; just release what we were just granted.
+    stream.getTracks().forEach((track) => track.stop());
+    return;
+  }
+  scannerStream = stream;
+  video.srcObject = scannerStream;
+
+  const detector = new window.BarcodeDetector({ formats: ["qr_code"] });
+  const scanLoop = async () => {
+    if (!scannerStream) return; // stopScanner() already ran — don't schedule another frame
+    let codes = [];
+    try {
+      codes = await detector.detect(video);
+    } catch {
+      // Transient decode failures (e.g. the video frame isn't ready yet) are normal — keep polling.
+    }
+    const match = codes.map((code) => parsePairingUri(code.rawValue)).find((parsed) => parsed !== null);
+    if (match) {
+      stopScanner();
+      applyScannedPairing(match);
+      return;
+    }
+    scannerRafId = requestAnimationFrame(() => {
+      scanLoop().catch(() => {});
+    });
+  };
+  scanLoop().catch(() => {});
+}
+
+document.getElementById("scan-qr").addEventListener("click", () => {
+  startScanner().catch(() => {});
+});
+document.getElementById("scanner-cancel").addEventListener("click", stopScanner);
 
 document.getElementById("forget-network").addEventListener("click", () => {
   localStorage.removeItem(STORAGE_KEY_URL);

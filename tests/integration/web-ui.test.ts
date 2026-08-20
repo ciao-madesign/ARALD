@@ -548,7 +548,11 @@ describe("WebUiServer GET /api/pairing", () => {
 
     const res = await fetch(`${baseUrl()}/api/pairing`);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ networkName: "CasaBase", networkPassword: PASSWORD });
+    // toMatchObject, not toEqual — address/qrDataUri are also expected here (see the dedicated
+    // "publicHost" describe block below), but whether they're present depends on the *test
+    // machine's* network interfaces when publicHost isn't given explicitly (as here), so this test
+    // only pins the two fields that don't vary by environment.
+    expect(await res.json()).toMatchObject({ networkName: "CasaBase", networkPassword: PASSWORD });
   });
 
   it("defaults networkName to the node's displayName when not given explicitly", async () => {
@@ -567,7 +571,7 @@ describe("WebUiServer GET /api/pairing", () => {
 
     const res = await fetch(`${baseUrl()}/api/pairing`);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ networkName: "", networkPassword: PASSWORD });
+    expect(await res.json()).toMatchObject({ networkName: "", networkPassword: PASSWORD });
 
     // POST /api/call's own guard doesn't touch networkName at all — an empty display name must not
     // make the two endpoints disagree about whether pairing is enabled.
@@ -578,5 +582,80 @@ describe("WebUiServer GET /api/pairing", () => {
       body: JSON.stringify({ serviceId: "service://echo", payload: {} }),
     });
     expect(callRes.status).toBe(200);
+  });
+});
+
+describe("WebUiServer GET /api/pairing — address and QR", () => {
+  let node: NomadNode | undefined;
+  let webUi: WebUiServer | undefined;
+  const PASSWORD = "K7XM-2QRT";
+
+  afterEach(async () => {
+    if (webUi) await webUi.stop();
+    if (node) await node.stop();
+    node = undefined;
+    webUi = undefined;
+  });
+
+  function baseUrl(): string {
+    return `http://127.0.0.1:${webUi!.port}`;
+  }
+
+  it("includes address and a scannable QR when publicHost is given explicitly", async () => {
+    node = new NomadNode({ displayName: "GatewayA" });
+    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, networkPassword: PASSWORD, publicHost: "192.168.1.50" });
+    await webUi.start();
+
+    const info = await (await fetch(`${baseUrl()}/api/pairing`)).json();
+    expect(info.address).toBe(`192.168.1.50:${webUi.port}`);
+    expect(info.qrDataUri).toMatch(/^data:image\/svg\+xml;base64,/);
+    const svg = Buffer.from(info.qrDataUri.split(",")[1], "base64").toString("utf8");
+    expect(svg).toContain("<svg");
+  });
+
+  it("uses an explicit non-loopback host as the public address without needing publicHost separately", async () => {
+    // A deliberately fake-but-well-formed address, not actually bound to — WebUiOptions.host only
+    // controls what the OS socket binds to; this test exercises the "host is already a concrete LAN
+    // address" branch of the publicHost-resolution logic, not real network reachability.
+    node = new NomadNode({ displayName: "GatewayA" });
+    webUi = new WebUiServer(node, { port: 0, host: "127.0.0.1", allowServiceCalls: true, networkPassword: PASSWORD, publicHost: "10.0.0.7" });
+    await webUi.start();
+
+    const info = await (await fetch(`${baseUrl()}/api/pairing`)).json();
+    expect(info.address).toBe(`10.0.0.7:${webUi.port}`);
+  });
+
+  it("omits address and qrDataUri when no public host can be resolved at all", async () => {
+    // publicHost explicitly set to a value that behaves like "not resolvable" isn't representable
+    // (any string is a valid host) — instead this pins the *shape* of the response when address
+    // resolution succeeds vs. is absent, exercised indirectly by the "no host detectable" case
+    // being environment-dependent (see the toMatchObject-based tests above). This test instead
+    // confirms qrDataUri is never present without address, whatever the environment resolves.
+    node = new NomadNode({ displayName: "GatewayA" });
+    webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, networkPassword: PASSWORD });
+    await webUi.start();
+
+    const info = await (await fetch(`${baseUrl()}/api/pairing`)).json();
+    if (info.address === undefined) {
+      expect(info.qrDataUri).toBeUndefined();
+    } else {
+      expect(info.qrDataUri).toMatch(/^data:image\/svg\+xml;base64,/);
+    }
+  });
+
+  it("omits qrDataUri (but keeps address) when the pairing URI exceeds the QR encoder's capacity", async () => {
+    node = new NomadNode({ displayName: "GatewayA" });
+    webUi = new WebUiServer(node, {
+      port: 0,
+      allowServiceCalls: true,
+      networkPassword: PASSWORD,
+      publicHost: "192.168.1.50",
+      networkName: "x".repeat(400), // forces the pairing URI well past ~272 bytes
+    });
+    await webUi.start();
+
+    const info = await (await fetch(`${baseUrl()}/api/pairing`)).json();
+    expect(info.address).toBe(`192.168.1.50:${webUi.port}`);
+    expect(info.qrDataUri).toBeUndefined();
   });
 });

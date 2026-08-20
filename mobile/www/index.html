@@ -25,10 +25,19 @@
       </div>
       <p class="hint">Nome rete e password si trovano sulla pagina web del gateway, sezione "Collega un telefono".</p>
       <button type="submit">Connetti</button>
+      <button type="button" id="scan-qr" class="link-button" hidden>Scansiona QR</button>
       <button type="button" id="change-address" class="link-button" hidden>Non è la rete giusta? Cambia indirizzo</button>
       <p id="setup-error" class="error" hidden></p>
     </form>
   </div>
+</section>
+
+<section id="scanner-overlay" hidden>
+  <video id="scanner-video" autoplay playsinline muted></video>
+  <div class="scanner-frame"></div>
+  <p class="scanner-hint">Inquadra il QR sulla pagina web del gateway</p>
+  <button type="button" id="scanner-cancel">Annulla</button>
+  <p id="scanner-error" class="error" hidden></p>
 </section>
 
 <section id="dashboard-screen" hidden>

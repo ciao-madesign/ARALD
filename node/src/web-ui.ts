@@ -1,9 +1,11 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import { networkInterfaces } from "node:os";
 import { BodyTooLargeError, LoopbackHttpServer, readRequestBody, sendJson } from "./loopback-http-server.js";
 import type { NomadNode } from "./node.js";
 import type { ContentMetadata } from "./content.js";
 import type { TrustLevel } from "./trust.js";
+import { encodeQr, qrToSvg } from "./qrcode.js";
 
 export interface WebUiOptions {
   /** Port to listen on; 0 (default) lets the OS assign one — useful in tests, mirrors TcpTransport's own `port` convention. */
@@ -70,6 +72,33 @@ export interface WebUiOptions {
    * implies about who can read it.
    */
   networkPassword?: string;
+  /**
+   * The address (host, no port) a phone on the same network should use to reach this node — the
+   * "one-time address" a human types once into the mobile app (`mobile/README.md`), and what the
+   * QR code on `/api/pairing`/the dashboard's "Collega un telefono" panel encodes alongside
+   * `networkName`/`networkPassword` so scanning it needs zero typing at all. Only meaningful
+   * together with `allowServiceCalls`. When omitted and `host` is a wildcard/loopback address
+   * (`0.0.0.0`, `127.0.0.1`, `localhost`, `::`, or simply not given), this is auto-detected via
+   * `node:os.networkInterfaces()` (first non-internal IPv4 address found) — a best-effort guess
+   * that can pick the wrong interface on a multi-NIC machine (VPNs, Docker bridges, ...), which is
+   * exactly why this option exists to override it explicitly. No QR/`address` field is served at
+   * all when neither resolves to anything (e.g. no network interface found) — degrades to the
+   * existing text-only pairing panel rather than emitting a guess that might be wrong.
+   */
+  publicHost?: string;
+}
+
+const WILDCARD_OR_LOOPBACK_HOSTS = new Set(["0.0.0.0", "127.0.0.1", "localhost", "::", "::1"]);
+
+/** Best-effort LAN IPv4 address for this machine — see `WebUiOptions.publicHost`'s doc comment for why this is a fallback, not the primary source of truth. */
+function detectLanIPv4(): string | undefined {
+  const interfaces = networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const net of interfaces[name] ?? []) {
+      if (net.family === "IPv4" && !net.internal) return net.address;
+    }
+  }
+  return undefined;
 }
 
 interface StatusPayload {
@@ -91,6 +120,18 @@ interface StatusPayload {
 interface PairingInfo {
   networkName: string;
   networkPassword: string;
+  /** `host:port` a phone should connect to — present only when a public host could be resolved (explicit `publicHost` or auto-detected LAN IPv4), see `WebUiOptions.publicHost`. */
+  address?: string;
+  /** `data:image/svg+xml;base64,...` — a scannable QR encoding `nomadnet://pair?h=<address>&n=<networkName>&p=<networkPassword>`, so the mobile app never needs any of the three typed manually. Present only when `address` is known and the pairing URI fits the encoder's capacity (`node/src/qrcode.ts`, ~272 bytes) — omitted, not an empty string, when either isn't true, so the client can tell "not offered" apart from "would be an empty image". */
+  qrDataUri?: string;
+}
+
+const PAIRING_URI_PREFIX = "nomadnet://pair?";
+
+/** `nomadnet://pair?h=<host:port>&n=<networkName>&p=<networkPassword>` — parsed back by the mobile app's QR scanner (`mobile/www/app.js`, `parsePairingUri()`), never interpreted by the OS (no intent filter registered, this scheme is only ever read by our own camera-scanning code, not "opened"). */
+function buildPairingUri(address: string, networkName: string, networkPassword: string): string {
+  const params = new URLSearchParams({ h: address, n: networkName, p: networkPassword });
+  return PAIRING_URI_PREFIX + params.toString();
 }
 
 interface PeerEntry {
@@ -274,10 +315,12 @@ const PAGE_HTML = `<!doctype html>
   #search-input { width: 100%; font: inherit; padding: 0.55em 0.7em; border-radius: 0.5em; border: 1px solid var(--border); background: var(--bg); color: var(--ink); margin-bottom: 0.8em; }
   #content-panel { margin-bottom: 1em; }
   #pairing-panel { margin-bottom: 1em; border-color: var(--accent); }
-  #pairing-panel .pairing-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11em, 1fr)); gap: 1em; }
+  #pairing-panel .pairing-body { display: flex; gap: 1.4em; flex-wrap: wrap; align-items: flex-start; }
+  #pairing-panel .pairing-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11em, 1fr)); gap: 1em; flex: 1; min-width: 12em; }
   #pairing-panel .k { font-size: 0.78em; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.25em; }
   #pairing-panel .v { font-size: 1.35em; font-weight: 700; font-family: ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.02em; }
   #pairing-panel p { margin: 0.8em 0 0; font-size: 0.85em; color: var(--muted); }
+  #pairing-qr { width: 9em; height: 9em; border-radius: 0.5em; background: #fff; padding: 0.5em; flex: none; }
 </style>
 </head>
 <body>
@@ -293,17 +336,20 @@ const PAGE_HTML = `<!doctype html>
 
 <section class="panel" id="pairing-panel" hidden>
   <h2>Collega un telefono</h2>
-  <div class="pairing-grid">
-    <div>
-      <div class="k">Nome rete</div>
-      <div class="v" id="pairing-name"></div>
-    </div>
-    <div>
-      <div class="k">Password</div>
-      <div class="v mono" id="pairing-password"></div>
+  <div class="pairing-body">
+    <img id="pairing-qr" alt="QR di pairing" hidden>
+    <div class="pairing-grid">
+      <div>
+        <div class="k">Nome rete</div>
+        <div class="v" id="pairing-name"></div>
+      </div>
+      <div>
+        <div class="k">Password</div>
+        <div class="v mono" id="pairing-password"></div>
+      </div>
     </div>
   </div>
-  <p>Apri l'app Nomad-Net sul telefono, sulla stessa rete Wi-Fi, e inserisci questi dati.</p>
+  <p>Apri l'app Nomad-Net sul telefono, sulla stessa rete Wi-Fi, e inquadra il QR — oppure inserisci questi dati a mano.</p>
 </section>
 
 <div class="panels">
@@ -503,6 +549,11 @@ async function loadPairingInfo() {
   var info = await res.json();
   document.getElementById("pairing-name").textContent = info.networkName;
   document.getElementById("pairing-password").textContent = info.networkPassword;
+  var qr = document.getElementById("pairing-qr");
+  if (info.qrDataUri) {
+    qr.src = info.qrDataUri; // data: URI set via .src, never innerHTML — see mobile app's own textContent-only discipline
+    qr.hidden = false;
+  }
   document.getElementById("pairing-panel").hidden = false;
 }
 
@@ -536,6 +587,8 @@ export class WebUiServer {
   private readonly allowServiceCalls: boolean;
   private readonly networkName: string | undefined;
   private readonly networkPassword: string | undefined;
+  private readonly publicHost: string | undefined;
+  private cachedPairingInfo: PairingInfo | undefined;
   private readonly httpServer: LoopbackHttpServer;
 
   constructor(node: NomadNode, options: WebUiOptions = {}) {
@@ -547,6 +600,8 @@ export class WebUiServer {
     }
     this.networkName = this.allowServiceCalls ? (options.networkName ?? node.displayName) : undefined;
     this.networkPassword = options.networkPassword;
+    const boundHost = options.host ?? "127.0.0.1";
+    this.publicHost = options.publicHost ?? (WILDCARD_OR_LOOPBACK_HOSTS.has(boundHost) ? detectLanIPv4() : boundHost);
     this.httpServer = new LoopbackHttpServer((req, res) => this.handleRequest(req, res), {
       port: options.port,
       host: options.host,
@@ -669,6 +724,16 @@ export class WebUiServer {
    * just the intended human. See `docs/security.md` for that tradeoff
    * spelled out. 404s when pairing isn't enabled, same posture as
    * `handleCall()` below.
+   *
+   * Also includes `address`/`qrDataUri` when a public host could be
+   * resolved (`WebUiOptions.publicHost`, explicit or auto-detected) — the
+   * QR encodes the full pairing URI (address + name + password) so the
+   * mobile app's camera scanner never needs any of the three typed
+   * manually, not even the one-time address. Silently omitted (not an
+   * error) when no public host is known, or when the pairing URI happens
+   * to exceed the QR encoder's capacity (`node/src/qrcode.ts`, an
+   * operator-chosen `--network-name` would have to be extremely long) —
+   * the text fields above still work either way, this is additive.
    */
   private handlePairing(res: ServerResponse): void {
     // Checks `=== undefined` rather than falsiness for networkName specifically — the constructor
@@ -682,8 +747,26 @@ export class WebUiServer {
       res.end("Not Found");
       return;
     }
-    const info: PairingInfo = { networkName: this.networkName, networkPassword: this.networkPassword };
-    sendJson(res, 200, info);
+    // Memoized — networkName/networkPassword/publicHost/port are all fixed for the server's
+    // lifetime once start() resolves (see the class doc comment), so recomputing this on every
+    // request would just redo the same QR encode (8-mask trial + Reed-Solomon over every block)
+    // for an answer that can never change, the one endpoint here plausible enough to be hit
+    // repeatedly (a phone re-checking pairing info, a script polling it) to make that worth caching.
+    if (!this.cachedPairingInfo) {
+      const info: PairingInfo = { networkName: this.networkName, networkPassword: this.networkPassword };
+      if (this.publicHost) {
+        const address = `${this.publicHost}:${this.port}`;
+        info.address = address;
+        const uri = buildPairingUri(address, this.networkName, this.networkPassword);
+        const qr = encodeQr(uri);
+        if (qr) {
+          const svg = qrToSvg(qr, { moduleSize: 6, margin: 4 });
+          info.qrDataUri = `data:image/svg+xml;base64,${Buffer.from(svg, "utf8").toString("base64")}`;
+        }
+      }
+      this.cachedPairingInfo = info;
+    }
+    sendJson(res, 200, this.cachedPairingInfo);
   }
 
   /**

@@ -66,6 +66,7 @@ async function main(): Promise<void> {
       allowServiceCalls,
       networkName,
       networkPassword,
+      publicHost: args["public-host"],
     });
     await webUi.start();
     const webHost = args["web-host"] ?? "127.0.0.1";
@@ -73,7 +74,7 @@ async function main(): Promise<void> {
     if (allowServiceCalls) {
       console.log(`Mobile network name: ${networkName}`);
       console.log(`Mobile network password: ${networkPassword}`);
-      console.log(`(anche visibili sulla pagina web sopra, sezione "Collega un telefono")`);
+      console.log(`(anche visibili, con QR da inquadrare, sulla pagina web sopra, sezione "Collega un telefono")`);
       if (!args["web-host"]) {
         console.log(`Note: --web-host wasn't set, so the Web UI is still loopback-only — a phone on the same Wi-Fi can't reach it yet.`);
       }
