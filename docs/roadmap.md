@@ -72,13 +72,31 @@ Due parti indipendenti, entrambe complete:
 
 `tools/simulator/simulate.ts` avvia N istanze reali di `NomadNode` in locale, le collega secondo una topologia configurabile (catena, anello, stella, casuale) ed esegue lo scenario "content fanout" (un nodo pubblica, tutti gli altri lo richiedono), misurando percentuale di consegna e latenza (§76-77). Utilizzabile anche da riga di comando: `npm run simulate -- --nodes 50 --topology random`. Lo sviluppo di questo strumento ha scovato un bug reale nel transport TCP di base (due connessioni simultanee tra la stessa coppia di nodi lasciavano un socket "orfano" che bloccava per sempre la chiusura del nodo) — corretto in `node/src/transports/tcp.ts`, con test di regressione dedicato.
 
+## Secondo giro: seguito dell'audit tecnico (in corso)
+
+Con le Milestone 12, 13, 15, 16 e 20 completate, è stato eseguito un audit tecnico completo (test, sicurezza, qualità del codice — vedi [`docs/audit-report.html`](./audit-report.html)) che ha identificato ulteriori miglioramenti realizzabili in puro software, in corso come sequenza di 9 slice tracciate in dettaglio in [`security.md`](./security.md) ("Bug corretti nel seguito dell'audit"):
+
+| # | Slice | Stato |
+|---|---|---|
+| 1 | Retry al prossimo content provider quando quello attivo tace | ✅ Fatto |
+| 2 | `BoundedFifoMap` condivisa (rimossa duplicazione 5x) | ✅ Fatto |
+| 3 | Eviction pesata sulla fiducia per `PeerDirectory`/`RemoteCatalog` | ✅ Fatto |
+| 4 | Scheduling reale basato su priorità in `TcpTransport` | ✅ Fatto |
+| 5 | Pacchetto `CONTENT_NOT_FOUND` + scadenza dei contenuti | ✅ Fatto |
+| 6 | Protocollo di service discovery (`SERVICE_*`) | ✅ Fatto |
+| 7 | Interfaccia web locale di stato/ricerca (spec §59) | ✅ Fatto |
+| 8 | Transport BLE **simulato** (Milestone 8 senza hardware reale) | ⏳ In corso |
+| 9 | Gateway NOMAD mockato contro un fake server locale (Milestone 11 senza Docker) | ⏳ Da fare |
+
+Le Slice 8 e 9 dimostrano che una parte di Milestone 8 e 11 *è* realizzabile in puro software: un transport BLE simulato (stessa interfaccia `Transport`, vincoli di MTU/frammentazione realistici, nessun radio reale) e un adapter gateway contro un server HTTP fittizio locale invece di Project NOMAD vero. Non sostituiscono la validazione con hardware/Docker reali (restano comunque necessarie prima di un deployment vero), ma permettono di validare la logica applicativa adesso.
+
 ## Ordine di lavoro consigliato per i prossimi passi
 
-Con le Milestone 12, 13, 15, 16 e 20 tutte completate, **tutto ciò che si poteva costruire e testare senza hardware BLE e senza Docker/Project NOMAD è stato portato a termine**. Quello che resta è bloccato su uno di due prerequisiti esterni:
+Dopo la Slice 9, quello che resta è bloccato su uno dei due prerequisiti esterni veri e propri:
 
-- **Milestone 8/9** (BLE, app mobile) richiedono dispositivi fisici per i test end-to-end.
-- **Milestone 10/11** (integrazione e gateway NOMAD) richiedono Docker e un'istanza di Project NOMAD raggiungibile.
+- **Milestone 8/9** (BLE/hardware reale, app mobile) richiedono dispositivi fisici per i test end-to-end.
+- **Milestone 10/11** (integrazione e gateway NOMAD reali) richiedono Docker e un'istanza di Project NOMAD raggiungibile.
 - **Milestone 14** (Wi-Fi Direct) richiede API di sistema operativo legate all'hardware di rete reale.
 - **Milestone 17-19** (deployment hardware, pilot) richiedono per definizione hardware reale.
 
-Non restano candidati aperti in puro software: le prossime mosse richiedono uno dei due prerequisiti sopra. Il confronto dettagliato è in [`docs/next-steps.md`](./next-steps.md) (aggiornato con lo stato corrente).
+Il confronto dettagliato è in [`docs/next-steps.md`](./next-steps.md) (aggiornato con lo stato corrente).

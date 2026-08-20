@@ -2,7 +2,7 @@
 
 Riferimento: [`docs/roadmap.md`](./roadmap.md) per lo stato di tutte le milestone (0-20). Questo documento traduce le milestone candidate come "prossimo passo" in piani d'azione concreti — file da toccare, prerequisiti, rischi, criteri di accettazione — così la scelta si può fare con cognizione di causa invece che sulla sola numerazione. Per la stessa lista in linguaggio semplice e non tecnico, vedi [`docs/audit-report.html`](./audit-report.html).
 
-**Stato: tutto ciò che si poteva fare senza hardware BLE e senza Docker/Project NOMAD è stato completato**, in tre passate successive. Oltre all'Opzione C (store-and-forward, Milestone 12), sono state completate: Milestone 13 (partition sync, `node/src/catalog.ts`), Milestone 15 per intero (firma dei contenuti, trust levels, rate limiting, cifratura E2E dei messaggi privati — vedi `docs/security.md`), Milestone 16 per intero (relay policy legata a batteria/carica **e** routing a costo distance-vector, `node/src/relay-policy.ts` + `node/src/routing-table.ts`) e la Milestone 20 (simulatore di rete, `tools/simulator/`). Le opzioni A (BLE) e B (gateway NOMAD), qui sotto invariate rispetto alla pianificazione originale, restano **bloccate**: richiedono rispettivamente hardware fisico e un'istanza Docker di Project NOMAD, nessuno dei due disponibile in questa sessione. Non restano candidati aperti in puro software — vedi la sezione finale.
+**Stato**: oltre all'Opzione C (store-and-forward, Milestone 12), sono state completate: Milestone 13 (partition sync, `node/src/catalog.ts`), Milestone 15 per intero (firma dei contenuti, trust levels, rate limiting, cifratura E2E dei messaggi privati — vedi `docs/security.md`), Milestone 16 per intero (relay policy legata a batteria/carica **e** routing a costo distance-vector, `node/src/relay-policy.ts` + `node/src/routing-table.ts`) e la Milestone 20 (simulatore di rete, `tools/simulator/`). Un secondo giro post-audit (7 slice completate: retry sui content provider, struttura dati limitata condivisa, eviction pesata sulla fiducia, scheduling per priorità, `CONTENT_NOT_FOUND`+scadenza, service discovery, interfaccia web — dettaglio in `docs/security.md`) ha poi rivalutato le opzioni A e B qui sotto: la **versione hardware/Docker reale** di entrambe resta bloccata come descritto (invariato), ma una **versione simulata/mockata** di ciascuna — che valida la logica applicativa senza quei prerequisiti — è realizzabile in puro software ed è in corso (Slice 8 per BLE, Slice 9 per il gateway NOMAD). Vedi le note aggiunte in coda a ciascuna opzione sotto.
 
 ## Come leggere questo documento
 
@@ -28,6 +28,8 @@ Per ciascuna opzione: cosa costruire, file coinvolti, prerequisiti, criteri di a
 
 **Sforzo relativo**: **alto** — nuovo dominio tecnico, hardware nel loop, nessuna copertura CI automatica possibile.
 
+**Aggiornamento (Slice 8, seguito dell'audit)**: la parte "hardware BLE reale" sopra resta bloccata invariata. Il paragrafo sopra menziona già la necessità di "un `Transport` fittizio (loopback BLE simulato) per i test automatici" — è esattamente questo che la Slice 8 realizza: un `BleSimulatedTransport` (o nome analogo) dietro la stessa interfaccia `Transport`, con vincoli di MTU/frammentazione realistici applicati in-process (nessun radio reale, nessuna libreria `noble`/`bleno`), per validare che il routing/content-centric layer si comporti correttamente su un link a pacchetti piccoli prima ancora di avere hardware. Vedi `docs/security.md` per il dettaglio una volta completata.
+
 ---
 
 ## Opzione B — Gateway NOMAD (roadmap Milestone 10-11)
@@ -43,6 +45,8 @@ Per ciascuna opzione: cosa costruire, file coinvolti, prerequisiti, criteri di a
 **Rischi principali**: Project NOMAD "non dichiarato stabile" (spec §4) — la sua API potrebbe cambiare sotto i piedi; il setup Docker è un prerequisito ambientale non garantito.
 
 **Sforzo relativo**: **medio** — riusa quasi interamente il codice già scritto e testato in questa sessione (`NomadNode`, protocollo, routing, content store come cache); il lavoro nuovo è isolato nell'adapter HTTP verso NOMAD.
+
+**Aggiornamento (Slice 9, seguito dell'audit)**: la parte "Project NOMAD reale via Docker" sopra resta bloccata invariata. La Slice 9 realizza invece l'adapter HTTP contro un **fake server locale** (avviato dallo stesso processo di test/dimostrazione, che imita la sola API Kiwix di sola lettura effettivamente usata) al posto di un'istanza Docker reale — stesso adapter, stesso protocollo Nomad-Net esposto, stessi criteri di accettazione sopra, ma senza il prerequisito Docker. Vedi `docs/security.md` per il dettaglio una volta completata.
 
 ---
 
@@ -82,8 +86,8 @@ Realizza sia la parte energy-aware di spec §51/§58 ("Relay OFF / Relay when ch
 
 ## Cosa resta possibile in puro software, se si vuole andare oltre
 
-Nessun candidato resta aperto in puro software: sia la cifratura end-to-end (Opzione E) sia il routing a costo distance-vector (Opzione F) sono stati completati in questa sessione. Le prossime mosse richiedono uno dei prerequisiti esterni elencati sotto.
+Le versioni **hardware/Docker reali** di BLE (Opzione A) e del gateway NOMAD (Opzione B) restano gli unici due candidati bloccati su prerequisiti esterni. Le loro **versioni simulate/mockate** (Slice 8 e 9 del secondo giro post-audit, vedi le note in coda a ciascuna opzione sopra e `docs/security.md`) sono realizzabili in puro software e sono rispettivamente in corso e da iniziare. Una volta completate entrambe, non resteranno altri candidati aperti in puro software oltre a un'eventuale ulteriore passata di qualità/sicurezza sul codice esistente.
 
 ## Come procedere
 
-Le opzioni A (BLE) e B (gateway NOMAD) sono le uniche due rimaste dalla pianificazione originale, ed entrambe restano bloccate sugli stessi prerequisiti ambientali (hardware fisico; Docker + Project NOMAD). Quando quegli elementi saranno disponibili, si riprende da lì.
+Le opzioni A (BLE) e B (gateway NOMAD) restano bloccate sui prerequisiti ambientali originali (hardware fisico; Docker + Project NOMAD) **solo per la loro forma realistica finale** — le rispettive versioni simulate (Slice 8, 9) procedono nel frattempo come lavoro in puro software. Quando hardware/Docker saranno disponibili, il codice del transport/gateway reale si aggiunge dietro la stessa interfaccia già validata dalla versione simulata, senza dover ripartire da zero.
