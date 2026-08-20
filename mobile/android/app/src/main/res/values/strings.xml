@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Nomad-Net</string>
+    <string name="title_activity_main">Nomad-Net</string>
+    <string name="package_name">net.nomadnet.mobile</string>
+    <string name="custom_url_scheme">net.nomadnet.mobile</string>
+</resources>

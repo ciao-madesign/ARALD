@@ -1,0 +1,8 @@
+{
+  "appId": "net.nomadnet.mobile",
+  "appName": "Nomad-Net",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  }
+}

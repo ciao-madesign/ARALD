@@ -1,0 +1,134 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f4f6f5; --card: #ffffff; --border: #d9dfdc; --ink: #16211e; --muted: #5c6b66;
+  --accent: #1f7a68; --accent-soft: #e2f1ed;
+  --good: #1f7a4a; --good-soft: #e3f3e8;
+  --warn: #a8631a; --warn-soft: #faeee0;
+  --bad: #a8321a; --bad-soft: #fae4e0;
+  --off: #8a938f; --off-soft: #ecefed;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101614; --card: #182220; --border: #2b3733; --ink: #e7ece9; --muted: #93a19b;
+    --accent: #4fbfa2; --accent-soft: #163a32;
+    --good: #4fbf7c; --good-soft: #163a24;
+    --warn: #e0a352; --warn-soft: #3a2c14;
+    --bad: #e07a52; --bad-soft: #3a1c14;
+    --off: #6b7671; --off-soft: #202a26;
+  }
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+body {
+  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg); color: var(--ink);
+  margin: 0;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  line-height: 1.45;
+  font-size: 16px;
+}
+
+.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.muted { color: var(--muted); }
+h1 { margin: 0; font-size: 1.3em; letter-spacing: 0.02em; }
+h2 { margin: 0 0 0.7em; font-size: 0.92em; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+
+button { font: inherit; cursor: pointer; }
+input, textarea { font: inherit; }
+
+/* ---------- setup screen ---------- */
+
+/* :not([hidden]) — an ID selector's specificity otherwise beats the UA stylesheet's own
+   [hidden] { display: none } rule, so an unguarded `display: flex` here would keep this screen
+   visible even after app.js sets the hidden attribute to switch to the dashboard. */
+#setup-screen:not([hidden]) {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5em;
+}
+.setup-card { max-width: 26em; width: 100%; }
+.setup-card .lede { color: var(--muted); font-size: 0.92em; margin-bottom: 1.5em; }
+.setup-card code { background: var(--off-soft); padding: 0.1em 0.35em; border-radius: 0.25em; }
+#setup-form { display: flex; flex-direction: column; gap: 0.4em; }
+#setup-form label { font-size: 0.82em; color: var(--muted); margin-top: 0.6em; }
+#setup-form input {
+  padding: 0.75em 0.8em;
+  border-radius: 0.6em;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--ink);
+}
+#setup-form button {
+  margin-top: 1.4em;
+  padding: 0.85em;
+  border-radius: 0.6em;
+  border: none;
+  background: var(--accent);
+  color: white;
+  font-weight: 600;
+}
+#setup-form button:active { opacity: 0.85; }
+
+/* ---------- dashboard ---------- */
+
+#dashboard-screen { padding: 1.2em 1em 3em; max-width: 40em; margin: 0 auto; }
+
+header { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.6em; margin-bottom: 1.2em; }
+#node-label { font-size: 0.82em; margin-top: 0.2em; }
+.link-button {
+  background: none; border: none; color: var(--accent); font-size: 0.85em; padding: 0.3em 0;
+  text-decoration: underline; text-underline-offset: 2px;
+}
+
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(7.5em, 1fr)); gap: 0.6em; margin-bottom: 1.2em; }
+.stat { background: var(--card); border: 1px solid var(--border); border-radius: 0.6em; padding: 0.7em 0.85em; }
+.stat .v { font-size: 1.3em; font-weight: 700; }
+.stat .l { font-size: 0.72em; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+
+.panel { background: var(--card); border: 1px solid var(--border); border-radius: 0.6em; padding: 1em; margin-bottom: 1em; }
+.panel ul { list-style: none; margin: 0; padding: 0; }
+.panel li { padding: 0.6em 0; border-top: 1px solid var(--border); }
+.panel li:first-child { border-top: none; padding-top: 0; }
+.empty { color: var(--muted); font-style: italic; padding: 0.3em 0; }
+
+.row { display: flex; align-items: center; justify-content: space-between; gap: 0.6em; }
+.row-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.pill { display: inline-flex; align-items: center; gap: 0.35em; padding: 0.22em 0.65em; border-radius: 999px; font-size: 0.76em; font-weight: 600; flex: none; }
+.pill.good { background: var(--good-soft); color: var(--good); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.bad { background: var(--bad-soft); color: var(--bad); }
+.pill.off { background: var(--off-soft); color: var(--off); }
+
+.tags { display: flex; gap: 0.3em; flex-wrap: wrap; margin-top: 0.35em; }
+.tag { font-size: 0.72em; background: var(--bg); border: 1px solid var(--border); border-radius: 0.3em; padding: 0.05em 0.4em; color: var(--muted); }
+
+#search-input {
+  width: 100%; padding: 0.6em 0.75em; border-radius: 0.5em; border: 1px solid var(--border);
+  background: var(--bg); color: var(--ink); margin-bottom: 0.7em;
+}
+
+.call-button {
+  padding: 0.35em 0.8em; border-radius: 0.5em; border: 1px solid var(--accent); background: var(--accent-soft);
+  color: var(--accent); font-size: 0.8em; font-weight: 600; flex: none;
+}
+.call-button:active { opacity: 0.8; }
+
+.call-form { margin-top: 0.6em; display: flex; flex-direction: column; gap: 0.45em; }
+.call-form textarea {
+  width: 100%; min-height: 4.5em; padding: 0.6em; border-radius: 0.5em; border: 1px solid var(--border);
+  background: var(--bg); color: var(--ink); font-family: inherit; resize: vertical;
+}
+.call-form .call-submit {
+  align-self: flex-start; padding: 0.5em 1em; border-radius: 0.5em; border: none;
+  background: var(--accent); color: white; font-weight: 600; font-size: 0.88em;
+}
+.call-result { font-size: 0.85em; padding: 0.6em; border-radius: 0.5em; background: var(--bg); border: 1px solid var(--border); white-space: pre-wrap; word-break: break-word; }
+.call-result.is-error { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
+
+.error {
+  color: var(--bad); background: var(--bad-soft); border-radius: 0.5em; padding: 0.7em 0.85em; font-size: 0.88em; margin-top: 0.8em;
+}

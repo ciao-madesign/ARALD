@@ -64,11 +64,15 @@ nomad-net/
 ├─ tests/           unit/, integration/, network/ (vitest)
 ├─ tools/simulator/ simulatore di rete a scala (usato anche da `npm run simulate`)
 ├─ gateway/nomad/   gateway NOMAD (Slice 9-10): KiwixGateway, AiGateway, fake server, cli.ts — mockato, non nel workspace npm
-├─ mobile/          segnaposto app Android/iOS — non ancora implementato
+├─ mobile/          client mobile Capacitor verso un gateway (Opzione H Fase 1) — vedi mobile/README.md; mobile/ios/ ancora solo segnaposto
 └─ protocol/        segnaposto definizioni di protocollo condivise — non contiene codice reale
 ```
 
-Tutto il codice reale vive sotto `node/src/`. `gateway/`, `mobile/`, `protocol/` sono placeholder dalla specifica, non toccarli aspettandosi codice.
+Tutto il codice reale vive sotto `node/src/`. `gateway/nomad/` e `mobile/` (Android) hanno codice reale ma non sono nel workspace npm della radice (progetti separati con proprio `package.json`, come sopra). `protocol/` e `mobile/ios/` restano placeholder dalla specifica, non toccarli aspettandosi codice.
+
+### App mobile (`mobile/`, Opzione H Fase 1)
+
+Client Capacitor (JS/TS vanilla, no framework) verso un `WebUiServer` esistente via HTTP: setup/pairing (indirizzo + token) poi dashboard (vicini/servizi/contenuti, chiamata servizi). Verificato end-to-end con un browser reale (Playwright) contro un `NomadNode` vero — non su un telefono fisico o un emulatore, entrambi non disponibili in questo ambiente. La build Android nativa (`mobile/android/`, generata da `npx cap add android`) **non compila in questa sessione**: richiede l'Android Gradle Plugin da `dl.google.com`, bloccato dalla policy di rete (403 dal proxy, verificato — non un problema di codice, non ritentare). Revisione dedicata con 6 problemi reali trovati e corretti (incluso un bug bloccante mai osservabile in un browser desktop: Android blocca di default il traffico HTTP non cifrato, corretto con un `network_security_config.xml`) — vedi `docs/security.md` voce #23 e `mobile/README.md` per il dettaglio completo.
 
 ### File chiave in `node/src/` e a cosa servono
 

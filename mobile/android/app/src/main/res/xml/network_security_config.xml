@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android blocks cleartext (plain http://) traffic by default from API 28
+  onward. This app's entire purpose (Fase 1, docs/next-steps.md Opzione H)
+  is talking to a Nomad-Net gateway node on the local Wi-Fi network — an
+  operator-entered LAN address, never a fixed domain — and WebUiServer
+  (node/src/loopback-http-server.ts) only ever serves plain HTTP, no TLS.
+  Without this, every fetch() in www/app.js to that gateway would be
+  silently blocked by the OS/WebView before it ever left the device.
+  Scoped as broadly as the app's own use case requires (any LAN address),
+  not narrowed to specific hosts, since the gateway's address isn't known
+  ahead of time.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

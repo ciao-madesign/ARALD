@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<title>Nomad-Net</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<section id="setup-screen">
+  <div class="setup-card">
+    <h1>NOMAD-NET</h1>
+    <p class="lede">Connettiti a un nodo gateway sulla stessa rete Wi-Fi. Trovi indirizzo e token stampati in console quando il gateway viene avviato con <code>--web-host</code> e <code>--allow-service-calls</code>.</p>
+    <form id="setup-form">
+      <label for="gateway-input">Indirizzo del gateway</label>
+      <input id="gateway-input" type="text" placeholder="192.168.1.5:8080" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      <label for="token-input">Token di pairing</label>
+      <input id="token-input" type="text" placeholder="3f9a2b..." autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      <button type="submit">Connetti</button>
+      <p id="setup-error" class="error" hidden></p>
+    </form>
+  </div>
+</section>
+
+<section id="dashboard-screen" hidden>
+  <header>
+    <div>
+      <h1>NOMAD-NET</h1>
+      <div id="node-label" class="mono muted"></div>
+    </div>
+    <button id="change-gateway" class="link-button">Cambia gateway</button>
+  </header>
+
+  <div id="stats" class="stats"></div>
+
+  <section class="panel">
+    <h2>Vicini connessi</h2>
+    <ul id="peers"></ul>
+  </section>
+
+  <section class="panel">
+    <h2>Servizi</h2>
+    <ul id="services"></ul>
+  </section>
+
+  <section class="panel">
+    <h2>Contenuti</h2>
+    <form id="search-form">
+      <input id="search-input" type="text" placeholder="Cerca per nome..." autocomplete="off">
+    </form>
+    <ul id="content"></ul>
+  </section>
+
+  <p id="dashboard-error" class="error" hidden></p>
+</section>
+
+<script src="app.js"></script>
+</body>
+</html>
