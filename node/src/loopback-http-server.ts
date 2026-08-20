@@ -13,6 +13,70 @@ export function sendJson(res: ServerResponse, statusCode: number, body: unknown)
   res.end(json);
 }
 
+/** Distinguishes "the body was too big" from every other stream failure (client disconnect, socket reset) — a caller of `readRequestBody()` needs to tell them apart to answer with the right status code instead of always claiming 413. */
+export class BodyTooLargeError extends Error {}
+
+/**
+ * Reads and concatenates a request body, rejecting with `BodyTooLargeError`
+ * once it exceeds `maxBytes` instead of buffering an unbounded amount from
+ * a hostile or broken client — any other stream failure rejects with the
+ * original error unchanged. Shared for the same reason `sendJson()` is:
+ * this exact body-reading loop (with the same `BodyTooLargeError` split)
+ * showed up first in `gateway/nomad/fake-ollama-server.ts` (Slice 10, for
+ * `POST /api/generate`) and then again in `WebUiServer` (for `POST
+ * /api/call`, spec §59 mobile pairing).
+ *
+ * `timeoutMs`, when given, bounds the *overall* wait for the body to finish
+ * arriving — not per-chunk idle time — so a client trickling data one byte
+ * at a time while staying under `maxBytes` can't hold the connection (and
+ * its socket/memory) open for Node's own default `http.Server` request
+ * timeout (300s), far longer than any caller of this function actually
+ * intends to wait. Optional and off by default so existing callers that
+ * never needed this bound (e.g. `FakeOllamaServer`, a test/demo server the
+ * mobile-pairing threat model doesn't apply to) are unaffected.
+ */
+export function readRequestBody(req: IncomingMessage, maxBytes: number, timeoutMs?: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    let settled = false;
+    const timer =
+      timeoutMs !== undefined
+        ? setTimeout(() => {
+            settled = true;
+            req.destroy();
+            reject(new Error(`timed out after ${timeoutMs}ms waiting for the request body`));
+          }, timeoutMs)
+        : undefined;
+    req.on("data", (chunk: Buffer) => {
+      if (settled) return;
+      total += chunk.length;
+      if (total > maxBytes) {
+        settled = true;
+        if (timer) clearTimeout(timer);
+        req.destroy();
+        reject(new BodyTooLargeError("request body too large"));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => {
+      if (!settled) {
+        settled = true;
+        if (timer) clearTimeout(timer);
+        resolve(Buffer.concat(chunks));
+      }
+    });
+    req.on("error", (err) => {
+      if (!settled) {
+        settled = true;
+        if (timer) clearTimeout(timer);
+        reject(err);
+      }
+    });
+  });
+}
+
 /**
  * Shared `start()`/`stop()`/`port`-getter boilerplate for a small,
  * local-only HTTP server — used by `WebUiServer` (spec §59) and, in

@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { LoopbackHttpServer, sendJson } from "./loopback-http-server.js";
+import { timingSafeEqual } from "node:crypto";
+import { BodyTooLargeError, LoopbackHttpServer, readRequestBody, sendJson } from "./loopback-http-server.js";
 import type { NomadNode } from "./node.js";
 import type { ContentMetadata } from "./content.js";
 import type { TrustLevel } from "./trust.js";
@@ -10,9 +11,13 @@ export interface WebUiOptions {
   /**
    * Deliberately bound to loopback only by default (spec §59 describes a
    * local status/search page, not a public one) — this prototype has no
-   * authentication on these endpoints, so binding wider than localhost
-   * without adding one would expose this node's peer list, known content,
-   * and search to anyone who can reach the port.
+   * authentication on the read-only endpoints below, so binding wider than
+   * localhost without one would expose this node's peer list, known
+   * content, and search to anyone who can reach the port. Set this to your
+   * LAN address (e.g. the machine's Wi-Fi IP) only when a mobile client on
+   * the same network needs to reach it — see `allowServiceCalls` for the
+   * one endpoint that additionally requires a pairing token regardless of
+   * `host`.
    */
   host?: string;
   /**
@@ -23,6 +28,29 @@ export interface WebUiOptions {
    * Defaults to always reporting OFFLINE.
    */
   internetStatus?: () => "ONLINE" | "OFFLINE";
+  /**
+   * Enables `POST /api/call` (spec §36-37 `CALL service://...`) — the one
+   * write/action endpoint this otherwise strictly read-only interface
+   * exposes, built for the mobile client (`docs/next-steps.md` Opzione H)
+   * to invoke a service like `service://ai` from a phone. Off by default;
+   * when true, `pairingToken` is required (the constructor throws
+   * otherwise) — there is no scenario where this should be enabled without
+   * one, since it lets any caller who has the token invoke any registered
+   * service with any payload, a materially bigger risk than the read-only
+   * endpoints below it.
+   */
+  allowServiceCalls?: boolean;
+  /**
+   * Required when `allowServiceCalls` is true. Every `POST /api/call`
+   * request must carry this exact value as `Authorization: Bearer
+   * <token>` (compared in constant time via `node:crypto.timingSafeEqual`
+   * to avoid a timing side-channel); a mismatched or missing token gets
+   * `401`. Generate one with `crypto.randomBytes(16).toString("hex")` (see
+   * `cli.ts`'s `--allow-service-calls`) and hand it to the mobile app once,
+   * out of band — this is a pairing secret, not something this class ever
+   * serves back over HTTP itself.
+   */
+  pairingToken?: string;
 }
 
 interface StatusPayload {
@@ -431,20 +459,30 @@ setInterval(refreshAll, 5000);
  * Local status/search web interface (spec §59): "l'utente non deve essere
  * costretto a capire il routing" — a human-readable dashboard over data
  * this node already tracks (peers, known services, cached-content ratio)
- * plus content browsing/search, without exposing any control/write
- * capability. Deliberately read-only and loopback-bound by default (see
- * `WebUiOptions`) — this is a status page, not an admin API: every endpoint
- * below only ever reads node state, never calls a service or mutates
- * anything (that stays a deliberate gap — see `docs/security.md`).
+ * plus content browsing/search. Loopback-bound by default (see
+ * `WebUiOptions`) and, for every endpoint except one, strictly read-only —
+ * this is a status page, not a general admin API. The one exception is
+ * `POST /api/call` (`handleCall()` below), added for the mobile client
+ * (`docs/next-steps.md` Opzione H) so a phone can invoke a service like
+ * `service://ai`: off unless `allowServiceCalls` is explicitly set, and
+ * gated by its own pairing token even when it is, regardless of whether
+ * `host` is loopback or a LAN address — see `docs/security.md`.
  */
 export class WebUiServer {
   private readonly node: NomadNode;
   private readonly internetStatus: () => "ONLINE" | "OFFLINE";
+  private readonly allowServiceCalls: boolean;
+  private readonly pairingToken: string | undefined;
   private readonly httpServer: LoopbackHttpServer;
 
   constructor(node: NomadNode, options: WebUiOptions = {}) {
     this.node = node;
     this.internetStatus = options.internetStatus ?? (() => "OFFLINE");
+    this.allowServiceCalls = options.allowServiceCalls ?? false;
+    if (this.allowServiceCalls && !options.pairingToken) {
+      throw new Error("WebUiServer: allowServiceCalls requires a pairingToken");
+    }
+    this.pairingToken = options.pairingToken;
     this.httpServer = new LoopbackHttpServer((req, res) => this.handleRequest(req, res), {
       port: options.port,
       host: options.host,
@@ -465,13 +503,26 @@ export class WebUiServer {
   }
 
   private handleRequest(req: IncomingMessage, res: ServerResponse): void {
-    const url = new URL(req.method === "GET" || req.method === "HEAD" ? (req.url ?? "/") : "/", "http://localhost");
+    if (req.method === "POST") {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      if (url.pathname === "/api/call") {
+        void this.handleCall(req, res);
+        return;
+      }
+      res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Method Not Allowed");
+      return;
+    }
 
     if (req.method !== "GET" && req.method !== "HEAD") {
       res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("Method Not Allowed");
       return;
     }
+
+    // req.method is provably GET or HEAD by this point — both earlier branches (POST, everything
+    // else) already returned — so req.url can be trusted directly, no fallback-to-"/" ternary needed.
+    const url = new URL(req.url ?? "/", "http://localhost");
 
     if (url.pathname === "/") {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Length": Buffer.byteLength(PAGE_HTML) });
@@ -507,4 +558,131 @@ export class WebUiServer {
     res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
     res.end("Not Found");
   }
+
+  /**
+   * `POST /api/call` — invokes `NomadNode.callService()` on behalf of the
+   * caller (spec §36-37 `CALL service://...`). Not reachable at all unless
+   * `allowServiceCalls` was set at construction; when it wasn't, this
+   * returns a plain `404` rather than a `403`/`401`, so the endpoint's mere
+   * existence isn't revealed to a caller who doesn't already know the
+   * pairing token — same "don't confirm what you're guarding" posture as
+   * refusing to distinguish "wrong token" from "no token" below.
+   */
+  private async handleCall(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.allowServiceCalls || !this.pairingToken) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+
+    const authHeader = req.headers.authorization;
+    const provided = typeof authHeader === "string" && authHeader.startsWith("Bearer ") ? authHeader.slice(7) : undefined;
+    if (!provided || !tokensMatch(provided, this.pairingToken)) {
+      sendJson(res, 401, { error: "missing or invalid pairing token" });
+      return;
+    }
+
+    let raw: Buffer;
+    try {
+      raw = await readRequestBody(req, MAX_CALL_BODY_BYTES, MAX_CALL_BODY_READ_MS);
+    } catch (err) {
+      if (res.writableEnded || res.destroyed) return; // connection already gone — nothing to answer
+      if (err instanceof BodyTooLargeError) {
+        sendJson(res, 413, { error: "request body too large" });
+      } else if (err instanceof Error && err.message.includes("timed out")) {
+        sendJson(res, 408, { error: "timed out waiting for the request body" });
+      } else {
+        sendJson(res, 400, { error: "failed to read request body" });
+      }
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = raw.length === 0 ? {} : JSON.parse(raw.toString("utf8"));
+    } catch {
+      sendJson(res, 400, { error: "malformed JSON body" });
+      return;
+    }
+
+    const body = parsed as { serviceId?: unknown; payload?: unknown; timeoutMs?: unknown } | null;
+    const serviceId = body?.serviceId;
+    if (typeof serviceId !== "string" || serviceId.length === 0) {
+      sendJson(res, 400, { error: "'serviceId' must be a non-empty string" });
+      return;
+    }
+    // Restricted to services this node already knows about and considers available — the same
+    // set /api/services already shows the caller — rather than letting an arbitrary serviceId fall
+    // through into callService()'s discoverService() path. Without this, any string here (up to
+    // MAX_CALL_BODY_BYTES) would flood a SERVICE_QUERY to the whole mesh on every miss (spec §21
+    // controlled flooding, re-flooded further by every peer that doesn't recognize it either) — a
+    // single authenticated HTTP request turning into mesh-wide traffic, unlike every other endpoint
+    // on this class, which only ever reads this node's own local state.
+    if (!isKnownAvailableService(this.node, serviceId)) {
+      sendJson(res, 404, { error: `unknown or unavailable service: ${serviceId}` });
+      return;
+    }
+    const timeoutMs = resolveCallTimeoutMs(body?.timeoutMs);
+
+    try {
+      // callService() applies timeoutMs independently to discovery *and* invocation (node.ts), so
+      // its own worst case is up to 2x timeoutMs — wrapped here so this endpoint never holds the
+      // HTTP connection open longer than the single timeoutMs it advertises, regardless. The
+      // underlying call isn't cancelled if it loses this race; it just finishes in the background.
+      const result = await callWithHardTimeout(this.node.callService(serviceId, body?.payload, { timeoutMs }), timeoutMs);
+      sendJson(res, 200, { result });
+    } catch (err) {
+      // Same convention as every other service-call error path in this codebase (node.ts's
+      // handleServiceRequest, the gateway handlers): forward only err.message, never a stack trace.
+      sendJson(res, 502, { error: (err as Error).message });
+    }
+  }
+}
+
+/** Mirrors the definition `/api/status`'s own `services` count already uses ("known to this node and currently marked available") — the same bar `POST /api/call` requires a `serviceId` to clear before `callService()` is ever invoked. */
+function isKnownAvailableService(node: NomadNode, serviceId: string): boolean {
+  return node.listKnownServices().some((announcement) => announcement.serviceId === serviceId && announcement.availability);
+}
+
+/**
+ * Bounds the *total* wall-clock time this endpoint waits for `promise` to
+ * `timeoutMs`, independent of how many internal timeouts the promise's own
+ * producer applies. Does not cancel the underlying operation — `promise`
+ * keeps running and may still resolve or reject later, harmlessly, after
+ * this has already settled the race (no `AbortController` plumbed through
+ * `NomadNode.callService()` today to actually stop it).
+ */
+function callWithHardTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`service call did not complete within ${timeoutMs}ms`)), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
+const MAX_CALL_BODY_BYTES = 262_144; // generous for a service call payload, nowhere near CHUNK_SIZE
+const MAX_CALL_BODY_READ_MS = 10_000; // bounds how long a slow/trickling body is tolerated (loopback-http-server.ts), well under Node's own 300s default
+const DEFAULT_CALL_TIMEOUT_MS = 5000;
+const MAX_CALL_TIMEOUT_MS = 15000; // caps how long a single POST /api/call can hold a connection open
+
+/** Pure so it's unit-testable without actually waiting out a timeout (see tests/unit/web-ui.test.ts) — a positive number is honored up to `MAX_CALL_TIMEOUT_MS`; anything else (missing, non-number, zero, negative) falls back to `DEFAULT_CALL_TIMEOUT_MS`. Exported for that reason, not because callers outside this module have any other use for it. */
+export function resolveCallTimeoutMs(requestedTimeoutMs: unknown): number {
+  const requested = typeof requestedTimeoutMs === "number" && requestedTimeoutMs > 0 ? requestedTimeoutMs : DEFAULT_CALL_TIMEOUT_MS;
+  return Math.min(requested, MAX_CALL_TIMEOUT_MS);
+}
+
+/** Constant-time pairing-token comparison — a naive `===` would leak how many leading bytes matched through response timing. Different lengths are rejected before the timing-safe compare, since `timingSafeEqual` requires equal-length buffers and leaking the token's length is an accepted, far smaller risk than leaking its bytes. */
+function tokensMatch(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided, "utf8");
+  const b = Buffer.from(expected, "utf8");
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }

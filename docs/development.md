@@ -54,7 +54,21 @@ Spenta di default (apre una seconda porta anche se in ascolto solo su loopback).
 npm run dev -w node -- --id A --port 9001 --web-port 8080
 ```
 
-Poi `http://127.0.0.1:8080` mostra lo stato del nodo (vicini connessi con trust level, servizi conosciuti con provider e capability, percentuale di contenuto in cache, se il relay è attivo) e una ricerca "live" sui contenuti — pagina a card, non più la lista minimale delle prime versioni. Nessuna autenticazione: resta volutamente bound solo su `127.0.0.1` (`node/src/web-ui.ts`), non pensata per essere esposta oltre la macchina locale. Endpoint JSON disponibili se serve leggerli programmaticamente: `/api/status`, `/api/peers`, `/api/services`, `/api/content` (tutto il conosciuto), `/api/search?q=...` (filtrato — query vuota restituisce sempre `[]`, per design).
+Poi `http://127.0.0.1:8080` mostra lo stato del nodo (vicini connessi con trust level, servizi conosciuti con provider e capability, percentuale di contenuto in cache, se il relay è attivo) e una ricerca "live" sui contenuti — pagina a card, non più la lista minimale delle prime versioni. Nessuna autenticazione sugli endpoint di lettura: resta volutamente bound solo su `127.0.0.1` per default (`node/src/web-ui.ts`). Endpoint JSON disponibili se serve leggerli programmaticamente: `/api/status`, `/api/peers`, `/api/services`, `/api/content` (tutto il conosciuto), `/api/search?q=...` (filtrato — query vuota restituisce sempre `[]`, per design).
+
+### Raggiungerla da un telefono sulla stessa rete (client mobile, `docs/next-steps.md` Opzione H)
+
+```bash
+npm run dev -w node -- --id A --port 9001 --web-port 8080 --web-host 0.0.0.0 --allow-service-calls
+```
+
+`--web-host 0.0.0.0` fa il bind su tutte le interfacce (serve l'indirizzo LAN della macchina, es. `192.168.1.x`, non `127.0.0.1`, perché il telefono lo raggiunga) — da usare solo su una rete fidata, dato che gli endpoint di lettura restano senza autenticazione. `--allow-service-calls` attiva `POST /api/call` (l'unico endpoint di scrittura, per invocare un servizio come `service://ai` dal telefono) e stampa in console un **token di pairing** generato fresco a ogni avvio, da inserire una volta nell'app mobile:
+
+```
+Mobile pairing token (POST /api/call, Authorization: Bearer <token>): 3f9a...
+```
+
+`/api/call` richiede sempre quel token (anche in ascolto solo su loopback) e accetta solo `serviceId` già noti e disponibili — vedi `docs/security.md` voce #22 per il dettaglio completo delle protezioni.
 
 ## Gateway NOMAD mockato (§37, seguito audit — Slice 9-10)
 

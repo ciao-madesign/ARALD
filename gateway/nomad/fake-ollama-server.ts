@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { LoopbackHttpServer, sendJson } from "../../node/src/loopback-http-server.js";
+import { BodyTooLargeError, LoopbackHttpServer, readRequestBody, sendJson } from "../../node/src/loopback-http-server.js";
 
 export interface FakeOllamaServerOptions {
   /** Port to listen on; 0 (default) lets the OS assign one, same convention as FakeNomadServer/TcpTransport. */
@@ -10,38 +10,6 @@ export interface FakeOllamaServerOptions {
 }
 
 const MAX_BODY_BYTES = 1_000_000;
-
-/** Distinguishes "the body was too big" from every other stream failure (client disconnect, socket reset) — `route()` needs to tell them apart to answer with the right status code instead of always claiming 413. */
-class BodyTooLargeError extends Error {}
-
-/** Reads and concatenates a request body, rejecting with `BodyTooLargeError` once it exceeds `maxBytes` instead of buffering an unbounded amount from a hostile or broken client — any other stream failure rejects with the original error unchanged. */
-function readBody(req: IncomingMessage, maxBytes: number): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let total = 0;
-    let settled = false;
-    req.on("data", (chunk: Buffer) => {
-      if (settled) return;
-      total += chunk.length;
-      if (total > maxBytes) {
-        settled = true;
-        req.destroy();
-        reject(new BodyTooLargeError("request body too large"));
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on("end", () => {
-      if (!settled) resolve(Buffer.concat(chunks));
-    });
-    req.on("error", (err) => {
-      if (!settled) {
-        settled = true;
-        reject(err);
-      }
-    });
-  });
-}
 
 /**
  * Stands in for the Ollama service a real Project NOMAD instance would
@@ -108,7 +76,7 @@ export class FakeOllamaServer {
 
     let raw: Buffer;
     try {
-      raw = await readBody(req, MAX_BODY_BYTES);
+      raw = await readRequestBody(req, MAX_BODY_BYTES);
     } catch (err) {
       if (res.writableEnded || res.destroyed) return; // connection already gone — nothing to answer
       if (err instanceof BodyTooLargeError) {
