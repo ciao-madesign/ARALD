@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { LoopbackHttpServer } from "./loopback-http-server.js";
+import { LoopbackHttpServer, sendJson } from "./loopback-http-server.js";
 import type { NomadNode } from "./node.js";
 
 export interface WebUiOptions {
@@ -196,12 +196,6 @@ setInterval(refreshStatus, 5000);
 </body>
 </html>
 `;
-
-function sendJson(res: ServerResponse, statusCode: number, body: unknown): void {
-  const json = JSON.stringify(body);
-  res.writeHead(statusCode, { "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(json) });
-  res.end(json);
-}
 
 /**
  * Local status/search web interface (spec §59): "l'utente non deve essere

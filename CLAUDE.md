@@ -18,7 +18,7 @@ Nomad-Net è un prototipo software di rete distribuita, **content-centric** e **
 
 Milestone 0-7, 12, 13, 15, 16, 20 della roadmap sono complete (identità crittografica, protocollo a pacchetti, transport TCP, routing multi-hop con controlled flooding + distance-vector a costo, content discovery/cache, store-and-forward, partition sync, firma dei contenuti, trust levels, rate limiting, E2E encryption, relay policy legata a batteria, simulatore di rete). Dettaglio completo in [`docs/roadmap.md`](docs/roadmap.md).
 
-Dopo il completamento delle milestone sopra è stato eseguito un **audit tecnico completo** (test, sicurezza, qualità del codice — vedi [`docs/audit-report.html`](docs/audit-report.html), un Artifact pubblicato e aggiornabile) che ha identificato ulteriori miglioramenti realizzabili in puro software. Questi sono in corso come una sequenza di **9 slice**, ciascuna con lo stesso workflow a "doppio check" (vedi sotto), tracciate in `docs/security.md` sotto "Bug corretti nel seguito dell'audit":
+Dopo il completamento delle milestone sopra è stato eseguito un **audit tecnico completo** (test, sicurezza, qualità del codice — vedi [`docs/audit-report.html`](docs/audit-report.html), un Artifact pubblicato e aggiornabile) che ha identificato ulteriori miglioramenti realizzabili in puro software. Sono stati realizzati come una sequenza di **9 slice pianificate, più una decima aggiunta successivamente su richiesta esplicita dell'utente**, ciascuna con lo stesso workflow a "doppio check" (vedi sotto), tracciate in `docs/security.md` sotto "Bug corretti nel seguito dell'audit":
 
 | # | Slice | Stato |
 |---|---|---|
@@ -31,14 +31,15 @@ Dopo il completamento delle milestone sopra è stato eseguito un **audit tecnico
 | 7 | Interfaccia web locale di stato/ricerca (spec §59) | ✅ Fatto |
 | 8 | Transport BLE simulato | ✅ Fatto |
 | 9 | Gateway NOMAD mockato (contro un fake server locale) | ✅ Fatto |
+| 10 | Gateway AI mockato (`service://ai`, spec §37 — contro un fake Ollama locale) | ✅ Fatto |
 
-**Le 9 slice pianificate sono tutte completate.** Ogni slice è documentata in dettaglio in `docs/security.md` (numerate progressivamente, bug #11-19) e spesso anche in `docs/protocol.md`. **Leggi quelle voci prima di toccare il codice corrispondente** — spiegano non solo cosa è stato fatto ma perché, inclusi i bug trovati dalla revisione e corretti prima di considerare ogni slice conclusa.
+**Le 9 slice pianificate sono tutte completate, più la decima.** Ogni slice è documentata in dettaglio in `docs/security.md` (numerate progressivamente, bug #11-20) e spesso anche in `docs/protocol.md`. **Leggi quelle voci prima di toccare il codice corrispondente** — spiegano non solo cosa è stato fatto ma perché, inclusi i bug trovati dalla revisione e corretti prima di considerare ogni slice conclusa.
 
-Con la Slice 9 chiusa, non restano candidati aperti realizzabili in puro software oltre a un'eventuale ulteriore passata di qualità/sicurezza sul codice esistente — `docs/roadmap.md`, `docs/next-steps.md` e `README.md` sono stati allineati di conseguenza. Le uniche milestone ancora aperte (8/9/10/11/14/17/18/19 nella loro forma *reale*, vedi `docs/roadmap.md`) sono bloccate su prerequisiti esterni (hardware fisico, Docker + Project NOMAD raggiungibile) non disponibili in questo ambiente — non c'è un "prossimo passo" software ovvio senza indicazione dell'utente su quale di questi prerequisiti diventa disponibile, o su un'altra direzione (es. un'ulteriore passata di code-review/qualità sul codice esistente).
+Con la Slice 10 chiusa, non restano candidati aperti realizzabili in puro software oltre a un'eventuale ulteriore passata di qualità/sicurezza sul codice esistente — `docs/roadmap.md`, `docs/next-steps.md`, `docs/audit-report.html` e `README.md` sono stati allineati di conseguenza. Le uniche milestone ancora aperte (8/9/10/11/14/17/18/19 nella loro forma *reale*, vedi `docs/roadmap.md`) sono bloccate su prerequisiti esterni (hardware fisico, Docker + Project NOMAD raggiungibile) non disponibili in questo ambiente — non c'è un "prossimo passo" software ovvio senza indicazione dell'utente su quale di questi prerequisiti diventa disponibile, o su un'altra direzione (es. un'ulteriore passata di code-review/qualità sul codice esistente).
 
 ## Workflow da riusare per lavoro futuro (slice, feature, o passate di qualità)
 
-Il workflow concordato con l'utente, usato per ognuna delle 9 slice sopra e da riapplicare identico a qualunque lavoro sostanziale futuro in questo repository:
+Il workflow concordato con l'utente, usato per ognuna delle 10 slice sopra e da riapplicare identico a qualunque lavoro sostanziale futuro in questo repository:
 
 1. Implementa la feature.
 2. Scrivi/aggiorna i test (unit + integration, seguendo le convenzioni esistenti — vedi sotto).
@@ -60,7 +61,7 @@ nomad-net/
 ├─ node/src/        nomad-node: il runtime di rete (unico package con codice reale)
 ├─ tests/           unit/, integration/, network/ (vitest)
 ├─ tools/simulator/ simulatore di rete a scala (usato anche da `npm run simulate`)
-├─ gateway/nomad/   gateway NOMAD (Slice 9): KiwixGateway, FakeNomadServer, cli.ts — mockato, non nel workspace npm
+├─ gateway/nomad/   gateway NOMAD (Slice 9-10): KiwixGateway, AiGateway, fake server, cli.ts — mockato, non nel workspace npm
 ├─ mobile/          segnaposto app Android/iOS — non ancora implementato
 └─ protocol/        segnaposto definizioni di protocollo condivise — non contiene codice reale
 ```
@@ -86,11 +87,11 @@ Tutto il codice reale vive sotto `node/src/`. `gateway/`, `mobile/`, `protocol/`
 - `bounded-map.ts` — `BoundedFifoMap<K,V>`, struttura dati limitata condivisa (con eviction opzionale pesata su uno score, es. la fiducia) usata da quasi tutte le strutture sopra che vengono alimentate dalla rete.
 - `priority-queue.ts` — coda a bucket per priorità (6 livelli), usata da `transports/tcp.ts` per lo scheduling reale degli invii.
 - `web-ui.ts` — interfaccia web locale di stato/ricerca (spec §59), server `node:http` minimale.
-- `loopback-http-server.ts` — bootstrap HTTP condiviso (`start()`/`stop()`/`port` getter) estratto da `web-ui.ts` e da `gateway/nomad/fake-nomad-server.ts` (Slice 9) quando la stessa boilerplate è comparsa una seconda volta.
+- `loopback-http-server.ts` — bootstrap HTTP condiviso (`start()`/`stop()`/`port` getter, più `sendJson()`) estratto da `web-ui.ts` e `gateway/nomad/fake-nomad-server.ts` (Slice 9), poi riusato anche da `gateway/nomad/fake-ollama-server.ts` (Slice 10) quando `sendJson()` è comparsa una terza volta.
 - `node.ts` — `NomadNode`, la classe che orchestra tutto il resto; qui vivono i pacchetti-handler (`handleContentQuery`, `handleServiceRequest`, ecc.) e i metodi pubblici (`getContent`, `callService`, `publishContent`, ...).
 - `cli.ts` — entry point eseguibile (`npm run dev -w node --`).
 
-`gateway/nomad/` (Slice 9, non nel workspace npm — importa `node/src/*` con percorsi relativi, stesso precedente di `tools/simulator/`): `kiwix-gateway.ts` (`KiwixGateway`, traduce `content://...`/`service://...` verso l'HTTP di NOMAD), `fake-nomad-server.ts` (`FakeNomadServer`, sostituisce Project NOMAD/Docker reale nei test/demo), `cli.ts` (demo eseguibile, `npm run gateway:demo`).
+`gateway/nomad/` (Slice 9-10, non nel workspace npm — importa `node/src/*` con percorsi relativi, stesso precedente di `tools/simulator/`): `kiwix-gateway.ts` (`KiwixGateway`, traduce `content://...`/`service://kiwix-search` verso l'HTTP di NOMAD), `fake-nomad-server.ts` (`FakeNomadServer`, sostituisce Project NOMAD/Docker reale nei test/demo), `ai-gateway.ts` (`AiGateway`, registra `service://ai` — spec §37, proxy live a un backend Ollama), `fake-ollama-server.ts` (`FakeOllamaServer`, sostituisce un'istanza Ollama reale nei test/demo), `cli.ts` (demo eseguibile, `npm run gateway:demo`).
 
 ## Convenzioni consolidate (da rispettare per coerenza, non da riscoprire)
 

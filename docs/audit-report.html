@@ -367,16 +367,23 @@
     </p>
     <div class="meta-row">
       <span>Rami: <code>claude/nomad-net-project-spec-lcnbqt</code> + <code>main</code></span>
-      <span>Ultimo commit: <code>80b6e8e</code></span>
-      <span>8 commit in totale</span>
+      <span>Aggiornato dopo: gateway AI mockato (10ª iterazione post-audit)</span>
     </div>
   </div>
 
+  <div class="reassure" style="margin-bottom:28px">
+    <strong>Aggiornamento al 20 agosto 2026:</strong> da questo controllo iniziale sono seguite dieci
+    iterazioni di sviluppo con lo stesso rigore (implementazione, test ripetuti, revisione dedicata,
+    correzione dei problemi trovati). Entrambi i problemi rimasti aperti nella sezione 03 sono stati
+    risolti da tempo — vedi lo stato aggiornato lì sotto. I numeri della sezione 01 restano quelli del
+    controllo originale del 14 agosto; lo stato attuale è riassunto nella nuova sezione 05, in fondo.
+  </div>
+
   <div class="stats">
-    <div class="stat"><div class="stat-num ok">142</div><div class="stat-label">test automatici, tutti superati</div></div>
-    <div class="stat"><div class="stat-num">31</div><div class="stat-label">file di test</div></div>
-    <div class="stat"><div class="stat-num">18</div><div class="stat-label">moduli del motore di rete</div></div>
-    <div class="stat"><div class="stat-num accent">2</div><div class="stat-label">problemi seri trovati e già corretti</div></div>
+    <div class="stat"><div class="stat-num ok">142</div><div class="stat-label">test automatici, tutti superati (14 agosto)</div></div>
+    <div class="stat"><div class="stat-num">31</div><div class="stat-label">file di test (14 agosto)</div></div>
+    <div class="stat"><div class="stat-num">18</div><div class="stat-label">moduli del motore di rete (14 agosto)</div></div>
+    <div class="stat"><div class="stat-num accent">2</div><div class="stat-label">problemi seri trovati e già corretti (14 agosto)</div></div>
   </div>
 
   <section>
@@ -437,17 +444,19 @@
     <div class="finding">
       <div class="finding-head">
         <h3 class="finding-title" style="margin:0">Un dispositivo "furbo" potrebbe far dimenticare identità legittime</h3>
-        <span class="chip open">annotato, non ancora risolto</span>
+        <span class="chip fixed">risolto</span>
       </div>
-      <p>La rete tiene un elenco limitato di "questo dispositivo usa questa chiave per i messaggi privati". Un dispositivo malintenzionato potrebbe generare economicamente molte identità usa-e-getta per far uscire dall'elenco identità vere, interrompendo temporaneamente i messaggi privati verso quei dispositivi (che tornano a funzionare non appena si riconnettono). Un meccanismo simile esiste già altrove nel codice per un problema analogo — va solo esteso qui.</p>
+      <span class="file">node/src/peer-directory.ts, node/src/catalog.ts</span>
+      <p>La rete tiene un elenco limitato di "questo dispositivo usa questa chiave per i messaggi privati". Un dispositivo malintenzionato poteva generare economicamente molte identità usa-e-getta per far uscire dall'elenco identità vere, interrompendo temporaneamente i messaggi privati verso quei dispositivi. <strong>Risolto</strong> nella terza delle iterazioni successive a questo controllo: quando l'elenco è pieno, ora si libera prima posto a scapito delle identità meno affidabili invece che della più vecchia in assoluto, così fabbricare identità nuove non basta più per scacciare quelle legittime.</p>
     </div>
 
     <div class="finding">
       <div class="finding-head">
         <h3 class="finding-title" style="margin:0">Se il primo dispositivo che risponde è irraggiungibile, non si prova il secondo</h3>
-        <span class="chip open">annotato, non ancora risolto</span>
+        <span class="chip fixed">risolto</span>
       </div>
-      <p>Quando un file esiste su più dispositivi, la rete si aggancia al primo che risponde. Se quel dispositivo diventa irraggiungibile proprio in quel momento, la richiesta scade invece di provare automaticamente con un altro dispositivo che invece avrebbe il file disponibile. Un caso limite raro, non un difetto della logica di base.</p>
+      <span class="file">node/src/node.ts — handleContentNotFound</span>
+      <p>Quando un file esiste su più dispositivi, la rete si aggancia al primo che risponde. Se quel dispositivo diventava irraggiungibile proprio in quel momento, la richiesta scadeva invece di provare automaticamente con un altro dispositivo che invece avrebbe avuto il file disponibile. <strong>Risolto</strong> nella prima delle iterazioni successive a questo controllo: la rete ora prova automaticamente il prossimo dispositivo candidato non appena capisce che il primo non può più rispondere.</p>
     </div>
   </section>
 
@@ -492,7 +501,23 @@
     </ol>
 
     <div class="reassure">
-      <strong>Nota rassicurante:</strong> nessuno dei prossimi passi dipende da altro software da scrivere. Il collo di bottiglia adesso è procurarsi dispositivi fisici e prendere qualche decisione organizzativa — non c'è altro lavoro di programmazione "bloccante" in attesa.
+      <strong>Nota rassicurante:</strong> nessuno dei prossimi passi dipende da altro software da scrivere. Il collo di bottiglia adesso è procurarsi dispositivi fisici e prendere qualche decisione organizzativa — non c'è altro lavoro di programmazione "bloccante" in attesa. Questo è, se possibile, ancora più vero oggi: vedi la sezione successiva per cosa è stato validato nel frattempo, sempre senza bisogno di hardware.
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head"><span class="section-num">05</span><h2>Cosa è successo da allora — dieci iterazioni in più</h2></div>
+    <div class="prose">
+      <p>Dopo questo controllo iniziale, il "cervello" della rete è cresciuto con dieci ulteriori iterazioni di sviluppo, ciascuna con lo stesso metodo: implementare, scrivere test, farli girare più volte di fila, sottoporre il codice a una revisione dedicata, correggere ogni problema reale trovato prima di considerarla conclusa. Oltre a risolvere i due problemi della sezione 03, hanno aggiunto funzionalità intere — tra le altre, la consegna differita quando un destinatario non è raggiungibile, la sincronizzazione tra reti che si incontrano per la prima volta, i messaggi privati cifrati, i livelli di fiducia tra vicini, la scoperta di servizi (non solo file), una pagina web locale di stato e ricerca, e l'instradamento consapevole della carica della batteria.</p>
+      <p>Le ultime tre iterazioni hanno affrontato in particolare le due parti del progetto che sembravano bloccate su hardware o servizi non disponibili in questo ambiente — dimostrando che la <em>logica</em> di entrambe si può comunque costruire e validare in puro software, dietro la stessa interfaccia che userà la versione reale:</p>
+    </div>
+    <ul class="check-list">
+      <li><span class="tick">✓</span> <span><strong>Un trasporto Bluetooth simulato</strong> — stessi vincoli di una radio BLE reale (dimensione minima dei pacchetti, numero massimo di dispositivi collegati contemporaneamente), ma senza onde radio vere. Manca solo l'hardware fisico per passare dalla simulazione al reale.</span></li>
+      <li><span class="tick">✓</span> <span><strong>Un collegamento mockato a Project NOMAD</strong> — lo stesso adattatore che parlerà con un'istanza Docker reale, oggi testato contro un piccolo server finto che imita l'archivio consultabile offline (Kiwix). Manca solo Docker + un'istanza reale per passare dal mock al reale.</span></li>
+      <li><span class="tick">✓</span> <span><strong>Un secondo collegamento mockato, per le risposte generate da un'intelligenza artificiale locale</strong> — lo scenario che questo stesso progetto descrive esplicitamente: un dispositivo poco potente chiede alla rete una risposta, e la rete trova un dispositivo più capace in grado di fornirla, senza che il primo debba sapere chi ha risposto. Stesso principio del punto precedente: manca solo un'istanza Ollama reale dietro Project NOMAD per passare dal mock al reale.</span></li>
+    </ul>
+    <div class="prose">
+      <p>Il codice conta oggi 249 test automatici in 45 file, tutti superati ripetutamente. Il dettaglio di ogni iterazione — inclusi i problemi reali trovati dalla revisione e corretti prima di considerarla conclusa, la stessa disciplina applicata ai due problemi della sezione 02 — è in <code>docs/security.md</code>; una spiegazione del progetto senza tecnicismi, seguita da un livello di dettaglio tecnico più a fondo, è in <code>CLAUDE.md</code> e nella documentazione sotto <code>docs/</code>.</p>
     </div>
   </section>
 

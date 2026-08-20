@@ -6,6 +6,13 @@ export interface LoopbackHttpServerOptions {
   host?: string;
 }
 
+/** Writes a JSON response with the right `Content-Type`/`Content-Length` headers — the other half of the small-HTTP-server boilerplate `LoopbackHttpServer` covers, shared for the same reason (this exact 5-line body showed up identically in `WebUiServer`, `FakeNomadServer`, and `FakeOllamaServer`). */
+export function sendJson(res: ServerResponse, statusCode: number, body: unknown): void {
+  const json = JSON.stringify(body);
+  res.writeHead(statusCode, { "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(json) });
+  res.end(json);
+}
+
 /**
  * Shared `start()`/`stop()`/`port`-getter boilerplate for a small,
  * local-only HTTP server — used by `WebUiServer` (spec §59) and, in

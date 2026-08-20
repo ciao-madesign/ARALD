@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { LoopbackHttpServer } from "../../node/src/loopback-http-server.js";
+import { LoopbackHttpServer, sendJson } from "../../node/src/loopback-http-server.js";
 
 /**
  * Stands in for a real Project NOMAD instance (spec §4) for this slice —
@@ -29,12 +29,6 @@ export interface FakeNomadServerOptions {
   host?: string;
   /** Simulated per-request delay in ms, so tests can exercise the gateway's async plumbing under something other than instant loopback response. */
   latencyMs?: number;
-}
-
-function sendJson(res: ServerResponse, statusCode: number, body: unknown): void {
-  const json = JSON.stringify(body);
-  res.writeHead(statusCode, { "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(json) });
-  res.end(json);
 }
 
 export class FakeNomadServer {
