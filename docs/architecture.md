@@ -34,7 +34,7 @@ Mesh Node
 +-- Store & Forward      node/src/store-and-forward.ts — implementato (pacchetti unicast, vedi roadmap.md milestone 12)
 +-- Sync Engine          node/src/catalog.ts (contenuti) + node/src/peer-directory.ts (identità/chiavi) — implementato (vedi roadmap.md milestone 13, 15)
 +-- Security Manager     node/src/trust.ts, node/src/rate-limit.ts, node/src/content.ts, node/src/encryption.ts — completo, vedi security.md
-+-- Service Registry     roadmap — non implementato
++-- Service Registry     node/src/service.ts, node/src/service-directory.ts — implementato (seguito audit, Slice 6, spec §35-37)
 +-- Storage Manager      node/src/content.ts (in-memory nel prototipo)
 +-- Resource Manager     node/src/relay-policy.ts — implementato (relay on/off/when-charging/battery-above, vedi milestone 16)
 ```
