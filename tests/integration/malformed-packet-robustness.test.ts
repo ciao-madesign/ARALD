@@ -83,4 +83,58 @@ describe("malformed packet payloads never crash the node", () => {
   it("survives a SERVICE_RESPONSE with no payload fields at all", () => expectSurvives(MessageType.SERVICE_RESPONSE, {}));
   it("survives a SERVICE_RESPONSE with a garbage announcement", () =>
     expectSurvives(MessageType.SERVICE_RESPONSE, { serviceId: "x", announcement: { serviceId: null } }));
+
+  // CONTENT_* handlers (handleContentQuery/handleContentFound/handleContentNotFound/
+  // handleContentRequest/handleContentChunk/handleContentComplete, node.ts) used to access
+  // packet.payload fields directly with no guard at all, unlike every handler above — a single
+  // malformed packet of any of these six types crashed the process outright. Found by a full
+  // code-review pass, not by an incident; see docs/security.md for the corresponding entry.
+  it("survives a CONTENT_QUERY with no payload fields at all", () => expectSurvives(MessageType.CONTENT_QUERY, undefined));
+  it("survives a CONTENT_QUERY with a non-string contentId", () => expectSurvives(MessageType.CONTENT_QUERY, { contentId: 42 }));
+  it("survives a CONTENT_FOUND with no payload fields at all", () => expectSurvives(MessageType.CONTENT_FOUND, undefined));
+  it("survives a CONTENT_NOT_FOUND with no payload fields at all", () => expectSurvives(MessageType.CONTENT_NOT_FOUND, undefined));
+  it("survives a CONTENT_REQUEST with no payload fields at all", () => expectSurvives(MessageType.CONTENT_REQUEST, undefined));
+  it("survives a CONTENT_CHUNK with no payload fields at all", () => expectSurvives(MessageType.CONTENT_CHUNK, undefined));
+  it("survives a CONTENT_CHUNK with a non-string data field", () =>
+    expectSurvives(MessageType.CONTENT_CHUNK, { contentId: "x", chunkIndex: 0, totalChunks: 1, data: 12345 }));
+  it("survives a CONTENT_COMPLETE with no payload fields at all", () => expectSurvives(MessageType.CONTENT_COMPLETE, undefined));
+  it("survives a CONTENT_COMPLETE with a null metadata field", () =>
+    expectSurvives(MessageType.CONTENT_COMPLETE, { contentId: "x", metadata: null }));
+  it("survives a PEER_LIST with a non-array payload", () => expectSurvives(MessageType.PEER_LIST, { not: "an array" }));
+  it("survives a PEER_LIST with garbage entries", () => expectSurvives(MessageType.PEER_LIST, [null, 42, "nope", { id: 7 }]));
+
+  // observeRelayedContent() (node.ts) is a second, independent code path for CONTENT_CHUNK/
+  // CONTENT_COMPLETE — reached only when this node is *relaying* the packet (destination is some
+  // other node), never validated by handleContentChunk/handleContentComplete above since those
+  // only run when this node is itself the destination. Needs its own malformed-payload coverage.
+  async function expectRelaySurvives(type: MessageType, payload: unknown): Promise<void> {
+    victim = new NomadNode({ displayName: "victim" });
+    const victimTransport = new TcpTransport(victim.nodeId, 0);
+    victim.addTransport(victimTransport);
+    await victim.start();
+
+    const attacker = Identity.generate();
+    attackerSocket = await connectAttacker(victimTransport.port, attacker.nodeId);
+    // Addressed to a node the victim has never heard of — decideForward() sets deliverLocally to
+    // false, routing this through observeRelayedContent()'s relay-caching path instead of
+    // handleContentChunk/handleContentComplete.
+    const someOtherNode = Identity.generate().nodeId;
+    attackerSocket.write(encodePacket(createPacket({ type, source: attacker.nodeId, destination: someOtherNode, ttl: 8, payload })));
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const pinged = new Promise<void>((resolve) => victim!.once("ping", () => resolve()));
+    attackerSocket.write(
+      encodePacket(createPacket({ type: MessageType.PING, source: attacker.nodeId, destination: victim!.nodeId, payload: {} })),
+    );
+    await pinged;
+  }
+
+  it("survives a relayed CONTENT_CHUNK with no payload fields at all", () =>
+    expectRelaySurvives(MessageType.CONTENT_CHUNK, undefined));
+  it("survives a relayed CONTENT_CHUNK with a non-string data field", () =>
+    expectRelaySurvives(MessageType.CONTENT_CHUNK, { contentId: "x", chunkIndex: 0, totalChunks: 1, data: 12345 }));
+  it("survives a relayed CONTENT_COMPLETE with no payload fields at all", () =>
+    expectRelaySurvives(MessageType.CONTENT_COMPLETE, undefined));
+  it("survives a relayed CONTENT_COMPLETE with a null metadata field", () =>
+    expectRelaySurvives(MessageType.CONTENT_COMPLETE, { contentId: "x", metadata: null }));
 });

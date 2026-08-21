@@ -8,6 +8,18 @@ export interface RouteEntry {
 export interface RoutingTableOptions {
   maxSize?: number;
   maxCost?: number;
+  /**
+   * Ranks eviction candidates by the trust level of the peer that sourced a route's `nextHop` —
+   * the same defense `PeerDirectory`/`RemoteCatalog` already apply to themselves (spec §57,
+   * catalog.ts/peer-directory.ts, docs/security.md bug #13): without it, plain FIFO eviction lets
+   * any connected peer — even one that just connected, `TrustLevel.SEEN` — evict long-standing
+   * routes to genuinely reachable destinations simply by announcing enough fabricated ones in a
+   * single ROUTE_ANNOUNCE (node.ts caps how many entries one packet may carry, but not how much of
+   * the table an untrusted announcer's entries can occupy once accepted). Pass
+   * `(nextHop) => trustRank(trustManager.get(nextHop))`. Omit for plain FIFO (the default before
+   * this option existed).
+   */
+  trustRank?: (nextHop: string) => number;
 }
 
 const DEFAULT_MAX_SIZE = 4096;
@@ -28,7 +40,11 @@ export class RoutingTable {
   private readonly maxCost: number;
 
   constructor(options: RoutingTableOptions = {}) {
-    this.routes = new BoundedFifoMap({ maxSize: options.maxSize ?? DEFAULT_MAX_SIZE });
+    const trustRank = options.trustRank;
+    this.routes = new BoundedFifoMap({
+      maxSize: options.maxSize ?? DEFAULT_MAX_SIZE,
+      evictionScore: trustRank ? (_destination, entry) => trustRank(entry.nextHop) : undefined,
+    });
     this.maxCost = options.maxCost ?? DEFAULT_MAX_COST;
   }
 

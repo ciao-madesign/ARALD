@@ -40,7 +40,7 @@ Implementato in `node/src/packet.ts`. Framing su TCP: un pacchetto JSON per riga
 | `IDENTITY_REQUEST` | annuncio dei node id di cui si conosce già la chiave di cifratura, a un peer appena connesso | Milestone 15 |
 | `IDENTITY_RESPONSE` | risposta con gli `IdentityAnnouncement` (autofirmati) che il peer non conosceva ancora | Milestone 15 |
 | `PRIVATE_MESSAGE` | payload applicativo cifrato end-to-end (AES-256-GCM su chiave derivata via ECDH X25519), instradato per `destination`; porta con sé l'`IdentityAnnouncement` del mittente | Milestone 15 |
-| `ROUTE_ANNOUNCE` | annuncio distance-vector (`{destination, cost}` o `cost: null` per un ritiro) scambiato tra vicini diretti | Milestone 16 |
+| `ROUTE_ANNOUNCE` | annuncio distance-vector (`{destination, cost}` o `cost: null` per un ritiro) scambiato tra vicini diretti — al massimo `MAX_ROUTES_PER_ANNOUNCE` (512, node.ts) entry di un singolo pacchetto vengono effettivamente applicate, il resto scartato silenziosamente; l'eviction di `RoutingTable` è pesata sulla fiducia del `nextHop` che ha annunciato ciascuna rotta (§57, docs/security.md voce #26), non un semplice FIFO | Milestone 16 |
 | `SERVICE_ANNOUNCE` | annuncio proattivo (floodato) di un servizio offerto localmente | Milestone 4 (service discovery, seguito audit) |
 | `SERVICE_QUERY` | "chi offre `service_id`?" — fallback quando non si conosce già un fornitore da un `SERVICE_ANNOUNCE` precedente | Milestone 4 (seguito audit) |
 | `SERVICE_REQUEST` | invocazione effettiva del servizio verso un fornitore noto (`CALL service://...`) | Milestone 4 (seguito audit) |

@@ -91,6 +91,18 @@ interface ContentWaiter {
 /** Bounds how many alternate providers a single content request will remember (spec §57 resource limits). */
 const MAX_CONTENT_CANDIDATES = 16;
 
+/**
+ * Bounds how many route entries a single ROUTE_ANNOUNCE packet may affect (spec §57). Unlike
+ * SYNC_RESPONSE/IDENTITY_RESPONSE entries, a route carries no signature of its own to individually
+ * rate-limit trust in — routingTable's trust-weighted eviction (node.ts constructor, `RoutingTable`
+ * options) already protects against a low-trust announcer evicting high-trust routes, but without
+ * this cap a single oversized packet could still spend a large amount of CPU/memory processing
+ * thousands of fabricated destinations in one call, regardless of how few of them ultimately "win"
+ * eviction. Generous for any real mesh's neighbor route table while still bounding one packet's
+ * worst case; extra entries beyond this are silently dropped, not rejected outright.
+ */
+const MAX_ROUTES_PER_ANNOUNCE = 512;
+
 interface PendingContentEntry {
   contentId: string;
   /** True once a CONTENT_QUERY has been flooded for this content id, so concurrent local callers don't re-flood. */
@@ -308,7 +320,15 @@ export class NomadNode extends EventEmitter {
       trustRank: (nodeId) => trustRank(this.trust.get(nodeId)),
     });
     this.ownAnnouncement = signIdentityAnnouncement(this.identity, this.encryptionIdentity);
-    this.routingTable = new RoutingTable({ maxSize: options.maxRoutingTableEntries, maxCost: options.maxRouteCost });
+    // Same trust-aware eviction as remoteCatalog/peerDirectory above — a route's only claim to
+    // trust is the trust level of the peer that announced it (routes carry no signature of their
+    // own, unlike content/identity/service claims), so eviction must be weighted by that instead
+    // of falling back to plain FIFO.
+    this.routingTable = new RoutingTable({
+      maxSize: options.maxRoutingTableEntries,
+      maxCost: options.maxRouteCost,
+      trustRank: (nextHop) => trustRank(this.trust.get(nextHop)),
+    });
     const assemblerOptions = { maxEntries: options.maxChunkAssemblyEntries, maxChunksPerEntry: options.maxChunksPerContent };
     this.requesterAssembler = new ChunkAssembler(assemblerOptions);
     this.relayAssembler = new ChunkAssembler(assemblerOptions);
@@ -960,12 +980,22 @@ export class NomadNode extends EventEmitter {
         this.emit("pong", packet.source);
         break;
 
-      case MessageType.PEER_LIST:
-        for (const entry of packet.payload as Array<{ id: string; address?: PeerAddress }>) {
+      case MessageType.PEER_LIST: {
+        // decodePacket() never validates payload shape (only the envelope) — a raw PEER_LIST with a
+        // non-array or null payload, or a non-object entry inside it, used to crash the process here
+        // (`for...of` on a non-iterable, or `entry.id` on `null`); every field is checked before use.
+        const list = Array.isArray(packet.payload)
+          ? (packet.payload as unknown[]).filter(
+              (entry): entry is { id: string; address?: PeerAddress } =>
+                typeof entry === "object" && entry !== null && typeof (entry as { id?: unknown }).id === "string",
+            )
+          : [];
+        for (const entry of list) {
           if (entry.id !== this.nodeId) this.peers.upsert(entry.id, entry.address);
         }
-        this.emit("peer-list", packet.payload);
+        this.emit("peer-list", list);
         break;
+      }
 
       case MessageType.DATA:
         this.emit("data", packet);
@@ -1049,18 +1079,25 @@ export class NomadNode extends EventEmitter {
   }
 
   private handleContentQuery(packet: Packet<ContentQueryPayload>): void {
-    const stored = this.contentStore.get(packet.payload.contentId);
+    // decodePacket() never validates payload shape — a raw CONTENT_QUERY with no `payload` (or a
+    // non-string contentId) used to crash the process here; every CONTENT_* handler below follows
+    // the same `packet.payload?.field` + typeof guard already used by SYNC_*/IDENTITY_*/SERVICE_*.
+    const contentId = packet.payload?.contentId;
+    if (typeof contentId !== "string") return;
+    const stored = this.contentStore.get(contentId);
     if (!stored) return; // We don't have it; decideForward already keeps the flood going.
     const response = this.originate<ContentFoundPayload>(
       MessageType.CONTENT_FOUND,
-      { queryId: packet.id, contentId: packet.payload.contentId, metadata: stored.metadata },
+      { queryId: packet.id, contentId, metadata: stored.metadata },
       { destination: packet.source, priority: Priority.CONTENT },
     );
     void this.floodExcept(response);
   }
 
   private handleContentFound(packet: Packet<ContentFoundPayload>): void {
-    const entry = this.pendingContentRequests.get(packet.payload.contentId);
+    const contentId = packet.payload?.contentId;
+    if (typeof contentId !== "string") return;
+    const entry = this.pendingContentRequests.get(contentId);
     if (!entry) return; // not waiting on this
     if (entry.activeProvider === packet.source) return; // already trying (or already gave up on) exactly this one
     if (entry.activeProvider && entry.providerTimer) {
@@ -1087,7 +1124,9 @@ export class NomadNode extends EventEmitter {
    * flight — same trust boundary as handleContentChunk/handleContentComplete.
    */
   private handleContentNotFound(packet: Packet<ContentNotFoundPayload>): void {
-    const entry = this.pendingContentRequests.get(packet.payload.contentId);
+    const contentId = packet.payload?.contentId;
+    if (typeof contentId !== "string") return;
+    const entry = this.pendingContentRequests.get(contentId);
     if (!entry) return; // not waiting on this
     if (packet.source !== entry.activeProvider) return;
     if (entry.providerTimer) clearTimeout(entry.providerTimer);
@@ -1127,7 +1166,9 @@ export class NomadNode extends EventEmitter {
   }
 
   private handleContentRequest(packet: Packet<ContentQueryPayload>): void {
-    const stored = this.contentStore.get(packet.payload.contentId);
+    const contentId = packet.payload?.contentId;
+    if (typeof contentId !== "string") return;
+    const stored = this.contentStore.get(contentId);
     if (!stored) {
       // We advertised this a moment ago via CONTENT_FOUND (or the requester assumed we still had
       // it) but don't any more — evicted, or expired (spec §24) in the meantime. Say so explicitly
@@ -1135,31 +1176,37 @@ export class NomadNode extends EventEmitter {
       // instead of waiting out contentProviderTimeoutMs on a request we'll never answer.
       const notFound = this.originate<ContentNotFoundPayload>(
         MessageType.CONTENT_NOT_FOUND,
-        { contentId: packet.payload.contentId },
+        { contentId },
         { destination: packet.source, priority: Priority.CONTENT },
       );
       void this.floodExcept(notFound);
       return;
     }
-    const chunks = this.contentStore.chunksFor(packet.payload.contentId);
+    const chunks = this.contentStore.chunksFor(contentId);
     for (const [chunkIndex, chunk] of chunks.entries()) {
       const chunkPacket = this.originate<ContentChunkPayload>(
         MessageType.CONTENT_CHUNK,
-        { contentId: packet.payload.contentId, chunkIndex, totalChunks: chunks.length, data: chunk.toString("base64") },
+        { contentId, chunkIndex, totalChunks: chunks.length, data: chunk.toString("base64") },
         { destination: packet.source, priority: Priority.CONTENT },
       );
       void this.floodExcept(chunkPacket);
     }
     const completePacket = this.originate<ContentCompletePayload>(
       MessageType.CONTENT_COMPLETE,
-      { contentId: packet.payload.contentId, metadata: stored.metadata },
+      { contentId, metadata: stored.metadata },
       { destination: packet.source, priority: Priority.CONTENT },
     );
     void this.floodExcept(completePacket);
   }
 
   private handleContentChunk(packet: Packet<ContentChunkPayload>): void {
-    const { contentId, chunkIndex, totalChunks, data } = packet.payload;
+    const contentId = packet.payload?.contentId;
+    const data = packet.payload?.data;
+    // contentId/data must be strings before anything below touches them (Buffer.from(data, ...)
+    // throws on a non-string); chunkIndex/totalChunks are passed through as-is — addChunk()
+    // (content.ts) already validates them defensively regardless of type.
+    if (typeof contentId !== "string" || typeof data !== "string") return;
+    const { chunkIndex, totalChunks } = packet.payload;
     const entry = this.pendingContentRequests.get(contentId);
     // A stale chunk from a provider we've since abandoned (retryNextProvider already discarded
     // its partial data) — accepting it now would just corrupt the current attempt again.
@@ -1175,7 +1222,13 @@ export class NomadNode extends EventEmitter {
   }
 
   private handleContentComplete(packet: Packet<ContentCompletePayload>): void {
-    const { contentId, metadata } = packet.payload;
+    const contentId = packet.payload?.contentId;
+    const metadata = packet.payload?.metadata;
+    // metadata is handed to tryComplete()/putVerified() below, both of which dereference its
+    // fields directly (they trust decodePacket() already validated the shape, which it never
+    // does) — must be at least a non-null object here, or those throw on an undefined/primitive
+    // metadata before ever reaching their own signature check.
+    if (typeof contentId !== "string" || !metadata || typeof metadata !== "object") return;
     const entry = this.pendingContentRequests.get(contentId);
     // Same reasoning as handleContentChunk: a late COMPLETE from an abandoned provider must never
     // be allowed to reject a retry that's currently in progress with a different, active one.
@@ -1218,14 +1271,27 @@ export class NomadNode extends EventEmitter {
     }
   }
 
-  /** Passive/opportunistic caching (spec §27, §91-92): a relay reassembles content it forwards and caches it too. */
+  /**
+   * Passive/opportunistic caching (spec §27, §91-92): a relay reassembles content it forwards and
+   * caches it too. Reached for a packet addressed to some *other* node — never validated by
+   * handleContentChunk/handleContentComplete, since those only run when this node is itself the
+   * destination — so the same defensive payload guards apply here independently.
+   */
   private observeRelayedContent(packet: Packet): void {
     if (packet.type === MessageType.CONTENT_CHUNK) {
-      const { contentId, chunkIndex, totalChunks, data } = packet.payload as ContentChunkPayload;
+      // Cast, not Partial<...> — the fields below are read defensively regardless of what the
+      // static type claims (decodePacket() never validated any of this), and addChunk() itself
+      // re-validates chunkIndex/totalChunks at runtime no matter their declared type.
+      const payload = packet.payload as ContentChunkPayload | undefined;
+      if (!payload || typeof payload.contentId !== "string" || typeof payload.data !== "string") return;
+      const { contentId, data } = payload;
       if (this.contentStore.has(contentId)) return;
-      this.relayAssembler.addChunk(contentId, chunkIndex, totalChunks, Buffer.from(data, "base64"));
+      this.relayAssembler.addChunk(contentId, payload.chunkIndex, payload.totalChunks, Buffer.from(data, "base64"));
     } else if (packet.type === MessageType.CONTENT_COMPLETE) {
-      const { contentId, metadata } = packet.payload as ContentCompletePayload;
+      const payload = packet.payload as ContentCompletePayload | undefined;
+      const contentId = payload?.contentId;
+      const metadata = payload?.metadata;
+      if (typeof contentId !== "string" || !metadata || typeof metadata !== "object") return;
       if (this.contentStore.has(contentId)) {
         this.relayAssembler.discard(contentId);
         return;
@@ -1322,7 +1388,7 @@ export class NomadNode extends EventEmitter {
    * refresh this prototype doesn't run.
    */
   private handleRouteAnnounce(packet: Packet<RouteAnnouncePayload>, fromPeerId: string): void {
-    const routes = Array.isArray(packet.payload?.routes) ? packet.payload.routes : [];
+    const routes = (Array.isArray(packet.payload?.routes) ? packet.payload.routes : []).slice(0, MAX_ROUTES_PER_ANNOUNCE);
     const changed: string[] = [];
     const withdrawn: string[] = [];
     for (const entry of routes) {

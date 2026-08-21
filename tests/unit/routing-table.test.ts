@@ -102,4 +102,40 @@ describe("RoutingTable", () => {
     expect(table.has("A")).toBe(false);
     expect(table.has("C")).toBe(true);
   });
+
+  /**
+   * A route carries no signature of its own (unlike content/identity/service claims) — its only
+   * claim to trust is the trust level of the peer that announced it (its `nextHop`), so eviction
+   * must be weighted by that instead of falling back to plain FIFO, the same defense
+   * PeerDirectory/RemoteCatalog already apply (spec §57, docs/security.md bug #13). Found in a
+   * full code-review pass: without this, a freshly-connected, untrusted peer could evict
+   * long-standing routes sourced from trusted neighbors just by announcing enough destinations.
+   */
+  it("with trustRank set, evicts the route sourced from the least-trusted nextHop first, not the oldest", () => {
+    const trust: Record<string, number> = { "low-trust-peer": 0, "high-trust-peer": 100 };
+    const table = new RoutingTable({ maxSize: 2, trustRank: (nextHop) => trust[nextHop] ?? 0 });
+
+    table.offer("A", "high-trust-peer", 1); // oldest, but sourced from the more trusted peer
+    table.offer("B", "low-trust-peer", 1); // sourced from the less trusted peer
+
+    // A brand-new destination from the low-trust peer should evict "B" (its own, least-trusted
+    // entry), not "A" — plain FIFO would have evicted "A" instead, since it was inserted first.
+    table.offer("C", "low-trust-peer", 1);
+
+    expect(table.size).toBe(2);
+    expect(table.has("A")).toBe(true);
+    expect(table.has("B")).toBe(false);
+    expect(table.has("C")).toBe(true);
+  });
+
+  it("without trustRank, eviction remains plain FIFO (unchanged default behavior)", () => {
+    const table = new RoutingTable({ maxSize: 2 });
+    table.offer("A", "untrusted-peer", 1);
+    table.offer("B", "trusted-peer", 1);
+    table.offer("C", "untrusted-peer", 1);
+
+    expect(table.has("A")).toBe(false); // oldest evicted, regardless of who sourced "B"
+    expect(table.has("B")).toBe(true);
+    expect(table.has("C")).toBe(true);
+  });
 });

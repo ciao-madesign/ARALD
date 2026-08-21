@@ -139,4 +139,94 @@ describe("trust-aware eviction resists a flood of throwaway identities", () => {
     expect(victim.remoteCatalog.has(legitMetadata.contentId)).toBe(true);
     expect(victim.remoteCatalog.size).toBe(2); // the trusted entry plus only the *last* throwaway
   });
+
+  /**
+   * A route carries no signature of its own — unlike PeerDirectory/RemoteCatalog entries above, a
+   * ROUTE_ANNOUNCE claim is trusted purely based on which connected peer sent it (its `nextHop`).
+   * Found in a full code-review pass: RoutingTable previously had no trustRank at all, so a
+   * freshly-connected, untrusted peer could evict a genuinely-trusted neighbor's route just by
+   * announcing enough fabricated destinations — this confirms the fix (node.ts wires
+   * `trustRank: (nextHop) => trustRank(trust.get(nextHop))` into the RoutingTable it constructs).
+   */
+  it("RoutingTable: keeps a trusted neighbor's route while evicting a fabricated one from an untrusted peer", async () => {
+    victim = new NomadNode({ displayName: "victim", maxRoutingTableEntries: 2 });
+    const victimTransport = new TcpTransport(victim.nodeId, 0);
+    victim.addTransport(victimTransport);
+    await victim.start();
+
+    legit = new NomadNode({ displayName: "legit" });
+    const legitTransport = new TcpTransport(legit.nodeId, 0);
+    legit.addTransport(legitTransport);
+    await legit.start();
+    await legit.connect({ host: "127.0.0.1", port: victimTransport.port });
+    await victim.waitForPeerKey(legit.nodeId, { timeoutMs: 2000 });
+    // Connecting already gave legit a direct route (routingTable.offer(peerId, peerId, 1),
+    // node.ts) — an operator now vouches for this specific device (spec §54).
+    victim.trust.set(legit.nodeId, TrustLevel.TRUSTED);
+    expect(victim.routingTable.has(legit.nodeId)).toBe(true);
+
+    const attackerId = "9".repeat(64);
+    attackerSocket = await connectAttacker(victimTransport.port, attackerId);
+    // Connecting also gave the attacker its own direct route — untrusted (default TrustLevel),
+    // filling the table to its cap of 2 alongside legit's.
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(victim.routingTable.size).toBe(2);
+
+    attackerSocket.write(
+      encodePacket(
+        createPacket({
+          type: MessageType.ROUTE_ANNOUNCE,
+          source: attackerId,
+          payload: { routes: [{ destination: "fabricated-destination", cost: 1 }] },
+        }),
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    expect(victim.routingTable.has(legit.nodeId)).toBe(true);
+    expect(victim.routingTable.has("fabricated-destination")).toBe(true);
+    expect(victim.routingTable.has(attackerId)).toBe(false); // the attacker's own low-trust entry was evicted, not legit's
+    expect(victim.routingTable.size).toBe(2);
+  });
+});
+
+/**
+ * MAX_ROUTES_PER_ANNOUNCE (node.ts) bounds how many entries a *single* ROUTE_ANNOUNCE packet may
+ * affect — defense-in-depth alongside the trust-weighted eviction above, since even a trust-ranked
+ * table could still have a large amount of CPU/memory spent processing one oversized packet before
+ * eviction ever gets a say. maxRoutingTableEntries is set generously above what a single packet
+ * could ever fill on its own, so any cap on the resulting size is attributable to the packet-level
+ * cap specifically, not table capacity.
+ */
+describe("ROUTE_ANNOUNCE per-packet cap", () => {
+  let victim: NomadNode | undefined;
+  let attackerSocket: Socket | undefined;
+
+  afterEach(async () => {
+    attackerSocket?.destroy();
+    if (victim) await victim.stop();
+    victim = undefined;
+    attackerSocket = undefined;
+  });
+
+  it("processes at most MAX_ROUTES_PER_ANNOUNCE entries from a single oversized packet", async () => {
+    victim = new NomadNode({ displayName: "victim", maxRoutingTableEntries: 100_000 });
+    const victimTransport = new TcpTransport(victim.nodeId, 0);
+    victim.addTransport(victimTransport);
+    await victim.start();
+
+    const attackerId = "9".repeat(64);
+    attackerSocket = await connectAttacker(victimTransport.port, attackerId);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const sizeBeforeFlood = victim.routingTable.size; // just the attacker's own direct route
+
+    const routes = Array.from({ length: 600 }, (_, i) => ({ destination: `fabricated-${i}`, cost: 1 }));
+    attackerSocket.write(encodePacket(createPacket({ type: MessageType.ROUTE_ANNOUNCE, source: attackerId, payload: { routes } })));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    // 600 fabricated destinations were offered, but at most 512 (MAX_ROUTES_PER_ANNOUNCE) of them
+    // should have actually reached routingTable.offer() — the rest silently dropped, not queued.
+    expect(victim.routingTable.size - sizeBeforeFlood).toBeLessThanOrEqual(512);
+    expect(victim.routingTable.size - sizeBeforeFlood).toBeGreaterThan(0); // sanity: the cap isn't just rejecting everything
+  });
 });
