@@ -4,6 +4,10 @@ import { FakeNomadServer } from "./fake-nomad-server.js";
 import { KiwixGateway } from "./kiwix-gateway.js";
 import { FakeOllamaServer } from "./fake-ollama-server.js";
 import { AiGateway } from "./ai-gateway.js";
+import { NewsGateway } from "./news-gateway.js";
+
+/** How often NewsGateway re-syncs against `--news-url` when given (`docs/security.md`: "aggiornato ogni volta che si può"). */
+const NEWS_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 
 function parseArgs(argv: string[]): Record<string, string> {
   const args: Record<string, string> = {};
@@ -29,10 +33,14 @@ function parseArgs(argv: string[]): Record<string, string> {
  * `--nomad-url` points at a real Project NOMAD/Kiwix instance instead, plus
  * an `AiGateway` backed by a `FakeOllamaServer` seeded with a couple of
  * canned answers unless `--ai-url` points at a real Ollama instance
- * instead. Not used by the automated test suite
- * (tests/integration/nomad-gateway.test.ts and ai-gateway.test.ts build
- * their own fixtures directly), same relationship `tools/simulator/cli.ts`
- * has to its own `simulate.ts`.
+ * instead. `NewsGateway` has no fake fallback (`docs/security.md`) — only
+ * registered when `--news-url` points at a real NOMAD news backend; without
+ * it, `service://news` simply isn't offered by this demo node, same as any
+ * real deployment where that particular NOMAD sub-service isn't running.
+ * Not used by the automated test suite (tests/integration/nomad-gateway.test.ts,
+ * ai-gateway.test.ts and news-gateway.test.ts build their own fixtures
+ * directly), same relationship `tools/simulator/cli.ts` has to its own
+ * `simulate.ts`.
  */
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
@@ -82,6 +90,23 @@ async function main(): Promise<void> {
   const aiGateway = new AiGateway(node, aiBaseUrl);
   aiGateway.registerAiService();
 
+  let newsGateway: NewsGateway | undefined;
+  const newsBaseUrl = args["news-url"];
+  if (newsBaseUrl) {
+    newsGateway = new NewsGateway(node, newsBaseUrl);
+    try {
+      await newsGateway.syncNews();
+      newsGateway.registerNewsService();
+      newsGateway.startAutoSync(NEWS_SYNC_INTERVAL_MS, (err) => console.error("service://news sync failed:", err));
+      console.log(`Registered service://news (syncing every ${NEWS_SYNC_INTERVAL_MS / 1000}s from ${newsBaseUrl})`);
+    } catch (err) {
+      console.error(`service://news not registered — initial sync against ${newsBaseUrl} failed:`, err);
+      newsGateway = undefined;
+    }
+  } else {
+    console.log(`service://news not registered — no --news-url given, and this gateway has no fake news backend`);
+  }
+
   console.log("Nomad-Net NOMAD Gateway");
   console.log(`Node ID: ${node.nodeId}`);
   console.log(`Listening on port: ${port}`);
@@ -91,6 +116,7 @@ async function main(): Promise<void> {
   console.log(`Registered service://ai`);
 
   const shutdown = async (): Promise<void> => {
+    newsGateway?.stopAutoSync();
     await node.stop();
     if (fakeServer) await fakeServer.stop();
     if (fakeOllama) await fakeOllama.stop();

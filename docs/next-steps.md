@@ -129,7 +129,9 @@ La Fase 1 è pronta per essere pianificata in dettaglio e avviata senza aspettar
 
 ## Cosa resta possibile in puro software, se si vuole andare oltre
 
-Le versioni **hardware/Docker reali** di BLE (Opzione A) e del gateway NOMAD (Opzione B) restano gli unici due candidati bloccati su prerequisiti esterni. Le loro **versioni simulate/mockate** (Slice 8 e 9 del secondo giro post-audit, vedi le note in coda a ciascuna opzione sopra e `docs/security.md`) sono realizzabili in puro software e sono ora entrambe **completate**. Non restano altri candidati aperti in puro software oltre a un'eventuale ulteriore passata di qualità/sicurezza sul codice esistente.
+Le versioni **hardware/Docker reali** di BLE (Opzione A) e del gateway NOMAD (Opzione B) restano gli unici due candidati bloccati su prerequisiti esterni. Le loro **versioni simulate/mockate** (Slice 8 e 9 del secondo giro post-audit, vedi le note in coda a ciascuna opzione sopra e `docs/security.md`) sono realizzabili in puro software e sono ora entrambe **completate**, così come un terzo sotto-servizio NOMAD, `service://news` (`NewsGateway`, `docs/security.md` bug #27, su richiesta esplicita dell'utente), e una UI mobile "motore di ricerca" con collegamenti rapidi ai servizi (stesso #27).
+
+Un candidato reale è emerso proprio dalla revisione della voce #27: **`ContentStore` (`node/src/content.ts`) non ha alcun limite di dimensione**, a differenza di `RemoteCatalog`/`PeerDirectory`/`ServiceDirectory`/`RoutingTable` (tutti dietro `BoundedFifoMap` con `maxSize`), pur essendo alimentato dalla rete via `putVerified()` (contenuto ricevuto/relayato da peer non fidati). Non corretto nella voce #27 perché la portata di una modifica a una struttura centrale usata ovunque nel sistema (percorso locale e di rete insieme) è nettamente più ampia di quanto giustificasse quella slice — ma è un candidato concreto e già isolato per una prossima passata di qualità/sicurezza in puro software, probabilmente il candidato più chiaro rimasto oggi.
 
 ## Come procedere
 

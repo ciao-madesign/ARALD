@@ -493,6 +493,14 @@ function buildCallForm(service) {
 // it, and rebuilds every other row normally.
 let openCallServiceId = null;
 
+/** Opens (or no-ops if already open) the call form for `svc` inside its already-rendered `<li>` — shared by the "Chiama" button (renderServices()) and the home hero's quick-links, so tapping either does exactly the same thing. */
+function openServiceCallForm(svc, li, callButton) {
+  if (openCallServiceId === svc.serviceId) return;
+  openCallServiceId = svc.serviceId;
+  li.append(buildCallForm(svc));
+  if (callButton) callButton.hidden = true;
+}
+
 function renderServices(services) {
   const list = document.getElementById("services");
   const previousOpenLi = openCallServiceId ? list.querySelector('li[data-service-id="' + CSS.escape(openCallServiceId) + '"]') : null;
@@ -515,15 +523,43 @@ function renderServices(services) {
     li.dataset.serviceId = svc.serviceId;
     if (svc.availability && networkPassword) {
       const callButton = el("button", { className: "call-button", textContent: "Chiama" });
-      callButton.addEventListener("click", () => {
-        if (openCallServiceId === svc.serviceId) return;
-        openCallServiceId = svc.serviceId;
-        li.append(buildCallForm(svc));
-        callButton.hidden = true;
-      });
+      callButton.addEventListener("click", () => openServiceCallForm(svc, li, callButton));
       li.append(callButton);
     }
     list.append(li);
+  }
+}
+
+// Known serviceIds get a recognizable icon; anything else (a service this app has never heard of,
+// e.g. one an operator registered locally) still gets a quick link, just with a generic icon rather
+// than being hidden — "some quick link" beats "silently missing" for an unrecognized-but-available
+// service.
+const SERVICE_ICONS = { "service://ai": "🤖", "service://kiwix-search": "📚", "service://news": "📰" };
+const DEFAULT_SERVICE_ICON = "🔧";
+const MAX_QUICK_LINKS = 8;
+
+function shortServiceLabel(serviceId) {
+  const name = serviceId.replace(/^service:\/\//, "");
+  return name.length > 11 ? name.slice(0, 10) + "…" : name;
+}
+
+/** Home-hero quick links (spec-inspired "motore di ricerca" UX, per the user's request) — one per currently-available service, tapping opens the exact same call form the "Chiama" button in the Servizi panel would, just reachable in one tap from the top of the screen instead of scrolling to find it. */
+function renderQuickLinks(services) {
+  const container = document.getElementById("quick-links");
+  container.textContent = "";
+  const available = services.filter((svc) => svc.availability).slice(0, MAX_QUICK_LINKS);
+  for (const svc of available) {
+    const link = el("button", { className: "quick-link", type: "button" }, [
+      el("span", { className: "quick-link-icon", textContent: SERVICE_ICONS[svc.serviceId] || DEFAULT_SERVICE_ICON }),
+      el("span", { textContent: shortServiceLabel(svc.serviceId) }),
+    ]);
+    link.addEventListener("click", () => {
+      const li = document.getElementById("services").querySelector('li[data-service-id="' + CSS.escape(svc.serviceId) + '"]');
+      if (!li) return; // services list hasn't rendered this one yet — nothing to open or scroll to
+      openServiceCallForm(svc, li, li.querySelector(".call-button"));
+      li.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    container.append(link);
   }
 }
 
@@ -577,6 +613,7 @@ async function refreshAll() {
     renderStats(status);
     renderPeers(peers);
     renderServices(services);
+    renderQuickLinks(services); // after renderServices() — relies on its <li data-service-id> nodes already existing
     await refreshContent();
     setDashboardError();
   } catch (err) {

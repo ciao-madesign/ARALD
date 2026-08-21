@@ -43,11 +43,21 @@
 <section id="dashboard-screen" hidden>
   <header>
     <div>
-      <h1>NOMAD-NET</h1>
       <div id="node-label" class="mono muted"></div>
     </div>
     <button id="forget-network" class="link-button">Cambia rete</button>
   </header>
+
+  <section id="home-hero">
+    <h1 class="wordmark">NOMAD-NET</h1>
+    <form id="search-form">
+      <div class="search-box">
+        <span class="search-icon" aria-hidden="true">⌕</span>
+        <input id="search-input" type="text" placeholder="Cerca contenuti..." autocomplete="off">
+      </div>
+    </form>
+    <div id="quick-links" class="quick-links"></div>
+  </section>
 
   <div id="stats" class="stats"></div>
 
@@ -61,11 +71,8 @@
     <ul id="services"></ul>
   </section>
 
-  <section class="panel">
+  <section class="panel" id="content-panel">
     <h2>Contenuti</h2>
-    <form id="search-form">
-      <input id="search-input" type="text" placeholder="Cerca per nome..." autocomplete="off">
-    </form>
     <ul id="content"></ul>
   </section>
 
