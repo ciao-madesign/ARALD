@@ -659,16 +659,39 @@ function buildCallForm(service) {
 // it, and rebuilds every other row normally.
 let openCallServiceId = null;
 
-/** Opens (or no-ops if already open) the call form for `svc` inside its already-rendered `<li>` — shared by the "Chiama" button (renderServices()) and the home hero's quick-links, so tapping either does exactly the same thing. */
+/** Opens (or no-ops if already open) the call form for `svc` inside its already-rendered card. */
 function openServiceCallForm(svc, li, callButton) {
   if (openCallServiceId === svc.serviceId) return;
   openCallServiceId = svc.serviceId;
+  li.classList.add("is-open"); // grows the card to full row width — see .service-cards .service-card.is-open
   li.append(buildCallForm(svc));
   if (callButton) callButton.hidden = true;
 }
 
+// Known serviceIds get a recognizable icon and a human-readable name; anything else (a service this
+// app has never heard of, e.g. one an operator registered locally) still gets a card, just with a
+// generic icon and a name derived from the raw id — "some card" beats "silently missing" for an
+// unrecognized-but-available service.
+const SERVICE_ICONS = { "service://ai": "sparkles", "service://kiwix-search": "book", "service://news": "newspaper" };
+const DEFAULT_SERVICE_ICON = "wrench";
+const SERVICE_LABELS = { "service://ai": "Assistente AI", "service://kiwix-search": "Enciclopedia", "service://news": "Notizie" };
+
+function serviceLabel(serviceId) {
+  if (SERVICE_LABELS[serviceId]) return SERVICE_LABELS[serviceId];
+  const name = serviceId.replace(/^service:\/\//, "").replace(/-/g, " ");
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
 let serviceSeenIds = new Set();
 
+/**
+ * Servizi are the first thing a user sees below the search bar (moved there, and the old
+ * home-hero "quick links" row removed, per explicit user feedback: the small quick-link buttons
+ * were unclear and duplicated this same panel — one prominent, actionable list of "what you can do"
+ * beats a second, cramped shortcut row above it) — so each entry renders as a full card (icon, a
+ * human-readable name, the raw serviceId as a de-emphasized subtitle, capability tags, and a
+ * full-width primary "Chiama" button) instead of a compact data row.
+ */
 function renderServices(services) {
   const list = document.getElementById("services");
   list.removeAttribute("aria-busy");
@@ -688,12 +711,10 @@ function renderServices(services) {
       list.append(previousOpenLi); // same node, same open form and its state — not rebuilt
       continue;
     }
-    const pill = el("span", { className: "pill " + (svc.availability ? "good" : "off") }, [
-      iconEl(svc.availability ? "check-circle" : "circle"),
-      el("span", { textContent: svc.availability ? "disponibile" : "non disponibile" }),
-    ]);
-    const li = el("li", null, [
-      el("div", { className: "row" }, [el("span", { className: "row-title mono", textContent: svc.serviceId, title: svc.serviceId }), pill]),
+    const li = el("li", { className: "service-card" }, [
+      el("div", { className: "service-card-icon" }, [iconEl(SERVICE_ICONS[svc.serviceId] || DEFAULT_SERVICE_ICON)]),
+      el("div", { className: "service-card-name", textContent: serviceLabel(svc.serviceId) }),
+      el("div", { className: "service-card-id mono muted", textContent: svc.serviceId, title: svc.serviceId }),
       el("div", { className: "tags" }, (Array.isArray(svc.capabilities) ? svc.capabilities : []).map((c) => el("span", { className: "tag", textContent: String(c) }))),
     ]);
     li.dataset.serviceId = svc.serviceId;
@@ -701,46 +722,13 @@ function renderServices(services) {
       const callButton = el("button", { className: "call-button", textContent: "Chiama" });
       callButton.addEventListener("click", () => openServiceCallForm(svc, li, callButton));
       li.append(callButton);
+    } else {
+      li.append(el("span", { className: "pill off" }, [iconEl("circle"), el("span", { textContent: "non disponibile" })]));
     }
     if (!serviceSeenIds.has(svc.serviceId)) li.classList.add("enter");
     list.append(li);
   }
   serviceSeenIds = nextSeen;
-}
-
-// Known serviceIds get a recognizable icon; anything else (a service this app has never heard of,
-// e.g. one an operator registered locally) still gets a quick link, just with a generic icon rather
-// than being hidden — "some quick link" beats "silently missing" for an unrecognized-but-available
-// service.
-const SERVICE_ICONS = { "service://ai": "sparkles", "service://kiwix-search": "book", "service://news": "newspaper" };
-const DEFAULT_SERVICE_ICON = "wrench";
-const MAX_QUICK_LINKS = 8;
-
-function shortServiceLabel(serviceId) {
-  const name = serviceId.replace(/^service:\/\//, "");
-  return name.length > 11 ? name.slice(0, 10) + "…" : name;
-}
-
-/** Home-hero quick links (spec-inspired "motore di ricerca" UX, per the user's request) — one per currently-available service, tapping opens the exact same call form the "Chiama" button in the Servizi panel would, just reachable in one tap from the top of the screen instead of scrolling to find it. */
-function renderQuickLinks(services) {
-  const container = document.getElementById("quick-links");
-  container.textContent = "";
-  const available = services.filter((svc) => svc.availability).slice(0, MAX_QUICK_LINKS);
-  for (const svc of available) {
-    const link = el("button", { className: "quick-link", type: "button" }, [
-      el("span", { className: "quick-link-icon" }, [iconEl(SERVICE_ICONS[svc.serviceId] || DEFAULT_SERVICE_ICON)]),
-      el("span", { textContent: shortServiceLabel(svc.serviceId) }),
-    ]);
-    link.setAttribute("aria-label", "Chiama " + svc.serviceId);
-    link.addEventListener("click", () => {
-      vibrate(8);
-      const li = document.getElementById("services").querySelector('li[data-service-id="' + CSS.escape(svc.serviceId) + '"]');
-      if (!li) return; // services list hasn't rendered this one yet — nothing to open or scroll to
-      openServiceCallForm(svc, li, li.querySelector(".call-button"));
-      li.scrollIntoView({ behavior: "smooth", block: "center" });
-    });
-    container.append(link);
-  }
 }
 
 let contentSeenIds = new Set();
@@ -818,7 +806,6 @@ async function refreshAll() {
     renderStats(status);
     renderPeers(peers);
     renderServices(services);
-    renderQuickLinks(services); // after renderServices() — relies on its <li data-service-id> nodes already existing
     await refreshContent();
     firstLoadDone = true;
     setDashboardError();

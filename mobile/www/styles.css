@@ -59,7 +59,7 @@ input, textarea { font: inherit; }
 /* ---------- focus & motion baseline ---------- */
 
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 0.25em; }
-button:focus-visible, .quick-link:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
+button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
@@ -279,7 +279,7 @@ li.skel-row { display: flex; flex-direction: column; }
 
 /* ---------- home hero (search-engine-style landing) ---------- */
 
-#home-hero { text-align: center; padding: 1.4em 0 1.6em; }
+#home-hero { text-align: center; padding: 1.4em 0 1em; }
 #home-hero .wordmark { font-size: 1.9em; letter-spacing: 0.06em; margin: 0 0 0.9em; color: var(--accent); }
 #home-hero .search-box {
   display: flex; align-items: center; gap: 0.5em; max-width: 26em; margin: 0 auto;
@@ -294,23 +294,43 @@ li.skel-row { display: flex; flex-direction: column; }
 }
 #home-hero #search-input:focus { outline: none; }
 
-.quick-links {
-  display: flex; flex-wrap: wrap; justify-content: center; gap: 0.7em;
-  max-width: 30em; margin: 1.2em auto 0;
+/* ---------- servizi (prima cosa sotto la ricerca — "cosa puoi fare", non una riga di dati) ---------- */
+
+.panel-primary { margin-bottom: 1.2em; }
+
+.service-cards {
+  display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0.8em;
+  list-style: none; margin: 0; padding: 0;
 }
-.quick-link {
-  display: flex; flex-direction: column; align-items: center; gap: 0.35em;
-  width: 4.6em; padding: 0.6em 0.3em; border-radius: 0.8em; border: 1px solid var(--border);
-  background: var(--card); color: var(--ink); font-size: 0.72em; font-weight: 600;
-  text-align: center; line-height: 1.2; box-shadow: var(--shadow-sm);
-  transition: transform 120ms var(--ease), box-shadow 120ms var(--ease);
+/* Full-width by default (the empty-state row and loading skeleton rows) — .service-card below
+   narrows to card width for the ones that actually render as cards. */
+.service-cards > li { flex: 1 1 100%; }
+/* .service-cards .service-card (two classes) rather than plain .service-card — needs to outrank the
+   generic `.panel li { padding; border-top; }` row styling above by specificity, not just source
+   order, since both are plain <li> elements inside a .panel. */
+.service-cards .service-card {
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  flex: 1 1 9em; max-width: 13em; min-width: 8.5em;
+  padding: 1.1em 0.9em; border-radius: 0.9em; border: 1px solid var(--border); background: var(--bg);
 }
-.quick-link:active { transform: scale(0.94); box-shadow: none; }
-.quick-link .quick-link-icon {
-  width: 2.2em; height: 2.2em; border-radius: 50%; background: var(--accent-soft); color: var(--accent);
-  display: flex; align-items: center; justify-content: center;
+/* `.panel li:first-child { border-top: none; padding-top: 0 }` (one class + pseudo-class + element)
+   outranks the rule above on the first card, stripping its top border/padding — three selector
+   pieces (0,2,1) beats our two classes (0,2,0). Restore them explicitly at matching specificity. */
+.service-cards .service-card:first-child { border-top: 1px solid var(--border); padding-top: 1.1em; }
+/* A card whose call form is open grows to the full row width instead of staying capped at the
+   compact card size — otherwise the AI-question/JSON-payload textarea is squeezed into ~13em. */
+.service-cards .service-card.is-open { flex-basis: 100%; max-width: 100%; }
+.service-card-icon {
+  width: 2.8em; height: 2.8em; border-radius: 50%; background: var(--accent-soft); color: var(--accent);
+  display: flex; align-items: center; justify-content: center; margin-bottom: 0.6em;
 }
-.quick-link .quick-link-icon .icon { width: 1.2em; height: 1.2em; }
+.service-card-icon .icon { width: 1.5em; height: 1.5em; }
+.service-card-name { font-weight: 700; font-size: 0.98em; }
+.service-card-id { font-size: 0.72em; margin-top: 0.15em; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.service-card .tags { justify-content: center; }
+.service-card .call-button { margin-top: 0.8em; width: 100%; }
+.service-card .pill { margin-top: 0.8em; }
+.service-card .call-form { width: 100%; text-align: left; }
 
 .call-button {
   padding: 0.35em 0.8em; border-radius: 0.5em; border: 1px solid var(--accent); background: var(--accent-soft);
