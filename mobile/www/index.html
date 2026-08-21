@@ -4,12 +4,47 @@
 <meta charset="utf-8">
 <title>Nomad-Net</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f7a68">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 
+<!-- Sprite di icone SVG disegnate a mano (stroke-based, coerenti tra loro) — nessuna libreria/font
+     esterno, stessa disciplina "niente dipendenze non necessarie" di node/src/qrcode.ts. Riferite
+     altrove via <svg class="icon"><use href="#icon-nome"></use></svg>. Mai visibile da sola. -->
+<svg xmlns="http://www.w3.org/2000/svg" class="icon-sprite" aria-hidden="true" focusable="false">
+  <defs>
+    <g id="icon-search"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></g>
+    <g id="icon-wifi"><path d="M2 8.8a15 15 0 0 1 20 0"/><path d="M5 12.6a10 10 0 0 1 14 0"/><path d="M8.5 16.3a5 5 0 0 1 7 0"/><circle cx="12" cy="20" r="1.1" fill="currentColor" stroke="none"/></g>
+    <g id="icon-lock"><rect x="3.5" y="10.5" width="17" height="11" rx="2"/><path d="M7 10.5V7a5 5 0 0 1 10 0v3.5"/></g>
+    <g id="icon-eye"><path d="M1 12s4-7.5 11-7.5S23 12 23 12s-4 7.5-11 7.5S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></g>
+    <g id="icon-eye-off"><path d="M17.7 17.7A11 11 0 0 1 12 19.5c-7 0-11-7.5-11-7.5a21 21 0 0 1 5-6M9.9 4.7A11 11 0 0 1 12 4.5c7 0 11 7.5 11 7.5a21 21 0 0 1-2.1 3.2M14.1 14.1a3 3 0 1 1-4.2-4.2"/><line x1="1" y1="1" x2="23" y2="23"/></g>
+    <g id="icon-qr"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="3" height="3"/><rect x="18" y="14" width="3" height="3"/><rect x="14" y="18" width="3" height="3"/><rect x="18" y="18" width="3" height="3"/></g>
+    <g id="icon-x"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></g>
+    <g id="icon-chevron-left"><polyline points="15 18 9 12 15 6"/></g>
+    <g id="icon-users"><circle cx="9" cy="8" r="3.3"/><path d="M3 20v-1.2a5 5 0 0 1 5-5h2a5 5 0 0 1 5 5V20"/><path d="M16.5 4.2a3.3 3.3 0 0 1 0 6.4"/><path d="M21 20v-1.2a5 5 0 0 0-3.5-4.8"/></g>
+    <g id="icon-plug"><path d="M9 2.5v5.5"/><path d="M15 2.5v5.5"/><path d="M6 8h12v3.5a6 6 0 0 1-6 6 6 6 0 0 1-6-6V8z"/><line x1="12" y1="17.5" x2="12" y2="21.5"/></g>
+    <g id="icon-inbox"><path d="M22 12.5h-5.5l-1.7 2.6h-5.6l-1.7-2.6H2"/><path d="M5.6 5.4 2 12.5v5.8a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-5.8l-3.6-7.1A2 2 0 0 0 16.6 4.3H7.4a2 2 0 0 0-1.8 1.1z"/></g>
+    <g id="icon-cloud"><path d="M17.5 19a4.5 4.5 0 0 0 0-9 6 6 0 0 0-11.6 1.7A4 4 0 0 0 6.5 19h11z"/></g>
+    <g id="icon-alert-triangle"><path d="M10.3 3.9 1.9 18a2 2 0 0 0 1.7 3h16.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9.5" x2="12" y2="13.5"/><circle cx="12" cy="17" r="1" fill="currentColor" stroke="none"/></g>
+    <g id="icon-alert-circle"><circle cx="12" cy="12" r="9.5"/><line x1="12" y1="7.5" x2="12" y2="12.5"/><circle cx="12" cy="16" r="1" fill="currentColor" stroke="none"/></g>
+    <g id="icon-refresh"><polyline points="22.5 4.5 22.5 10 17 10"/><polyline points="1.5 19.5 1.5 14 7 14"/><path d="M3.5 9A9 9 0 0 1 18 5.6L22.5 10M1.5 14l4.5 4.4A9 9 0 0 0 20.5 15"/></g>
+    <g id="icon-check-circle"><path d="M22 11.1V12a10 10 0 1 1-5.9-9.1"/><polyline points="22 4 12 14 9 11"/></g>
+    <g id="icon-sparkles"><path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z"/><path d="M19 14.5l.6 1.9 1.9.6-1.9.6-.6 1.9-.6-1.9-1.9-.6 1.9-.6z"/></g>
+    <g id="icon-book"><path d="M4.5 19.2A2.3 2.3 0 0 1 6.8 17H20V2.5H6.8a2.3 2.3 0 0 0-2.3 2.3z"/><path d="M4.5 19.2v-14"/></g>
+    <g id="icon-newspaper"><rect x="2" y="4.5" width="14" height="15" rx="1.6"/><path d="M16 8.5h3.5a2.5 2.5 0 0 1 2.5 2.5v8a2.5 2.5 0 0 1-2.5 2.5H16"/><line x1="5.5" y1="8.5" x2="12.5" y2="8.5"/><line x1="5.5" y1="12" x2="12.5" y2="12"/><line x1="5.5" y1="15.5" x2="10" y2="15.5"/></g>
+    <g id="icon-wrench"><path d="M14.5 6.4a4 4 0 1 1-5.4 5.4L3 18l3 3 6.2-6.1a4 4 0 0 1 5.4-5.4l-3 3-2-2z"/></g>
+    <g id="icon-send"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></g>
+    <g id="icon-network"><circle cx="4.5" cy="12" r="2.2"/><circle cx="19.5" cy="5.5" r="2.2"/><circle cx="19.5" cy="18.5" r="2.2"/><line x1="6.5" y1="11" x2="17.5" y2="6.3"/><line x1="6.5" y1="13" x2="17.5" y2="17.7"/></g>
+    <g id="icon-circle"><circle cx="12" cy="12" r="9"/></g>
+  </defs>
+</svg>
+
+<a id="skip-link" class="visually-hidden-focusable" href="#dashboard-main">Vai al contenuto</a>
+
 <section id="setup-screen">
   <div class="setup-card">
+    <div class="setup-mark"><svg class="icon icon-lg" aria-hidden="true"><use href="#icon-network"></use></svg></div>
     <h1>NOMAD-NET</h1>
     <p class="lede">Connettiti alla rete Nomad-Net del tuo gateway, come faresti con una rete Wi-Fi.</p>
     <form id="setup-form">
@@ -20,14 +55,24 @@
       </div>
       <label for="password-input">Password di rete</label>
       <div class="password-row">
+        <span class="input-icon" aria-hidden="true"><svg class="icon"><use href="#icon-lock"></use></svg></span>
         <input id="password-input" type="password" placeholder="K7XM-2QRT" autocomplete="off" autocapitalize="off" spellcheck="false" required>
-        <button type="button" id="toggle-password" class="link-button">Mostra</button>
+        <button type="button" id="toggle-password" class="icon-button" aria-label="Mostra password" aria-pressed="false">
+          <svg class="icon" aria-hidden="true"><use href="#icon-eye"></use></svg>
+        </button>
       </div>
       <p class="hint">Nome rete e password si trovano sulla pagina web del gateway, sezione "Collega un telefono".</p>
-      <button type="submit">Connetti</button>
-      <button type="button" id="scan-qr" class="link-button" hidden>Scansiona QR</button>
-      <button type="button" id="change-address" class="link-button" hidden>Non è la rete giusta? Cambia indirizzo</button>
-      <p id="setup-error" class="error" hidden></p>
+      <button type="submit" id="connect-submit">
+        <span class="btn-label">Connetti</span>
+        <span class="btn-spinner" hidden></span>
+      </button>
+      <button type="button" id="scan-qr" class="link-button" hidden>
+        <svg class="icon" aria-hidden="true"><use href="#icon-qr"></use></svg> Scansiona QR
+      </button>
+      <button type="button" id="change-address" class="link-button" hidden>
+        <svg class="icon" aria-hidden="true"><use href="#icon-chevron-left"></use></svg> Non è la rete giusta? Cambia indirizzo
+      </button>
+      <p id="setup-error" class="error" role="alert" aria-live="assertive" hidden></p>
     </form>
   </div>
 </section>
@@ -36,48 +81,63 @@
   <video id="scanner-video" autoplay playsinline muted></video>
   <div class="scanner-frame"></div>
   <p class="scanner-hint">Inquadra il QR sulla pagina web del gateway</p>
-  <button type="button" id="scanner-cancel">Annulla</button>
-  <p id="scanner-error" class="error" hidden></p>
+  <button type="button" id="scanner-cancel">
+    <svg class="icon" aria-hidden="true"><use href="#icon-x"></use></svg> Annulla
+  </button>
+  <p id="scanner-error" class="error" role="alert" aria-live="assertive" hidden></p>
 </section>
 
 <section id="dashboard-screen" hidden>
   <header>
-    <div>
+    <div class="header-identity">
+      <svg class="icon icon-accent" aria-hidden="true"><use href="#icon-wifi"></use></svg>
       <div id="node-label" class="mono muted"></div>
     </div>
     <button id="forget-network" class="link-button">Cambia rete</button>
   </header>
 
-  <section id="home-hero">
-    <h1 class="wordmark">NOMAD-NET</h1>
-    <form id="search-form">
-      <div class="search-box">
-        <span class="search-icon" aria-hidden="true">⌕</span>
-        <input id="search-input" type="text" placeholder="Cerca contenuti..." autocomplete="off">
-      </div>
-    </form>
-    <div id="quick-links" class="quick-links"></div>
-  </section>
+  <main id="dashboard-main" tabindex="-1">
+    <section id="home-hero">
+      <h1 class="wordmark">NOMAD-NET</h1>
+      <form id="search-form" role="search">
+        <div class="search-box">
+          <svg class="icon search-icon" aria-hidden="true"><use href="#icon-search"></use></svg>
+          <input id="search-input" type="text" placeholder="Cerca contenuti..." autocomplete="off" aria-label="Cerca contenuti">
+          <span id="search-spinner" class="mini-spinner" hidden aria-hidden="true"></span>
+        </div>
+      </form>
+      <nav id="quick-links" class="quick-links" aria-label="Collegamenti rapidi ai servizi"></nav>
+    </section>
 
-  <div id="stats" class="stats"></div>
+    <div id="stats" class="stats" aria-label="Stato del nodo"></div>
 
-  <section class="panel">
-    <h2>Vicini connessi</h2>
-    <ul id="peers"></ul>
-  </section>
+    <div class="panels-grid">
+      <section class="panel">
+        <h2><svg class="icon" aria-hidden="true"><use href="#icon-users"></use></svg> Vicini connessi <span class="count" id="peers-count"></span></h2>
+        <ul id="peers"></ul>
+      </section>
 
-  <section class="panel">
-    <h2>Servizi</h2>
-    <ul id="services"></ul>
-  </section>
+      <section class="panel">
+        <h2><svg class="icon" aria-hidden="true"><use href="#icon-plug"></use></svg> Servizi <span class="count" id="services-count"></span></h2>
+        <ul id="services"></ul>
+      </section>
 
-  <section class="panel" id="content-panel">
-    <h2>Contenuti</h2>
-    <ul id="content"></ul>
-  </section>
+      <section class="panel" id="content-panel">
+        <h2><svg class="icon" aria-hidden="true"><use href="#icon-inbox"></use></svg> Contenuti <span class="count" id="content-count"></span></h2>
+        <ul id="content"></ul>
+      </section>
+    </div>
 
-  <p id="dashboard-error" class="error" hidden></p>
+    <div id="dashboard-error-wrap" hidden>
+      <p id="dashboard-error" class="error" role="alert" aria-live="polite"></p>
+      <button type="button" id="retry-refresh" class="link-button">
+        <svg class="icon" aria-hidden="true"><use href="#icon-refresh"></use></svg> Riprova
+      </button>
+    </div>
+  </main>
 </section>
+
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
 <script src="app.js"></script>
 </body>

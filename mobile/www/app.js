@@ -2,6 +2,8 @@
 // framework, same discipline as node/src/web-ui.ts's own page: every value from the network goes
 // through textContent (never innerHTML), because a peer's declared content name, service id, or
 // capability list is untrusted input this app renders, exactly like the desktop status page does.
+// Icons referenced via iconEl() point at static <symbol> ids defined once in index.html — never
+// built from network data, so they carry no such risk.
 
 const STORAGE_KEY_URL = "nomadnet.gatewayUrl";
 const STORAGE_KEY_PASSWORD = "nomadnet.networkPassword";
@@ -140,19 +142,72 @@ function el(tag, props, children) {
       else if (k === "type") e.type = props[k];
       else if (k === "placeholder") e.placeholder = props[k];
       else if (k === "value") e.value = props[k];
+      else if (k === "title") e.title = props[k];
     }
   }
   if (children) for (const c of children) e.append(c);
   return e;
 }
 
-function renderEmptyIfNeeded(list, items, message) {
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+/** Builds a <svg class="icon [extraClass]"><use href="#icon-name"></use></svg> referencing the static sprite in index.html. `name` is always a hardcoded literal at call sites, never network data. */
+function iconEl(name, extraClass) {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("class", extraClass ? "icon " + extraClass : "icon");
+  svg.setAttribute("aria-hidden", "true");
+  const use = document.createElementNS(SVG_NS, "use");
+  use.setAttribute("href", "#icon-" + name);
+  svg.append(use);
+  return svg;
+}
+
+function renderEmptyIfNeeded(list, items, message, iconName) {
   list.textContent = "";
   if (items.length === 0) {
-    list.append(el("li", null, [el("div", { className: "empty", textContent: message })]));
+    const empty = el("div", { className: "empty" }, [el("span", { textContent: message })]);
+    if (iconName) empty.prepend(iconEl(iconName));
+    list.append(el("li", null, [empty]));
     return true;
   }
   return false;
+}
+
+/**
+ * Shows a brief auto-dismissing toast (bottom pill) — used for confirmations that don't warrant a
+ * persistent banner, e.g. "connessione ristabilita" after a transient gateway error clears. Ignored
+ * entirely under prefers-reduced-motion at the CSS level (animation-duration collapses to ~0), so no
+ * JS branching is needed here for that.
+ */
+// Two timers are in flight while a toast is showing (the 2600ms "start fading" one, then the 220ms
+// "actually hide" one) — both must be tracked and cleared on a new call, or a toast shown while the
+// previous one is still mid-fade can get cut short by the first toast's stale "now hide" timer.
+let toastHideTimer;
+let toastLeaveTimer;
+function showToast(message, iconName) {
+  const toast = document.getElementById("toast");
+  clearTimeout(toastHideTimer);
+  clearTimeout(toastLeaveTimer);
+  toast.classList.remove("is-leaving");
+  toast.textContent = "";
+  if (iconName) toast.append(iconEl(iconName));
+  toast.append(el("span", { textContent: message }));
+  toast.hidden = false;
+  toastHideTimer = setTimeout(() => {
+    toast.classList.add("is-leaving");
+    toastLeaveTimer = setTimeout(() => {
+      toast.hidden = true;
+    }, 220);
+  }, 2600);
+}
+
+/** Best-effort haptic feedback (Vibration API — Chrome/Android WebView; silently a no-op elsewhere, e.g. iOS Safari/WebView which never implements it). Never throws: some embedders (including sandboxed iframes) expose the method but reject the call. */
+function vibrate(pattern) {
+  try {
+    if (navigator.vibrate) navigator.vibrate(pattern);
+  } catch {
+    // best-effort only
+  }
 }
 
 function formatBytes(n) {
@@ -197,28 +252,53 @@ function showSetupScreen(errorMessage) {
 
   document.getElementById("password-input").value = "";
   document.getElementById("password-input").type = "password";
-  document.getElementById("toggle-password").textContent = "Mostra";
+  setPasswordToggleState(false);
 
   const errorEl = document.getElementById("setup-error");
   if (errorMessage) {
-    errorEl.textContent = errorMessage;
+    errorEl.textContent = "";
+    errorEl.append(iconEl("alert-circle"), el("span", { textContent: errorMessage }));
     errorEl.hidden = false;
   } else {
     errorEl.hidden = true;
   }
+  setConnectSubmitBusy(false);
+
+  // Focus the first field the user actually needs to fill — helps keyboard/screen-reader users land
+  // ready to type instead of having to find the input themselves, and matters more here than on a
+  // typical form because this runs every time setup re-appears (e.g. after a password rejection).
+  const target = document.getElementById(needsAddress ? "gateway-input" : "password-input");
+  if (document.activeElement !== target) target.focus({ preventScroll: true });
+}
+
+function setPasswordToggleState(showing) {
+  const btn = document.getElementById("toggle-password");
+  btn.setAttribute("aria-pressed", String(showing));
+  btn.setAttribute("aria-label", showing ? "Nascondi password" : "Mostra password");
+  btn.textContent = "";
+  btn.append(iconEl(showing ? "eye-off" : "eye"));
+}
+
+function setConnectSubmitBusy(busy) {
+  const btn = document.getElementById("connect-submit");
+  btn.disabled = busy;
+  btn.querySelector(".btn-label").textContent = busy ? "Connessione..." : "Connetti";
+  btn.querySelector(".btn-spinner").hidden = !busy;
 }
 
 document.getElementById("toggle-password").addEventListener("click", () => {
   const input = document.getElementById("password-input");
   const showing = input.type === "text";
   input.type = showing ? "password" : "text";
-  document.getElementById("toggle-password").textContent = showing ? "Mostra" : "Nascondi";
+  setPasswordToggleState(!showing);
+  input.focus({ preventScroll: true });
 });
 
 document.getElementById("change-address").addEventListener("click", () => {
   document.getElementById("address-field").hidden = false;
   document.getElementById("gateway-input").required = true;
   document.getElementById("change-address").hidden = true;
+  document.getElementById("gateway-input").focus({ preventScroll: true });
 });
 
 document.getElementById("setup-form").addEventListener("submit", async (event) => {
@@ -226,6 +306,7 @@ document.getElementById("setup-form").addEventListener("submit", async (event) =
   const addressVisible = !document.getElementById("address-field").hidden;
   const candidateUrl = addressVisible ? normalizeGatewayUrl(document.getElementById("gateway-input").value) : gatewayUrl;
   const candidatePassword = document.getElementById("password-input").value.trim();
+  setConnectSubmitBusy(true);
 
   const previousUrl = gatewayUrl;
   gatewayUrl = candidateUrl;
@@ -265,6 +346,7 @@ document.getElementById("setup-form").addEventListener("submit", async (event) =
   networkPassword = candidatePassword;
   localStorage.setItem(STORAGE_KEY_URL, gatewayUrl);
   localStorage.setItem(STORAGE_KEY_PASSWORD, networkPassword);
+  vibrate(12);
   showDashboard();
 });
 
@@ -390,27 +472,82 @@ function handlePasswordRejected() {
 
 // ---------- dashboard ----------
 
+// Skeleton placeholders shown between showDashboard() and the first successful refreshAll() —
+// distinguishes "still loading" from "genuinely empty" (an empty peers list and a not-yet-fetched
+// one used to look identical). Cleared for good once the first real render happens; the periodic 5s
+// refresh never shows skeletons again, even if a later refresh is slow, so live data never flashes
+// away mid-session.
+let firstLoadDone = false;
+
+function renderStatSkeletons() {
+  const stats = document.getElementById("stats");
+  stats.textContent = "";
+  stats.setAttribute("aria-busy", "true");
+  for (let i = 0; i < 4; i++) {
+    stats.append(el("div", { className: "stat skel-stat" }, [el("div", { className: "v", textContent: "0" }), el("div", { className: "l", textContent: "..." })]));
+  }
+}
+
+function listSkeleton(list, rows) {
+  list.textContent = "";
+  list.setAttribute("aria-busy", "true");
+  for (let i = 0; i < rows; i++) {
+    list.append(el("li", { className: "skel-row" }, [el("div", { className: "skel skel-line w-60" }), el("div", { className: "skel skel-line w-40" })]));
+  }
+}
+
+function renderSkeletons() {
+  renderStatSkeletons();
+  listSkeleton(document.getElementById("peers"), 2);
+  listSkeleton(document.getElementById("services"), 3);
+  listSkeleton(document.getElementById("content"), 3);
+}
+
 function showDashboard() {
   document.getElementById("setup-screen").hidden = true;
   document.getElementById("dashboard-screen").hidden = false;
+  firstLoadDone = false;
+  peerSeenIds = new Set();
+  serviceSeenIds = new Set();
+  contentSeenIds = new Set();
+  lastContentQuery = null;
+  renderSkeletons();
+  const main = document.getElementById("dashboard-main");
+  main.focus({ preventScroll: true }); // announces the screen change to screen-reader users
   refreshAll();
   clearInterval(refreshTimer);
   refreshTimer = setInterval(refreshAll, 5000);
 }
 
+// Tracks whether the dashboard is currently showing a "gateway non raggiungibile" banner, so
+// clearing it can offer a small "connessione ristabilita" confirmation instead of just silently
+// removing the error — otherwise a flaky connection recovering is invisible unless the user happens
+// to be looking at the (now-empty) error area at that exact moment.
+let dashboardHadError = false;
+
 function setDashboardError(message) {
+  const wrap = document.getElementById("dashboard-error-wrap");
   const el = document.getElementById("dashboard-error");
   if (message) {
-    el.textContent = message;
-    el.hidden = false;
+    el.textContent = "";
+    el.append(iconEl("alert-triangle"), document.createTextNode(message));
+    wrap.hidden = false;
+    dashboardHadError = true;
   } else {
-    el.hidden = true;
+    wrap.hidden = true;
+    if (dashboardHadError && firstLoadDone) showToast("Connessione ristabilita", "check-circle");
+    dashboardHadError = false;
   }
 }
+
+document.getElementById("retry-refresh").addEventListener("click", () => {
+  refreshAll().catch(() => {});
+});
 
 function renderStats(s) {
   const stats = document.getElementById("stats");
   stats.textContent = "";
+  stats.removeAttribute("aria-busy");
   const entries = [
     ["Vicini", String(s.peers)],
     ["Servizi attivi", String(s.services)],
@@ -418,24 +555,50 @@ function renderStats(s) {
     ["Relay", s.relaying ? "attivo" : "fermo"],
   ];
   for (const [label, value] of entries) {
-    stats.append(el("div", { className: "stat" }, [el("div", { className: "v", textContent: value }), el("div", { className: "l", textContent: label })]));
+    const isRelay = label === "Relay";
+    stats.append(
+      el("div", { className: "stat" + (isRelay && s.relaying ? " stat-relay-on" : "") }, [
+        el("div", { className: "v", textContent: value }),
+        el("div", { className: "l", textContent: label }),
+      ]),
+    );
   }
   document.getElementById("node-label").textContent = "Connesso a: " + (s.networkName || s.displayName);
 }
 
+let peerSeenIds = new Set();
+
 function renderPeers(peers) {
   const list = document.getElementById("peers");
-  if (renderEmptyIfNeeded(list, peers, "Nessun vicino connesso al momento.")) return;
+  list.removeAttribute("aria-busy");
+  document.getElementById("peers-count").textContent = peers.length > 0 ? String(peers.length) : "";
+  if (renderEmptyIfNeeded(list, peers, "Nessun vicino connesso al momento.", "users")) {
+    peerSeenIds = new Set();
+    return;
+  }
+  const nextSeen = new Set();
   for (const p of peers) {
-    list.append(
-      el("li", null, [
-        el("div", { className: "row" }, [
-          el("span", { className: "row-title mono", textContent: p.shortLabel }),
-          el("span", { className: "muted", textContent: timeAgo(p.connectedAt) }),
-        ]),
-        el("div", { className: "tags" }, [el("span", { className: "tag", textContent: TRUST_LABELS[p.trustLevel] || p.trustLevel })]),
+    nextSeen.add(p.nodeId);
+    const li = el("li", null, [
+      el("div", { className: "row" }, [
+        el("span", { className: "row-title mono", textContent: p.shortLabel, title: p.shortLabel }),
+        el("span", { className: "muted", textContent: timeAgo(p.connectedAt) }),
       ]),
-    );
+      el("div", { className: "tags" }, [el("span", { className: "tag", textContent: TRUST_LABELS[p.trustLevel] || p.trustLevel })]),
+    ]);
+    if (!peerSeenIds.has(p.nodeId)) li.classList.add("enter");
+    list.append(li);
+  }
+  peerSeenIds = nextSeen;
+}
+
+function setCallSubmitBusy(submit, busy) {
+  submit.disabled = busy;
+  submit.textContent = "";
+  if (busy) {
+    submit.append(el("span", { className: "mini-spinner" }), el("span", { textContent: "Invio..." }));
+  } else {
+    submit.append(iconEl("send"), el("span", { textContent: "Invia" }));
   }
 }
 
@@ -444,9 +607,12 @@ function buildCallForm(service) {
   const input = isAi
     ? el("textarea", { placeholder: "Scrivi una domanda..." })
     : el("textarea", { placeholder: "Payload JSON, es. {}", value: "{}" });
-  const submit = el("button", { className: "call-submit", textContent: "Invia" });
+  const submit = el("button", { className: "call-submit" });
+  setCallSubmitBusy(submit, false);
   const result = el("div", { className: "call-result", textContent: "" });
   result.hidden = true;
+  result.setAttribute("role", "status");
+  result.setAttribute("aria-live", "polite");
 
   submit.addEventListener("click", async () => {
     let payload;
@@ -462,14 +628,14 @@ function buildCallForm(service) {
         return;
       }
     }
-    submit.disabled = true;
-    submit.textContent = "...";
+    setCallSubmitBusy(submit, true);
     try {
       const value = await callService(service.serviceId, payload);
       result.hidden = false;
       result.className = "call-result";
       const rendered = isAi && value && typeof value.response === "string" ? value.response : JSON.stringify(value, null, 2);
       result.textContent = rendered;
+      vibrate(10);
     } catch (err) {
       if (err.status === 401) {
         handlePasswordRejected();
@@ -478,9 +644,9 @@ function buildCallForm(service) {
       result.hidden = false;
       result.className = "call-result is-error";
       result.textContent = err.message;
+      vibrate([12, 40, 12]);
     } finally {
-      submit.disabled = false;
-      submit.textContent = "Invia";
+      setCallSubmitBusy(submit, false);
     }
   });
 
@@ -501,23 +667,33 @@ function openServiceCallForm(svc, li, callButton) {
   if (callButton) callButton.hidden = true;
 }
 
+let serviceSeenIds = new Set();
+
 function renderServices(services) {
   const list = document.getElementById("services");
+  list.removeAttribute("aria-busy");
+  document.getElementById("services-count").textContent = services.length > 0 ? String(services.length) : "";
   const previousOpenLi = openCallServiceId ? list.querySelector('li[data-service-id="' + CSS.escape(openCallServiceId) + '"]') : null;
   if (!services.some((svc) => svc.serviceId === openCallServiceId)) openCallServiceId = null; // the open service is gone from this refresh
 
-  if (renderEmptyIfNeeded(list, services, "Nessun servizio conosciuto.")) {
+  if (renderEmptyIfNeeded(list, services, "Nessun servizio conosciuto.", "plug")) {
     openCallServiceId = null;
+    serviceSeenIds = new Set();
     return;
   }
+  const nextSeen = new Set();
   for (const svc of services) {
+    nextSeen.add(svc.serviceId);
     if (svc.serviceId === openCallServiceId && previousOpenLi) {
       list.append(previousOpenLi); // same node, same open form and its state — not rebuilt
       continue;
     }
-    const pill = el("span", { className: "pill " + (svc.availability ? "good" : "off"), textContent: svc.availability ? "disponibile" : "non disponibile" });
+    const pill = el("span", { className: "pill " + (svc.availability ? "good" : "off") }, [
+      iconEl(svc.availability ? "check-circle" : "circle"),
+      el("span", { textContent: svc.availability ? "disponibile" : "non disponibile" }),
+    ]);
     const li = el("li", null, [
-      el("div", { className: "row" }, [el("span", { className: "row-title mono", textContent: svc.serviceId }), pill]),
+      el("div", { className: "row" }, [el("span", { className: "row-title mono", textContent: svc.serviceId, title: svc.serviceId }), pill]),
       el("div", { className: "tags" }, (Array.isArray(svc.capabilities) ? svc.capabilities : []).map((c) => el("span", { className: "tag", textContent: String(c) }))),
     ]);
     li.dataset.serviceId = svc.serviceId;
@@ -526,16 +702,18 @@ function renderServices(services) {
       callButton.addEventListener("click", () => openServiceCallForm(svc, li, callButton));
       li.append(callButton);
     }
+    if (!serviceSeenIds.has(svc.serviceId)) li.classList.add("enter");
     list.append(li);
   }
+  serviceSeenIds = nextSeen;
 }
 
 // Known serviceIds get a recognizable icon; anything else (a service this app has never heard of,
 // e.g. one an operator registered locally) still gets a quick link, just with a generic icon rather
 // than being hidden — "some quick link" beats "silently missing" for an unrecognized-but-available
 // service.
-const SERVICE_ICONS = { "service://ai": "🤖", "service://kiwix-search": "📚", "service://news": "📰" };
-const DEFAULT_SERVICE_ICON = "🔧";
+const SERVICE_ICONS = { "service://ai": "sparkles", "service://kiwix-search": "book", "service://news": "newspaper" };
+const DEFAULT_SERVICE_ICON = "wrench";
 const MAX_QUICK_LINKS = 8;
 
 function shortServiceLabel(serviceId) {
@@ -550,10 +728,12 @@ function renderQuickLinks(services) {
   const available = services.filter((svc) => svc.availability).slice(0, MAX_QUICK_LINKS);
   for (const svc of available) {
     const link = el("button", { className: "quick-link", type: "button" }, [
-      el("span", { className: "quick-link-icon", textContent: SERVICE_ICONS[svc.serviceId] || DEFAULT_SERVICE_ICON }),
+      el("span", { className: "quick-link-icon" }, [iconEl(SERVICE_ICONS[svc.serviceId] || DEFAULT_SERVICE_ICON)]),
       el("span", { textContent: shortServiceLabel(svc.serviceId) }),
     ]);
+    link.setAttribute("aria-label", "Chiama " + svc.serviceId);
     link.addEventListener("click", () => {
+      vibrate(8);
       const li = document.getElementById("services").querySelector('li[data-service-id="' + CSS.escape(svc.serviceId) + '"]');
       if (!li) return; // services list hasn't rendered this one yet — nothing to open or scroll to
       openServiceCallForm(svc, li, li.querySelector(".call-button"));
@@ -563,29 +743,54 @@ function renderQuickLinks(services) {
   }
 }
 
+let contentSeenIds = new Set();
+
 function renderContent(entries, emptyMessage) {
   const list = document.getElementById("content");
-  if (renderEmptyIfNeeded(list, entries, emptyMessage)) return;
-  for (const c of entries) {
-    const pill = el("span", { className: "pill " + (c.availableLocally ? "good" : "warn"), textContent: c.availableLocally ? "in cache" : "remoto" });
-    list.append(
-      el("li", null, [
-        el("div", { className: "row" }, [el("span", { className: "row-title", textContent: c.name }), pill]),
-        el("div", { className: "muted", textContent: c.mimeType + " · " + formatBytes(c.size) }),
-      ]),
-    );
+  list.removeAttribute("aria-busy");
+  document.getElementById("content-count").textContent = entries.length > 0 ? String(entries.length) : "";
+  if (renderEmptyIfNeeded(list, entries, emptyMessage, "inbox")) {
+    contentSeenIds = new Set();
+    return;
   }
+  const nextSeen = new Set();
+  for (const c of entries) {
+    nextSeen.add(c.contentId);
+    const pill = el("span", { className: "pill " + (c.availableLocally ? "good" : "warn") }, [
+      iconEl(c.availableLocally ? "check-circle" : "cloud"),
+      el("span", { textContent: c.availableLocally ? "in cache" : "remoto" }),
+    ]);
+    const li = el("li", null, [
+      el("div", { className: "row" }, [el("span", { className: "row-title", textContent: c.name, title: c.name }), pill]),
+      el("div", { className: "muted", textContent: c.mimeType + " · " + formatBytes(c.size) }),
+    ]);
+    if (!contentSeenIds.has(c.contentId)) li.classList.add("enter");
+    list.append(li);
+  }
+  contentSeenIds = nextSeen;
 }
 
 let contentRequestId = 0;
+// Tracks the last query refreshContent() actually rendered for — a *changed* query is a new context
+// (don't diff-animate its results against a previous, unrelated query's ids), but the periodic 5s
+// refresh calls refreshContent() with the same (possibly empty) query every time, and that case must
+// keep diffing normally or every row would replay its entrance animation on every tick.
+let lastContentQuery = null;
 async function refreshContent() {
   const requestId = ++contentRequestId;
   const q = document.getElementById("search-input").value.trim();
   const path = q.length === 0 ? "/api/content" : "/api/search?q=" + encodeURIComponent(q);
   const emptyMessage = q.length === 0 ? "Nessun contenuto conosciuto ancora." : 'Nessun risultato per "' + q + '".';
-  const entries = await fetchJson(path);
-  if (requestId !== contentRequestId) return; // superseded by a newer request while this one was in flight
-  renderContent(entries, emptyMessage);
+  document.getElementById("search-spinner").hidden = false;
+  try {
+    const entries = await fetchJson(path);
+    if (requestId !== contentRequestId) return; // superseded by a newer request while this one was in flight
+    if (q !== lastContentQuery) contentSeenIds = new Set();
+    lastContentQuery = q;
+    renderContent(entries, emptyMessage);
+  } finally {
+    if (requestId === contentRequestId) document.getElementById("search-spinner").hidden = true;
+  }
 }
 
 let searchDebounce;
@@ -615,6 +820,7 @@ async function refreshAll() {
     renderServices(services);
     renderQuickLinks(services); // after renderServices() — relies on its <li data-service-id> nodes already existing
     await refreshContent();
+    firstLoadDone = true;
     setDashboardError();
   } catch (err) {
     if (cycleId !== refreshCycleId) return;
