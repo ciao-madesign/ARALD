@@ -26,9 +26,11 @@ L'utente non deve sapere quale dispositivo possiede il contenuto, quanti hop ser
 
 ## Stato del progetto
 
-Prototipo software (Milestone 0-7, 12, 13, 15, 16 e 20 nella roadmap): identità crittografica per nodo, protocollo a pacchetti con TTL e deduplicazione, transport TCP, routing multi-hop (controlled flooding + routing a costo distance-vector per il traffico unicast), content discovery e cache, store-and-forward, sincronizzazione dei cataloghi tra segmenti di rete riconnessi, firma dei contenuti, trust levels, rate limiting, cifratura end-to-end dei messaggi privati, relay policy legata a batteria/carica, simulatore di rete a scala — tutto dimostrato su rete locale, **senza Internet e senza BLE**, per validare la logica di rete prima di introdurre i radio transport.
+Prototipo software con le Milestone 0-7, 12, 13, 15, 16, 20 della roadmap complete: identità crittografica per nodo, protocollo a pacchetti con TTL e deduplicazione, transport TCP, routing multi-hop (controlled flooding + routing a costo distance-vector per il traffico unicast), content discovery e cache, store-and-forward, sincronizzazione dei cataloghi tra segmenti di rete riconnessi, firma dei contenuti, trust levels, rate limiting, cifratura end-to-end dei messaggi privati, relay policy legata a batteria/carica, simulatore di rete a scala — tutto dimostrato su rete locale reale (TCP), senza Internet.
 
-Dopo un audit tecnico completo (vedi [`docs/audit-report.html`](docs/audit-report.html)) è in corso un secondo giro di miglioramenti realizzabili in puro software (retry sui content provider, struttura dati limitata condivisa, eviction pesata sulla fiducia, scheduling reale per priorità, `CONTENT_NOT_FOUND` + scadenza dei contenuti, service discovery, interfaccia web locale di stato/ricerca — dettaglio in [`docs/security.md`](docs/security.md)). BLE/mobile/gateway NOMAD reali restano bloccati su hardware/Docker, ma un transport BLE *simulato* e un gateway NOMAD mockato contro un fake server locale sono comunque realizzabili senza quei prerequisiti e sono le prossime due voci in corso. Vedi [`docs/roadmap.md`](docs/roadmap.md) per lo stato dettagliato di ogni milestone e [`docs/next-steps.md`](docs/next-steps.md) per cosa resta aperto.
+Dopo un audit tecnico completo (vedi [`docs/audit-report.html`](docs/audit-report.html)) sono state realizzate 10 slice più diversi follow-up su richiesta esplicita dell'utente — dettaglio completo in [`docs/security.md`](docs/security.md): retry sui content provider, struttura dati limitata condivisa, eviction pesata sulla fiducia, scheduling reale per priorità, `CONTENT_NOT_FOUND` + scadenza dei contenuti, service discovery, un'interfaccia web locale di stato/ricerca (`node/src/web-ui.ts`), un transport BLE **simulato** (nessun radio reale), un gateway NOMAD **mockato** con tre sotto-servizi — Kiwix (`service://kiwix-search`), AI (`service://ai`, spec §37) e news (`service://news`) — contro server fittizi locali, un'**app mobile** (`mobile/`, Capacitor) verso quel gateway con pairing in stile Wi-Fi (nome rete + password, anche via QR code), e una dashboard mobile in stile "motore di ricerca" con collegamenti rapidi ai servizi. Tutto verificato con test automatici ripetuti e più passate di code-review (bug reali trovati e corretti a ogni voce, documentati in `docs/security.md`).
+
+**Cosa resta bloccato**: le versioni **hardware/Docker reali** di BLE e del gateway NOMAD (serve rispettivamente hardware BLE fisico e Docker + un'istanza Project NOMAD raggiungibile) — le loro controparti simulate/mockate sopra hanno comunque validato tutta la logica applicativa in puro software. **Debito noto, non ancora affrontato**: la UI dell'app mobile è stata verificata solo funzionalmente, mai con una vera passata di design — vedi `docs/next-steps.md`. Vedi [`docs/roadmap.md`](docs/roadmap.md) per lo stato dettagliato di ogni milestone e [`docs/next-steps.md`](docs/next-steps.md) per i piani d'azione, incluse una valutazione di un'evoluzione più ambiziosa di `service://news` (RSS reale, priorità di emergenza, digest AI) e il debito di design della UI mobile.
 
 ## Quick start
 
@@ -50,12 +52,12 @@ Vedi [`docs/development.md`](docs/development.md) per il flusso completo (multi-
 ```
 nomad-net/
 +-- docs/         specifica e documentazione tecnica
-+-- protocol/     definizioni di protocollo condivise (packet/content/service/sync) — segnaposto, vedi protocol/README.md
-+-- node/         nomad-node: il runtime di rete (identity, routing, content, transport)
-+-- gateway/      traduzione Nomad-Net <-> Project NOMAD / Internet — non ancora implementato
-+-- mobile/       app Android/iOS — non ancora implementato
-+-- tests/        unit, integration, network, dtn
-+-- tools/        simulatore di rete (tools/simulator/) — benchmark non ancora implementato
++-- protocol/     definizioni di protocollo condivise — segnaposto, non contiene codice reale
++-- node/         nomad-node: il runtime di rete (identity, routing, content, transport, web UI) — unico package nel workspace npm
++-- gateway/nomad/ traduzione Nomad-Net <-> Project NOMAD (Kiwix/Ollama/news) — mockata contro server fittizi locali, progetto separato
++-- mobile/       app Capacitor verso un gateway (Wi-Fi/TCP, Fase 1) — verificata via browser, build Android nativa non compilabile in questo ambiente; iOS ancora segnaposto
++-- tests/        unit, integration, network
++-- tools/        simulatore di rete (tools/simulator/)
 ```
 
 Struttura di riferimento completa: [`docs/SPECIFICATION.md` §87](docs/SPECIFICATION.md#87-struttura-della-repository-finale).

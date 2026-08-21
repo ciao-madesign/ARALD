@@ -4,6 +4,8 @@ Client mobile leggero per Nomad-Net — **Fase 1** del piano in `docs/next-steps
 
 **Decisioni prese con l'utente** (vedi `docs/next-steps.md` Opzione H per il ragionamento completo): client leggero verso un gateway, non un nodo completo; framework ibrido ([Capacitor](https://capacitorjs.com/)), non nativo puro — adeguato perché il telefono si connette *a* un gateway (ruolo BLE centrale, quando arriverà la Fase 2) e non deve mai farsi scoprire da altri telefoni (ruolo periferica, che l'ibrido supporta male).
 
+**Debito di design noto, non ancora affrontato**: ogni iterazione fin qui è stata verificata solo *funzionalmente* (Playwright contro un `NomadNode` reale) — l'app non ha mai ricevuto una vera passata di design. Dettaglio di cosa manca (gerarchia visiva, transizioni, stati di caricamento, icone coerenti, feedback tattile, layout tablet, accessibilità) in `docs/next-steps.md`, sezione "Debito di design della UI mobile". Prima di aggiungere altre funzionalità qui, vale la pena affrontare questo.
+
 ## Cosa c'è
 
 - `www/` — l'app vera e propria: `index.html` + `styles.css` + `app.js`, vanilla JS senza framework (stessa disciplina di `node/src/web-ui.ts`: ogni valore che arriva dalla rete passa da `textContent`, mai `innerHTML`, perché il nome di un contenuto o l'id di un servizio dichiarati da un peer sono input non fidato). Due schermate:
