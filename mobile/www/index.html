@@ -11,7 +11,7 @@
 
 <!-- Sprite di icone SVG disegnate a mano (stroke-based, coerenti tra loro) — nessuna libreria/font
      esterno, stessa disciplina "niente dipendenze non necessarie" di node/src/qrcode.ts. Riferite
-     altrove via <svg class="icon"><use href="#icon-nome"></use></svg>. Mai visibile da sola. -->
+     altrove via <svg viewBox="0 0 24 24" class="icon"><use href="#icon-nome"></use></svg>. Mai visibile da sola. -->
 <svg xmlns="http://www.w3.org/2000/svg" class="icon-sprite" aria-hidden="true" focusable="false">
   <defs>
     <g id="icon-search"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></g>
@@ -22,6 +22,7 @@
     <g id="icon-qr"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="3" height="3"/><rect x="18" y="14" width="3" height="3"/><rect x="14" y="18" width="3" height="3"/><rect x="18" y="18" width="3" height="3"/></g>
     <g id="icon-x"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></g>
     <g id="icon-chevron-left"><polyline points="15 18 9 12 15 6"/></g>
+    <g id="icon-chevron-right"><polyline points="9 18 15 12 9 6"/></g>
     <g id="icon-users"><circle cx="9" cy="8" r="3.3"/><path d="M3 20v-1.2a5 5 0 0 1 5-5h2a5 5 0 0 1 5 5V20"/><path d="M16.5 4.2a3.3 3.3 0 0 1 0 6.4"/><path d="M21 20v-1.2a5 5 0 0 0-3.5-4.8"/></g>
     <g id="icon-plug"><path d="M9 2.5v5.5"/><path d="M15 2.5v5.5"/><path d="M6 8h12v3.5a6 6 0 0 1-6 6 6 6 0 0 1-6-6V8z"/><line x1="12" y1="17.5" x2="12" y2="21.5"/></g>
     <g id="icon-inbox"><path d="M22 12.5h-5.5l-1.7 2.6h-5.6l-1.7-2.6H2"/><path d="M5.6 5.4 2 12.5v5.8a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-5.8l-3.6-7.1A2 2 0 0 0 16.6 4.3H7.4a2 2 0 0 0-1.8 1.1z"/></g>
@@ -44,7 +45,7 @@
 
 <section id="setup-screen">
   <div class="setup-card">
-    <div class="setup-mark"><svg class="icon icon-lg" aria-hidden="true"><use href="#icon-network"></use></svg></div>
+    <div class="setup-mark"><svg viewBox="0 0 24 24" class="icon icon-lg" aria-hidden="true"><use href="#icon-network"></use></svg></div>
     <h1>NOMAD-NET</h1>
     <p class="lede">Connettiti alla rete Nomad-Net del tuo gateway, come faresti con una rete Wi-Fi.</p>
     <form id="setup-form">
@@ -55,10 +56,10 @@
       </div>
       <label for="password-input">Password di rete</label>
       <div class="password-row">
-        <span class="input-icon" aria-hidden="true"><svg class="icon"><use href="#icon-lock"></use></svg></span>
+        <span class="input-icon" aria-hidden="true"><svg viewBox="0 0 24 24" class="icon"><use href="#icon-lock"></use></svg></span>
         <input id="password-input" type="password" placeholder="K7XM-2QRT" autocomplete="off" autocapitalize="off" spellcheck="false" required>
         <button type="button" id="toggle-password" class="icon-button" aria-label="Mostra password" aria-pressed="false">
-          <svg class="icon" aria-hidden="true"><use href="#icon-eye"></use></svg>
+          <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-eye"></use></svg>
         </button>
       </div>
       <p class="hint">Nome rete e password si trovano sulla pagina web del gateway, sezione "Collega un telefono".</p>
@@ -67,10 +68,10 @@
         <span class="btn-spinner" hidden></span>
       </button>
       <button type="button" id="scan-qr" class="link-button" hidden>
-        <svg class="icon" aria-hidden="true"><use href="#icon-qr"></use></svg> Scansiona QR
+        <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-qr"></use></svg> Scansiona QR
       </button>
       <button type="button" id="change-address" class="link-button" hidden>
-        <svg class="icon" aria-hidden="true"><use href="#icon-chevron-left"></use></svg> Non è la rete giusta? Cambia indirizzo
+        <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-chevron-left"></use></svg> Non è la rete giusta? Cambia indirizzo
       </button>
       <p id="setup-error" class="error" role="alert" aria-live="assertive" hidden></p>
     </form>
@@ -82,7 +83,7 @@
   <div class="scanner-frame"></div>
   <p class="scanner-hint">Inquadra il QR sulla pagina web del gateway</p>
   <button type="button" id="scanner-cancel">
-    <svg class="icon" aria-hidden="true"><use href="#icon-x"></use></svg> Annulla
+    <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-x"></use></svg> Annulla
   </button>
   <p id="scanner-error" class="error" role="alert" aria-live="assertive" hidden></p>
 </section>
@@ -90,7 +91,7 @@
 <section id="dashboard-screen" hidden>
   <header>
     <div class="header-identity">
-      <svg class="icon icon-accent" aria-hidden="true"><use href="#icon-wifi"></use></svg>
+      <svg viewBox="0 0 24 24" class="icon icon-accent" aria-hidden="true"><use href="#icon-wifi"></use></svg>
       <div id="node-label" class="mono muted"></div>
     </div>
     <button id="forget-network" class="link-button">Cambia rete</button>
@@ -101,7 +102,7 @@
       <h1 class="wordmark">NOMAD-NET</h1>
       <form id="search-form" role="search">
         <div class="search-box">
-          <svg class="icon search-icon" aria-hidden="true"><use href="#icon-search"></use></svg>
+          <svg viewBox="0 0 24 24" class="icon search-icon" aria-hidden="true"><use href="#icon-search"></use></svg>
           <input id="search-input" type="text" placeholder="Cerca contenuti..." autocomplete="off" aria-label="Cerca contenuti">
           <span id="search-spinner" class="mini-spinner" hidden aria-hidden="true"></span>
         </div>
@@ -109,28 +110,35 @@
     </section>
 
     <section class="panel panel-primary" id="services-panel">
-      <h2><svg class="icon" aria-hidden="true"><use href="#icon-plug"></use></svg> Servizi <span class="count" id="services-count"></span></h2>
+      <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-plug"></use></svg> Servizi <span class="count" id="services-count"></span></h2>
       <ul id="services" class="service-cards"></ul>
+      <div id="service-call-panel" hidden></div>
     </section>
 
     <div id="stats" class="stats" aria-label="Stato del nodo"></div>
 
     <div class="panels-grid">
-      <section class="panel">
-        <h2><svg class="icon" aria-hidden="true"><use href="#icon-users"></use></svg> Vicini connessi <span class="count" id="peers-count"></span></h2>
+      <details class="panel">
+        <summary>
+          <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-users"></use></svg> Vicini connessi <span class="count" id="peers-count"></span></h2>
+          <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+        </summary>
         <ul id="peers"></ul>
-      </section>
+      </details>
 
-      <section class="panel" id="content-panel">
-        <h2><svg class="icon" aria-hidden="true"><use href="#icon-inbox"></use></svg> Contenuti <span class="count" id="content-count"></span></h2>
+      <details class="panel" id="content-panel">
+        <summary>
+          <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-inbox"></use></svg> Contenuti <span class="count" id="content-count"></span></h2>
+          <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+        </summary>
         <ul id="content"></ul>
-      </section>
+      </details>
     </div>
 
     <div id="dashboard-error-wrap" hidden>
       <p id="dashboard-error" class="error" role="alert" aria-live="polite"></p>
       <button type="button" id="retry-refresh" class="link-button">
-        <svg class="icon" aria-hidden="true"><use href="#icon-refresh"></use></svg> Riprova
+        <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-refresh"></use></svg> Riprova
       </button>
     </div>
   </main>

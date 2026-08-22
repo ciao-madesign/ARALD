@@ -155,6 +155,7 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 function iconEl(name, extraClass) {
   const svg = document.createElementNS(SVG_NS, "svg");
   svg.setAttribute("class", extraClass ? "icon " + extraClass : "icon");
+  svg.setAttribute("viewBox", "0 0 24 24"); // without this the <use>'d path (drawn in 24x24 units) renders unscaled and gets clipped by the smaller rendered box instead of fitting it
   svg.setAttribute("aria-hidden", "true");
   const use = document.createElementNS(SVG_NS, "use");
   use.setAttribute("href", "#icon-" + name);
@@ -653,19 +654,45 @@ function buildCallForm(service) {
   return el("div", { className: "call-form" }, [input, submit, result]);
 }
 
-// Tracks which service currently has an open call form, so the periodic 5s refresh (refreshAll())
-// can preserve it instead of wiping out an in-progress prompt or an in-flight/just-arrived result —
-// renderServices() reuses the exact same <li> DOM node for that one service rather than rebuilding
-// it, and rebuilds every other row normally.
+// Tracks which service currently has an open call form. The form itself lives in a single shared
+// #service-call-panel below the card grid (not inside the card) — per explicit user feedback that
+// the tiles must all stay the same size, a card can no longer grow to host its own form. This also
+// means renderServices() no longer needs to preserve/reuse a DOM node across the periodic 5s
+// refresh (the earlier "reuse the open <li>" dance): the panel is untouched by re-rendering the
+// list, so a fresh rebuild every refresh is fine — only the matching card's .is-open highlight and
+// the panel's own visibility need to survive.
 let openCallServiceId = null;
 
-/** Opens (or no-ops if already open) the call form for `svc` inside its already-rendered card. */
-function openServiceCallForm(svc, li, callButton) {
-  if (openCallServiceId === svc.serviceId) return;
-  openCallServiceId = svc.serviceId;
-  li.classList.add("is-open"); // grows the card to full row width — see .service-cards .service-card.is-open
-  li.append(buildCallForm(svc));
-  if (callButton) callButton.hidden = true;
+function closeServiceCallForm() {
+  openCallServiceId = null;
+  const panel = document.getElementById("service-call-panel");
+  panel.hidden = true;
+  panel.textContent = "";
+  document.querySelectorAll("#services .service-card.is-open").forEach((li) => li.classList.remove("is-open"));
+}
+
+/** Opens (or scrolls to, if already open) the shared call form for `svc`. */
+function openServiceCallForm(svc) {
+  if (openCallServiceId !== svc.serviceId) {
+    openCallServiceId = svc.serviceId;
+    const panel = document.getElementById("service-call-panel");
+    panel.textContent = "";
+    const closeButton = el("button", { className: "icon-button", type: "button" }, [iconEl("x")]);
+    closeButton.setAttribute("aria-label", "Chiudi");
+    closeButton.addEventListener("click", closeServiceCallForm);
+    panel.append(
+      el("div", { className: "call-panel-header" }, [
+        el("div", { className: "call-panel-title" }, [iconEl(SERVICE_ICONS[svc.serviceId] || DEFAULT_SERVICE_ICON), el("span", { textContent: serviceLabel(svc.serviceId) })]),
+        closeButton,
+      ]),
+      buildCallForm(svc),
+    );
+    panel.hidden = false;
+    document.querySelectorAll("#services .service-card").forEach((li) => {
+      li.classList.toggle("is-open", li.dataset.serviceId === svc.serviceId);
+    });
+  }
+  document.getElementById("service-call-panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 // Known serviceIds get a recognizable icon and a human-readable name; anything else (a service this
@@ -690,37 +717,38 @@ let serviceSeenIds = new Set();
  * were unclear and duplicated this same panel — one prominent, actionable list of "what you can do"
  * beats a second, cramped shortcut row above it) — so each entry renders as a full card (icon, a
  * human-readable name, the raw serviceId as a de-emphasized subtitle, capability tags, and a
- * full-width primary "Chiama" button) instead of a compact data row.
+ * full-width primary "Chiama" button) instead of a compact data row. Every card is the same fixed
+ * size (CSS grid + a shared min-height) regardless of content — tapping "Chiama" opens the actual
+ * form in the shared #service-call-panel below the grid, never inside the card itself.
  */
 function renderServices(services) {
   const list = document.getElementById("services");
   list.removeAttribute("aria-busy");
   document.getElementById("services-count").textContent = services.length > 0 ? String(services.length) : "";
-  const previousOpenLi = openCallServiceId ? list.querySelector('li[data-service-id="' + CSS.escape(openCallServiceId) + '"]') : null;
-  if (!services.some((svc) => svc.serviceId === openCallServiceId)) openCallServiceId = null; // the open service is gone from this refresh
+  // Close the shared call panel not just when the open service disappears entirely, but also when it
+  // merely becomes unavailable (e.g. its provider disconnected) — otherwise the card would show both
+  // the .is-open highlight and the "non disponibile" pill at once, with a live form still open below
+  // for a service the server will now reject the call for (node/src/web-ui.ts's availability check).
+  if (openCallServiceId && !services.some((svc) => svc.serviceId === openCallServiceId && svc.availability)) closeServiceCallForm();
 
   if (renderEmptyIfNeeded(list, services, "Nessun servizio conosciuto.", "plug")) {
-    openCallServiceId = null;
     serviceSeenIds = new Set();
     return;
   }
   const nextSeen = new Set();
   for (const svc of services) {
     nextSeen.add(svc.serviceId);
-    if (svc.serviceId === openCallServiceId && previousOpenLi) {
-      list.append(previousOpenLi); // same node, same open form and its state — not rebuilt
-      continue;
-    }
     const li = el("li", { className: "service-card" }, [
       el("div", { className: "service-card-icon" }, [iconEl(SERVICE_ICONS[svc.serviceId] || DEFAULT_SERVICE_ICON)]),
-      el("div", { className: "service-card-name", textContent: serviceLabel(svc.serviceId) }),
+      el("div", { className: "service-card-name", textContent: serviceLabel(svc.serviceId), title: serviceLabel(svc.serviceId) }),
       el("div", { className: "service-card-id mono muted", textContent: svc.serviceId, title: svc.serviceId }),
       el("div", { className: "tags" }, (Array.isArray(svc.capabilities) ? svc.capabilities : []).map((c) => el("span", { className: "tag", textContent: String(c) }))),
     ]);
     li.dataset.serviceId = svc.serviceId;
+    if (svc.serviceId === openCallServiceId) li.classList.add("is-open");
     if (svc.availability && networkPassword) {
       const callButton = el("button", { className: "call-button", textContent: "Chiama" });
-      callButton.addEventListener("click", () => openServiceCallForm(svc, li, callButton));
+      callButton.addEventListener("click", () => openServiceCallForm(svc));
       li.append(callButton);
     } else {
       li.append(el("span", { className: "pill off" }, [iconEl("circle"), el("span", { textContent: "non disponibile" })]));
@@ -773,9 +801,17 @@ async function refreshContent() {
   try {
     const entries = await fetchJson(path);
     if (requestId !== contentRequestId) return; // superseded by a newer request while this one was in flight
-    if (q !== lastContentQuery) contentSeenIds = new Set();
+    const isNewQuery = q !== lastContentQuery;
+    if (isNewQuery) contentSeenIds = new Set();
     lastContentQuery = q;
     renderContent(entries, emptyMessage);
+    // "Contenuti" is collapsed by default (a more technical section — see #content-panel) but a
+    // search is an explicit request to see results, so *starting* a non-empty search reveals them
+    // rather than leaving them collapsed behind a toggle the user has no reason yet to know about.
+    // Gated on isNewQuery (not just "query is non-empty"): the periodic 5s refresh calls this again
+    // with the same unchanged query, and re-forcing `open = true` every cycle would silently snap
+    // the section back open if the user had manually collapsed it again while still searching.
+    if (isNewQuery && q.length > 0) document.getElementById("content-panel").open = true;
   } finally {
     if (requestId === contentRequestId) document.getElementById("search-spinner").hidden = true;
   }

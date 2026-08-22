@@ -248,6 +248,21 @@ header { display: flex; align-items: flex-start; justify-content: space-between;
 .empty { color: var(--muted); font-style: italic; padding: 0.3em 0; display: flex; align-items: center; gap: 0.5em; }
 .empty .icon { color: var(--off); }
 
+/* Sezioni più tecniche (Vicini connessi, Contenuti) rese collassabili con <details>/<summary> nativi
+   — niente stato JS da gestire, tastiera/screen reader già supportati dal browser (Invio/Spazio
+   attivano il toggle, aria-expanded implicito). Collassate di default: la prima cosa che un utente
+   comune deve vedere è "Servizi" (cosa può fare), non un elenco di id tecnici. */
+details.panel > summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.6em;
+  cursor: pointer; list-style: none; margin-bottom: 0.8em;
+}
+details.panel > summary::-webkit-details-marker, details.panel > summary::marker { display: none; }
+details.panel > summary h2 { margin: 0; }
+details.panel:not([open]) > summary { margin-bottom: 0; }
+details.panel > summary:active { opacity: 0.7; }
+.chevron { transition: transform 200ms var(--ease); flex: none; color: var(--muted); }
+details.panel[open] > summary .chevron { transform: rotate(90deg); }
+
 .row { display: flex; align-items: center; justify-content: space-between; gap: 0.6em; }
 .row-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -298,39 +313,57 @@ li.skel-row { display: flex; flex-direction: column; }
 
 .panel-primary { margin-bottom: 1.2em; }
 
+/* CSS Grid rather than flex-wrap: every column in a `repeat()` track list is forced to the same
+   width regardless of a card's own content, which flexbox's flex-basis/grow arithmetic does not
+   guarantee across wrapped rows — this is what makes every tile genuinely the same size. */
 .service-cards {
-  display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0.8em;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5em, 1fr)); gap: 0.8em;
   list-style: none; margin: 0; padding: 0;
 }
 /* Full-width by default (the empty-state row and loading skeleton rows) — .service-card below
-   narrows to card width for the ones that actually render as cards. */
-.service-cards > li { flex: 1 1 100%; }
+   reverts to the grid's own uniform column width for the ones that actually render as cards. */
+.service-cards > li { grid-column: 1 / -1; }
 /* .service-cards .service-card (two classes) rather than plain .service-card — needs to outrank the
    generic `.panel li { padding; border-top; }` row styling above by specificity, not just source
    order, since both are plain <li> elements inside a .panel. */
 .service-cards .service-card {
+  grid-column: auto;
   display: flex; flex-direction: column; align-items: center; text-align: center;
-  flex: 1 1 9em; max-width: 13em; min-width: 8.5em;
+  min-height: 11.5em;
   padding: 1.1em 0.9em; border-radius: 0.9em; border: 1px solid var(--border); background: var(--bg);
 }
 /* `.panel li:first-child { border-top: none; padding-top: 0 }` (one class + pseudo-class + element)
    outranks the rule above on the first card, stripping its top border/padding — three selector
    pieces (0,2,1) beats our two classes (0,2,0). Restore them explicitly at matching specificity. */
 .service-cards .service-card:first-child { border-top: 1px solid var(--border); padding-top: 1.1em; }
-/* A card whose call form is open grows to the full row width instead of staying capped at the
-   compact card size — otherwise the AI-question/JSON-payload textarea is squeezed into ~13em. */
-.service-cards .service-card.is-open { flex-basis: 100%; max-width: 100%; }
+/* The card whose call form is open (in the separate #service-call-panel below, never inside the
+   card itself — that's what keeps every tile the same size) gets a highlighted border instead of
+   growing, so the grid's uniform sizing is never disturbed by opening a form. */
+.service-cards .service-card.is-open { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .service-card-icon {
   width: 2.8em; height: 2.8em; border-radius: 50%; background: var(--accent-soft); color: var(--accent);
-  display: flex; align-items: center; justify-content: center; margin-bottom: 0.6em;
+  display: flex; align-items: center; justify-content: center; margin-bottom: 0.6em; flex: none;
 }
 .service-card-icon .icon { width: 1.5em; height: 1.5em; }
-.service-card-name { font-weight: 700; font-size: 0.98em; }
+.service-card-name { font-weight: 700; font-size: 0.98em; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .service-card-id { font-size: 0.72em; margin-top: 0.15em; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.service-card .tags { justify-content: center; }
-.service-card .call-button { margin-top: 0.8em; width: 100%; }
-.service-card .pill { margin-top: 0.8em; }
-.service-card .call-form { width: 100%; text-align: left; }
+.service-card .tags { justify-content: center; max-height: 1.7em; overflow: hidden; }
+/* margin-top: auto (inside the column flex layout above) pins the button/pill to the card's bottom
+   edge regardless of how much the icon/name/id/tags above it take up — the main reason cards read as
+   uniform even when content length differs slightly from one service to the next. */
+.service-card .call-button, .service-card .pill { margin-top: auto; }
+.service-card .call-button { width: 100%; }
+
+/* ---------- pannello di chiamata condiviso (mai dentro una card — vedi sopra) ---------- */
+
+#service-call-panel:not([hidden]) {
+  margin-top: 1em; padding: 1em; border-radius: 0.8em; border: 1px solid var(--accent); background: var(--accent-soft);
+  animation: item-in 220ms var(--ease);
+}
+.call-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 0.6em; margin-bottom: 0.8em; }
+.call-panel-title { display: flex; align-items: center; gap: 0.55em; font-weight: 700; min-width: 0; }
+.call-panel-title .icon { color: var(--accent); flex: none; }
+.call-panel-title span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .call-button {
   padding: 0.35em 0.8em; border-radius: 0.5em; border: 1px solid var(--accent); background: var(--accent-soft);
