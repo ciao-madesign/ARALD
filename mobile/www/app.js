@@ -480,13 +480,62 @@ function handlePasswordRejected() {
 // away mid-session.
 let firstLoadDone = false;
 
+const GAUGE_RADIUS = 42;
+const GAUGE_CIRCUMFERENCE = 2 * Math.PI * GAUGE_RADIUS;
+
+/**
+ * Approximate, honestly-labelled network-health reading derived only from the number of reachable
+ * peers — the only "how connected am I" signal /api/status actually exposes (no latency/loss
+ * measurement exists in this prototype, spec §22). Never claims false precision: the ring fraction
+ * is illustrative and caps well short of a full circle even at many peers, and the word label (not
+ * a fabricated percentage) is what the "condizione del sentiero" reading actually communicates —
+ * same transparency principle as the self-declared "Internet: OFFLINE" on the desktop status page
+ * (node/src/web-ui.ts).
+ */
+function gaugeReading(peers) {
+  if (peers === 0) return { fraction: 0.06, label: "Isolato", tone: "off" };
+  if (peers === 1) return { fraction: 0.5, label: "Debole", tone: "signal" };
+  return { fraction: Math.min(0.95, 0.3 + peers * 0.2), label: "Solido", tone: "signal" };
+}
+
+/** Builds the radial "condizione del sentiero" ring — a plain track circle, plus (unless `muted`, used for the loading skeleton) a progress arc in `tone`'s color for `fraction` of the circumference. */
+function buildGaugeRing(fraction, muted, tone) {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "0 0 100 100");
+  svg.setAttribute("class", "gauge-ring" + (muted ? " skel-ring" : ""));
+  svg.setAttribute("aria-hidden", "true");
+  const track = document.createElementNS(SVG_NS, "circle");
+  track.setAttribute("cx", "50");
+  track.setAttribute("cy", "50");
+  track.setAttribute("r", String(GAUGE_RADIUS));
+  track.setAttribute("fill", "none");
+  track.setAttribute("stroke", "var(--border)");
+  track.setAttribute("stroke-width", "9");
+  svg.append(track);
+  if (!muted) {
+    const arc = document.createElementNS(SVG_NS, "circle");
+    arc.setAttribute("cx", "50");
+    arc.setAttribute("cy", "50");
+    arc.setAttribute("r", String(GAUGE_RADIUS));
+    arc.setAttribute("fill", "none");
+    arc.setAttribute("stroke", tone === "off" ? "var(--off)" : "var(--signal)");
+    arc.setAttribute("stroke-width", "9");
+    arc.setAttribute("stroke-linecap", "round");
+    arc.setAttribute("stroke-dasharray", (fraction * GAUGE_CIRCUMFERENCE).toFixed(1) + " " + GAUGE_CIRCUMFERENCE.toFixed(1));
+    arc.setAttribute("transform", "rotate(-90 50 50)");
+    svg.append(arc);
+  }
+  return svg;
+}
+
 function renderStatSkeletons() {
   const stats = document.getElementById("stats");
   stats.textContent = "";
   stats.setAttribute("aria-busy", "true");
-  for (let i = 0; i < 4; i++) {
-    stats.append(el("div", { className: "stat skel-stat" }, [el("div", { className: "v", textContent: "0" }), el("div", { className: "l", textContent: "..." })]));
-  }
+  stats.append(
+    buildGaugeRing(0, true, "off"),
+    el("div", null, [el("div", { className: "skel skel-line w-60" }), el("div", { className: "skel skel-line w-80" })]),
+  );
 }
 
 function listSkeleton(list, rows) {
@@ -549,21 +598,20 @@ function renderStats(s) {
   const stats = document.getElementById("stats");
   stats.textContent = "";
   stats.removeAttribute("aria-busy");
-  const entries = [
-    ["Vicini", String(s.peers)],
-    ["Servizi attivi", String(s.services)],
-    ["Cache", s.cachedContentPercent + "%"],
-    ["Relay", s.relaying ? "attivo" : "fermo"],
-  ];
-  for (const [label, value] of entries) {
-    const isRelay = label === "Relay";
-    stats.append(
-      el("div", { className: "stat" + (isRelay && s.relaying ? " stat-relay-on" : "") }, [
-        el("div", { className: "v", textContent: value }),
-        el("div", { className: "l", textContent: label }),
-      ]),
-    );
-  }
+  const { fraction, label, tone } = gaugeReading(s.peers);
+  const detail =
+    (s.peers === 1 ? "1 vicino" : s.peers + " vicini") +
+    " · " +
+    (s.services === 1 ? "1 servizio attivo" : s.services + " servizi attivi") +
+    " · cache " +
+    s.cachedContentPercent +
+    "% · relay " +
+    (s.relaying ? "attivo" : "fermo");
+  stats.append(
+    buildGaugeRing(fraction, false, tone),
+    el("div", null, [el("div", { className: "gauge-label", textContent: label }), el("div", { className: "gauge-detail", textContent: detail })]),
+  );
+  stats.setAttribute("aria-label", "Stato della rete: " + label + ". " + detail);
   document.getElementById("node-label").textContent = "Connesso a: " + (s.networkName || s.displayName);
 }
 

@@ -1,34 +1,41 @@
+/* Palette "Waypoint" (docs/security.md voce #31): pietra/inchiostro per struttura, ambra-faro come
+   unico colore d'azione — usato con parsimonia, mai come tinta diffusa — e blu segnale per tutto
+   ciò che è "disponibile/connesso" (focus, link, icone di stato, servizi non ancora aperti). Vedi
+   il Field Guide (Artifact) per il sistema completo: la stessa distinzione beacon-vs-signal vale
+   qui, non solo nel documento di brand. */
 :root {
   color-scheme: light dark;
-  --bg: #f4f6f5; --card: #ffffff; --border: #d9dfdc; --ink: #16211e; --muted: #5c6b66;
-  --accent: #1f7a68; --accent-soft: #e2f1ed; --accent-ink: #ffffff;
-  --good: #1f7a4a; --good-soft: #e3f3e8;
-  --warn: #a8631a; --warn-soft: #faeee0;
-  --bad: #a8321a; --bad-soft: #fae4e0;
-  --off: #8a938f; --off-soft: #ecefed;
-  --shadow-sm: 0 1px 2px rgba(22, 33, 30, 0.06);
-  --shadow-md: 0 4px 14px rgba(22, 33, 30, 0.08);
-  --skeleton-base: #e4e9e7; --skeleton-shine: #f2f5f4;
+  --bg: #e4e6da; --card: #ffffff; --border: #c9cdbc; --ink: #1e231f; --muted: #5f6656;
+  --accent: #c9a227; --accent-soft: #f1e6be; --accent-ink: #241505;
+  --signal: #35607c; --signal-soft: #d9e6ec; --signal-ink: #eaf3f8;
+  --good: #3f5636; --good-soft: #dee7d6;
+  --warn: #8f5518; --warn-soft: #f2dec4;
+  --bad: #8e2e1c; --bad-soft: #f3d9d0;
+  --off: #5f6656; --off-soft: #e3e5d8;
+  --shadow-sm: 0 1px 2px rgba(30, 35, 31, 0.10);
+  --shadow-md: 0 4px 14px rgba(30, 35, 31, 0.14);
+  --skeleton-base: #dbdecf; --skeleton-shine: #edefe4;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #101614; --card: #182220; --border: #2b3733; --ink: #e7ece9; --muted: #93a19b;
-    --accent: #4fbfa2; --accent-soft: #163a32; --accent-ink: #06231c;
-    --good: #4fbf7c; --good-soft: #163a24;
-    --warn: #e0a352; --warn-soft: #3a2c14;
-    --bad: #e07a52; --bad-soft: #3a1c14;
-    --off: #6b7671; --off-soft: #202a26;
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.35);
-    --skeleton-base: #202a26; --skeleton-shine: #283530;
+    --bg: #14170f; --card: #232921; --border: #343b32; --ink: #edeae0; --muted: #8b9184;
+    --accent: #ddbe55; --accent-soft: #3d3315; --accent-ink: #1b1002;
+    --signal: #7fb3d1; --signal-soft: #1e323d; --signal-ink: #08161c;
+    --good: #7fa36e; --good-soft: #26331f;
+    --warn: #e0954b; --warn-soft: #3a2814;
+    --bad: #e06a4c; --bad-soft: #3a1f17;
+    --off: #9aa090; --off-soft: #2a2e26;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5);
+    --skeleton-base: #262b22; --skeleton-shine: #313629;
   }
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
 body {
-  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   background: var(--bg); color: var(--ink);
   margin: 0;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
@@ -39,8 +46,9 @@ body {
 .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
 .muted { color: var(--muted); }
 h1 { margin: 0; font-size: 1.3em; letter-spacing: 0.02em; }
+.dot { color: var(--accent); } /* the wordmark's separator, echoing the mark's own beacon-colored center node */
 h2 {
-  margin: 0 0 0.8em; font-size: 0.92em; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted);
+  margin: 0 0 0.8em; font-size: 0.92em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
   display: flex; align-items: center; gap: 0.45em;
 }
 h2 .icon { width: 1.05em; height: 1.05em; color: var(--muted); flex: none; }
@@ -52,13 +60,17 @@ input, textarea { font: inherit; }
 /* Skip link — visually hidden until focused via keyboard, standard SPA a11y pattern. */
 .visually-hidden-focusable {
   position: absolute; left: -999px; top: 0; z-index: 100;
-  background: var(--accent); color: var(--accent-ink); padding: 0.6em 1em; border-radius: 0 0 0.5em 0;
+  background: var(--signal); color: var(--signal-ink); padding: 0.6em 1em; border-radius: 0 0 0.5em 0;
 }
 .visually-hidden-focusable:focus { left: 0; }
 
 /* ---------- focus & motion baseline ---------- */
 
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 0.25em; }
+/* --accent ("beacon") is reserved for the single action a user is actually committing to right now
+   — the connect button, the one open call panel — never for ambient chrome like a focus ring, which
+   uses --signal instead. See docs/security.md voce #31 and the Field Guide Artifact for the full
+   beacon-vs-signal rationale. */
+:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; border-radius: 0.25em; }
 button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
 
 @media (prefers-reduced-motion: reduce) {
@@ -70,7 +82,7 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
 .icon-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
 .icon { width: 1.2em; height: 1.2em; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vertical-align: -0.2em; }
 .icon-lg { width: 2.4em; height: 2.4em; }
-.icon-accent { color: var(--accent); }
+.icon-accent { color: var(--signal); }
 
 .icon-button {
   display: inline-flex; align-items: center; justify-content: center;
@@ -80,7 +92,7 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
 }
 .icon-button:hover { background: var(--off-soft); color: var(--ink); }
 .icon-button:active { transform: scale(0.9); }
-.icon-button[aria-pressed="true"] { color: var(--accent); }
+.icon-button[aria-pressed="true"] { color: var(--signal); }
 
 /* ---------- setup screen ---------- */
 
@@ -96,8 +108,11 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
   animation: screen-in 320ms var(--ease);
 }
 .setup-card { max-width: 26em; width: 100%; }
+/* Neutral housing, not accent-tinted — keeps the first screen a user sees from adding yet another
+   accent-colored element before the mark itself (monochrome ink, see #icon-waypoint in index.html)
+   has even loaded; the mark supplies its own visual interest without needing a colored backdrop. */
 .setup-mark {
-  width: 3.2em; height: 3.2em; border-radius: 1em; background: var(--accent-soft); color: var(--accent);
+  width: 3.2em; height: 3.2em; border-radius: 1em; background: var(--off-soft);
   display: flex; align-items: center; justify-content: center; margin-bottom: 1em;
 }
 .setup-card .lede { color: var(--muted); font-size: 0.92em; margin-bottom: 1.5em; }
@@ -114,28 +129,35 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
   color: var(--ink);
   transition: border-color 150ms var(--ease), box-shadow 150ms var(--ease);
 }
-#setup-form input:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+#setup-form input:focus-visible { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
 #setup-form .password-row {
   display: flex; align-items: center; gap: 0; border: 1px solid var(--border); border-radius: 0.6em; background: var(--card);
   transition: border-color 150ms var(--ease), box-shadow 150ms var(--ease);
 }
-#setup-form .password-row:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+#setup-form .password-row:focus-within { border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
 #setup-form .password-row .input-icon { color: var(--muted); padding-left: 0.75em; display: flex; }
 #setup-form .password-row input { flex: 1; min-width: 0; border: none; background: none; }
 #setup-form .password-row input:focus-visible { outline: none; box-shadow: none; }
 #setup-form .password-row .icon-button { margin-right: 0.2em; }
 
+/* The one deliberate beacon moment on this screen: the single action the whole form leads to. */
 #setup-form button[type="submit"] {
   margin-top: 1.4em;
   padding: 0.85em;
-  border-radius: 0.6em;
   border: none;
   background: var(--accent);
   color: var(--accent-ink);
   font-weight: 600;
   display: flex; align-items: center; justify-content: center; gap: 0.6em;
   transition: opacity 150ms var(--ease), transform 100ms var(--ease);
+  clip-path: polygon(0 0, calc(100% - 0.6em) 0, 100% 0.6em, 100% 100%, 0 100%);
 }
+/* clip-path clips the whole painted box, outline included — the generic :focus-visible rule's
+   outline-offset (2-3px *outside* the border box) falls entirely in the area this button's own
+   clip-path polygon has already cut away near the top-right corner, so on an unclipped platform the
+   ring would show, but here it's invisible (WCAG 2.4.7 failure). Draw it inset instead: -0.65em
+   clears both this cut (0.6em) and .call-submit's (0.5em) with margin, staying inside the polygon. */
+#setup-form button[type="submit"]:focus-visible { outline-offset: -0.65em; }
 #setup-form button[type="submit"]:active { transform: scale(0.98); }
 #setup-form button[type="submit"]:disabled { opacity: 0.7; cursor: default; }
 #setup-form button[type="submit"]:disabled:active { transform: none; }
@@ -147,7 +169,7 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
 .link-button:not([hidden]) { display: inline-flex; }
 .link-button {
   align-items: center; gap: 0.35em;
-  background: none; border: none; color: var(--accent); font-size: 0.85em; padding: 0.3em 0;
+  background: none; border: none; color: var(--signal); font-size: 0.85em; padding: 0.3em 0;
   text-decoration: underline; text-underline-offset: 2px;
   transition: opacity 100ms var(--ease);
 }
@@ -164,7 +186,7 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
   border: 2px solid rgba(255, 255, 255, 0.35); border-top-color: currentColor;
   animation: spin 700ms linear infinite;
 }
-.mini-spinner { border: 2px solid var(--border); border-top-color: var(--accent); }
+.mini-spinner { border: 2px solid var(--border); border-top-color: var(--signal); }
 
 /* ---------- QR scanner overlay ---------- */
 
@@ -229,18 +251,25 @@ header { display: flex; align-items: flex-start; justify-content: space-between;
 .header-identity .icon { color: var(--good); }
 #node-label { font-size: 0.82em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(7.5em, 1fr)); gap: 0.6em; margin-bottom: 1.2em; }
-.stat {
-  background: var(--card); border: 1px solid var(--border); border-radius: 0.6em; padding: 0.7em 0.85em;
-  box-shadow: var(--shadow-sm);
-}
-.stat .v { font-size: 1.3em; font-weight: 700; }
-.stat .l { font-size: 0.72em; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
-.stat.stat-relay-on .v { color: var(--good); }
+/* Un'unica lettura ("condizione del sentiero") al posto di quattro tile numeriche isolate che
+   l'utente doveva sommare mentalmente — vedi Field Guide (Artifact), plate "Dashboard". L'anello
+   non è una percentuale di segnale reale (questo prototipo non misura latenza/perdita, spec §22):
+   è una lettura onesta ma approssimata, derivata solo dal numero di vicini raggiungibili — vedi
+   gaugeFraction()/gaugeLabel() in app.js per la soglia esatta, stesso principio di trasparenza già
+   usato per "Internet: OFFLINE" nella pagina web del gateway (mai una misura finta di precisione). */
+.trail-gauge { display: flex; align-items: center; gap: 1.1em; margin-bottom: 1.2em; }
+.trail-gauge .gauge-ring { width: 4.4em; height: 4.4em; flex: none; }
+.trail-gauge .gauge-label { font-size: 1.05em; font-weight: 700; }
+.trail-gauge .gauge-detail { font-size: 0.78em; color: var(--muted); margin-top: 0.25em; line-height: 1.5; }
 
 .panels-grid { display: flex; flex-direction: column; gap: 1em; }
 
-.panel { background: var(--card); border: 1px solid var(--border); border-radius: 0.6em; padding: 1em; box-shadow: var(--shadow-sm); }
+/* Angolo tagliato in alto a destra invece di un raggio uniforme — la firma strutturale del sistema
+   "Waypoint" (Field Guide, Artifact), non un effetto isolato: richiama l'angolo strappato di una
+   mappa da campo. clip-path invece di border-radius: niente sotto quell'angolo, mai un colore da
+   far coincidere (a differenza del vecchio trucco a pseudo-elemento, già scartato una volta — vedi
+   docs/security.md voce #30 — per lo stesso motivo). */
+.panel { background: var(--card); border: 1px solid var(--border); padding: 1em; box-shadow: var(--shadow-sm); clip-path: polygon(0 0, calc(100% - 1.1em) 0, 100% 1.1em, 100% 100%, 0 100%); }
 .panel ul { list-style: none; margin: 0; padding: 0; }
 .panel li { padding: 0.6em 0; border-top: 1px solid var(--border); }
 .panel li:first-child { border-top: none; padding-top: 0; }
@@ -284,25 +313,21 @@ details.panel[open] > summary .chevron { transform: rotate(90deg); }
 .skel-line.w-40 { width: 40%; }
 .skel-line.w-80 { width: 80%; }
 li.skel-row { display: flex; flex-direction: column; }
-.stat.skel-stat .v, .stat.skel-stat .l { visibility: hidden; position: relative; }
-.stat.skel-stat { position: relative; overflow: hidden; }
-.stat.skel-stat::after {
-  content: ""; position: absolute; inset: 0.7em 0.85em;
-  background: linear-gradient(100deg, var(--skeleton-base) 30%, var(--skeleton-shine) 50%, var(--skeleton-base) 70%);
-  background-size: 250% 100%; animation: shimmer 1.5s ease-in-out infinite; border-radius: 0.4em;
-}
+.trail-gauge .gauge-ring.skel-ring circle { stroke: var(--skeleton-base); }
 
 /* ---------- home hero (search-engine-style landing) ---------- */
 
 #home-hero { text-align: center; padding: 1.4em 0 1em; }
-#home-hero .wordmark { font-size: 1.9em; letter-spacing: 0.06em; margin: 0 0 0.9em; color: var(--accent); }
+/* Plain ink, not accent — only the separating dot carries the beacon color (echoes the mark's own
+   center node), so the wordmark itself doesn't become one more place accent shows up. */
+#home-hero .wordmark { font-size: 1.9em; letter-spacing: 0.06em; margin: 0 0 0.9em; color: var(--ink); }
 #home-hero .search-box {
   display: flex; align-items: center; gap: 0.5em; max-width: 26em; margin: 0 auto;
   padding: 0.75em 1.1em; border-radius: 999px; border: 1px solid var(--border);
   background: var(--card); box-shadow: var(--shadow-sm);
   transition: border-color 150ms var(--ease), box-shadow 150ms var(--ease);
 }
-#home-hero .search-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+#home-hero .search-box:focus-within { border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
 #home-hero .search-icon { color: var(--muted); flex: none; }
 #home-hero #search-input {
   flex: 1; min-width: 0; border: none; background: none; color: var(--ink); padding: 0;
@@ -330,7 +355,8 @@ li.skel-row { display: flex; flex-direction: column; }
   grid-column: auto;
   display: flex; flex-direction: column; align-items: center; text-align: center;
   min-height: 11.5em;
-  padding: 1.1em 0.9em; border-radius: 0.9em; border: 1px solid var(--border); background: var(--bg);
+  padding: 1.1em 0.9em; border: 1px solid var(--border); background: var(--bg);
+  clip-path: polygon(0 0, calc(100% - 0.9em) 0, 100% 0.9em, 100% 100%, 0 100%);
 }
 /* `.panel li:first-child { border-top: none; padding-top: 0 }` (one class + pseudo-class + element)
    outranks the rule above on the first card, stripping its top border/padding — three selector
@@ -341,7 +367,7 @@ li.skel-row { display: flex; flex-direction: column; }
    growing, so the grid's uniform sizing is never disturbed by opening a form. */
 .service-cards .service-card.is-open { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .service-card-icon {
-  width: 2.8em; height: 2.8em; border-radius: 50%; background: var(--accent-soft); color: var(--accent);
+  width: 2.8em; height: 2.8em; border-radius: 50%; background: var(--signal-soft); color: var(--signal);
   display: flex; align-items: center; justify-content: center; margin-bottom: 0.6em; flex: none;
 }
 .service-card-icon .icon { width: 1.5em; height: 1.5em; }
@@ -357,7 +383,8 @@ li.skel-row { display: flex; flex-direction: column; }
 /* ---------- pannello di chiamata condiviso (mai dentro una card — vedi sopra) ---------- */
 
 #service-call-panel:not([hidden]) {
-  margin-top: 1em; padding: 1em; border-radius: 0.8em; border: 1px solid var(--accent); background: var(--accent-soft);
+  margin-top: 1em; padding: 1em; border: 1px solid var(--accent); background: var(--accent-soft);
+  clip-path: polygon(0 0, calc(100% - 1em) 0, 100% 1em, 100% 100%, 0 100%);
   animation: item-in 220ms var(--ease);
 }
 .call-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 0.6em; margin-bottom: 0.8em; }
@@ -365,9 +392,11 @@ li.skel-row { display: flex; flex-direction: column; }
 .call-panel-title .icon { color: var(--accent); flex: none; }
 .call-panel-title span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* Invitation, not commitment — signal, not beacon: this button just opens the shared call panel
+   below (#service-call-panel keeps the beacon treatment for the actual in-progress action). */
 .call-button {
-  padding: 0.35em 0.8em; border-radius: 0.5em; border: 1px solid var(--accent); background: var(--accent-soft);
-  color: var(--accent); font-size: 0.8em; font-weight: 600; flex: none;
+  padding: 0.35em 0.8em; border-radius: 0.5em; border: 1px solid var(--signal); background: var(--signal-soft);
+  color: var(--signal); font-size: 0.8em; font-weight: 600; flex: none;
   transition: transform 100ms var(--ease);
 }
 .call-button:active { transform: scale(0.93); }
@@ -377,13 +406,16 @@ li.skel-row { display: flex; flex-direction: column; }
   width: 100%; min-height: 4.5em; padding: 0.6em; border-radius: 0.5em; border: 1px solid var(--border);
   background: var(--bg); color: var(--ink); font-family: inherit; resize: vertical;
 }
-.call-form textarea:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.call-form textarea:focus-visible { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
 .call-form .call-submit {
-  align-self: flex-start; padding: 0.5em 1em; border-radius: 0.5em; border: none;
+  align-self: flex-start; padding: 0.5em 1em; border: none;
   background: var(--accent); color: var(--accent-ink); font-weight: 600; font-size: 0.88em;
   display: inline-flex; align-items: center; gap: 0.5em;
   transition: transform 100ms var(--ease), opacity 150ms var(--ease);
+  clip-path: polygon(0 0, calc(100% - 0.5em) 0, 100% 0.5em, 100% 100%, 0 100%);
 }
+/* Same clip-path-clips-the-outline fix as #setup-form button[type="submit"] above. */
+.call-form .call-submit:focus-visible { outline-offset: -0.65em; }
 .call-form .call-submit:active { transform: scale(0.96); }
 .call-form .call-submit:disabled { opacity: 0.7; }
 .call-result { font-size: 0.85em; padding: 0.6em; border-radius: 0.5em; background: var(--bg); border: 1px solid var(--border); white-space: pre-wrap; word-break: break-word; animation: item-in 200ms var(--ease); }
@@ -439,5 +471,4 @@ li.skel-row { display: flex; flex-direction: column; }
   .panels-grid .panel { flex: 1; min-width: 0; }
   #home-hero { padding-top: 1em; }
   .setup-card { max-width: 30em; }
-  .stats { grid-template-columns: repeat(4, 1fr); }
 }
