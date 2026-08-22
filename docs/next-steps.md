@@ -135,6 +135,8 @@ La Fase 1 è pronta per essere pianificata in dettaglio e avviata senza aspettar
 
 Restano comunque fuori portata in questo ambiente, invariati: la verifica su un telefono reale o un emulatore (nessun hardware/SDK Android disponibile — vedi `mobile/README.md`), e la scansione QR live via `BarcodeDetector` (non implementata nel Chromium headless usato qui).
 
+**Nota per il futuro**: dopo l'identità visiva "Waypoint" (voce #31, approvata dall'utente il 22 agosto 2026 con la richiesta esplicita "usa meno arancione"), l'utente ha segnalato che in futuro è previsto un **restyling grafico per rendere l'aspetto più moderno** — non una richiesta immediata né ancora specificata in dettaglio (non è chiaro se sarà un affinamento della stessa identità Waypoint o una direzione visiva nuova), solo un punto da riprendere in una prossima sessione dedicata all'estetica.
+
 ## Cosa resta possibile in puro software, se si vuole andare oltre
 
 Le versioni **hardware/Docker reali** di BLE (Opzione A) e del gateway NOMAD (Opzione B) restano gli unici due candidati bloccati su prerequisiti esterni. Le loro **versioni simulate/mockate** (Slice 8 e 9 del secondo giro post-audit, vedi le note in coda a ciascuna opzione sopra e `docs/security.md`) sono realizzabili in puro software e sono ora entrambe **completate**, così come un terzo sotto-servizio NOMAD, `service://news` (`NewsGateway`, `docs/security.md` bug #27, su richiesta esplicita dell'utente), e una UI mobile "motore di ricerca" con collegamenti rapidi ai servizi (stesso #27).
