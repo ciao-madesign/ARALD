@@ -95,9 +95,16 @@ export class NewsGateway {
    * repeatedly — returns only the headlines that are new or changed since
    * this instance's own last sync, mirroring `KiwixGateway.syncCatalog()`'s
    * contract exactly (including its same accepted limitation: an edited
-   * headline is published under a brand new content id, the previous
-   * version's bytes are never evicted from `node.contentStore` — see that
-   * class's doc comment for the full reasoning, unchanged here).
+   * headline is published under a brand new content id, and the previous
+   * version's bytes aren't explicitly deleted — see that class's doc
+   * comment for the full reasoning and the resulting size-bound tradeoff,
+   * unchanged here. `publishedById` itself tracks up to `MAX_TRACKED_HEADLINES`
+   * (4096) distinct headline ids, independently of how many of their
+   * published content ids `node.contentStore` still actually holds bytes
+   * for — a long-running `startAutoSync()` past `maxContentStoreEntries`
+   * distinct published entries can evict this node's own older headlines
+   * from `contentStore` while `publishedById` still "remembers" them as
+   * already published and never re-publishes/re-caches them).
    *
    * The response body is validated defensively before anything is applied
    * (same posture as `packet.payload?.field` checks elsewhere in this

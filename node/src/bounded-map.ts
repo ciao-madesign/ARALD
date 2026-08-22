@@ -84,7 +84,11 @@ export class BoundedFifoMap<K, V> {
         bestKey = key;
       }
     }
-    return bestKey;
+    // bestKey stays undefined only if every entry scored exactly Infinity (the search's own
+    // starting sentinel, so nothing was ever strictly lower) — an evictionScore is never expected
+    // to return Infinity, but falling back to plain FIFO here instead of "nothing to evict" keeps
+    // the size bound an unconditional guarantee regardless of what a caller's score function does.
+    return bestKey ?? this.map.keys().next().value;
   }
 
   keys(): IterableIterator<K> {

@@ -9,6 +9,45 @@ import { NewsGateway } from "./news-gateway.js";
 /** How often NewsGateway re-syncs against `--news-url` when given (`docs/security.md`: "aggiornato ogni volta che si può"). */
 const NEWS_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 
+/**
+ * Default `maxContentStoreEntries` for this gateway's `NomadNode` (spec
+ * §57 resource limits) — deliberately well above `content.ts`'s own
+ * conservative default (256, sized for a generic mesh node's opportunistic
+ * cache) since a gateway *is* its catalog: `KiwixGateway.syncCatalog()` and
+ * `NewsGateway.startAutoSync()` both publish real content on an ongoing
+ * basis, and this node's own published entries only ever compete with each
+ * other for eviction once the store is full (`node.ts`'s
+ * `OWN_CONTENT_TRUST_RANK` already keeps them ahead of anything merely
+ * relay-cached). Still finite, not a return to the pre-bound "never
+ * evicted" behavior those two gateways' doc comments used to describe — an
+ * operator syncing a catalog larger than this needs `--max-content-entries`
+ * sized accordingly.
+ */
+const DEFAULT_MAX_CONTENT_ENTRIES = 8192;
+
+/**
+ * Parses a `--flag` value as a positive integer, falling back to `fallback`
+ * (with a warning) for anything else — a missing value (`parseArgs` stores
+ * the literal string `"true"` for a flag with no following non-flag token),
+ * a non-numeric typo, zero, or negative. Bare `Number()` would silently
+ * produce `NaN` or a negative value instead, both of which defeat the whole
+ * point of `--max-content-entries`: `NaN` disables `BoundedFifoMap`'s size
+ * check entirely (both its bound comparisons are always false for `NaN`,
+ * so it never evicts and grows unbounded again), and zero/negative makes
+ * every `set()` silently no-op instead (`ContentStore.putVerified()` still
+ * reports success either way, so a bad value fails silently rather than
+ * loudly).
+ */
+function parsePositiveInt(raw: string | undefined, fallback: number, flagName: string): number {
+  if (raw === undefined) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    console.error(`Invalid --${flagName} (${JSON.stringify(raw)}), expected a positive integer — using default ${fallback}`);
+    return fallback;
+  }
+  return parsed;
+}
+
 function parseArgs(argv: string[]): Record<string, string> {
   const args: Record<string, string> = {};
   for (let i = 0; i < argv.length; i++) {
@@ -79,7 +118,8 @@ async function main(): Promise<void> {
     console.log(`Fake Ollama server (no --ai-url given): ${aiBaseUrl}`);
   }
 
-  const node = new NomadNode({ displayName: args.id ?? `GATEWAY-${port}` });
+  const maxContentStoreEntries = parsePositiveInt(args["max-content-entries"], DEFAULT_MAX_CONTENT_ENTRIES, "max-content-entries");
+  const node = new NomadNode({ displayName: args.id ?? `GATEWAY-${port}`, maxContentStoreEntries });
   node.addTransport(new TcpTransport(node.nodeId, port));
   await node.start();
 

@@ -46,6 +46,8 @@ export interface NomadNodeOptions {
   maxRemoteCatalogEntries?: number;
   /** Max node ids tracked in the trust table at once (spec §57 resource limits). */
   maxTrustEntries?: number;
+  /** Max distinct content ids held (bytes included) in this node's local content store at once (spec §57 resource limits). */
+  maxContentStoreEntries?: number;
   /** Max packets a single peer may send per window before further packets are dropped (spec §57). */
   maxPacketsPerWindow?: number;
   /** Rate-limiting window length in milliseconds. */
@@ -90,6 +92,19 @@ interface ContentWaiter {
 
 /** Bounds how many alternate providers a single content request will remember (spec §57 resource limits). */
 const MAX_CONTENT_CANDIDATES = 16;
+
+/**
+ * Outranks any trust level `TrustManager` can actually assign (spec §54's
+ * highest, ADMIN, ranks 4) for `ContentStore` eviction purposes. A node
+ * never records trust for its own node id in its own `TrustManager` (there
+ * is nothing to "earn" trust from itself for) — without this, content this
+ * node published itself would score the same UNKNOWN rank as a freshly
+ * minted throwaway identity, and could be evicted from a full store just as
+ * readily. Deliberately finite, not `Infinity`: `BoundedFifoMap`'s eviction
+ * search seeds its own "best so far" at `Infinity`, so a score of exactly
+ * `Infinity` would never register as strictly lower than that sentinel.
+ */
+const OWN_CONTENT_TRUST_RANK = trustRank(TrustLevel.ADMIN) + 1;
 
 /**
  * Bounds how many route entries a single ROUTE_ANNOUNCE packet may affect (spec §57). Unlike
@@ -243,7 +258,7 @@ export class NomadNode extends EventEmitter {
   readonly identity: Identity;
   readonly displayName: string;
   readonly peers = new PeerTable();
-  readonly contentStore = new ContentStore();
+  readonly contentStore: ContentStore;
   /** Content known to exist elsewhere in the mesh via catalog sync (spec §33-34, milestone 13) but not fetched locally. */
   readonly remoteCatalog: RemoteCatalog;
   /** Per-node-id trust state (spec §54): SEEN/VERIFIED are earned automatically, TRUSTED/ADMIN are operator-assigned. */
@@ -303,6 +318,13 @@ export class NomadNode extends EventEmitter {
       maxSize: options.maxPendingDeliveries,
     });
     this.trust = new TrustManager({ maxSize: options.maxTrustEntries });
+    // Same trust-weighted eviction as remoteCatalog/peerDirectory/routingTable/services below, with
+    // one addition: this node's own published content must outrank anything network-sourced, since
+    // this node's own id is never recorded in its own trust table (see OWN_CONTENT_TRUST_RANK).
+    this.contentStore = new ContentStore({
+      maxSize: options.maxContentStoreEntries,
+      trustRank: (publisherId) => (publisherId === this.nodeId ? OWN_CONTENT_TRUST_RANK : trustRank(this.trust.get(publisherId))),
+    });
     // A full catalog/directory evicts the least-trusted entry first, not just the oldest — the
     // same defense TrustManager already applies to itself (spec §57, docs/security.md).
     this.remoteCatalog = new RemoteCatalog({

@@ -72,14 +72,26 @@ export class KiwixGateway {
    *
    * Known, accepted limitation: an article that changes at NOMAD gets
    * published under a brand new content id — the *previous* content id's
-   * bytes are never evicted from `node.contentStore`, since content in
+   * bytes are not explicitly deleted when that happens, since content in
    * this prototype is otherwise immutable by construction and nothing
    * elsewhere ever deletes a published entry either. A gateway that syncs
    * on a timer against a catalog whose articles are edited over time will
-   * accumulate every historical version of every edited article,
-   * unbounded — a real deployment would need either a `ttlMs` on
-   * `publishContent()` for gateway-sourced content, or an explicit
-   * eviction mechanism this prototype doesn't have yet.
+   * keep accumulating historical versions of every edited article — but
+   * `node.contentStore` is bounded (`NomadNodeOptions.maxContentStoreEntries`,
+   * spec §57 resource limits; this gateway's own `NomadNode` sizes it via
+   * `cli.ts`'s `--max-content-entries`, generously above the default sized
+   * for a generic mesh node's opportunistic cache), so it's memory-safe
+   * rather than truly unbounded. This node's own published entries are
+   * preferred for retention over anything merely relay-cached from other
+   * peers (`node.ts`'s `OWN_CONTENT_TRUST_RANK`), but **not** over each
+   * other — once the store is full, its own oldest published entries are
+   * evicted first-in-first-out, historical and current alike. A catalog
+   * (including accumulated historical versions) larger than
+   * `maxContentStoreEntries` will therefore start losing access to
+   * still-current articles, not just superseded ones — an operator syncing
+   * a catalog at that scale needs to size that option (or add a `ttlMs` on
+   * gateway-published content) accordingly, rather than relying on this
+   * prototype's cache to hold everything forever.
    */
   async syncCatalog(): Promise<Array<{ path: string; contentId: string }>> {
     const listRes = await fetch(`${this.baseUrl}/api/articles`);

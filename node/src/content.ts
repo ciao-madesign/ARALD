@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { BoundedFifoMap } from "./bounded-map.js";
 import { Identity } from "./identity.js";
 
 /**
@@ -89,9 +90,37 @@ export function computeContentId(data: Buffer): string {
   return createHash("sha256").update(data).digest("hex");
 }
 
+export interface ContentStoreOptions {
+  /**
+   * Bounds memory: an existing entry is evicted once the store is full to
+   * make room for a new one (spec §57 resource limits) — see `trustRank`.
+   * Deliberately much smaller than the default for metadata-only stores
+   * like `RemoteCatalog`/`ServiceDirectory` (4096): unlike those, an entry
+   * here carries actual payload bytes, not a few hundred bytes of metadata.
+   */
+  maxSize?: number;
+  /**
+   * Ranks a publisher's trust for eviction purposes (higher survives
+   * longer) — pass `(publisherId) => trustRank(trustManager.get(publisherId))`
+   * (trust.ts) so a full store evicts the least-trusted publisher's content
+   * first, instead of always the oldest. Omit for plain FIFO eviction.
+   */
+  trustRank?: (publisherId: string) => number;
+}
+
+const DEFAULT_MAX_SIZE = 256;
+
 /** Local content catalogue + cache (spec §27-29). A node's own published content and anything it has cached share this store. */
 export class ContentStore {
-  private readonly items = new Map<string, StoredContent>();
+  private readonly items: BoundedFifoMap<string, StoredContent>;
+
+  constructor(options: ContentStoreOptions = {}) {
+    const trustRank = options.trustRank;
+    this.items = new BoundedFifoMap({
+      maxSize: options.maxSize ?? DEFAULT_MAX_SIZE,
+      evictionScore: trustRank ? (_contentId, item) => trustRank(item.metadata.publisherId ?? "") : undefined,
+    });
+  }
 
   put(name: string, mimeType: string, data: Buffer, options: { ttlMs?: number } = {}): ContentMetadata {
     const metadata: ContentMetadata = {

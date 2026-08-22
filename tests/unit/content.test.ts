@@ -42,6 +42,45 @@ describe("ContentStore", () => {
   });
 });
 
+describe("ContentStore size bound (spec §57)", () => {
+  it("evicts the oldest entry once maxSize is exceeded, when no trustRank is given", () => {
+    const store = new ContentStore({ maxSize: 2 });
+    store.put("a.txt", "text/plain", Buffer.from("a"));
+    store.put("b.txt", "text/plain", Buffer.from("b"));
+    store.put("c.txt", "text/plain", Buffer.from("c"));
+
+    expect(store.size).toBe(2);
+    expect(store.list().map((m) => m.name).sort()).toEqual(["b.txt", "c.txt"]);
+  });
+
+  it("with trustRank given, evicts the least-trusted publisher's content instead of the oldest", () => {
+    // Unlike RemoteCatalog.record(), ContentStore.putVerified() actually checks the signature
+    // (spec §55) — so, unlike catalog.test.ts's equivalent, this needs real identities and real
+    // signatures rather than free-form "alice"/"bob" string aliases; the trust table below is
+    // keyed by each identity's real (generated) nodeId instead.
+    const alice = Identity.generate();
+    const bob = Identity.generate();
+    const trust: Record<string, number> = { [alice.nodeId]: 5, [bob.nodeId]: 0 };
+    const store = new ContentStore({ maxSize: 2, trustRank: (publisherId) => trust[publisherId] ?? 0 });
+
+    function publish(identity: Identity, data: Buffer): ContentMetadata {
+      const contentId = computeContentId(data);
+      const fields = { contentId, name: "n", mimeType: "text/plain", size: data.length, publisherId: identity.nodeId };
+      const metadata = { ...fields, createdAt: Date.now(), signature: identity.sign(contentSigningPayload(fields)).toString("hex") };
+      expect(store.putVerified(metadata, data)).toBe(true);
+      return metadata;
+    }
+
+    const aMeta = publish(alice, Buffer.from("trusted, oldest — must still survive"));
+    const bMeta = publish(bob, Buffer.from("untrusted"));
+    const cMeta = publish(bob, Buffer.from("untrusted, newer than b — b evicted, not a"));
+
+    expect(store.has(aMeta.contentId)).toBe(true);
+    expect(store.has(bMeta.contentId)).toBe(false);
+    expect(store.has(cMeta.contentId)).toBe(true);
+  });
+});
+
 describe("ContentStore expiry (spec §24)", () => {
   it("put() without ttlMs never expires", () => {
     const store = new ContentStore();

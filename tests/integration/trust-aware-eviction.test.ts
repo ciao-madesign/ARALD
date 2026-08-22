@@ -141,6 +141,69 @@ describe("trust-aware eviction resists a flood of throwaway identities", () => {
   });
 
   /**
+   * ContentStore now bounds itself the same way RemoteCatalog/PeerDirectory/RoutingTable already
+   * do (found in a code-review pass: it was the one network-fed store in the codebase still a
+   * plain, unbounded Map). Its eviction score has an extra wrinkle the others don't: a node never
+   * records trust for its *own* node id in its own TrustManager, so without special-casing it,
+   * this node's own published content would rank at the same UNKNOWN trust as any throwaway
+   * publisher and could be evicted from a full store just as readily (node.ts's
+   * OWN_CONTENT_TRUST_RANK). This drives eviction via the passive relay-caching path
+   * (`observeRelayedContent`) rather than a real content request, since that's the simplest way to
+   * get attacker-controlled content into a victim's store without a matching pendingContentRequests
+   * entry — a packet addressed to neither the victim nor the attacker is relayed-through, not
+   * delivered, which is exactly the condition that path caches under (spec §27).
+   */
+  it("ContentStore: keeps this node's own published content while evicting throwaway-publisher content", async () => {
+    victim = new NomadNode({ displayName: "victim", maxContentStoreEntries: 2 });
+    const victimTransport = new TcpTransport(victim.nodeId, 0);
+    victim.addTransport(victimTransport);
+    await victim.start();
+
+    const ownData = Buffer.from("mappa ufficiale del rifugio (pubblicata localmente)");
+    const ownMetadata = victim.publishContent("mappa.txt", "text/plain", ownData);
+
+    attackerSocket = await connectAttacker(victimTransport.port, "7".repeat(64));
+    const relayDestination = "3".repeat(64); // neither victim nor attacker — makes the packet relay-only, not delivered
+
+    for (let i = 0; i < 2; i++) {
+      const throwaway = Identity.generate();
+      const data = Buffer.from(`spam ${i}`);
+      const fields = {
+        contentId: computeContentId(data),
+        name: `spam-${i}.txt`,
+        mimeType: "text/plain",
+        size: data.length,
+        publisherId: throwaway.nodeId,
+      };
+      const metadata = { ...fields, createdAt: Date.now(), signature: throwaway.sign(contentSigningPayload(fields)).toString("hex") };
+      attackerSocket.write(
+        encodePacket(
+          createPacket({
+            type: MessageType.CONTENT_CHUNK,
+            source: throwaway.nodeId,
+            destination: relayDestination,
+            payload: { contentId: metadata.contentId, chunkIndex: 0, totalChunks: 1, data: data.toString("base64") },
+          }),
+        ),
+      );
+      attackerSocket.write(
+        encodePacket(
+          createPacket({
+            type: MessageType.CONTENT_COMPLETE,
+            source: throwaway.nodeId,
+            destination: relayDestination,
+            payload: { contentId: metadata.contentId, metadata },
+          }),
+        ),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    }
+
+    expect(victim.contentStore.has(ownMetadata.contentId)).toBe(true);
+    expect(victim.contentStore.size).toBe(2); // own content plus only the *last* throwaway
+  });
+
+  /**
    * A route carries no signature of its own — unlike PeerDirectory/RemoteCatalog entries above, a
    * ROUTE_ANNOUNCE claim is trusted purely based on which connected peer sent it (its `nextHop`).
    * Found in a full code-review pass: RoutingTable previously had no trustRank at all, so a

@@ -67,6 +67,21 @@ describe("BoundedFifoMap", () => {
     expect(map.has("c")).toBe(true);
   });
 
+  it("still evicts (falling back to FIFO) when every entry's evictionScore ties at Infinity", () => {
+    // Infinity is the eviction search's own starting sentinel — if every real score also comes back
+    // Infinity, a naive "strictly lower than the best so far" scan never finds a candidate. Without
+    // a fallback this would silently break the maxSize guarantee instead of evicting something.
+    const map = new BoundedFifoMap<string, number>({ maxSize: 2, evictionScore: () => Infinity });
+    map.set("a", 1);
+    map.set("b", 2);
+    map.set("c", 3);
+
+    expect(map.size).toBe(2);
+    expect(map.has("a")).toBe(false); // oldest, evicted by the FIFO fallback
+    expect(map.has("b")).toBe(true);
+    expect(map.has("c")).toBe(true);
+  });
+
   it("holds nothing at all with maxSize 0 — the very first insert has no prior entry to evict", () => {
     const map = new BoundedFifoMap<string, number>({ maxSize: 0 });
     expect(map.set("a", 1)).toBe("a");
