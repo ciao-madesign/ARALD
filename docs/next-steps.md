@@ -178,3 +178,67 @@ L'utente ha proposto una specifica dettagliata per evolvere `service://news` (vo
 **Questioni non tecniche (copyright/paywall/licenze delle fonti, sezione 7 della proposta)**: non risolvibili con codice — sono decisioni editoriali che chi gestisce il gateway reale deve prendere scegliendo le fonti. Bollettini ufficiali open (es. Protezione Civile) restano la scelta più sicura per il caso d'uso rifugio/emergenza che la proposta stessa individua come il più concreto.
 
 **Ordine di implementazione, un pezzo alla volta con ok esplicito dell'utente tra un pezzo e il successivo**: (1) ✅ parser RSS + schema arricchito — fatto, voce #33; (2) livelli headline/summary; (3) digest AI componendo `NewsGateway`+`AiGateway`; (4) l'estensione di priorità/broadcast per contenuti (il pezzo architetturale nuovo — l'utente ha già indicato la direzione: un nuovo pacchetto di annuncio broadcast firmato, parallelo a `SERVICE_ANNOUNCE`, non un campo di priorità dichiarata nel sync esistente) → `service://emergency-news` come conseguenza naturale. Stesso workflow a doppio check di ogni voce precedente (implementa, testa, `code-review`, correggi, documenta, commit+push su entrambi i branch).
+
+## Opzione J — Sotto-applicazioni: messaggistica (stile BitChat) e tracciamento posizione (valutazione, 21 agosto 2026)
+
+L'utente ha chiesto se sia possibile integrare in Nomad-Net delle "sotto-applicazioni": un sistema di messaggistica per chattare senza Internet (concettualmente come BitChat, ma sopra Nomad-Net invece che una mesh BLE dedicata), e un sistema di segnalazione/tracciamento posizione opportunistico (un dispositivo segnala la propria posizione/i propri spostamenti, la segnalazione si propaga di incontro in incontro fino a un nodo "registro"). Valutazione (non implementata — solo analizzata e documentata):
+
+### Messaggistica
+
+**Chat 1:1 — sostanzialmente già esistente, manca solo la UI.** `NomadNode.sendPrivateMessage(destination, payload)` (`node/src/node.ts`) è già cifrato end-to-end (X25519 ECDH + AES-256-GCM, `node/src/encryption.ts`), già multi-hop (un relay inoltra il ciphertext senza poterlo leggere), e già delay-tolerant: passa dalla stessa `floodExcept()`/store-and-forward generica di ogni pacchetto unicast (`node/src/store-and-forward.ts`) — un messaggio a un peer offline viene già accodato e ritentato alla riconnessione, senza bisogno di scrivere nulla di nuovo lato rete. Corrisponde esattamente alla categoria "Private messages (end-to-end encrypted)" che la specifica elenca già come una delle tre categorie di privacy (`docs/SPECIFICATION.md` §56). Una chat 1:1 sarebbe quasi solo lavoro di UI mobile sopra un'API che esiste e funziona.
+
+**Canali pubblici (bulletin di gruppo, non cifrati)** — mappano bene sul pattern già dimostrato da `NewsGateway`: ogni messaggio pubblicato come `content://` firmato (Ed25519, stesso schema di `content.ts`), scoperto/sincronizzato via catalog sync — un canale chat sarebbe concettualmente "`NewsGateway` al contrario", contenuti scritti dall'utente invece che scaricati da RSS. Nessun nuovo tipo di pacchetto necessario. Vincolo reale: `ContentMetadata` non ha un campo "topic/canale" di primo livello — la categorizzazione oggi vive dentro il corpo JSON del contenuto (come `category` in `NewsHeadline`), non è filtrabile da `/api/search` senza scaricare ogni messaggio. Due strade: una convenzione sul nome (`name: "chat:generale:<id>"`, come già fa `KiwixGateway` coi path) senza toccare il protocollo, oppure un vero campo `tags`/`topic` in `ContentMetadata` — un cambio di protocollo reale, non enorme ma da valutare con attenzione (tocca la firma del contenuto, `contentSigningPayload()`, e ogni punto che legge `ContentMetadata`).
+
+**Gruppi/chat private cifrate (non solo pubbliche)** — qui c'è lavoro genuinamente nuovo, il pezzo più interessante emerso dall'analisi. Oggi esiste solo cifratura punto-a-punto: una chiave condivisa per coppia di nodi (`EncryptionIdentity.sharedKeyWith()`, ECDH), nessun concetto di "chiave di gruppo" distribuita a più membri. Per una chat privata di gruppo (es. "i soccorritori della zona nord") servirebbe un meccanismo di **key-wrapping**: una chiave simmetrica del gruppo, generata da chi crea il canale, cifrata separatamente per ogni membro con la chiave X25519 di quel membro (già nota via `PeerDirectory`, propagata mesh-wide) — ogni membro decifra la propria copia della chiave di gruppo con la propria chiave privata, poi usa quella per leggere/scrivere nel canale. Le primitive crittografiche esistono già in `encryption.ts` (X25519, AES-256-GCM); quello che manca è: un formato per l'"invito" cifrato-per-membro, gestione dell'ingresso/uscita da un gruppo (rotazione della chiave quando qualcuno esce, o accettare che chi è uscito possa comunque decifrare la storia pregressa — una scelta di design da fare esplicitamente, non implicita), e dove/come questi inviti vengono distribuiti (candidato naturale: come `PRIVATE_MESSAGE` 1:1 verso ogni nuovo membro, riusando ciò che già esiste). Fattibile, ma è design crittografico nuovo, da trattare con la stessa cura riservata finora a `encryption.ts`/`peer-directory.ts` (più di una passata di revisione dedicata, non una feature "semplice").
+
+**Gap architetturale condiviso con la proposta news (Opzione I)**: i canali pubblici hanno lo stesso limite già isolato per le notizie di emergenza — la scoperta dei contenuti è pull-based, nessun content-broadcast come `SERVICE_ANNOUNCE`. Senza quel pezzo, un nuovo messaggio in un canale non "spinge" a chi è già connesso, va aspettato/interrogato esplicitamente — poco naturale per una chat. Se si costruisce il meccanismo di priorità/broadcast per contenuti descritto in Opzione I, serve automaticamente anche qui: **stesso pezzo di lavoro, due casi d'uso.**
+
+### Tracciamento posizione
+
+**La parte difficile è già coperta.** `PeerDirectory` propaga le chiavi di cifratura mesh-wide (stesso meccanismo del catalog sync, non solo tra vicini diretti connessi ora) — un dispositivo può quindi già cifrare `sendPrivateMessage()` per un nodo "registro" a molti hop di distanza, mai incontrato direttamente, e se il registro è irraggiungibile al momento della segnalazione, store-and-forward la mette in coda e la consegna al primo incontro utile lungo il percorso. È esattamente lo scenario "segnalo la posizione, il primo dispositivo mesh che incrocio la porta avanti fino al registro" — nessun nuovo protocollo di consegna da progettare.
+
+**Cosa serve di nuovo:**
+1. **Scoperta del registro**: un `service://location-registry` che annuncia il proprio node id/chiave (stesso pattern service discovery già esistente, §35-37), così un dispositivo non deve conoscere l'indirizzo del registro a priori.
+2. **Un gateway "registro"**: nuovo componente, ma stesso schema di `NewsGateway`/`AiGateway` — riceve `PRIVATE_MESSAGE`, decifra (è l'unico che può), verifica la firma del reporter, persiste in un log/store. Andrebbe pensato con un limite di dimensione fin dall'inizio (stessa convenzione `BoundedFifoMap` di tutto il resto), non aggiunto dopo come per `ContentStore`.
+3. **Lato mobile**: campionamento periodico della posizione (plugin Capacitor Geolocation, richiede permesso OS) — lavoro nuovo, ma può ora appoggiarsi al design "Waypoint" già completato (voci #28-31) invece che nascere nel vecchio impianto minimale.
+
+**Punto architetturale importante**: un report di posizione **non va mai pubblicato con `publishContent()`** — quel percorso è progettato apposta per essere cacheabile/scopribile da chiunque nella mesh (spec §56, "Public content"), l'opposto di cosa serve per un dato personale. Va per forza `sendPrivateMessage()` (categoria "Private messages" della stessa §56), mai il content store.
+
+**Limiti reali, non risolvibili solo con codice:**
+- **Traffic analysis**: anche cifrato, un relay lungo il percorso vede "il nodo X manda periodicamente qualcosa al nodo registro" — questo da solo rivela che X sta condividendo la posizione, anche senza leggerne il contenuto. Limite noto e accettato in sistemi analoghi (Signal, Tor); va documentato onestamente come limite residuo, non preteso di essere risolto da questa feature.
+- **Consenso ed etica**: qui i dati sono la posizione di persone reali — la specifica stessa elenca esplicitamente "posizione" tra i dati **da minimizzare** (`docs/SPECIFICATION.md` §56: "Da minimizzare: identificatori persistenti, posizione, cronologia dei contatti, contenuti richiesti"). Questo non è un'opinione di design aggiunta ora, è già un principio dichiarato nella specifica. Prima di scrivere codice serve: opt-in esplicito e revocabile lato utente (mai attivo di default), un controllo su chi può interrogare il registro (riuserebbe `TrustLevel`/`TrustManager` già esistente), e una decisione esplicita su quanto a lungo conservare le segnalazioni (minimizzazione nel tempo, non solo nello spazio). Questa è una discussione da fare con l'utente prima dell'implementazione, non una scelta tecnica che si può prendere da soli.
+
+### Come procedere, se si riprende
+
+1. Chat 1:1 — quasi gratis lato rete, il grosso è UI mobile. Non ha bisogno del meccanismo di broadcast (è unicast per natura).
+2. Canali pubblici — dopo (o insieme a) il meccanismo di priorità/broadcast per contenuti condiviso con l'Opzione I, per non costruirlo due volte.
+3. Tracciamento posizione — richiede prima una decisione esplicita con l'utente su consenso/conservazione/autorizzazione (non solo codice), poi: `service://location-registry` + gateway registro + lato mobile.
+4. Chat private/di gruppo cifrate — l'ultimo, perché richiede il design crittografico nuovo (key-wrapping) più sostanzioso dei tre; conviene affrontarlo dopo aver validato canali pubblici e chat 1:1, non come primo passo.
+
+Stesso workflow a doppio check di ogni voce precedente per qualunque di questi pezzi si scelga di implementare.
+
+## Piano d'insieme (22 agosto 2026, aggiornato dopo #28-33) — come ordinare tutti i candidati aperti
+
+Con l'Opzione I (news evoluto) e l'Opzione J (messaggistica + tracciamento posizione) valutate, e con il debito di design UI mobile, `ContentStore` e il primo pezzo dell'evoluzione news **già completati** (voci #28-33, `docs/security.md` — vedi "Stato del progetto" in `CLAUDE.md`), questo piano riordina i candidati **rimasti** in un'unica sequenza motivata — per dipendenze reali, non solo per data di scoperta — pensata per essere seguita passo per passo, non per essere fatta tutta insieme. Le fasi originariamente "0", "1" e parte della "3" (`ContentStore`, UI mobile, parser RSS) sono barrate sotto come riferimento storico di come questo piano è stato pensato, non perché vadano ancora fatte.
+
+~~**Fase 0 — `ContentStore` senza limite di dimensione.**~~ ✅ Fatta (voce #32).
+
+~~**Fase 1 — UI mobile, prerequisito per tutto ciò che segue che tocca il telefono.**~~ ✅ Fatta (voci #28-31, incluso il rebrand "Waypoint") — resta annotata, non pianificata, una richiesta dell'utente di un futuro restyling più moderno (vedi `CLAUDE.md`, "Stato del progetto").
+
+**Fase 2 — Il prerequisito architetturale condiviso.** Il meccanismo di priorità/broadcast per singolo contenuto (Opzione I, "lavoro architetturale genuinamente nuovo") serve sia a `service://emergency-news` (Opzione I) sia ai canali pubblici di chat (Opzione J) — un solo pezzo di lavoro, due casi d'uso. Conviene costruirlo una volta sola qui, non duplicarlo in due slice separate quando si arriva a ciascuna delle due funzionalità.
+
+**Fase 3 — Feature veloci e in gran parte indipendenti tra loro (parallelizzabili).**
+- Chat 1:1 (Opzione J) — backend già pronto (`sendPrivateMessage()`), solo UI sopra il design "Waypoint" già completato (Fase 1).
+- ~~Parser RSS + schema arricchito~~ ✅ Fatto (voce #33). Restano gli altri pezzi backend dell'evoluzione news (Opzione I): livelli headline/summary, digest AI componendo `NewsGateway`+`AiGateway`. Indipendenti dalla UI mobile.
+
+**Fase 4 — Costruita sopra il prerequisito della Fase 2.**
+- Canali pubblici di chat (Opzione J).
+- `service://emergency-news` (Opzione I).
+
+**Fase 5 — Richiede prima una decisione esplicita con l'utente, non solo codice.** Tracciamento posizione (Opzione J): consenso, conservazione, autorizzazione all'interrogazione del registro vanno decisi **con** l'utente prima di scrivere il gateway registro o il lato mobile — la specifica stessa (§56) elenca la posizione tra i dati da minimizzare, non è una scelta tecnica da prendere in autonomia.
+
+**Fase 6 — Il pezzo di design crittografico più sostanzioso, per ultimo.** Chat private/di gruppo cifrate (Opzione J): key-wrapping, gestione ingresso/uscita dal gruppo — conviene affrontarlo dopo aver validato chat 1:1 e canali pubblici, quando il resto dell'infrastruttura di messaggistica è già in produzione e testata.
+
+**Bloccati su prerequisiti esterni, indipendentemente da questo piano**: le forme hardware/Docker reali di BLE e gateway NOMAD (Opzioni A/B), fonti news reali e Wikinews via ZIM reale (Opzione I), la build Android nativa (Opzione H Fase 1) — nessuno di questi ha una data, il piano sopra non li include perché non richiedono una decisione di sequenza, solo la disponibilità del prerequisito.
+
+Questo piano è un ordine **consigliato**, non un impegno: ogni fase resta soggetta allo stesso workflow a doppio check e a un ok esplicito dell'utente prima di iniziare, come ogni lavoro precedente in questo repository.
