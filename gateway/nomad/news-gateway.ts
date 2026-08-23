@@ -1,47 +1,108 @@
 import type { NomadNode } from "../../node/src/node.js";
 import { BoundedFifoMap } from "../../node/src/bounded-map.js";
+import { parseFeed, MAX_FEED_BYTES, type FeedItem } from "./rss-feed.js";
 
-/** One news headline, as returned by NOMAD's news backend (`GET /api/news`). */
+/**
+ * One news headline. Originally the shape of NOMAD's (fictional) news
+ * backend's `GET /api/news` JSON — replaced by real RSS/Atom ingestion
+ * (`rss-feed.ts`), so every field below now comes from a parsed
+ * `FeedItem`/`ParsedFeed` instead: see `toHeadline()`.
+ */
 export interface NewsHeadline {
   id: string;
   title: string;
   summary: string;
   url: string;
-  /** ISO 8601 — kept as the backend's own string, never reparsed/reformatted here. */
+  /** Normalized to ISO 8601 by `rss-feed.ts`'s `toIso()` — never the feed's raw native date format (RFC 822 for RSS). */
   publishedAt: string;
+  /** The feed's own name (RSS `<channel><title>`/Atom `<feed><title>`), e.g. "Wikinotizie" — empty string if the feed doesn't declare one. */
+  source: string;
+  /** First `<category>` the feed gave this item, if any. */
+  category?: string;
+  /** RSS `<language>`/Atom `xml:lang`, feed-wide (not per item) — carried on every headline from the same sync for convenience, so a consumer never has to look elsewhere for it. */
+  language?: string;
+  /** Atom `<updated>` only, when distinct from `publishedAt` — always undefined for an RSS-sourced headline (RSS 2.0 has no equivalent field). */
+  updatedAt?: string;
 }
 
 /** Same bound `RemoteCatalog`/`PeerDirectory` default to (`node/src/catalog.ts`) — `publishedById` is the one piece of this gateway's own state a hostile/misbehaving `--news-url` backend could otherwise grow forever by rotating headline ids on every `startAutoSync()` tick (`docs/security.md`). */
 const MAX_TRACKED_HEADLINES = 4096;
 
-function isNewsHeadline(value: unknown): value is NewsHeadline {
-  if (typeof value !== "object" || value === null) return false;
-  const candidate = value as Record<string, unknown>;
-  return (
-    typeof candidate.id === "string" &&
-    typeof candidate.title === "string" &&
-    typeof candidate.summary === "string" &&
-    typeof candidate.url === "string" &&
-    typeof candidate.publishedAt === "string"
-  );
+/**
+ * Fetches `url` and reads its body as text, aborting as soon as more than
+ * `maxBytes` have arrived rather than buffering an unbounded response in
+ * full first — `res.text()` alone would download the entire body before
+ * `parseFeed()`'s own `MAX_FEED_BYTES` check ever got a chance to reject
+ * it, so a hostile/misbehaving `--news-url` backend (spec §57) could still
+ * force this node to hold an arbitrarily large response in memory (found
+ * by review; empirically confirmed before this fix existed). Mirrors
+ * `node/src/loopback-http-server.ts`'s `readRequestBody()`/`BodyTooLargeError`
+ * pattern, applied to an outbound fetch instead of an inbound request.
+ * Falls back to buffering the whole response only if the runtime doesn't
+ * expose a streaming body (`res.body` undefined) — not expected under
+ * Node's `fetch()`, kept only as a defensive fallback.
+ */
+async function fetchTextBounded(url: string, maxBytes: number): Promise<string> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`news feed fetch failed (HTTP ${res.status})`);
+  if (!res.body) {
+    // Not expected from Node's fetch() for a normal response with a body — kept only as a
+    // defensive fallback (e.g. a future runtime/polyfill difference). Still bounded: this can only
+    // ever buffer whatever the backend actually sent, then reject it after the fact, rather than
+    // silently accepting an unbounded body the way an unchecked res.text() would (found by review:
+    // this branch originally had no size check at all, reintroducing the exact vulnerability the
+    // streaming path below exists to close).
+    const text = await res.text();
+    if (Buffer.byteLength(text, "utf8") > maxBytes) throw new Error(`news feed response exceeded ${maxBytes} bytes`);
+    return text;
+  }
+
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new Error(`news feed response exceeded ${maxBytes} bytes`);
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8");
+}
+
+function toHeadline(item: FeedItem, source: string, language: string | undefined): NewsHeadline {
+  return {
+    id: item.id,
+    title: item.title,
+    summary: item.summary,
+    url: item.link,
+    publishedAt: item.publishedAt,
+    source,
+    category: item.category,
+    language,
+    updatedAt: item.updatedAt,
+  };
 }
 
 /**
- * Translates Nomad-Net's abstract APIs (spec §37) into HTTP calls against a
- * Project NOMAD instance's news service — a third NOMAD sub-service
- * alongside Kiwix (`kiwix-gateway.ts`) and Ollama (`ai-gateway.ts`,
- * `docs/reuse-vs-new.md`). Deliberately has **no** fake/mocked backend of
- * its own, unlike those two (`fake-nomad-server.ts`/`fake-ollama-server.ts`)
- * — an explicit choice made with the user rather than an oversight
- * (`docs/security.md`). NOMAD's own news feature is envisioned as *it*
- * pulling from the open internet (the one NOMAD sub-service whose upstream
- * genuinely could be "the real internet" rather than something needing
- * Docker/local infrastructure) and re-serving what it has to mesh nodes —
- * this gateway still can't be exercised against a real backend in this
- * sandboxed session (its own outbound network policy blocks arbitrary
- * internet hosts, confirmed directly — see `docs/security.md`), the same
- * "written to spec, can't verify end-to-end here" boundary as Kiwix/Ollama
- * without Docker, just for a different reason.
+ * Ingests a real RSS/Atom news feed (`rss-feed.ts`) directly — unlike
+ * `KiwixGateway`/`AiGateway`, this is **not** a translation layer in front
+ * of a Project NOMAD HTTP API. It originally was one (a fictional NOMAD
+ * `GET /api/news` JSON endpoint that never represented anything real); that
+ * mini-API is gone, replaced by parsing an actual feed, because RSS/Atom is
+ * the real protocol most news sources speak and a hand-rolled parser makes
+ * this gateway testable against something genuine rather than an invented
+ * contract nothing implements (`docs/next-steps.md` Opzione I). Still no
+ * fake/mocked backend shipped, unlike `KiwixGateway`/`AiGateway`'s
+ * `fake-nomad-server.ts`/`fake-ollama-server.ts` — an explicit choice made
+ * with the user (`docs/security.md`), and this gateway still can't be
+ * exercised against a real feed in this sandboxed session (its own outbound
+ * network policy blocks arbitrary internet hosts, confirmed directly — see
+ * `docs/security.md`); tests exercise `rss-feed.ts` and `syncNews()`
+ * against a test-local HTTP server serving hand-written XML fixtures.
  *
  * Hybrid of both existing gateways' patterns, because news genuinely needs
  * both halves:
@@ -78,8 +139,8 @@ export class NewsGateway {
 
   constructor(
     private readonly node: NomadNode,
-    /** Base URL of the NOMAD news HTTP API, e.g. `http://127.0.0.1:PORT`. No default/fake fallback — see the class doc comment. */
-    private readonly baseUrl: string,
+    /** URL of an RSS or Atom feed, e.g. `http://127.0.0.1:PORT/feed.xml`. No default/fake fallback — see the class doc comment. */
+    private readonly feedUrl: string,
   ) {}
 
   /** The most recent successful sync's headlines — what `service://news` currently answers with. Empty before the first successful `syncNews()`. */
@@ -88,30 +149,32 @@ export class NewsGateway {
   }
 
   /**
-   * Fetches NOMAD's current headline list, publishes each one via
-   * `publishContent()` (as `application/json`, so a caller gets the
-   * structured headline back rather than having to parse prose), and
-   * refreshes the in-memory cache `service://news` serves from. Callable
-   * repeatedly — returns only the headlines that are new or changed since
-   * this instance's own last sync, mirroring `KiwixGateway.syncCatalog()`'s
-   * contract exactly (including its same accepted limitation: an edited
-   * headline is published under a brand new content id, and the previous
-   * version's bytes aren't explicitly deleted — see that class's doc
-   * comment for the full reasoning and the resulting size-bound tradeoff,
-   * unchanged here. `publishedById` itself tracks up to `MAX_TRACKED_HEADLINES`
-   * (4096) distinct headline ids, independently of how many of their
-   * published content ids `node.contentStore` still actually holds bytes
-   * for — a long-running `startAutoSync()` past `maxContentStoreEntries`
-   * distinct published entries can evict this node's own older headlines
-   * from `contentStore` while `publishedById` still "remembers" them as
-   * already published and never re-publishes/re-caches them).
+   * Fetches `feedUrl`, parses it as RSS or Atom (`rss-feed.ts`), publishes
+   * each item via `publishContent()` (as `application/json`, so a caller
+   * gets the structured headline back rather than having to parse prose),
+   * and refreshes the in-memory cache `service://news` serves from.
+   * Callable repeatedly — returns only the headlines that are new or
+   * changed since this instance's own last sync, mirroring
+   * `KiwixGateway.syncCatalog()`'s contract exactly (including its same
+   * accepted limitation: an edited headline is published under a brand new
+   * content id, and the previous version's bytes aren't explicitly deleted
+   * — see that class's doc comment for the full reasoning and the
+   * resulting size-bound tradeoff, unchanged here. `publishedById` itself
+   * tracks up to `MAX_TRACKED_HEADLINES` (4096) distinct headline ids,
+   * independently of how many of their published content ids
+   * `node.contentStore` still actually holds bytes for — a long-running
+   * `startAutoSync()` past `maxContentStoreEntries` distinct published
+   * entries can evict this node's own older headlines from `contentStore`
+   * while `publishedById` still "remembers" them as already published and
+   * never re-publishes/re-caches them).
    *
-   * The response body is validated defensively before anything is applied
-   * (same posture as `packet.payload?.field` checks elsewhere in this
-   * codebase for network-sourced data, `CLAUDE.md`) — a non-array or
-   * malformed-entry response throws and leaves `publishedById`/
-   * `cachedHeadlines` completely untouched, rather than partially applying
-   * whichever entries happened to parse before a later one didn't.
+   * The response is validated defensively before anything is applied (same
+   * posture as `packet.payload?.field` checks elsewhere in this codebase
+   * for network-sourced data, `CLAUDE.md`) — `parseFeed()` returning
+   * `undefined` (not RSS/Atom at all, oversized, or containing at least one
+   * item missing a required field) rejects the whole sync and leaves
+   * `publishedById`/`cachedHeadlines` completely untouched, rather than
+   * partially applying whichever items happened to parse.
    *
    * If a newer `syncNews()` call has already started (and possibly already
    * committed) by the time this one's response arrives, this call's result
@@ -119,15 +182,12 @@ export class NewsGateway {
    */
   async syncNews(): Promise<NewsHeadline[]> {
     const generation = ++this.syncGeneration;
-    const res = await fetch(`${this.baseUrl}/api/news`);
-    if (!res.ok) {
-      throw new Error(`NOMAD news backend failed (HTTP ${res.status})`);
+    const xml = await fetchTextBounded(this.feedUrl, MAX_FEED_BYTES);
+    const parsed = parseFeed(xml);
+    if (!parsed) {
+      throw new Error("news feed returned malformed or unrecognized RSS/Atom XML");
     }
-    const body: unknown = await res.json();
-    if (!Array.isArray(body) || !body.every(isNewsHeadline)) {
-      throw new Error("NOMAD news backend returned a malformed headline list");
-    }
-    const headlines = body;
+    const headlines = parsed.items.map((item) => toHeadline(item, parsed.source, parsed.language));
 
     if (generation !== this.syncGeneration) {
       // Superseded by a newer syncNews() call started while this fetch was in flight — that

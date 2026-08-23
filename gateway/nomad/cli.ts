@@ -73,9 +73,9 @@ function parseArgs(argv: string[]): Record<string, string> {
  * an `AiGateway` backed by a `FakeOllamaServer` seeded with a couple of
  * canned answers unless `--ai-url` points at a real Ollama instance
  * instead. `NewsGateway` has no fake fallback (`docs/security.md`) — only
- * registered when `--news-url` points at a real NOMAD news backend; without
+ * registered when `--news-url` points at a real RSS/Atom feed URL; without
  * it, `service://news` simply isn't offered by this demo node, same as any
- * real deployment where that particular NOMAD sub-service isn't running.
+ * real deployment where no feed has been configured.
  * Not used by the automated test suite (tests/integration/nomad-gateway.test.ts,
  * ai-gateway.test.ts and news-gateway.test.ts build their own fixtures
  * directly), same relationship `tools/simulator/cli.ts` has to its own
@@ -131,20 +131,20 @@ async function main(): Promise<void> {
   aiGateway.registerAiService();
 
   let newsGateway: NewsGateway | undefined;
-  const newsBaseUrl = args["news-url"];
-  if (newsBaseUrl) {
-    newsGateway = new NewsGateway(node, newsBaseUrl);
+  const newsFeedUrl = args["news-url"];
+  if (newsFeedUrl) {
+    newsGateway = new NewsGateway(node, newsFeedUrl);
     try {
       await newsGateway.syncNews();
       newsGateway.registerNewsService();
       newsGateway.startAutoSync(NEWS_SYNC_INTERVAL_MS, (err) => console.error("service://news sync failed:", err));
-      console.log(`Registered service://news (syncing every ${NEWS_SYNC_INTERVAL_MS / 1000}s from ${newsBaseUrl})`);
+      console.log(`Registered service://news (syncing every ${NEWS_SYNC_INTERVAL_MS / 1000}s from ${newsFeedUrl})`);
     } catch (err) {
-      console.error(`service://news not registered — initial sync against ${newsBaseUrl} failed:`, err);
+      console.error(`service://news not registered — initial sync against ${newsFeedUrl} failed:`, err);
       newsGateway = undefined;
     }
   } else {
-    console.log(`service://news not registered — no --news-url given, and this gateway has no fake news backend`);
+    console.log(`service://news not registered — no --news-url given (an RSS/Atom feed URL)`);
   }
 
   console.log("Nomad-Net NOMAD Gateway");
