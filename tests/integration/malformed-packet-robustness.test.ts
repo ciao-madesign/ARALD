@@ -100,6 +100,10 @@ describe("malformed packet payloads never crash the node", () => {
   it("survives a CONTENT_COMPLETE with no payload fields at all", () => expectSurvives(MessageType.CONTENT_COMPLETE, undefined));
   it("survives a CONTENT_COMPLETE with a null metadata field", () =>
     expectSurvives(MessageType.CONTENT_COMPLETE, { contentId: "x", metadata: null }));
+  it("survives a CONTENT_ANNOUNCE with no payload fields at all", () => expectSurvives(MessageType.CONTENT_ANNOUNCE, undefined));
+  it("survives a CONTENT_ANNOUNCE with a null metadata field", () => expectSurvives(MessageType.CONTENT_ANNOUNCE, { metadata: null }));
+  it("survives a CONTENT_ANNOUNCE with a non-string contentId in metadata", () =>
+    expectSurvives(MessageType.CONTENT_ANNOUNCE, { metadata: { contentId: 42, signature: "not-real" } }));
   it("survives a PEER_LIST with a non-array payload", () => expectSurvives(MessageType.PEER_LIST, { not: "an array" }));
   it("survives a PEER_LIST with garbage entries", () => expectSurvives(MessageType.PEER_LIST, [null, 42, "nope", { id: 7 }]));
 

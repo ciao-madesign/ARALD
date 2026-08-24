@@ -170,6 +170,21 @@ interface ContentCompletePayload {
   metadata: ContentMetadata;
 }
 
+/**
+ * Proactive broadcast announcing a piece of content's existence — the
+ * push counterpart to the pull-based CONTENT_QUERY cycle (spec §25).
+ * Carries only signed metadata, never the bytes: a recipient still fetches
+ * the actual content through the normal CONTENT_QUERY -> CONTENT_COMPLETE
+ * cycle if/when it wants it. Opt-in per publish (`publishContent()`'s
+ * `announce` option) — most publishers (e.g. KiwixGateway's catalog sync)
+ * still rely on pull discovery/periodic catalog sync, this is for content
+ * that should reach already-connected peers immediately (e.g. an
+ * emergency bulletin or a new chat message) instead of waiting for either.
+ */
+interface ContentAnnouncePayload {
+  metadata: ContentMetadata;
+}
+
 interface SyncRequestPayload {
   /** Content ids the sender already knows about (has locally, or has previously learned of via sync) — spec §33. */
   knownContentIds: string[];
@@ -452,8 +467,17 @@ export class NomadNode extends EventEmitter {
    * expiry check below (both read `Date.now()`, moments apart) — pick a
    * value that comfortably outlives a single synchronous call if the
    * content actually needs to be servable at all after publishing.
+   *
+   * `options.announce`, if true, additionally floods a `CONTENT_ANNOUNCE`
+   * (metadata only, see `ContentAnnouncePayload`) so already-connected
+   * peers learn of this content immediately instead of waiting for a pull
+   * query or the next catalog sync — for content where that latency
+   * matters (an emergency bulletin, a new chat message), not the default
+   * for routine publishing. `options.priority` sets that announce's
+   * priority (default `Priority.CONTENT`, unchanged from before this
+   * option existed); ignored if `announce` is not set.
    */
-  publishContent(name: string, mimeType: string, data: Buffer, options: { ttlMs?: number } = {}): ContentMetadata {
+  publishContent(name: string, mimeType: string, data: Buffer, options: { ttlMs?: number; announce?: boolean; priority?: Priority } = {}): ContentMetadata {
     const contentId = computeContentId(data);
     const size = data.length;
     const publisherId = this.nodeId;
@@ -464,6 +488,14 @@ export class NomadNode extends EventEmitter {
     const metadata: ContentMetadata = { contentId, name, mimeType, size, createdAt: Date.now(), publisherId, signature, expiresAt };
     if (!this.contentStore.putVerified(metadata, data)) {
       throw new Error("internal error: freshly signed content failed its own verification (bad signature, or ttlMs too small to survive publishing)");
+    }
+    if (options.announce) {
+      const packet = this.originate<ContentAnnouncePayload>(
+        MessageType.CONTENT_ANNOUNCE,
+        { metadata },
+        { priority: options.priority ?? Priority.CONTENT },
+      );
+      void this.floodExcept(packet);
     }
     return metadata;
   }
@@ -1055,6 +1087,10 @@ export class NomadNode extends EventEmitter {
         this.handleContentComplete(packet as Packet<ContentCompletePayload>);
         break;
 
+      case MessageType.CONTENT_ANNOUNCE:
+        this.handleContentAnnounce(packet as Packet<ContentAnnouncePayload>);
+        break;
+
       case MessageType.SYNC_REQUEST:
         this.handleSyncRequest(packet as Packet<SyncRequestPayload>, fromPeerId);
         break;
@@ -1340,6 +1376,38 @@ export class NomadNode extends EventEmitter {
   }
 
   /**
+   * Shared trust-boundary check for one piece of untrusted catalog metadata
+   * (spec §55) — a SYNC_RESPONSE entry and a CONTENT_ANNOUNCE are the same
+   * kind of claim ("this content exists, signed by X") arriving by two
+   * different paths (a peer's catalog reply vs. an unsolicited broadcast),
+   * so both funnel through this one check rather than keeping two
+   * near-identical copies that could silently drift apart. Records into
+   * `remoteCatalog` and marks the publisher verified as a side effect;
+   * returns the metadata if accepted, `undefined` otherwise (never throws
+   * — `metadata` is untrusted network input, validated defensively).
+   */
+  private acceptCatalogEntry(metadata: ContentMetadata | null | undefined): ContentMetadata | undefined {
+    if (!metadata || typeof metadata.contentId !== "string") return undefined; // malformed — never trust it
+    if (this.contentStore.has(metadata.contentId)) return undefined; // we already hold the actual bytes
+    if (!verifyContentSignature(metadata)) return undefined; // unsigned or forged claim — never trust it
+    if (metadata.expiresAt !== undefined && metadata.expiresAt <= Date.now()) return undefined; // dead on arrival (spec §24) — not worth recording
+    this.remoteCatalog.record(metadata);
+    if (metadata.publisherId) this.trust.markVerified(metadata.publisherId);
+    return metadata;
+  }
+
+  /**
+   * Records a proactively-announced piece of content (spec §25, push
+   * counterpart to CONTENT_QUERY) — existence/metadata only, the actual
+   * bytes still have to be fetched through the normal CONTENT_QUERY ->
+   * CONTENT_COMPLETE cycle if/when wanted.
+   */
+  private handleContentAnnounce(packet: Packet<ContentAnnouncePayload>): void {
+    const accepted = this.acceptCatalogEntry(packet.payload?.metadata);
+    if (accepted) this.emit("content:announced", accepted);
+  }
+
+  /**
    * Records what a peer's catalog reply announced — existence only;
    * retrieval still happens on demand via getContent(). A SYNC_RESPONSE is
    * untrusted network input just like a CONTENT_COMPLETE: each entry must
@@ -1352,13 +1420,8 @@ export class NomadNode extends EventEmitter {
     const entries = Array.isArray(packet.payload?.entries) ? packet.payload.entries : [];
     const accepted: ContentMetadata[] = [];
     for (const metadata of entries) {
-      if (!metadata || typeof metadata.contentId !== "string") continue; // malformed entry — never trust it
-      if (this.contentStore.has(metadata.contentId)) continue; // we already hold the actual bytes
-      if (!verifyContentSignature(metadata)) continue; // unsigned or forged claim — never trust it
-      if (metadata.expiresAt !== undefined && metadata.expiresAt <= Date.now()) continue; // dead on arrival (spec §24) — not worth recording
-      this.remoteCatalog.record(metadata);
-      if (metadata.publisherId) this.trust.markVerified(metadata.publisherId);
-      accepted.push(metadata);
+      const result = this.acceptCatalogEntry(metadata);
+      if (result) accepted.push(result);
     }
     if (accepted.length > 0) this.emit("catalog-sync", accepted);
   }
