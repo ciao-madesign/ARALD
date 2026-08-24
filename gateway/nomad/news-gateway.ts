@@ -48,8 +48,45 @@ export interface NewsArticleBody {
   summary: string;
 }
 
+/** A generated AI digest of the currently cached headlines (`generateDigest()`) — "digest generati da un'IA locale" from the original proposal (`docs/next-steps.md` Opzione I, pezzo 3). There is only ever one — the latest — never a history of past digests, same "just the current snapshot" shape `cachedHeadlines` itself has. */
+export interface NewsDigest {
+  text: string;
+  /** Content id of `text`, published via `publishContent()` (`text/plain`) so the digest is independently discoverable/retrievable through the mesh, exactly like a headline or article body — the proposal's "content://news/digest/latest" framing, addressed here by content id rather than a stable path (see the architecture note in `docs/next-steps.md`). */
+  contentId: string;
+  generatedAt: number;
+}
+
 /** Same bound `RemoteCatalog`/`PeerDirectory` default to (`node/src/catalog.ts`) — `publishedById` is the one piece of this gateway's own state a hostile/misbehaving `--news-url` backend could otherwise grow forever by rotating headline ids on every `startAutoSync()` tick (`docs/security.md`). */
 const MAX_TRACKED_HEADLINES = 4096;
+
+/** Caps how many cached headlines feed into the AI digest prompt (`generateDigest()`) — keeps the prompt, and thus the service://ai request/response round trip (possibly multi-hop, spec §35-36, subject to the same per-packet size ceiling every packet is — see bug #9 in `docs/security.md`), bounded regardless of how many headlines a feed carries. */
+const MAX_DIGEST_HEADLINES = 20;
+
+/** Caps a single headline title's contribution to the digest prompt (`sanitizeTitleForPrompt()`) — `MAX_DIGEST_HEADLINES` alone only bounds the *count* of titles, not their length, so an otherwise-valid feed (`rss-feed.ts` has no per-title length cap of its own) could still make each of the 20 admitted titles enormous. */
+const MAX_DIGEST_TITLE_CHARS = 200;
+
+/**
+ * Prepares a single (untrusted, feed-sourced) headline title for inclusion
+ * in the digest prompt's bullet list: collapses any newline/carriage-return
+ * into a space so a title can never break out of its own `- ` bullet line
+ * and inject what looks like a second, attacker-controlled line into the
+ * prompt `service://ai` receives (found by review — a title containing a
+ * literal `\n` could otherwise impersonate a fresh instruction once joined
+ * with real newlines), then truncates to `MAX_DIGEST_TITLE_CHARS`. This is
+ * a structural mitigation, not a general defense against prompt injection
+ * (out of scope for a small local/mocked digest feature) — it only
+ * guarantees a title stays a single, bounded bullet line.
+ */
+function sanitizeTitleForPrompt(title: string): string {
+  const singleLine = title.replace(/[\r\n]+/g, " ");
+  return singleLine.length > MAX_DIGEST_TITLE_CHARS ? `${singleLine.slice(0, MAX_DIGEST_TITLE_CHARS)}…` : singleLine;
+}
+
+/** Builds the `service://ai` prompt for `generateDigest()` from a (already count-capped) list of headlines — sanitized titles only, never the article body, keeping the prompt itself small and mirroring `NewsHeadline`'s own "lean" framing. */
+function buildDigestPrompt(headlines: readonly NewsHeadline[]): string {
+  const bulletList = headlines.map((h) => `- ${sanitizeTitleForPrompt(h.title)}`).join("\n");
+  return `Riassumi in breve, in italiano, le seguenti notizie:\n${bulletList}`;
+}
 
 /**
  * Fetches `url` and reads its body as text, aborting as soon as more than
@@ -136,7 +173,10 @@ export class NewsGateway {
   private readonly publishedById = new BoundedFifoMap<string, string>({ maxSize: MAX_TRACKED_HEADLINES });
   /** Snapshot from the most recent successful `syncNews()` — what `service://news` actually answers with, never a live call per invocation. */
   private cachedHeadlines: NewsHeadline[] = [];
+  /** Snapshot from the most recent successful `generateDigest()` — undefined until the first call succeeds. */
+  private cachedDigest: NewsDigest | undefined;
   private syncTimer: NodeJS.Timeout | undefined;
+  private digestTimer: NodeJS.Timeout | undefined;
   /**
    * Bumped at the start of every `syncNews()` call, so a call that started
    * earlier but resolves later (a slow request overtaken by a faster one
@@ -145,6 +185,8 @@ export class NewsGateway {
    * the network doesn't guarantee responses arrive in request order.
    */
   private syncGeneration = 0;
+  /** Same purpose as `syncGeneration`, for `generateDigest()`/`startDigestAutoRefresh()` — a `service://ai` call can be multi-hop (spec §35-36) and is not guaranteed to resolve in the order it was sent, so a slow tick's stale response must not clobber a fresher digest a later tick already committed. */
+  private digestGeneration = 0;
 
   constructor(
     private readonly node: NomadNode,
@@ -155,6 +197,11 @@ export class NewsGateway {
   /** The most recent successful sync's headlines — what `service://news` currently answers with. Empty before the first successful `syncNews()`. */
   get headlines(): readonly NewsHeadline[] {
     return this.cachedHeadlines;
+  }
+
+  /** The most recently generated AI digest (`generateDigest()`) — undefined until the first call succeeds. */
+  get digest(): NewsDigest | undefined {
+    return this.cachedDigest;
   }
 
   /**
@@ -248,6 +295,87 @@ export class NewsGateway {
   }
 
   /**
+   * Composes `NewsGateway` with the AI service already registered elsewhere
+   * in the mesh (spec §37, `service://ai` — `AiGateway`/`FakeOllamaServer`
+   * in this codebase, a real Ollama behind Project NOMAD in production) to
+   * produce a short digest of the currently cached headlines — "digest
+   * generati da un'IA locale" from the original proposal
+   * (`docs/next-steps.md` Opzione I, pezzo 3). Deliberately loose coupling:
+   * this method never imports `AiGateway` or knows which node actually
+   * answers — it calls `service://ai` the same way any other caller in this
+   * codebase does (`node.callService()`), the same "a weak node calls
+   * service://ai without knowing who answers" pattern `ai-gateway.ts`'s own
+   * doc comment describes; a node that also has `AiGateway` registered
+   * locally (as `cli.ts`'s demo does) answers its own call without a
+   * network round trip at all (`callService()`'s local-provider shortcut).
+   *
+   * Returns `undefined` (never throws) when there are no cached headlines
+   * to summarize — nothing to compose a meaningful prompt from, and
+   * generating one anyway would spend a live AI call on an empty result no
+   * caller wants. Otherwise propagates whatever error `service://ai` itself
+   * raises (no provider registered, backend unreachable, timeout) — this
+   * method makes no attempt to hide that failure or fall back to a stale
+   * digest, mirroring `syncNews()`'s own "let the caller decide" posture; a
+   * caller wiring this into a periodic timer (`startDigestAutoRefresh()`
+   * below, same shape as `startAutoSync()`) is expected to catch it the
+   * same way `onError` already works for news sync failures.
+   *
+   * If a newer `generateDigest()` call has already started (and possibly
+   * already committed) by the time this one's response arrives, this
+   * call's result is discarded rather than clobbering the fresher one —
+   * see `digestGeneration`, same protection `syncNews()` already has via
+   * `syncGeneration` for the same "responses don't arrive in request
+   * order" reason.
+   */
+  async generateDigest(options: { timeoutMs?: number } = {}): Promise<NewsDigest | undefined> {
+    if (this.cachedHeadlines.length === 0) return undefined;
+    const generation = ++this.digestGeneration;
+
+    const prompt = buildDigestPrompt(this.cachedHeadlines.slice(0, MAX_DIGEST_HEADLINES));
+    const result = await this.node.callService("service://ai", { prompt }, options);
+    // callService() resolves with whatever the (untrusted, possibly remote) provider's
+    // SERVICE_RESPONSE declared as `result` (node.ts's handleServiceResponse), never validated —
+    // same defensive posture CLAUDE.md requires for any network-sourced value.
+    const response = result && typeof result === "object" ? (result as { response?: unknown }).response : undefined;
+    if (typeof response !== "string" || response.length === 0) {
+      throw new Error("service://ai returned a malformed or empty response while generating the news digest");
+    }
+
+    if (generation !== this.digestGeneration) return undefined; // superseded — see digestGeneration
+
+    const metadata = this.node.publishContent("Digest notizie", "text/plain", Buffer.from(response, "utf8"));
+    const digest: NewsDigest = { text: response, contentId: metadata.contentId, generatedAt: Date.now() };
+    this.cachedDigest = digest;
+    return digest;
+  }
+
+  /**
+   * Starts calling `generateDigest()` on its own timer, independent of
+   * `startAutoSync()`'s feed-poll interval — regenerating a digest is a
+   * live AI call (spec's "never caches" posture already applied to
+   * `service://ai` itself), so an operator may reasonably want it refreshed
+   * less often than the feed is polled. Same "tolerate a flaky
+   * upstream, keep retrying next interval" posture as `startAutoSync()`.
+   * `options.timeoutMs` is forwarded to every `generateDigest()` call this
+   * timer makes (e.g. bounding how long a single tick waits on
+   * `discoverService()` when no `service://ai` provider is reachable at
+   * all, distinct from the interval between ticks). Calling this again
+   * replaces any previously running timer rather than stacking a second one.
+   */
+  startDigestAutoRefresh(intervalMs: number, onError?: (err: unknown) => void, options: { timeoutMs?: number } = {}): void {
+    this.stopDigestAutoRefresh();
+    this.digestTimer = setInterval(() => {
+      this.generateDigest(options).catch((err: unknown) => onError?.(err));
+    }, intervalMs);
+  }
+
+  /** Stops the timer started by `startDigestAutoRefresh()`, if one is running. Safe to call even if none is. */
+  stopDigestAutoRefresh(): void {
+    if (this.digestTimer) clearInterval(this.digestTimer);
+    this.digestTimer = undefined;
+  }
+
+  /**
    * Starts calling `syncNews()` on a timer (spec's delay-tolerant "update
    * whenever reachable" ethos — the user's own framing for this feature).
    * A failed sync (backend momentarily unreachable, exactly as `docs/security.md`
@@ -277,11 +405,13 @@ export class NewsGateway {
    * doc comment for why this never proxies live like
    * `service://ai`/`service://kiwix-search` do). Answers `{ headlines: [] }`
    * rather than an error if no sync has completed yet — an honest "the mesh
-   * hasn't learned anything yet", not a failure.
+   * hasn't learned anything yet", not a failure. `digest`/`digestContentId`
+   * are omitted (not `null`/empty string) until `generateDigest()` has
+   * succeeded at least once — same "absent, not a placeholder" convention.
    */
   registerNewsService(): void {
     this.node.registerService("service://news", "1.0.0", ["headlines"], async () => {
-      return { headlines: this.cachedHeadlines };
+      return { headlines: this.cachedHeadlines, digest: this.cachedDigest?.text, digestContentId: this.cachedDigest?.contentId };
     });
   }
 }

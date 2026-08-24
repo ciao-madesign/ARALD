@@ -9,6 +9,9 @@ import { NewsGateway } from "./news-gateway.js";
 /** How often NewsGateway re-syncs against `--news-url` when given (`docs/security.md`: "aggiornato ogni volta che si può"). */
 const NEWS_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 
+/** How often NewsGateway regenerates its AI digest (`generateDigest()`) — deliberately less frequent than `NEWS_SYNC_INTERVAL_MS`, since a digest regeneration is a live `service://ai` call, not a cheap cache refresh. */
+const NEWS_DIGEST_INTERVAL_MS = 15 * 60 * 1000;
+
 /**
  * Default `maxContentStoreEntries` for this gateway's `NomadNode` (spec
  * §57 resource limits) — deliberately well above `content.ts`'s own
@@ -139,6 +142,23 @@ async function main(): Promise<void> {
       newsGateway.registerNewsService();
       newsGateway.startAutoSync(NEWS_SYNC_INTERVAL_MS, (err) => console.error("service://news sync failed:", err));
       console.log(`Registered service://news (syncing every ${NEWS_SYNC_INTERVAL_MS / 1000}s from ${newsFeedUrl})`);
+
+      // service://ai is already registered locally above (aiGateway.registerAiService()), so this
+      // composes the two gateways via the mesh's own service-call mechanism rather than a direct
+      // reference between the classes — see generateDigest()'s doc comment. A failed initial digest
+      // (AI backend momentarily unreachable) doesn't take down service://news itself — it just
+      // starts without one, same "tolerate a flaky upstream" posture as everything else here.
+      // startDigestAutoRefresh() is armed unconditionally (found by review: an earlier version only
+      // armed it inside the try, so a failed *initial* attempt left service://news with no digest —
+      // and no way to ever get one — for the rest of the process's life, even once the AI backend
+      // recovered) — its own onError keeps retrying every interval regardless of how the first call went.
+      try {
+        await newsGateway.generateDigest();
+        console.log(`Generated initial news digest (refreshing every ${NEWS_DIGEST_INTERVAL_MS / 1000}s)`);
+      } catch (err) {
+        console.error("initial news digest generation failed (will keep retrying):", err);
+      }
+      newsGateway.startDigestAutoRefresh(NEWS_DIGEST_INTERVAL_MS, (err) => console.error("news digest generation failed:", err));
     } catch (err) {
       console.error(`service://news not registered — initial sync against ${newsFeedUrl} failed:`, err);
       newsGateway = undefined;
@@ -157,6 +177,7 @@ async function main(): Promise<void> {
 
   const shutdown = async (): Promise<void> => {
     newsGateway?.stopAutoSync();
+    newsGateway?.stopDigestAutoRefresh();
     await node.stop();
     if (fakeServer) await fakeServer.stop();
     if (fakeOllama) await fakeOllama.stop();

@@ -30,6 +30,8 @@ export class FakeOllamaServer {
   private defaultAnswer = "Non ho una risposta per questo.";
   private readonly latencyMs: number;
   private readonly httpServer: LoopbackHttpServer;
+  /** Every `prompt` this server has received so far, oldest first — lets a test assert on exactly what a caller sent (e.g. `NewsGateway.generateDigest()`'s composed prompt) without resorting to intercepting `fetch` itself. */
+  private readonly receivedPrompts: string[] = [];
 
   constructor(options: FakeOllamaServerOptions = {}) {
     this.latencyMs = options.latencyMs ?? 0;
@@ -51,6 +53,16 @@ export class FakeOllamaServer {
   /** Response returned when no registered keyword matches the prompt — defaults to a generic "I don't know" rather than an empty string, so a test/demo never mistakes silence for a real answer. */
   setDefaultAnswer(answer: string): void {
     this.defaultAnswer = answer;
+  }
+
+  /** Every prompt received so far, oldest first — a copy, never the live internal array. */
+  get prompts(): readonly string[] {
+    return [...this.receivedPrompts];
+  }
+
+  /** The most recently received prompt, or undefined if none has arrived yet. */
+  get lastPrompt(): string | undefined {
+    return this.receivedPrompts[this.receivedPrompts.length - 1];
   }
 
   async start(): Promise<void> {
@@ -105,6 +117,7 @@ export class FakeOllamaServer {
       sendJson(res, 400, { error: "'prompt' must be a string" });
       return;
     }
+    this.receivedPrompts.push(prompt);
 
     const needle = prompt.toLowerCase();
     let response = this.defaultAnswer;
