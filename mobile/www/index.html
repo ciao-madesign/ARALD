@@ -140,6 +140,11 @@
       </details>
     </div>
 
+    <!-- Fuori dai due <details> sopra (deliberatamente): una conversazione aperta non deve sparire
+         solo perché "Vicini connessi" viene ricollassato — stesso principio di #service-call-panel,
+         mai annidato dentro un contenitore che potrebbe nascondersi da solo. -->
+    <div id="chat-panel" hidden></div>
+
     <div id="dashboard-error-wrap" hidden>
       <p id="dashboard-error" class="error" role="alert" aria-live="polite"></p>
       <button type="button" id="retry-refresh" class="link-button">

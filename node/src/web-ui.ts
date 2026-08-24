@@ -4,6 +4,7 @@ import { networkInterfaces } from "node:os";
 import { BodyTooLargeError, LoopbackHttpServer, readRequestBody, sendJson } from "./loopback-http-server.js";
 import type { NomadNode } from "./node.js";
 import type { ContentMetadata } from "./content.js";
+import { MAX_MESSAGE_TEXT_LENGTH, type StoredMessage } from "./message-history.js";
 import type { TrustLevel } from "./trust.js";
 import { encodeQr, qrToSvg } from "./qrcode.js";
 
@@ -140,6 +141,8 @@ interface PeerEntry {
   trustLevel: TrustLevel;
   connectedAt: number;
   lastSeen: number;
+  /** Whether this peer's encryption key is already known (`peerDirectory`) — `sendPrivateMessage()`/the chat UI's "message" action needs this; identity sync can lag a moment behind the connection itself. */
+  canMessage: boolean;
 }
 
 interface ServiceEntry {
@@ -207,6 +210,7 @@ function buildPeers(node: NomadNode): PeerEntry[] {
     trustLevel: node.trust.get(peer.id),
     connectedAt: peer.connectedAt,
     lastSeen: peer.lastSeen,
+    canMessage: node.peerDirectory.has(peer.id),
   }));
 }
 
@@ -656,6 +660,10 @@ export class WebUiServer {
         void this.handleCall(req, res);
         return;
       }
+      if (url.pathname === "/api/messages") {
+        void this.handleSendMessage(req, res);
+        return;
+      }
       res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("Method Not Allowed");
       return;
@@ -704,6 +712,11 @@ export class WebUiServer {
 
     if (url.pathname === "/api/search") {
       sendJson(res, 200, buildSearchResults(this.node, url.searchParams.get("q") ?? ""));
+      return;
+    }
+
+    if (url.pathname === "/api/messages") {
+      this.handleGetMessages(req, res, url);
       return;
     }
 
@@ -784,10 +797,7 @@ export class WebUiServer {
       res.end("Not Found");
       return;
     }
-
-    const authHeader = req.headers.authorization;
-    const provided = typeof authHeader === "string" && authHeader.startsWith("Bearer ") ? authHeader.slice(7) : undefined;
-    if (!provided || !timingSafeStringEqual(provided, this.networkPassword)) {
+    if (!this.isAuthorized(req, this.networkPassword)) {
       sendJson(res, 401, { error: "missing or invalid network password" });
       return;
     }
@@ -847,6 +857,117 @@ export class WebUiServer {
       sendJson(res, 502, { error: (err as Error).message });
     }
   }
+
+  /**
+   * `GET /api/messages?peer=<nodeId>` — the 1:1 conversation history with
+   * `peer` (`node.messageHistory`), oldest first. Unlike `/api/peers`,
+   * `/api/services`, `/api/content` (always readable, no sensitive data),
+   * this requires the same network-password auth as `POST /api/call` —
+   * message text is "Private messages" (spec §56), not public mesh state,
+   * so it gets the one gate this class otherwise reserves for writes.
+   */
+  private handleGetMessages(req: IncomingMessage, res: ServerResponse, url: URL): void {
+    if (!this.allowServiceCalls || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+    const peer = url.searchParams.get("peer");
+    if (!peer) {
+      sendJson(res, 400, { error: "'peer' query parameter is required" });
+      return;
+    }
+    const messages: StoredMessage[] = this.node.messageHistory.get(peer);
+    sendJson(res, 200, { messages });
+  }
+
+  /**
+   * `POST /api/messages` — sends a 1:1 encrypted chat message (body
+   * `{ to, text }`) via `NomadNode.sendPrivateMessage()`. Same auth as
+   * `POST /api/call`; a 404 when `to`'s encryption key isn't known yet
+   * mirrors `handleCall()`'s "unknown or unavailable service" — "can't
+   * reach this recipient (yet)" is the same class of condition.
+   */
+  private async handleSendMessage(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.allowServiceCalls || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+
+    let raw: Buffer;
+    try {
+      raw = await readRequestBody(req, MAX_MESSAGE_BODY_BYTES, MAX_CALL_BODY_READ_MS);
+    } catch (err) {
+      if (res.writableEnded || res.destroyed) return; // connection already gone — nothing to answer
+      if (err instanceof BodyTooLargeError) {
+        sendJson(res, 413, { error: "request body too large" });
+      } else if (err instanceof Error && err.message.includes("timed out")) {
+        sendJson(res, 408, { error: "timed out waiting for the request body" });
+      } else {
+        sendJson(res, 400, { error: "failed to read request body" });
+      }
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = raw.length === 0 ? {} : JSON.parse(raw.toString("utf8"));
+    } catch {
+      sendJson(res, 400, { error: "malformed JSON body" });
+      return;
+    }
+
+    const body = parsed as { to?: unknown; text?: unknown } | null;
+    const to = body?.to;
+    if (typeof to !== "string" || to.length === 0) {
+      sendJson(res, 400, { error: "'to' must be a non-empty string" });
+      return;
+    }
+    const text = body?.text;
+    if (typeof text !== "string" || text.length === 0) {
+      sendJson(res, 400, { error: "'text' must be a non-empty string" });
+      return;
+    }
+    if (text.length > MAX_MESSAGE_TEXT_LENGTH) {
+      sendJson(res, 400, { error: `'text' must be at most ${MAX_MESSAGE_TEXT_LENGTH} characters` });
+      return;
+    }
+
+    try {
+      const id = this.node.sendPrivateMessage(to, { text });
+      sendJson(res, 200, { id });
+    } catch (err) {
+      // sendPrivateMessage()'s only synchronous throw today is the "encryption key not yet
+      // known" case (node.ts) — mapped to 404, same as handleCall()'s "unknown or unavailable
+      // service". Anything else falls back to handleCall()'s own 502 convention for unexpected
+      // downstream failures, so a future second throw reason in sendPrivateMessage() doesn't
+      // silently become a misleading 404.
+      const message = (err as Error).message;
+      sendJson(res, message.includes("encryption key") ? 404 : 502, { error: message });
+    }
+  }
+
+  /**
+   * Shared Bearer-token check for every endpoint gated behind the network
+   * password (`handleCall`, `handleGetMessages`, `handleSendMessage`) —
+   * callers must first confirm `expectedPassword` is set (the `!this.allowServiceCalls
+   * || !this.networkPassword` guard each of them already has) so TypeScript
+   * narrows it to `string` here.
+   */
+  private isAuthorized(req: IncomingMessage, expectedPassword: string): boolean {
+    const authHeader = req.headers.authorization;
+    const provided = typeof authHeader === "string" && authHeader.startsWith("Bearer ") ? authHeader.slice(7) : undefined;
+    return provided !== undefined && timingSafeStringEqual(provided, expectedPassword);
+  }
 }
 
 /** Mirrors the definition `/api/status`'s own `services` count already uses ("known to this node and currently marked available") — the same bar `POST /api/call` requires a `serviceId` to clear before `callService()` is ever invoked. */
@@ -880,6 +1001,7 @@ function callWithHardTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise
 
 const MAX_CALL_BODY_BYTES = 262_144; // generous for a service call payload, nowhere near CHUNK_SIZE
 const MAX_CALL_BODY_READ_MS = 10_000; // bounds how long a slow/trickling body is tolerated (loopback-http-server.ts), well under Node's own 300s default
+const MAX_MESSAGE_BODY_BYTES = 65_536; // a chat message's JSON body is tiny compared to a service call's
 const DEFAULT_CALL_TIMEOUT_MS = 5000;
 const MAX_CALL_TIMEOUT_MS = 15000; // caps how long a single POST /api/call can hold a connection open
 

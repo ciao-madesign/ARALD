@@ -421,6 +421,38 @@ li.skel-row { display: flex; flex-direction: column; }
 .call-result { font-size: 0.85em; padding: 0.6em; border-radius: 0.5em; background: var(--bg); border: 1px solid var(--border); white-space: pre-wrap; word-break: break-word; animation: item-in 200ms var(--ease); }
 .call-result.is-error { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
 
+/* ---------- chat 1:1 (docs/next-steps.md Opzione J) — riusa il pannello condiviso sopra ---------- */
+
+#chat-panel:not([hidden]) {
+  margin-top: 1em; padding: 1em; border: 1px solid var(--accent); background: var(--accent-soft);
+  clip-path: polygon(0 0, calc(100% - 1em) 0, 100% 1em, 100% 100%, 0 100%);
+  animation: item-in 220ms var(--ease);
+}
+.chat-messages {
+  list-style: none; margin: 0 0 0.6em; padding: 0.2em 0;
+  max-height: 18em; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5em;
+}
+.chat-messages > li { border-top: none; padding: 0; } /* outranks the generic .panel li rule — #chat-panel isn't a .panel but inherits the same list reset habit */
+.chat-message { display: flex; flex-direction: column; max-width: 80%; animation: item-in 180ms var(--ease); }
+.chat-message.is-sent { align-self: flex-end; align-items: flex-end; }
+.chat-message.is-received { align-self: flex-start; align-items: flex-start; }
+.chat-bubble {
+  padding: 0.55em 0.8em; border-radius: 0.9em; font-size: 0.92em; white-space: pre-wrap; word-break: break-word;
+}
+.chat-message.is-sent .chat-bubble { background: var(--accent); color: var(--accent-ink); border-bottom-right-radius: 0.25em; }
+.chat-message.is-received .chat-bubble { background: var(--card); border: 1px solid var(--border); border-bottom-left-radius: 0.25em; }
+.chat-timestamp { font-size: 0.68em; margin-top: 0.2em; padding: 0 0.2em; }
+.chat-compose { display: flex; gap: 0.5em; align-items: center; }
+.chat-compose input {
+  flex: 1; min-width: 0; padding: 0.6em 0.8em; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--card); color: var(--ink);
+}
+.chat-compose input:focus-visible { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
+.chat-compose .call-submit {
+  align-self: auto; border-radius: 999px; flex: none;
+  clip-path: none; /* the cut-corner "beacon" signature reads oddly on a small pill-shaped send button */
+}
+
 /* :not([hidden]) — same reason as #setup-screen above: an author rule setting `display` at equal
    specificity to the UA stylesheet's `[hidden] { display: none }` wins over it (author styles beat
    UA styles on a specificity tie), so an unguarded `display: flex` here would keep an error banner

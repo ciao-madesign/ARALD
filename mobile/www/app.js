@@ -113,6 +113,53 @@ async function callService(serviceId, payload) {
 }
 
 /**
+ * GET /api/messages?peer=... (node/src/web-ui.ts) — unlike fetchJson()'s other callers, this needs
+ * the network-password Authorization header: message text is "Private messages" (spec §56), not
+ * public mesh state like /api/peers/services/content, so it's gated the same way POST /api/call is.
+ */
+async function fetchMessages(peer) {
+  const res = await fetchWithTimeout(
+    apiUrl("/api/messages?peer=" + encodeURIComponent(peer)),
+    { headers: { Authorization: "Bearer " + networkPassword } },
+    READ_TIMEOUT_MS,
+  );
+  if (res.status === 401) {
+    handlePasswordRejected();
+    throw new Error("password di rete non valida");
+  }
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const body = await res.json();
+  return body.messages;
+}
+
+/** POST /api/messages (node/src/web-ui.ts) — sends a 1:1 encrypted chat message. Mirrors callService()'s err.status convention so callers can react to a rejected password the same way. */
+async function sendChatMessage(to, text) {
+  const res = await fetchWithTimeout(
+    apiUrl("/api/messages"),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + networkPassword },
+      body: JSON.stringify({ to, text }),
+    },
+    CALL_TIMEOUT_MS,
+  );
+  let body;
+  try {
+    body = await res.json();
+  } catch {
+    const err = new Error("risposta non valida dal gateway (HTTP " + res.status + ")");
+    err.status = res.status;
+    throw err;
+  }
+  if (!res.ok) {
+    const err = new Error(body.error || "HTTP " + res.status);
+    err.status = res.status;
+    throw err;
+  }
+  return body.id;
+}
+
+/**
  * Probes whether `password` is accepted by `baseUrl`'s POST /api/call, without invoking any real
  * service (see PROBE_SERVICE_ID above) — used during setup so a wrong network password is caught
  * with a clear error immediately, instead of only surfacing the first time the user taps "Chiama".
@@ -242,6 +289,7 @@ function showSetupScreen(errorMessage) {
   document.getElementById("setup-screen").hidden = false;
   document.getElementById("dashboard-screen").hidden = true;
   clearInterval(refreshTimer);
+  closeChatPanel();
 
   const needsAddress = addressFieldNeeded();
   document.getElementById("address-field").hidden = !needsAddress;
@@ -561,6 +609,7 @@ function showDashboard() {
   serviceSeenIds = new Set();
   contentSeenIds = new Set();
   lastContentQuery = null;
+  closeChatPanel();
   renderSkeletons();
   const main = document.getElementById("dashboard-main");
   main.focus({ preventScroll: true }); // announces the screen change to screen-reader users
@@ -635,6 +684,16 @@ function renderPeers(peers) {
       ]),
       el("div", { className: "tags" }, [el("span", { className: "tag", textContent: TRUST_LABELS[p.trustLevel] || p.trustLevel })]),
     ]);
+    li.dataset.peerId = p.nodeId;
+    // canMessage lags a moment behind the connection itself (identity sync, not instant) — the
+    // button simply isn't there yet for a peer that just connected, same gating style as services'
+    // own "Chiama" button below.
+    if (p.canMessage && networkPassword) {
+      const messageButton = el("button", { className: "call-button", textContent: "Messaggia" });
+      messageButton.addEventListener("click", () => openChatPanel(p.nodeId, p.shortLabel));
+      li.append(messageButton);
+    }
+    if (openChatPeer === p.nodeId) li.classList.add("is-open");
     if (!peerSeenIds.has(p.nodeId)) li.classList.add("enter");
     list.append(li);
   }
@@ -741,6 +800,123 @@ function openServiceCallForm(svc) {
     });
   }
   document.getElementById("service-call-panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+// ---------- chat 1:1 (docs/next-steps.md Opzione J) ----------
+//
+// Same shared-panel pattern as #service-call-panel above (one conversation open at a time, panel
+// lives outside any collapsible container so it survives "Vicini connessi" being re-collapsed) —
+// deliberately does NOT auto-close when the peer disconnects, unlike closeServiceCallForm()'s own
+// availability check: a private message is delay-tolerant (store-and-forward queues it until the
+// peer reconnects, node.ts), so an offline conversation is still meaningful to read and write to,
+// not a dead end the way an unavailable service call would be.
+
+let openChatPeer = null;
+let chatPollTimer = null;
+
+function closeChatPanel() {
+  openChatPeer = null;
+  clearInterval(chatPollTimer);
+  chatPollTimer = null;
+  const panel = document.getElementById("chat-panel");
+  panel.hidden = true;
+  panel.textContent = "";
+  document.querySelectorAll("#peers li.is-open").forEach((li) => li.classList.remove("is-open"));
+}
+
+function renderChatMessages(list, messages) {
+  const wasScrolledToBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 24;
+  if (renderEmptyIfNeeded(list, messages, "Nessun messaggio ancora. Scrivine uno.")) return;
+  for (const m of messages) {
+    list.append(
+      el("li", { className: "chat-message " + (m.direction === "sent" ? "is-sent" : "is-received") }, [
+        el("div", { className: "chat-bubble", textContent: m.text }),
+        el("div", { className: "chat-timestamp muted", textContent: timeAgo(m.timestamp) }),
+      ]),
+    );
+  }
+  // Only auto-scroll if the user was already at (or near) the bottom — otherwise the periodic poll
+  // below would yank someone scrolling up to read older messages back down every few seconds.
+  if (wasScrolledToBottom) list.scrollTop = list.scrollHeight;
+}
+
+async function refreshChatMessages(peer, list) {
+  try {
+    const messages = await fetchMessages(peer);
+    if (openChatPeer !== peer) return; // panel closed/switched while this was in flight
+    renderChatMessages(list, messages);
+  } catch {
+    // Best-effort background poll — the main dashboard error banner (refreshAll()) already surfaces
+    // a persistently unreachable gateway; no need for this poll to also spam its own error each tick.
+  }
+}
+
+/** Opens (or scrolls to, if already open) the shared chat panel for a 1:1 conversation with `peer`. */
+function openChatPanel(peer, label) {
+  if (openChatPeer === peer) {
+    document.getElementById("chat-panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    return;
+  }
+  closeChatPanel();
+  openChatPeer = peer;
+  const panel = document.getElementById("chat-panel");
+  panel.textContent = "";
+
+  const closeButton = el("button", { className: "icon-button", type: "button" }, [iconEl("x")]);
+  closeButton.setAttribute("aria-label", "Chiudi");
+  closeButton.addEventListener("click", closeChatPanel);
+
+  const list = el("ul", { className: "chat-messages" });
+  list.setAttribute("aria-live", "polite");
+  listSkeleton(list, 2);
+
+  const input = el("input", { type: "text", placeholder: "Scrivi un messaggio..." });
+  input.autocomplete = "off";
+  const submit = el("button", { className: "call-submit", type: "submit" }, [iconEl("send"), el("span", { textContent: "Invia" })]);
+  const form = el("form", { className: "chat-compose" }, [input, submit]);
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+    input.disabled = true;
+    submit.disabled = true;
+    try {
+      await sendChatMessage(peer, text);
+      input.value = "";
+      vibrate(10);
+      await refreshChatMessages(peer, list);
+    } catch (err) {
+      if (err.status === 401) {
+        handlePasswordRejected();
+        return;
+      }
+      showToast(err.message, "alert-circle");
+      vibrate([12, 40, 12]);
+    } finally {
+      input.disabled = false;
+      submit.disabled = false;
+      input.focus({ preventScroll: true });
+    }
+  });
+
+  panel.append(
+    el("div", { className: "call-panel-header" }, [
+      el("div", { className: "call-panel-title" }, [iconEl("users"), el("span", { textContent: label })]),
+      closeButton,
+    ]),
+    list,
+    form,
+  );
+  panel.hidden = false;
+  document.querySelectorAll("#peers li").forEach((li) => li.classList.toggle("is-open", li.dataset.peerId === peer));
+  panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+  refreshChatMessages(peer, list);
+  // A dedicated, lighter-weight poll independent of refreshAll()'s 5s cycle — only runs while a
+  // conversation is actually open, and /api/messages needs the Authorization header refreshAll()'s
+  // other calls don't, so piggybacking on that cycle isn't a natural fit here.
+  chatPollTimer = setInterval(() => refreshChatMessages(peer, list), 3000);
 }
 
 // Known serviceIds get a recognizable icon and a human-readable name; anything else (a service this

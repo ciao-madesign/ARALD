@@ -26,6 +26,7 @@ import {
   type IdentityAnnouncement,
 } from "./encryption.js";
 import { PeerDirectory } from "./peer-directory.js";
+import { MessageHistory, MAX_MESSAGE_TEXT_LENGTH } from "./message-history.js";
 import { RoutingTable } from "./routing-table.js";
 import { ServiceDirectory } from "./service-directory.js";
 import { serviceSigningPayload, verifyServiceAnnouncement, type ServiceAnnouncement, type ServiceHandler } from "./service.js";
@@ -82,6 +83,10 @@ export interface NomadNodeOptions {
   maxChunksPerContent?: number;
   /** Max (serviceId, providerId) entries tracked in the remote service directory at once (spec §57 resource limits). */
   maxServiceDirectoryEntries?: number;
+  /** Max distinct 1:1 conversations tracked in `messageHistory` at once (spec §57 resource limits). */
+  maxMessageHistoryPeers?: number;
+  /** Max messages kept per conversation in `messageHistory` — the oldest is dropped once exceeded. */
+  maxMessagesPerPeer?: number;
 }
 
 interface ContentWaiter {
@@ -220,6 +225,28 @@ interface PrivateMessagePayload extends EncryptedPayload {
 }
 
 /**
+ * A PRIVATE_MESSAGE payload's `text` field, if it has one shaped as a plain
+ * chat message — used by `sendPrivateMessage()`/`handlePrivateMessage()` to
+ * decide what's worth recording into `messageHistory` (never assumes
+ * `payload` is trusted or well-formed; other private-message payloads
+ * simply aren't chat messages). A `text` longer than
+ * `MAX_MESSAGE_TEXT_LENGTH` is treated the same as a missing one — this is
+ * the one place both the send and the *receive* path funnel through, so it
+ * has to reject an oversized message on its own: a connected peer can send
+ * an arbitrarily large `PRIVATE_MESSAGE` directly (spec §57, no HTTP layer
+ * or its own request-body limit is involved on that path at all), unlike
+ * `POST /api/messages`'s own length check, which only ever sees messages
+ * *this* node originates.
+ */
+function extractChatText(payload: unknown): string | undefined {
+  if (payload && typeof payload === "object" && typeof (payload as { text?: unknown }).text === "string") {
+    const text = (payload as { text: string }).text;
+    return text.length <= MAX_MESSAGE_TEXT_LENGTH ? text : undefined;
+  }
+  return undefined;
+}
+
+/**
  * Distance-vector route advertisement (spec §22), exchanged directly
  * between neighbors like IDENTITY_REQUEST/RESPONSE — never flooded, since
  * it only ever concerns the two nodes on that link. `cost: null` withdraws
@@ -297,6 +324,8 @@ export class NomadNode extends EventEmitter {
   readonly routingTable: RoutingTable;
   /** Services known to exist elsewhere in the mesh (spec §35), via SERVICE_ANNOUNCE or a SERVICE_QUERY reply — analogous to remoteCatalog for content. */
   readonly services: ServiceDirectory;
+  /** Local-only history of 1:1 private chat messages sent/received via `sendPrivateMessage()` (spec §56 "private messages") — never signed or propagated, purely for a thin HTTP client (`web-ui.ts`'s `/api/messages`) to poll. */
+  readonly messageHistory: MessageHistory;
 
   private readonly defaultTtl: number;
   private readonly contentRequestTimeoutMs: number;
@@ -372,6 +401,11 @@ export class NomadNode extends EventEmitter {
     this.services = new ServiceDirectory({
       maxSize: options.maxServiceDirectoryEntries,
       trustRank: (providerId) => trustRank(this.trust.get(providerId)),
+    });
+    this.messageHistory = new MessageHistory({
+      maxPeers: options.maxMessageHistoryPeers,
+      maxMessagesPerPeer: options.maxMessagesPerPeer,
+      trustRank: (peer) => trustRank(this.trust.get(peer)),
     });
   }
 
@@ -603,6 +637,12 @@ export class NomadNode extends EventEmitter {
    * forwards the ciphertext without being able to read it; only
    * `destination` can decrypt it. Throws if `destination`'s encryption key
    * isn't known yet — call `waitForPeerKey()` first if it might not be.
+   *
+   * If `payload` looks like a chat message (a plain `{ text: string }`, the
+   * shape the mobile app's chat UI sends via `/api/messages`), it's also
+   * recorded into `messageHistory` — `payload` is otherwise unconstrained
+   * (this method has other callers/tests that pass arbitrary shapes), so
+   * anything else is sent normally but simply isn't added to the chat log.
    */
   sendPrivateMessage(destination: string, payload: unknown): string {
     const peerKey = this.peerDirectory.getKey(destination);
@@ -617,6 +657,8 @@ export class NomadNode extends EventEmitter {
       { destination, priority: Priority.MESSAGING },
     );
     void this.floodExcept(packet);
+    const text = extractChatText(payload);
+    if (text !== undefined) this.messageHistory.record(destination, "sent", text);
     return packet.id;
   }
 
@@ -1525,6 +1567,8 @@ export class NomadNode extends EventEmitter {
     try {
       const sharedKey = this.encryptionIdentity.sharedKeyWith(senderKey);
       const payload: unknown = JSON.parse(decryptFromPeer(sharedKey, packet.payload).toString("utf8"));
+      const text = extractChatText(payload);
+      if (text !== undefined) this.messageHistory.record(packet.source, "received", text);
       this.emit("private-message", { ...packet, payload });
     } catch (err) {
       this.emit("private-message:failed", packet.source, (err as Error).message);

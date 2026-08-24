@@ -185,7 +185,7 @@ L'utente ha chiesto se sia possibile integrare in Nomad-Net delle "sotto-applica
 
 ### Messaggistica
 
-**Chat 1:1 — sostanzialmente già esistente, manca solo la UI.** `NomadNode.sendPrivateMessage(destination, payload)` (`node/src/node.ts`) è già cifrato end-to-end (X25519 ECDH + AES-256-GCM, `node/src/encryption.ts`), già multi-hop (un relay inoltra il ciphertext senza poterlo leggere), e già delay-tolerant: passa dalla stessa `floodExcept()`/store-and-forward generica di ogni pacchetto unicast (`node/src/store-and-forward.ts`) — un messaggio a un peer offline viene già accodato e ritentato alla riconnessione, senza bisogno di scrivere nulla di nuovo lato rete. Corrisponde esattamente alla categoria "Private messages (end-to-end encrypted)" che la specifica elenca già come una delle tre categorie di privacy (`docs/SPECIFICATION.md` §56). Una chat 1:1 sarebbe quasi solo lavoro di UI mobile sopra un'API che esiste e funziona.
+**Chat 1:1 — ✅ fatta (`docs/security.md` voce #36).** `NomadNode.sendPrivateMessage(destination, payload)` (`node/src/node.ts`) era già cifrato end-to-end (X25519 ECDH + AES-256-GCM, `node/src/encryption.ts`), già multi-hop (un relay inoltra il ciphertext senza poterlo leggere), e già delay-tolerant: passa dalla stessa `floodExcept()`/store-and-forward generica di ogni pacchetto unicast (`node/src/store-and-forward.ts`) — un messaggio a un peer offline veniva già accodato e ritentato alla riconnessione. Mancava solo una cronologia messaggi lato gateway (`node/src/message-history.ts`, nuovo) e due endpoint HTTP (`GET`/`POST /api/messages`) più la UI mobile sopra il design "Waypoint" — tutti ora implementati.
 
 **Canali pubblici (bulletin di gruppo, non cifrati)** — mappano bene sul pattern già dimostrato da `NewsGateway`: ogni messaggio pubblicato come `content://` firmato (Ed25519, stesso schema di `content.ts`), scoperto/sincronizzato via catalog sync — un canale chat sarebbe concettualmente "`NewsGateway` al contrario", contenuti scritti dall'utente invece che scaricati da RSS. Nessun nuovo tipo di pacchetto necessario. Vincolo reale: `ContentMetadata` non ha un campo "topic/canale" di primo livello — la categorizzazione oggi vive dentro il corpo JSON del contenuto (come `category` in `NewsHeadline`), non è filtrabile da `/api/search` senza scaricare ogni messaggio. Due strade: una convenzione sul nome (`name: "chat:generale:<id>"`, come già fa `KiwixGateway` coi path) senza toccare il protocollo, oppure un vero campo `tags`/`topic` in `ContentMetadata` — un cambio di protocollo reale, non enorme ma da valutare con attenzione (tocca la firma del contenuto, `contentSigningPayload()`, e ogni punto che legge `ContentMetadata`).
 
@@ -210,7 +210,7 @@ L'utente ha chiesto se sia possibile integrare in Nomad-Net delle "sotto-applica
 
 ### Come procedere, se si riprende
 
-1. Chat 1:1 — quasi gratis lato rete, il grosso è UI mobile. Non ha bisogno del meccanismo di broadcast (è unicast per natura).
+1. ~~Chat 1:1~~ ✅ Fatta (voce #36).
 2. Canali pubblici — dopo (o insieme a) il meccanismo di priorità/broadcast per contenuti condiviso con l'Opzione I, per non costruirlo due volte.
 3. Tracciamento posizione — richiede prima una decisione esplicita con l'utente su consenso/conservazione/autorizzazione (non solo codice), poi: `service://location-registry` + gateway registro + lato mobile.
 4. Chat private/di gruppo cifrate — l'ultimo, perché richiede il design crittografico nuovo (key-wrapping) più sostanzioso dei tre; conviene affrontarlo dopo aver validato canali pubblici e chat 1:1, non come primo passo.
@@ -219,7 +219,7 @@ Stesso workflow a doppio check di ogni voce precedente per qualunque di questi p
 
 ## Piano d'insieme (22 agosto 2026, aggiornato dopo #28-35) — come ordinare tutti i candidati aperti
 
-Con l'Opzione I (news evoluto) e l'Opzione J (messaggistica + tracciamento posizione) valutate, e con il debito di design UI mobile, `ContentStore`, i primi due pezzi dell'evoluzione news e il prerequisito architetturale condiviso **già completati** (voci #28-35, `docs/security.md` — vedi "Stato del progetto" in `CLAUDE.md`), questo piano riordina i candidati **rimasti** in un'unica sequenza motivata — per dipendenze reali, non solo per data di scoperta — pensata per essere seguita passo per passo, non per essere fatta tutta insieme. Le fasi "0", "1" e "2" (`ContentStore`, UI mobile, parser RSS, meccanismo di broadcast) sono barrate sotto come riferimento storico di come questo piano è stato pensato, non perché vadano ancora fatte.
+Con l'Opzione I (news evoluto) e l'Opzione J (messaggistica + tracciamento posizione) valutate, e con il debito di design UI mobile, `ContentStore`, i primi due pezzi dell'evoluzione news, il prerequisito architetturale condiviso e la chat 1:1 **già completati** (voci #28-36, `docs/security.md` — vedi "Stato del progetto" in `CLAUDE.md`), questo piano riordina i candidati **rimasti** in un'unica sequenza motivata — per dipendenze reali, non solo per data di scoperta — pensata per essere seguita passo per passo, non per essere fatta tutta insieme. Le fasi "0", "1" e "2" (`ContentStore`, UI mobile, parser RSS, meccanismo di broadcast) sono barrate sotto come riferimento storico di come questo piano è stato pensato, non perché vadano ancora fatte.
 
 ~~**Fase 0 — `ContentStore` senza limite di dimensione.**~~ ✅ Fatta (voce #32).
 
@@ -228,7 +228,7 @@ Con l'Opzione I (news evoluto) e l'Opzione J (messaggistica + tracciamento posiz
 ~~**Fase 2 — Il prerequisito architetturale condiviso.**~~ ✅ Fatta (`docs/security.md` voce #34, `MessageType.CONTENT_ANNOUNCE` + `publishContent(..., { announce, priority })`) — un solo pezzo di lavoro, già pronto sia per `service://emergency-news` (Opzione I) sia per i canali pubblici di chat (Opzione J) quando verranno implementati.
 
 **Fase 3 — Feature veloci e in gran parte indipendenti tra loro (parallelizzabili).**
-- Chat 1:1 (Opzione J) — backend già pronto (`sendPrivateMessage()`), solo UI sopra il design "Waypoint" già completato (Fase 1).
+- ~~Chat 1:1 (Opzione J)~~ ✅ Fatta (voce #36).
 - ~~Parser RSS + schema arricchito~~ ✅ Fatto (voce #33). ~~Livelli headline/summary~~ ✅ Fatto (voce #35). Resta il digest AI componendo `NewsGateway`+`AiGateway`. Indipendente dalla UI mobile.
 
 **Fase 4 — Costruita sopra il prerequisito della Fase 2.**

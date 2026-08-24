@@ -211,8 +211,9 @@ describe("WebUiServer (spec §59)", () => {
     const peers = await (await fetch(`${baseUrl()}/api/peers`)).json();
     expect(peers).toHaveLength(1);
     // Normal HELLO handshake exchanges a signed IdentityAnnouncement (peer-directory.ts), so a
-    // freshly-connected peer is already past SEEN by the time both sides have processed it.
-    expect(peers[0]).toMatchObject({ nodeId: other.nodeId, shortLabel: `NODE-${other.nodeId.slice(0, 8)}`, trustLevel: "VERIFIED" });
+    // freshly-connected peer is already past SEEN — and its encryption key already known
+    // (canMessage) — by the time both sides have processed it.
+    expect(peers[0]).toMatchObject({ nodeId: other.nodeId, shortLabel: `NODE-${other.nodeId.slice(0, 8)}`, trustLevel: "VERIFIED", canMessage: true });
     expect(typeof peers[0].connectedAt).toBe("number");
     expect(typeof peers[0].lastSeen).toBe("number");
 
@@ -657,5 +658,183 @@ describe("WebUiServer GET /api/pairing — address and QR", () => {
     const info = await (await fetch(`${baseUrl()}/api/pairing`)).json();
     expect(info.address).toBe(`192.168.1.50:${webUi.port}`);
     expect(info.qrDataUri).toBeUndefined();
+  });
+});
+
+/**
+ * POST/GET /api/messages (Slice 2a, "chat 1:1" — docs/next-steps.md Opzione J):
+ * a thin HTTP layer over NomadNode.sendPrivateMessage()/messageHistory.
+ * Unlike the read-only endpoints above (/api/peers, /api/services,
+ * /api/content — always reachable, no sensitive data), both verbs here
+ * require the same network-password auth as POST /api/call, since message
+ * text is "Private messages" (spec §56), not public mesh state.
+ */
+describe("WebUiServer /api/messages", () => {
+  const TOKEN = "test-pairing-token-0123456789abcdef";
+  const nodes: NomadNode[] = [];
+  const webUis: WebUiServer[] = [];
+
+  afterEach(async () => {
+    await Promise.all(webUis.map((w) => w.stop()));
+    await Promise.all(nodes.map((n) => n.stop()));
+    nodes.length = 0;
+    webUis.length = 0;
+  });
+
+  function makeGateway(displayName: string): { node: NomadNode; transport: TcpTransport; webUi: WebUiServer } {
+    const node = new NomadNode({ displayName });
+    const transport = new TcpTransport(node.nodeId, 0);
+    node.addTransport(transport);
+    const webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, networkPassword: TOKEN });
+    nodes.push(node);
+    webUis.push(webUi);
+    return { node, transport, webUi };
+  }
+
+  function authedFetch(webUi: WebUiServer, path: string, init: RequestInit = {}): Promise<Response> {
+    return fetch(`http://127.0.0.1:${webUi.port}${path}`, {
+      ...init,
+      headers: { ...init.headers, Authorization: `Bearer ${TOKEN}` },
+    });
+  }
+
+  /** Two real, connected nodes with encryption keys already exchanged — every send-path test needs this. */
+  async function makeConnectedPair(): Promise<{ a: ReturnType<typeof makeGateway>; b: ReturnType<typeof makeGateway> }> {
+    const a = makeGateway("A");
+    const b = makeGateway("B");
+    await Promise.all([a.node.start(), b.node.start(), a.webUi.start(), b.webUi.start()]);
+    await a.node.connect({ host: "127.0.0.1", port: b.transport.port });
+    await a.node.waitForPeerKey(b.node.nodeId, { timeoutMs: 2000 });
+    await b.node.waitForPeerKey(a.node.nodeId, { timeoutMs: 2000 });
+    return { a, b };
+  }
+
+  it("is a 404 for both verbs when allowServiceCalls is off", async () => {
+    const node = new NomadNode({ displayName: "N" });
+    const webUi = new WebUiServer(node, { port: 0 });
+    nodes.push(node);
+    webUis.push(webUi);
+    await webUi.start();
+
+    const getRes = await fetch(`http://127.0.0.1:${webUi.port}/api/messages?peer=x`);
+    expect(getRes.status).toBe(404);
+    const postRes = await fetch(`http://127.0.0.1:${webUi.port}/api/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to: "x", text: "hi" }),
+    });
+    expect(postRes.status).toBe(404);
+  });
+
+  it("rejects both verbs with 401 when the Authorization header is missing or wrong", async () => {
+    const { a } = await makeConnectedPair();
+
+    const getNoAuth = await fetch(`http://127.0.0.1:${a.webUi.port}/api/messages?peer=x`);
+    expect(getNoAuth.status).toBe(401);
+    const getWrongAuth = await fetch(`http://127.0.0.1:${a.webUi.port}/api/messages?peer=x`, {
+      headers: { Authorization: "Bearer wrong-token" },
+    });
+    expect(getWrongAuth.status).toBe(401);
+
+    const postNoAuth = await fetch(`http://127.0.0.1:${a.webUi.port}/api/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to: "x", text: "hi" }),
+    });
+    expect(postNoAuth.status).toBe(401);
+  });
+
+  it("sends a message end-to-end: recorded in the sender's history, and the real recipient node receives + records it too", async () => {
+    const { a, b } = await makeConnectedPair();
+
+    const received = new Promise<unknown>((resolve) => b.node.once("private-message", (packet) => resolve(packet.payload)));
+
+    const sendRes = await authedFetch(a.webUi, "/api/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to: b.node.nodeId, text: "rifugio raggiunto, tutto bene" }),
+    });
+    expect(sendRes.status).toBe(200);
+    const { id } = await sendRes.json();
+    expect(typeof id).toBe("string");
+
+    await expect(received).resolves.toEqual({ text: "rifugio raggiunto, tutto bene" });
+
+    // The sender's own history already has it (recorded synchronously by sendPrivateMessage()).
+    const senderHistoryRes = await authedFetch(a.webUi, `/api/messages?peer=${b.node.nodeId}`);
+    const senderHistory = await senderHistoryRes.json();
+    expect(senderHistory.messages).toEqual([{ peer: b.node.nodeId, direction: "sent", text: "rifugio raggiunto, tutto bene", timestamp: expect.any(Number) }]);
+
+    // The recipient's own node recorded it as received — checked directly on messageHistory rather
+    // than racing b's GET endpoint against handlePrivateMessage()'s async decrypt-then-record.
+    const recipientMessages = b.node.messageHistory.get(a.node.nodeId);
+    expect(recipientMessages).toEqual([{ peer: a.node.nodeId, direction: "received", text: "rifugio raggiunto, tutto bene", timestamp: expect.any(Number) }]);
+  });
+
+  it("GET returns the conversation oldest-first after multiple sends", async () => {
+    const { a, b } = await makeConnectedPair();
+
+    await authedFetch(a.webUi, "/api/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to: b.node.nodeId, text: "primo" }),
+    });
+    await authedFetch(a.webUi, "/api/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to: b.node.nodeId, text: "secondo" }),
+    });
+
+    const res = await authedFetch(a.webUi, `/api/messages?peer=${b.node.nodeId}`);
+    const body = await res.json();
+    expect(body.messages.map((m: { text: string }) => m.text)).toEqual(["primo", "secondo"]);
+  });
+
+  it("GET with no history for that peer returns an empty array, not an error", async () => {
+    const { a } = await makeConnectedPair();
+    const res = await authedFetch(a.webUi, "/api/messages?peer=some-node-never-messaged");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ messages: [] });
+  });
+
+  it("GET without a 'peer' query parameter is a 400", async () => {
+    const { a } = await makeConnectedPair();
+    const res = await authedFetch(a.webUi, "/api/messages");
+    expect(res.status).toBe(400);
+  });
+
+  it("POST validates 'to' and 'text', rejecting missing/empty/oversized fields with 400", async () => {
+    const { a, b } = await makeConnectedPair();
+
+    const cases = [
+      { body: {}, why: "missing both" },
+      { body: { to: b.node.nodeId }, why: "missing text" },
+      { body: { text: "hi" }, why: "missing to" },
+      { body: { to: "", text: "hi" }, why: "empty to" },
+      { body: { to: b.node.nodeId, text: "" }, why: "empty text" },
+      { body: { to: b.node.nodeId, text: "x".repeat(4001) }, why: "text too long" },
+    ];
+    for (const { body } of cases) {
+      const res = await authedFetch(a.webUi, "/api/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      expect(res.status).toBe(400);
+    }
+  });
+
+  it("POST to a peer whose encryption key isn't known yet is a 404, not a 500/hang", async () => {
+    const a = makeGateway("A");
+    await Promise.all([a.node.start(), a.webUi.start()]);
+
+    const res = await authedFetch(a.webUi, "/api/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to: "some-node-never-connected-to", text: "hello?" }),
+    });
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toMatch(/encryption key/);
   });
 });
