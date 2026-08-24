@@ -177,7 +177,7 @@ L'utente ha proposto una specifica dettagliata per evolvere `service://news` (vo
 
 **Questioni non tecniche (copyright/paywall/licenze delle fonti, sezione 7 della proposta)**: non risolvibili con codice — sono decisioni editoriali che chi gestisce il gateway reale deve prendere scegliendo le fonti. Bollettini ufficiali open (es. Protezione Civile) restano la scelta più sicura per il caso d'uso rifugio/emergenza che la proposta stessa individua come il più concreto.
 
-**Ordine di implementazione, un pezzo alla volta con ok esplicito dell'utente tra un pezzo e il successivo**: (1) ✅ parser RSS + schema arricchito — fatto, voce #33; (2) livelli headline/summary; (3) digest AI componendo `NewsGateway`+`AiGateway`; (4) l'estensione di priorità/broadcast per contenuti (il pezzo architetturale nuovo — l'utente ha già indicato la direzione: un nuovo pacchetto di annuncio broadcast firmato, parallelo a `SERVICE_ANNOUNCE`, non un campo di priorità dichiarata nel sync esistente) → `service://emergency-news` come conseguenza naturale. Stesso workflow a doppio check di ogni voce precedente (implementa, testa, `code-review`, correggi, documenta, commit+push su entrambi i branch).
+**Ordine di implementazione, un pezzo alla volta**: (1) ✅ parser RSS + schema arricchito — fatto, voce #33; (2) ✅ livelli headline/summary — fatto, voce #34; (3) digest AI componendo `NewsGateway`+`AiGateway`; (4) l'estensione di priorità/broadcast per contenuti (il pezzo architetturale nuovo — l'utente ha già indicato la direzione: un nuovo pacchetto di annuncio broadcast firmato, parallelo a `SERVICE_ANNOUNCE`, non un campo di priorità dichiarata nel sync esistente) → `service://emergency-news` come conseguenza naturale. Stesso workflow a doppio check di ogni voce precedente (implementa, testa, `code-review`, correggi, documenta, commit+push su entrambi i branch).
 
 ## Opzione J — Sotto-applicazioni: messaggistica (stile BitChat) e tracciamento posizione (valutazione, 21 agosto 2026)
 
@@ -229,7 +229,7 @@ Con l'Opzione I (news evoluto) e l'Opzione J (messaggistica + tracciamento posiz
 
 **Fase 3 — Feature veloci e in gran parte indipendenti tra loro (parallelizzabili).**
 - Chat 1:1 (Opzione J) — backend già pronto (`sendPrivateMessage()`), solo UI sopra il design "Waypoint" già completato (Fase 1).
-- ~~Parser RSS + schema arricchito~~ ✅ Fatto (voce #33). Restano gli altri pezzi backend dell'evoluzione news (Opzione I): livelli headline/summary, digest AI componendo `NewsGateway`+`AiGateway`. Indipendenti dalla UI mobile.
+- ~~Parser RSS + schema arricchito~~ ✅ Fatto (voce #33). ~~Livelli headline/summary~~ ✅ Fatto (voce #34). Resta il digest AI componendo `NewsGateway`+`AiGateway`. Indipendente dalla UI mobile.
 
 **Fase 4 — Costruita sopra il prerequisito della Fase 2.**
 - Canali pubblici di chat (Opzione J).

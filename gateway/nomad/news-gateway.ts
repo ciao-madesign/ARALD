@@ -1,17 +1,21 @@
 import type { NomadNode } from "../../node/src/node.js";
 import { BoundedFifoMap } from "../../node/src/bounded-map.js";
-import { parseFeed, MAX_FEED_BYTES, type FeedItem } from "./rss-feed.js";
+import { parseFeed, MAX_FEED_BYTES } from "./rss-feed.js";
 
 /**
- * One news headline. Originally the shape of NOMAD's (fictional) news
- * backend's `GET /api/news` JSON — replaced by real RSS/Atom ingestion
- * (`rss-feed.ts`), so every field below now comes from a parsed
- * `FeedItem`/`ParsedFeed` instead: see `toHeadline()`.
+ * One news headline — deliberately lean: title and metadata only, never the
+ * article body. Originally this also carried `summary` inline (one blob per
+ * news item, "titolo+riassunto insieme"); now split into two tiers
+ * (`docs/next-steps.md` Opzione I, pezzo 2), the same "small metadata always
+ * synced, larger body fetched on demand" shape the proposal asked for,
+ * motivated by efficiency on narrow-band links (BLE, spec §46-47) — a
+ * catalog sync no longer has to move every article's full text just to let
+ * a node discover that the headline exists. Every field below comes from a
+ * parsed `FeedItem`/`ParsedFeed` (`rss-feed.ts`): see `syncNews()`.
  */
 export interface NewsHeadline {
   id: string;
   title: string;
-  summary: string;
   url: string;
   /** Normalized to ISO 8601 by `rss-feed.ts`'s `toIso()` — never the feed's raw native date format (RFC 822 for RSS). */
   publishedAt: string;
@@ -23,6 +27,25 @@ export interface NewsHeadline {
   language?: string;
   /** Atom `<updated>` only, when distinct from `publishedAt` — always undefined for an RSS-sourced headline (RSS 2.0 has no equivalent field). */
   updatedAt?: string;
+  /**
+   * Content id of this item's separately-published body (`NewsArticleBody`,
+   * `application/json`) — the second tier, published alongside the headline
+   * but never eagerly held by a consumer the way `service://news`'s
+   * headline list is: fetch it explicitly via `NomadNode.getContent()` only
+   * once a user actually wants to read the full text. Since a content id is
+   * the hash of its bytes (spec §24), this reference itself is stable even
+   * though the article body it points to is immutable — a later edit to
+   * the article publishes new bytes and a new id (same accepted limitation
+   * `KiwixGateway.syncCatalog()`'s doc comment already describes for its
+   * own re-published content).
+   */
+  articleContentId: string;
+}
+
+/** The body a `NewsHeadline.articleContentId` points to — kept as its own small, explicit shape (not just a bare string) so a future richer article tier (full text vs. today's feed-provided summary, spec §46-47's narrow-band framing) can extend it without changing `NewsHeadline`'s own shape again. */
+export interface NewsArticleBody {
+  /** RSS `<description>` or Atom `<summary>`/`<content>`, verbatim from `FeedItem.summary` (`rss-feed.ts`) — empty string if the feed omitted it for this item. */
+  summary: string;
 }
 
 /** Same bound `RemoteCatalog`/`PeerDirectory` default to (`node/src/catalog.ts`) — `publishedById` is the one piece of this gateway's own state a hostile/misbehaving `--news-url` backend could otherwise grow forever by rotating headline ids on every `startAutoSync()` tick (`docs/security.md`). */
@@ -71,20 +94,6 @@ async function fetchTextBounded(url: string, maxBytes: number): Promise<string> 
     chunks.push(value);
   }
   return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8");
-}
-
-function toHeadline(item: FeedItem, source: string, language: string | undefined): NewsHeadline {
-  return {
-    id: item.id,
-    title: item.title,
-    summary: item.summary,
-    url: item.link,
-    publishedAt: item.publishedAt,
-    source,
-    category: item.category,
-    language,
-    updatedAt: item.updatedAt,
-  };
 }
 
 /**
@@ -149,12 +158,17 @@ export class NewsGateway {
   }
 
   /**
-   * Fetches `feedUrl`, parses it as RSS or Atom (`rss-feed.ts`), publishes
-   * each item via `publishContent()` (as `application/json`, so a caller
-   * gets the structured headline back rather than having to parse prose),
-   * and refreshes the in-memory cache `service://news` serves from.
-   * Callable repeatedly — returns only the headlines that are new or
-   * changed since this instance's own last sync, mirroring
+   * Fetches `feedUrl`, parses it as RSS or Atom (`rss-feed.ts`), and
+   * publishes each item as **two** separate contents (`application/json`) —
+   * the two-tier split described on `NewsHeadline`/`NewsArticleBody`: the
+   * article body first (so the headline can embed its real content id),
+   * then the headline itself, which is what gets tracked/returned/cached
+   * below and what `service://news` actually answers with. Refreshes the
+   * in-memory cache `service://news` serves from. Callable repeatedly —
+   * returns only the headlines that are new or changed since this
+   * instance's own last sync (a change to either tier changes the
+   * headline's own content id, since it embeds `articleContentId` — no
+   * separate change tracking needed for the article tier), mirroring
    * `KiwixGateway.syncCatalog()`'s contract exactly (including its same
    * accepted limitation: an edited headline is published under a brand new
    * content id, and the previous version's bytes aren't explicitly deleted
@@ -164,9 +178,11 @@ export class NewsGateway {
    * independently of how many of their published content ids
    * `node.contentStore` still actually holds bytes for — a long-running
    * `startAutoSync()` past `maxContentStoreEntries` distinct published
-   * entries can evict this node's own older headlines from `contentStore`
-   * while `publishedById` still "remembers" them as already published and
-   * never re-publishes/re-caches them).
+   * entries can evict this node's own older headlines/articles from
+   * `contentStore` while `publishedById` still "remembers" them as already
+   * published and never re-publishes/re-caches them; each item now costs
+   * two `contentStore` entries instead of one, so `maxContentStoreEntries`
+   * needs to account for that — see `cli.ts`'s `--max-content-entries`).
    *
    * The response is validated defensively before anything is applied (same
    * posture as `packet.payload?.field` checks elsewhere in this codebase
@@ -174,7 +190,9 @@ export class NewsGateway {
    * `undefined` (not RSS/Atom at all, oversized, or containing at least one
    * item missing a required field) rejects the whole sync and leaves
    * `publishedById`/`cachedHeadlines` completely untouched, rather than
-   * partially applying whichever items happened to parse.
+   * partially applying whichever items happened to parse — and, since that
+   * check runs before either tier of any item is published, a superseded
+   * sync never publishes anything at all, not even article bodies.
    *
    * If a newer `syncNews()` call has already started (and possibly already
    * committed) by the time this one's response arrives, this call's result
@@ -187,19 +205,41 @@ export class NewsGateway {
     if (!parsed) {
       throw new Error("news feed returned malformed or unrecognized RSS/Atom XML");
     }
-    const headlines = parsed.items.map((item) => toHeadline(item, parsed.source, parsed.language));
 
     if (generation !== this.syncGeneration) {
       // Superseded by a newer syncNews() call started while this fetch was in flight — that
-      // newer call is authoritative, so this stale response reports nothing new.
+      // newer call is authoritative, so this stale response reports nothing new. Checked before
+      // any publishContent() call (either tier), so a superseded sync never writes anything.
       return [];
     }
 
+    const headlines: NewsHeadline[] = [];
     const changed: NewsHeadline[] = [];
-    for (const headline of headlines) {
-      const metadata = this.node.publishContent(headline.title, "application/json", Buffer.from(JSON.stringify(headline), "utf8"));
-      if (this.publishedById.get(headline.id) !== metadata.contentId) {
-        this.publishedById.set(headline.id, metadata.contentId);
+    for (const item of parsed.items) {
+      // Unconditional, every tick, for every item — publishedById's dedup check below only applies
+      // to the headline tier, not this one: an unchanged article is re-signed and re-published just
+      // as often as before this two-tier split (only the headline used to pay this cost; now both
+      // tiers do). Not a correctness issue — publishContent() is idempotent over the same bytes,
+      // content-addressing means no unbounded growth — but it doubles the signing/serialization work
+      // this loop does on a hot periodic path (startAutoSync()) whenever most items are unchanged.
+      const article: NewsArticleBody = { summary: item.summary };
+      const articleMetadata = this.node.publishContent(`${item.title} (articolo)`, "application/json", Buffer.from(JSON.stringify(article), "utf8"));
+
+      const headline: NewsHeadline = {
+        id: item.id,
+        title: item.title,
+        url: item.link,
+        publishedAt: item.publishedAt,
+        source: parsed.source,
+        category: item.category,
+        language: parsed.language,
+        updatedAt: item.updatedAt,
+        articleContentId: articleMetadata.contentId,
+      };
+      const headlineMetadata = this.node.publishContent(headline.title, "application/json", Buffer.from(JSON.stringify(headline), "utf8"));
+      headlines.push(headline);
+      if (this.publishedById.get(headline.id) !== headlineMetadata.contentId) {
+        this.publishedById.set(headline.id, headlineMetadata.contentId);
         changed.push(headline);
       }
     }

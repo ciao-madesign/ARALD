@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NomadNode } from "../../node/src/node.js";
 import { TcpTransport } from "../../node/src/transports/tcp.js";
+import { computeContentId } from "../../node/src/content.js";
 import { NewsGateway, type NewsHeadline } from "../../gateway/nomad/news-gateway.js";
 
 /**
@@ -138,6 +139,25 @@ function waitFor(predicate: () => boolean, timeoutMs = 2000, intervalMs = 15): P
   });
 }
 
+/** The exact contentId NewsGateway.syncNews() publishes for a given item's article body — matches its `JSON.stringify({ summary })` bytes exactly, so tests can assert `NewsHeadline.articleContentId` structurally instead of treating it as opaque. */
+function articleContentIdFor(summary: string): string {
+  return computeContentId(Buffer.from(JSON.stringify({ summary }), "utf8"));
+}
+
+/** The `NewsHeadline` NewsGateway.syncNews() should produce for a `TestHeadline` fixture — the two-tier split (`docs/next-steps.md` Opzione I, pezzo 2) means `summary` never appears here; it lives only in the separately-published article body (`articleContentIdFor`). */
+function expectedHeadline(h: TestHeadline, extra: { source?: string; language?: string } = {}): NewsHeadline {
+  return {
+    id: h.id,
+    title: h.title,
+    url: h.url,
+    publishedAt: h.publishedAt,
+    source: extra.source ?? "",
+    category: h.category,
+    language: extra.language,
+    articleContentId: articleContentIdFor(h.summary),
+  } as NewsHeadline;
+}
+
 function makeNode(displayName: string): { node: NomadNode; transport: TcpTransport } {
   const node = new NomadNode({ displayName });
   const transport = new TcpTransport(node.nodeId, 0);
@@ -172,8 +192,8 @@ describe("NewsGateway (mocked with a test-local RSS HTTP server, no shipped fake
     gateway = new NewsGateway(gatewayNode.node, started.url);
 
     const first = await gateway.syncNews();
-    expect(first).toEqual([{ ...headline1, source: "Notizie di test" }]);
-    expect(gateway.headlines).toEqual([{ ...headline1, source: "Notizie di test" }]);
+    expect(first).toEqual([expectedHeadline(headline1, { source: "Notizie di test" })]);
+    expect(gateway.headlines).toEqual([expectedHeadline(headline1, { source: "Notizie di test" })]);
 
     // Re-syncing the same headline reports nothing new — dedup mirrors KiwixGateway.syncCatalog().
     const second = await gateway.syncNews();
@@ -182,8 +202,8 @@ describe("NewsGateway (mocked with a test-local RSS HTTP server, no shipped fake
     // A genuinely new headline shows up.
     items = [headline1, headline2];
     const third = await gateway.syncNews();
-    expect(third).toEqual([{ ...headline2, source: "Notizie di test" }]);
-    expect(gateway.headlines).toEqual([{ ...headline1, source: "Notizie di test" }, { ...headline2, source: "Notizie di test" }]);
+    expect(third).toEqual([expectedHeadline(headline2, { source: "Notizie di test" })]);
+    expect(gateway.headlines).toEqual([expectedHeadline(headline1, { source: "Notizie di test" }), expectedHeadline(headline2, { source: "Notizie di test" })]);
   });
 
   it("carries the feed's source/category/language onto every headline from that sync", async () => {
@@ -199,24 +219,58 @@ describe("NewsGateway (mocked with a test-local RSS HTTP server, no shipped fake
     expect(result.language).toBe("it");
     expect(result.category).toBe("meteo");
     expect(result.updatedAt).toBeUndefined(); // RSS 2.0 has no <updated> equivalent
+    expect(result.articleContentId).toBe(articleContentIdFor(headline1.summary));
   });
 
-  it("publishes each headline as retrievable content, discoverable via the normal CONTENT_QUERY cycle", async () => {
+  it("publishes the headline and its article body as two separate, independently retrievable contents (pezzo 2: livelli headline/summary)", async () => {
     const started = await startTestNewsServer(() => [headline1]);
     server = started.server;
 
     gatewayNode = makeNode("gateway");
     await gatewayNode.node.start();
     gateway = new NewsGateway(gatewayNode.node, started.url);
-    await gateway.syncNews();
+    const [headline] = await gateway.syncNews();
+
+    // The headline itself never carries `summary` — that's the whole point of the split.
+    expect(headline).not.toHaveProperty("summary");
+    expect(headline.articleContentId).toBe(articleContentIdFor(headline1.summary));
 
     const known = gatewayNode.node.listKnownContent();
-    expect(known).toHaveLength(1);
-    expect(known[0].name).toBe(headline1.title);
-    expect(known[0].mimeType).toBe("application/json");
+    expect(known).toHaveLength(2); // the headline + its article body, two distinct content ids
+    expect(known.some((m) => m.mimeType === "application/json")).toBe(true);
 
-    const stored = await gatewayNode.node.getContent(known[0].contentId, { timeoutMs: 2000 });
-    expect(JSON.parse(stored.toString("utf8"))).toEqual({ ...headline1, source: "" });
+    // The headline tier: small metadata, no article text.
+    const headlineContentId = known.find((m) => m.name === headline1.title)!.contentId;
+    const storedHeadline = await gatewayNode.node.getContent(headlineContentId, { timeoutMs: 2000 });
+    expect(JSON.parse(storedHeadline.toString("utf8"))).toEqual(expectedHeadline(headline1, { source: "" }));
+
+    // The article tier: fetched separately, on demand, via the headline's own articleContentId —
+    // never eagerly required just to know the headline exists.
+    const storedArticle = await gatewayNode.node.getContent(headline.articleContentId, { timeoutMs: 2000 });
+    expect(JSON.parse(storedArticle.toString("utf8"))).toEqual({ summary: headline1.summary });
+  });
+
+  it("a resync that only changes the article body (same title) still produces a new headline and is reported as changed", async () => {
+    // Since NewsHeadline embeds articleContentId, editing only the summary changes the headline's
+    // own bytes (and therefore its content id) even though title/id/url/publishedAt are unchanged —
+    // proves the "no separate change tracking needed for the article tier" claim in syncNews()'s doc
+    // comment actually holds, rather than just being asserted there.
+    let items = [headline1];
+    const started = await startTestNewsServer(() => items);
+    server = started.server;
+
+    gatewayNode = makeNode("gateway");
+    await gatewayNode.node.start();
+    gateway = new NewsGateway(gatewayNode.node, started.url);
+
+    const [first] = await gateway.syncNews();
+    items = [{ ...headline1, summary: "Un riassunto completamente diverso." }];
+    const changed = await gateway.syncNews();
+
+    expect(changed).toHaveLength(1);
+    expect(changed[0].id).toBe(headline1.id);
+    expect(changed[0].articleContentId).not.toBe(first.articleContentId);
+    expect(changed[0].articleContentId).toBe(articleContentIdFor("Un riassunto completamente diverso."));
   });
 
   it("service://news answers instantly from the cache, never blocking on a live HTTP call per invocation", async () => {
@@ -238,7 +292,7 @@ describe("NewsGateway (mocked with a test-local RSS HTTP server, no shipped fake
     gateway.registerNewsService();
 
     const result = (await caller.node.callService("service://news", {}, { timeoutMs: 2000 })) as { headlines: NewsHeadline[] };
-    expect(result.headlines).toEqual([{ ...headline1, source: "" }]);
+    expect(result.headlines).toEqual([expectedHeadline(headline1, { source: "" })]);
     // The service call itself never hit the backend again — still exactly the one sync() call above.
     expect(callCount).toBe(1);
   });
@@ -281,17 +335,17 @@ describe("NewsGateway (mocked with a test-local RSS HTTP server, no shipped fake
 
     gateway.startAutoSync(40);
     await waitFor(() => gateway!.headlines.length === 1);
-    expect(gateway.headlines).toEqual([{ ...headline1, source: "" }]);
+    expect(gateway.headlines).toEqual([expectedHeadline(headline1, { source: "" })]);
 
     items = [headline1, headline2];
     await waitFor(() => gateway!.headlines.length === 2);
-    expect(gateway.headlines).toEqual([{ ...headline1, source: "" }, { ...headline2, source: "" }]);
+    expect(gateway.headlines).toEqual([expectedHeadline(headline1, { source: "" }), expectedHeadline(headline2, { source: "" })]);
 
     gateway.stopAutoSync();
     items = [headline1, headline2, { ...headline1, id: "3", title: "Terza notizia" }];
     await new Promise((resolve) => setTimeout(resolve, 200)); // several would-be intervals' worth
     // Stopped — the timer no longer fires, so the third headline is never picked up.
-    expect(gateway.headlines).toEqual([{ ...headline1, source: "" }, { ...headline2, source: "" }]);
+    expect(gateway.headlines).toEqual([expectedHeadline(headline1, { source: "" }), expectedHeadline(headline2, { source: "" })]);
   });
 
   it("startAutoSync() reports every failed sync via onError without ever stopping the timer", async () => {
@@ -387,9 +441,9 @@ describe("NewsGateway (mocked with a test-local RSS HTTP server, no shipped fake
     const fastSecondCall = gateway.syncNews(); // request 1 — starts after 0, resolves almost immediately
 
     const [slowResult, fastResult] = await Promise.all([slowFirstCall, fastSecondCall]);
-    expect(fastResult).toEqual([{ ...headline1, source: "" }, { ...headline2, source: "" }]); // the newer call reports both as new/current
+    expect(fastResult).toEqual([expectedHeadline(headline1, { source: "" }), expectedHeadline(headline2, { source: "" })]); // the newer call reports both as new/current
     expect(slowResult).toEqual([]); // the superseded call reports nothing — it never got to commit
-    expect(gateway.headlines).toEqual([{ ...headline1, source: "" }, { ...headline2, source: "" }]); // final state matches the newer call, not the stale one
+    expect(gateway.headlines).toEqual([expectedHeadline(headline1, { source: "" }), expectedHeadline(headline2, { source: "" })]); // final state matches the newer call, not the stale one
   });
 
   it("publishedById stays bounded even after syncing far more distinct headlines than its cap", async () => {
@@ -427,6 +481,6 @@ describe("NewsGateway (mocked with a test-local RSS HTTP server, no shipped fake
     // on the same gateway instance (same publishedById) throughout.
     currentBatch = [firstHeadline];
     const finalChanged = await gateway.syncNews();
-    expect(finalChanged).toEqual([{ ...firstHeadline, source: "" }]); // evicted, so it's "new" again — proves the bound held
+    expect(finalChanged).toEqual([expectedHeadline(firstHeadline, { source: "" })]); // evicted, so it's "new" again — proves the bound held
   });
 });
