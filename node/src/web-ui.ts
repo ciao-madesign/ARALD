@@ -7,6 +7,7 @@ import type { ContentMetadata } from "./content.js";
 import { MAX_MESSAGE_TEXT_LENGTH, type StoredMessage } from "./message-history.js";
 import type { TrustLevel } from "./trust.js";
 import { encodeQr, qrToSvg } from "./qrcode.js";
+import { raceTimeout } from "./async-timeout.js";
 
 export interface WebUiOptions {
   /** Port to listen on; 0 (default) lets the OS assign one — useful in tests, mirrors TcpTransport's own `port` convention. */
@@ -849,7 +850,11 @@ export class WebUiServer {
       // its own worst case is up to 2x timeoutMs — wrapped here so this endpoint never holds the
       // HTTP connection open longer than the single timeoutMs it advertises, regardless. The
       // underlying call isn't cancelled if it loses this race; it just finishes in the background.
-      const result = await callWithHardTimeout(this.node.callService(serviceId, body?.payload, { timeoutMs }), timeoutMs);
+      const result = await raceTimeout(
+        this.node.callService(serviceId, body?.payload, { timeoutMs }),
+        timeoutMs,
+        `service call did not complete within ${timeoutMs}ms`,
+      );
       sendJson(res, 200, { result });
     } catch (err) {
       // Same convention as every other service-call error path in this codebase (node.ts's
@@ -973,30 +978,6 @@ export class WebUiServer {
 /** Mirrors the definition `/api/status`'s own `services` count already uses ("known to this node and currently marked available") — the same bar `POST /api/call` requires a `serviceId` to clear before `callService()` is ever invoked. */
 function isKnownAvailableService(node: NomadNode, serviceId: string): boolean {
   return node.listKnownServices().some((announcement) => announcement.serviceId === serviceId && announcement.availability);
-}
-
-/**
- * Bounds the *total* wall-clock time this endpoint waits for `promise` to
- * `timeoutMs`, independent of how many internal timeouts the promise's own
- * producer applies. Does not cancel the underlying operation — `promise`
- * keeps running and may still resolve or reject later, harmlessly, after
- * this has already settled the race (no `AbortController` plumbed through
- * `NomadNode.callService()` today to actually stop it).
- */
-function callWithHardTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`service call did not complete within ${timeoutMs}ms`)), timeoutMs);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      },
-    );
-  });
 }
 
 const MAX_CALL_BODY_BYTES = 262_144; // generous for a service call payload, nowhere near CHUNK_SIZE

@@ -347,6 +347,8 @@ export class NomadNode extends EventEmitter {
     string,
     { providerId: string; resolve: (result: unknown) => void; reject: (err: Error) => void; timeout: NodeJS.Timeout }
   >();
+  /** In-flight `callService()` invocations currently awaiting a *local* handler (`withServiceTimeout()`) — tracked separately from `pendingServiceCalls` (which only ever holds remote, network-bound calls) so `stop()` can reject these too instead of leaving them alive past shutdown, found by review. */
+  private readonly pendingLocalServiceCalls = new Set<{ reject: (err: Error) => void }>();
   private started = false;
 
   constructor(options: NomadNodeOptions = {}) {
@@ -474,6 +476,14 @@ export class NomadNode extends EventEmitter {
       pending.reject(new Error("node stopped while the service call was still in flight"));
     }
     this.pendingServiceCalls.clear();
+    // Same reasoning as pendingServiceCalls just above, for a locally-served callService() instead
+    // of a remote one — found missing by review. Each entry's own reject() (withServiceTimeout())
+    // clears its underlying setTimeout too, so this also prevents the timer itself from outliving
+    // stop() by up to the rest of timeoutMs.
+    for (const pending of this.pendingLocalServiceCalls) {
+      pending.reject(new Error("node stopped while the service call was still in flight"));
+    }
+    this.pendingLocalServiceCalls.clear();
   }
 
   async connect(address: PeerAddress, transportId?: string): Promise<string> {
@@ -794,13 +804,59 @@ export class NomadNode extends EventEmitter {
    * result or rejecting with its declared error / a timeout.
    */
   async callService(serviceId: string, payload: unknown, options: { timeoutMs?: number } = {}): Promise<unknown> {
+    const timeoutMs = options.timeoutMs ?? this.contentRequestTimeoutMs;
     const local = this.localServices.get(serviceId);
     if (local && local.announcement.availability) {
-      return local.handler(payload, this.nodeId);
+      return this.withServiceTimeout(Promise.resolve(local.handler(payload, this.nodeId)), serviceId, timeoutMs);
     }
-    const timeoutMs = options.timeoutMs ?? this.contentRequestTimeoutMs;
     const provider = await this.discoverService(serviceId, { timeoutMs });
     return this.invokeService(provider.providerId, serviceId, payload, timeoutMs);
+  }
+
+  /**
+   * Bounds a locally-served `callService()` call to `timeoutMs`, the same
+   * guarantee the remote-invocation path (`invokeService()`) already has —
+   * found missing by review: a locally-registered handler that hangs (a
+   * live HTTP proxy like `AiGateway`'s, stalled on a wedged backend) used
+   * to leave the caller's promise pending forever, silently ignoring
+   * `options.timeoutMs`, purely because the provider happened to be local
+   * rather than remote.
+   *
+   * Deliberately does NOT delegate to the shared `raceTimeout()`
+   * (`async-timeout.ts`): that helper keeps its timer internal, so nothing
+   * outside it can `clearTimeout()` early, and `stop()` needs exactly that.
+   * Managing the timer here directly mirrors the pattern `pendingServiceCalls`/
+   * `stop()` already use for the remote path (explicit `clearTimeout()`
+   * on every exit, not just a race that settles promptly but leaves the
+   * loser's timer ticking). This call is registered in
+   * `pendingLocalServiceCalls` for its duration so `stop()` can reject (and
+   * this then clears its own timer) immediately instead of leaving it to
+   * time out on its own well after the node has already shut down — the
+   * same guarantee `pendingServiceCalls`/`invokeService()` already give the
+   * remote-invocation path. Rejecting doesn't cancel the underlying handler
+   * call itself (there's no general cancellation protocol for an arbitrary
+   * `ServiceHandler`) — just stops making the caller wait for it.
+   */
+  private withServiceTimeout<T>(result: Promise<T>, serviceId: string, timeoutMs: number): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const entry = {
+        reject: (err: Error) => {
+          clearTimeout(timer);
+          this.pendingLocalServiceCalls.delete(entry);
+          reject(err);
+        },
+      };
+      const timer = setTimeout(() => entry.reject(new Error(`local service call to ${serviceId} timed out`)), timeoutMs);
+      this.pendingLocalServiceCalls.add(entry);
+      result.then(
+        (value) => {
+          clearTimeout(timer);
+          this.pendingLocalServiceCalls.delete(entry);
+          resolve(value);
+        },
+        (err: unknown) => entry.reject(err as Error),
+      );
+    });
   }
 
   private invokeService(providerId: string, serviceId: string, payload: unknown, timeoutMs: number): Promise<unknown> {

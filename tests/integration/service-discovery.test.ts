@@ -192,6 +192,38 @@ describe("service discovery and invocation", () => {
     }
   });
 
+  it("callService() times out a locally-registered handler that never resolves, instead of hanging forever (regression: found by review, digest AI work)", async () => {
+    // withServiceTimeout() (node.ts) closes a gap the remote-invocation path never had: a handler
+    // registered on *this* node used to be awaited with no timeout at all, silently ignoring
+    // options.timeoutMs whenever the provider happened to be local rather than remote — exactly the
+    // topology gateway/nomad/cli.ts's demo sets up for service://ai + any of its consumers.
+    const caller = makeNode("caller");
+    nodes.push(caller.node);
+    await caller.node.start();
+
+    caller.node.registerService("service://hangs", "1.0.0", ["noop"], () => new Promise(() => {})); // never resolves
+
+    const start = Date.now();
+    await expect(caller.node.callService("service://hangs", {}, { timeoutMs: 100 })).rejects.toThrow(/timed out/);
+    expect(Date.now() - start).toBeLessThan(1000); // bounded by timeoutMs, not left hanging
+  });
+
+  it("stop() rejects an in-flight callService() invocation of a *local* handler too, not just remote ones", async () => {
+    // Not pushed to `nodes` (stopped explicitly below) — afterEach() would otherwise call stop()
+    // on it a second time, same convention as the existing remote-call version of this test above.
+    const solo = makeNode("solo");
+    await solo.node.start();
+
+    solo.node.registerService("service://hangs-local", "1.0.0", [], () => new Promise(() => {})); // never resolves
+
+    const pending = solo.node.callService("service://hangs-local", {}, { timeoutMs: 5000 });
+    const startedStopAt = Date.now();
+    await solo.node.stop();
+    await expect(pending).rejects.toThrow(/node stopped/);
+    // Proves the rejection came from stop()'s own cleanup, not from waiting out the 5000ms timeout.
+    expect(Date.now() - startedStopAt).toBeLessThan(1000);
+  });
+
   it("rejects a validly-signed SERVICE_ANNOUNCE whose capabilities isn't an array, instead of storing it for a later consumer (e.g. the web UI) to crash on", async () => {
     // Regression test: a valid Ed25519 signature only proves the claimed providerId produced this
     // exact JSON — it says nothing about the shape of the fields inside. An attacker who generates
