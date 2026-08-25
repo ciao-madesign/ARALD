@@ -1,4 +1,4 @@
-import { BoundedFifoMap } from "./bounded-map.js";
+import { BoundedFifoMap, pushBounded } from "./bounded-map.js";
 
 export interface StoredMessage {
   /** The other party in this 1:1 conversation — always the peer's node id, regardless of `direction`. */
@@ -65,8 +65,8 @@ export class MessageHistory {
 
   record(peer: string, direction: "sent" | "received", text: string): void {
     const messages = this.conversations.get(peer) ?? [];
-    messages.push({ peer, direction, text, timestamp: Date.now() });
-    while (messages.length > this.maxMessagesPerPeer) messages.shift();
+    pushBounded(messages, { peer, direction, text, timestamp: Date.now() }, this.maxMessagesPerPeer);
+    if (messages.length === 0) return; // maxMessagesPerPeer <= 0 — nothing survived trimming, don't record an empty conversation
     this.conversations.set(peer, messages);
   }
 

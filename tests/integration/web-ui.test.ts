@@ -838,3 +838,190 @@ describe("WebUiServer /api/messages", () => {
     expect(body.error).toMatch(/encryption key/);
   });
 });
+
+/**
+ * GET /api/channels, GET/POST /api/channel-messages (public chat channels —
+ * docs/next-steps.md Opzione J): a thin HTTP layer over
+ * NomadNode.publishChannelMessage()/publicChannels. Unlike /api/messages
+ * (1:1 private chat, gated behind the network password even for reads),
+ * both GET endpoints here are unauthenticated — same tier as /api/peers,
+ * /api/services, /api/content — because a public channel's contents are
+ * public mesh state by definition, not "Private messages" (spec §56).
+ * POST still requires the same network-password auth as every other write
+ * this class exposes.
+ */
+describe("WebUiServer /api/channels, /api/channel-messages", () => {
+  const TOKEN = "test-pairing-token-0123456789abcdef";
+  const nodes: NomadNode[] = [];
+  const webUis: WebUiServer[] = [];
+
+  afterEach(async () => {
+    await Promise.all(webUis.map((w) => w.stop()));
+    await Promise.all(nodes.map((n) => n.stop()));
+    nodes.length = 0;
+    webUis.length = 0;
+  });
+
+  function makeGateway(displayName: string): { node: NomadNode; transport: TcpTransport; webUi: WebUiServer } {
+    const node = new NomadNode({ displayName });
+    const transport = new TcpTransport(node.nodeId, 0);
+    node.addTransport(transport);
+    const webUi = new WebUiServer(node, { port: 0, allowServiceCalls: true, networkPassword: TOKEN });
+    nodes.push(node);
+    webUis.push(webUi);
+    return { node, transport, webUi };
+  }
+
+  function authedFetch(webUi: WebUiServer, path: string, init: RequestInit = {}): Promise<Response> {
+    return fetch(`http://127.0.0.1:${webUi.port}${path}`, {
+      ...init,
+      headers: { ...init.headers, Authorization: `Bearer ${TOKEN}` },
+    });
+  }
+
+  it("GET /api/channels and GET /api/channel-messages need no auth at all, even when allowServiceCalls/networkPassword are set", async () => {
+    const a = makeGateway("A");
+    await Promise.all([a.node.start(), a.webUi.start()]);
+    a.node.publishChannelMessage("generale", "ciao a tutti");
+
+    const listRes = await fetch(`http://127.0.0.1:${a.webUi.port}/api/channels`);
+    expect(listRes.status).toBe(200);
+    expect(await listRes.json()).toEqual([{ channel: "generale", messageCount: 1, lastActivity: expect.any(Number) }]);
+
+    const messagesRes = await fetch(`http://127.0.0.1:${a.webUi.port}/api/channel-messages?channel=generale`);
+    expect(messagesRes.status).toBe(200);
+    const body = await messagesRes.json();
+    expect(body.messages).toEqual([{ channel: "generale", author: a.node.nodeId, text: "ciao a tutti", timestamp: expect.any(Number), contentId: expect.any(String) }]);
+  });
+
+  it("GET /api/channels is an empty array before any channel has ever been posted to", async () => {
+    const a = makeGateway("A");
+    await Promise.all([a.node.start(), a.webUi.start()]);
+    expect(await (await fetch(`http://127.0.0.1:${a.webUi.port}/api/channels`)).json()).toEqual([]);
+  });
+
+  it("GET /api/channel-messages with no messages for that channel returns an empty array, not an error", async () => {
+    const a = makeGateway("A");
+    await Promise.all([a.node.start(), a.webUi.start()]);
+    const res = await fetch(`http://127.0.0.1:${a.webUi.port}/api/channel-messages?channel=nobody-posted-here`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ messages: [] });
+  });
+
+  it("GET /api/channel-messages without a 'channel' query parameter is a 400", async () => {
+    const a = makeGateway("A");
+    await Promise.all([a.node.start(), a.webUi.start()]);
+    const res = await fetch(`http://127.0.0.1:${a.webUi.port}/api/channel-messages`);
+    expect(res.status).toBe(400);
+  });
+
+  it("GET /api/channel-messages normalizes the channel query to lowercase, matching how POST stores it", async () => {
+    const a = makeGateway("A");
+    await Promise.all([a.node.start(), a.webUi.start()]);
+    a.node.publishChannelMessage("Generale", "ciao"); // publishChannelMessage() itself lowercases
+
+    const res = await fetch(`http://127.0.0.1:${a.webUi.port}/api/channel-messages?channel=Generale`);
+    const body = await res.json();
+    expect(body.messages).toHaveLength(1);
+  });
+
+  it("both GET endpoints stay reachable (200) even when allowServiceCalls is off, unlike GET /api/messages", async () => {
+    // Unlike /api/messages (which 404s with allowServiceCalls off, since it needs the password
+    // infrastructure to exist at all), the two GET endpoints here have no auth dependency — they
+    // must stay reachable even when POST /api/call and friends are disabled entirely.
+    const node = new NomadNode({ displayName: "N" });
+    const webUi = new WebUiServer(node, { port: 0 });
+    nodes.push(node);
+    webUis.push(webUi);
+    await Promise.all([node.start(), webUi.start()]);
+    node.publishChannelMessage("generale", "ciao");
+
+    const listRes = await fetch(`http://127.0.0.1:${webUi.port}/api/channels`);
+    expect(listRes.status).toBe(200);
+    const messagesRes = await fetch(`http://127.0.0.1:${webUi.port}/api/channel-messages?channel=generale`);
+    expect(messagesRes.status).toBe(200);
+  });
+
+  it("POST publishes end-to-end: reaches a second connected node's own publicChannels", async () => {
+    const a = makeGateway("A");
+    const b = makeGateway("B");
+    await Promise.all([a.node.start(), b.node.start(), a.webUi.start(), b.webUi.start()]);
+    await a.node.connect({ host: "127.0.0.1", port: b.transport.port });
+
+    const res = await authedFetch(a.webUi, "/api/channel-messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel: "generale", text: "rifugio raggiunto" }),
+    });
+    expect(res.status).toBe(200);
+    const { message } = await res.json();
+    expect(message.text).toBe("rifugio raggiunto");
+    expect(message.author).toBe(a.node.nodeId);
+
+    await waitFor(() => b.node.publicChannels.get("generale").length === 1);
+    expect(b.node.publicChannels.get("generale")[0].text).toBe("rifugio raggiunto");
+  });
+
+  it("is a 404 for POST when allowServiceCalls is off", async () => {
+    const node = new NomadNode({ displayName: "N" });
+    const webUi = new WebUiServer(node, { port: 0 });
+    nodes.push(node);
+    webUis.push(webUi);
+    await Promise.all([node.start(), webUi.start()]);
+
+    const res = await fetch(`http://127.0.0.1:${webUi.port}/api/channel-messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel: "generale", text: "ciao" }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("POST rejects with 401 when the Authorization header is missing or wrong", async () => {
+    const a = makeGateway("A");
+    await Promise.all([a.node.start(), a.webUi.start()]);
+
+    const noAuth = await fetch(`http://127.0.0.1:${a.webUi.port}/api/channel-messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel: "generale", text: "ciao" }),
+    });
+    expect(noAuth.status).toBe(401);
+  });
+
+  it("POST validates 'channel' and 'text', rejecting missing/empty fields with 400", async () => {
+    const a = makeGateway("A");
+    await Promise.all([a.node.start(), a.webUi.start()]);
+
+    const cases = [{ body: {} }, { body: { channel: "generale" } }, { body: { text: "hi" } }, { body: { channel: "", text: "hi" } }, { body: { channel: "generale", text: "" } }];
+    for (const { body } of cases) {
+      const res = await authedFetch(a.webUi, "/api/channel-messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      expect(res.status).toBe(400);
+    }
+  });
+
+  it("POST rejects an invalid channel name or oversized text with 400, surfacing publishChannelMessage()'s own error", async () => {
+    const a = makeGateway("A");
+    await Promise.all([a.node.start(), a.webUi.start()]);
+
+    const invalidChannel = await authedFetch(a.webUi, "/api/channel-messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel: "has spaces", text: "ciao" }),
+    });
+    expect(invalidChannel.status).toBe(400);
+    expect((await invalidChannel.json()).error).toMatch(/invalid channel name/);
+
+    const oversizedText = await authedFetch(a.webUi, "/api/channel-messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel: "generale", text: "x".repeat(4001) }),
+    });
+    expect(oversizedText.status).toBe(400);
+    expect((await oversizedText.json()).error).toMatch(/1-\d+ characters/);
+  });
+});

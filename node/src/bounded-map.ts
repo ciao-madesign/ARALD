@@ -111,3 +111,26 @@ export class BoundedFifoMap<K, V> {
     return this.map.size;
   }
 }
+
+/**
+ * Appends `item` to `array` in place, then trims from the front until it's
+ * no longer than `maxLength` — the "keep the N most recent" bounding
+ * pattern used by every per-key message list in this codebase
+ * (`MessageHistory.record()`, `PublicChannels.record()`). Extracted so
+ * that identical logic has one place to change, same reasoning
+ * `BoundedFifoMap` itself was extracted for (`CLAUDE.md`, "rimossa
+ * duplicazione 5x").
+ *
+ * A negative `maxLength` never even reaches the trimming loop (found by
+ * review): `array.length > maxLength` stays true once the array is empty
+ * (`0 > -1`), and `Array.prototype.shift()` on an empty array is a silent
+ * no-op — without this guard the loop never terminates, freezing the event
+ * loop. Mirrors `BoundedFifoMap.set()`'s own `maxSize <= 0` guard (refuses
+ * to hold anything at all) so `maxLength <= 0` behaves identically here:
+ * `item` is never even pushed.
+ */
+export function pushBounded<T>(array: T[], item: T, maxLength: number): void {
+  if (maxLength <= 0) return;
+  array.push(item);
+  while (array.length > maxLength) array.shift();
+}
