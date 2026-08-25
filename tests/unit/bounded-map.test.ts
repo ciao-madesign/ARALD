@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BoundedFifoMap } from "../../node/src/bounded-map.js";
+import { BoundedFifoMap, pushBounded } from "../../node/src/bounded-map.js";
 
 describe("BoundedFifoMap", () => {
   it("stores and retrieves values like a Map", () => {
@@ -149,5 +149,41 @@ describe("BoundedFifoMap", () => {
 
     expect(seen).toEqual(["a", "b", "c"]);
     expect(map.size).toBe(0);
+  });
+});
+
+describe("pushBounded", () => {
+  it("appends and trims from the front once the array exceeds maxLength", () => {
+    const arr = [1, 2, 3];
+    pushBounded(arr, 4, 3);
+    expect(arr).toEqual([2, 3, 4]);
+  });
+
+  it("appends without trimming while under maxLength", () => {
+    const arr = [1];
+    pushBounded(arr, 2, 3);
+    expect(arr).toEqual([1, 2]);
+  });
+
+  it("leaves the array empty for maxLength 0 — the item is never even pushed", () => {
+    const arr: number[] = [];
+    pushBounded(arr, 1, 0);
+    expect(arr).toEqual([]);
+  });
+
+  it("leaves the array empty for a negative maxLength, and terminates instead of looping forever", () => {
+    // Regression: found by review — the trimming loop (`while (array.length > maxLength) shift()`)
+    // never terminates for a negative maxLength: once the array is empty, `0 > -1` is still true, and
+    // shift() on an empty array is a silent no-op, so the loop spins forever and freezes the event
+    // loop. This test itself would hang (and eventually time out) if the guard regressed.
+    const arr: number[] = [];
+    pushBounded(arr, 1, -1);
+    expect(arr).toEqual([]);
+  });
+
+  it("a negative maxLength never disturbs a pre-existing non-empty array — the guard returns before pushing", () => {
+    const arr = [1, 2];
+    pushBounded(arr, 3, -5);
+    expect(arr).toEqual([1, 2]); // unchanged — 3 was never pushed, nothing was trimmed away either
   });
 });

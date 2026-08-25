@@ -453,6 +453,27 @@ li.skel-row { display: flex; flex-direction: column; }
   clip-path: none; /* the cut-corner "beacon" signature reads oddly on a small pill-shaped send button */
 }
 
+/* ---------- public channels (docs/next-steps.md Opzione J) — same shape as chat 1:1 above, plus a
+   join-by-name form and an author label for messages that aren't this device's own ---------- */
+
+#join-channel-form { display: flex; gap: 0.5em; margin-bottom: 0.8em; }
+#join-channel-form input {
+  flex: 1; min-width: 0; padding: 0.55em 0.75em; border-radius: 0.5em; border: 1px solid var(--border);
+  background: var(--bg); color: var(--ink);
+}
+#join-channel-form input:focus-visible { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
+#join-channel-form button { flex: none; border-radius: 0.5em; padding: 0.55em 1em; background: var(--accent); color: var(--accent-ink); border: none; font-weight: 600; }
+#join-channel-form button:active { transform: scale(0.97); }
+
+/* #channel-panel reuses #chat-panel's own look exactly (cut-corner accent border) — same visual
+   language for "a conversation is open", whether 1:1 or a group channel. */
+#channel-panel:not([hidden]) {
+  margin-top: 1em; padding: 1em; border: 1px solid var(--accent); background: var(--accent-soft);
+  clip-path: polygon(0 0, calc(100% - 1em) 0, 100% 1em, 100% 100%, 0 100%);
+  animation: item-in 220ms var(--ease);
+}
+.chat-author { font-size: 0.7em; font-weight: 600; margin-bottom: 0.15em; padding: 0 0.2em; }
+
 /* :not([hidden]) — same reason as #setup-screen above: an author rule setting `display` at equal
    specificity to the UA stylesheet's `[hidden] { display: none }` wins over it (author styles beat
    UA styles on a specificity tie), so an unguarded `display: flex` here would keep an error banner

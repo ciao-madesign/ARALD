@@ -48,6 +48,8 @@ const TRUST_LABELS = {
 let gatewayUrl = localStorage.getItem(STORAGE_KEY_URL) || "";
 let networkPassword = localStorage.getItem(STORAGE_KEY_PASSWORD) || "";
 let refreshTimer;
+/** This node's own node id, from the last /api/status response — set by renderStats(), read by renderChannelMessages() to tell a group channel message this device sent apart from one authored by someone else. */
+let myNodeId = null;
 
 // Read calls get a shorter client-side budget than POST /api/call, whose own server-side cap
 // (MAX_CALL_TIMEOUT_MS, node/src/web-ui.ts) is 15s — set a bit above that so the server's own
@@ -157,6 +159,44 @@ async function sendChatMessage(to, text) {
     throw err;
   }
   return body.id;
+}
+
+/**
+ * GET /api/channel-messages?channel=... (node/src/web-ui.ts) — unlike fetchMessages() above, this
+ * needs no Authorization header at all: a public channel's contents are public mesh state by
+ * definition (docs/next-steps.md Opzione J), not "Private messages" (spec §56), so it's the same
+ * always-readable tier as fetchJson()'s other callers (/api/peers, /api/content, ...).
+ */
+async function fetchChannelMessages(channel) {
+  const body = await fetchJson("/api/channel-messages?channel=" + encodeURIComponent(channel));
+  return body.messages;
+}
+
+/** POST /api/channel-messages (node/src/web-ui.ts) — publishes a message to a public channel. Same auth/err.status convention as sendChatMessage() — posting, unlike reading, still needs the network password. */
+async function sendChannelMessage(channel, text) {
+  const res = await fetchWithTimeout(
+    apiUrl("/api/channel-messages"),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + networkPassword },
+      body: JSON.stringify({ channel, text }),
+    },
+    CALL_TIMEOUT_MS,
+  );
+  let body;
+  try {
+    body = await res.json();
+  } catch {
+    const err = new Error("risposta non valida dal gateway (HTTP " + res.status + ")");
+    err.status = res.status;
+    throw err;
+  }
+  if (!res.ok) {
+    const err = new Error(body.error || "HTTP " + res.status);
+    err.status = res.status;
+    throw err;
+  }
+  return body.message;
 }
 
 /**
@@ -290,6 +330,7 @@ function showSetupScreen(errorMessage) {
   document.getElementById("dashboard-screen").hidden = true;
   clearInterval(refreshTimer);
   closeChatPanel();
+  closeChannelPanel();
 
   const needsAddress = addressFieldNeeded();
   document.getElementById("address-field").hidden = !needsAddress;
@@ -599,6 +640,7 @@ function renderSkeletons() {
   listSkeleton(document.getElementById("peers"), 2);
   listSkeleton(document.getElementById("services"), 3);
   listSkeleton(document.getElementById("content"), 3);
+  listSkeleton(document.getElementById("channels"), 2);
 }
 
 function showDashboard() {
@@ -609,7 +651,9 @@ function showDashboard() {
   serviceSeenIds = new Set();
   contentSeenIds = new Set();
   lastContentQuery = null;
+  channelSeenNames = new Set();
   closeChatPanel();
+  closeChannelPanel();
   renderSkeletons();
   const main = document.getElementById("dashboard-main");
   main.focus({ preventScroll: true }); // announces the screen change to screen-reader users
@@ -644,6 +688,7 @@ document.getElementById("retry-refresh").addEventListener("click", () => {
 });
 
 function renderStats(s) {
+  myNodeId = s.nodeId; // needed by renderChannelMessages() to tell "my own message" apart from another author's
   const stats = document.getElementById("stats");
   stats.textContent = "";
   stats.removeAttribute("aria-busy");
@@ -698,6 +743,39 @@ function renderPeers(peers) {
     list.append(li);
   }
   peerSeenIds = nextSeen;
+}
+
+let channelSeenNames = new Set();
+
+function renderChannels(channels) {
+  const list = document.getElementById("channels");
+  list.removeAttribute("aria-busy");
+  document.getElementById("channels-count").textContent = channels.length > 0 ? String(channels.length) : "";
+  if (renderEmptyIfNeeded(list, channels, "Nessun canale conosciuto ancora. Aprine uno qui sopra.", "message-circle")) {
+    channelSeenNames = new Set();
+    return;
+  }
+  const nextSeen = new Set();
+  for (const c of channels) {
+    nextSeen.add(c.channel);
+    const li = el("li", null, [
+      el("div", { className: "row" }, [
+        el("span", { className: "row-title mono", textContent: "#" + c.channel, title: c.channel }),
+        el("span", { className: "muted", textContent: timeAgo(c.lastActivity) }),
+      ]),
+      el("div", { className: "tags" }, [el("span", { className: "tag", textContent: c.messageCount === 1 ? "1 messaggio" : c.messageCount + " messaggi" })]),
+    ]);
+    li.dataset.channel = c.channel;
+    if (networkPassword) {
+      const openButton = el("button", { className: "call-button", textContent: "Apri" });
+      openButton.addEventListener("click", () => openChannelPanel(c.channel));
+      li.append(openButton);
+    }
+    if (openChannel === c.channel) li.classList.add("is-open");
+    if (!channelSeenNames.has(c.channel)) li.classList.add("enter");
+    list.append(li);
+  }
+  channelSeenNames = nextSeen;
 }
 
 function setCallSubmitBusy(submit, busy) {
@@ -919,6 +997,126 @@ function openChatPanel(peer, label) {
   chatPollTimer = setInterval(() => refreshChatMessages(peer, list), 3000);
 }
 
+// ---------- public channels (docs/next-steps.md Opzione J) — shares the #chat-panel styling
+// (.chat-messages/.chat-bubble/.chat-compose) but its own #channel-panel container, since a channel
+// stays open independently of any 1:1 conversation that might also be open. ----------
+
+let openChannel = null;
+let channelPollTimer = null;
+
+function closeChannelPanel() {
+  openChannel = null;
+  clearInterval(channelPollTimer);
+  channelPollTimer = null;
+  const panel = document.getElementById("channel-panel");
+  panel.hidden = true;
+  panel.textContent = "";
+  document.querySelectorAll("#channels li.is-open").forEach((li) => li.classList.remove("is-open"));
+}
+
+function renderChannelMessages(list, messages) {
+  const wasScrolledToBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 24;
+  if (renderEmptyIfNeeded(list, messages, "Nessun messaggio ancora. Scrivine uno.")) return;
+  for (const m of messages) {
+    const isMine = m.author === myNodeId;
+    const bubbleChildren = [el("div", { className: "chat-bubble", textContent: m.text })];
+    // A group channel needs the author visible (unlike 1:1 chat, where "sent"/"received" already
+    // says who) — shown only for someone else's message, never this device's own.
+    const children = isMine
+      ? bubbleChildren
+      : [el("div", { className: "chat-author muted", textContent: "NODE-" + m.author.slice(0, 8) }), ...bubbleChildren];
+    children.push(el("div", { className: "chat-timestamp muted", textContent: timeAgo(m.timestamp) }));
+    list.append(el("li", { className: "chat-message " + (isMine ? "is-sent" : "is-received") }, children));
+  }
+  if (wasScrolledToBottom) list.scrollTop = list.scrollHeight;
+}
+
+async function refreshChannelMessages(channel, list) {
+  try {
+    const messages = await fetchChannelMessages(channel);
+    if (openChannel !== channel) return; // panel closed/switched while this was in flight
+    renderChannelMessages(list, messages);
+  } catch {
+    // Best-effort background poll, same posture as refreshChatMessages() — the main dashboard error
+    // banner already surfaces a persistently unreachable gateway.
+  }
+}
+
+/** Opens (or scrolls to, if already open) the shared channel panel for `channel` — a channel need not already be known: opening one that's never been posted to just shows an empty thread ready for the first message, matching the content-centric "no channel-creation step" design (public-channels.ts). */
+function openChannelPanel(channel) {
+  if (openChannel === channel) {
+    document.getElementById("channel-panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    return;
+  }
+  closeChannelPanel();
+  openChannel = channel;
+  const panel = document.getElementById("channel-panel");
+  panel.textContent = "";
+
+  const closeButton = el("button", { className: "icon-button", type: "button" }, [iconEl("x")]);
+  closeButton.setAttribute("aria-label", "Chiudi");
+  closeButton.addEventListener("click", closeChannelPanel);
+
+  const list = el("ul", { className: "chat-messages" });
+  list.setAttribute("aria-live", "polite");
+  listSkeleton(list, 2);
+
+  const input = el("input", { type: "text", placeholder: "Scrivi un messaggio..." });
+  input.autocomplete = "off";
+  const submit = el("button", { className: "call-submit", type: "submit" }, [iconEl("send"), el("span", { textContent: "Invia" })]);
+  const form = el("form", { className: "chat-compose" }, [input, submit]);
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+    input.disabled = true;
+    submit.disabled = true;
+    try {
+      await sendChannelMessage(channel, text);
+      input.value = "";
+      vibrate(10);
+      await refreshChannelMessages(channel, list);
+    } catch (err) {
+      if (err.status === 401) {
+        handlePasswordRejected();
+        return;
+      }
+      showToast(err.message, "alert-circle");
+      vibrate([12, 40, 12]);
+    } finally {
+      input.disabled = false;
+      submit.disabled = false;
+      input.focus({ preventScroll: true });
+    }
+  });
+
+  panel.append(
+    el("div", { className: "call-panel-header" }, [
+      el("div", { className: "call-panel-title" }, [iconEl("message-circle"), el("span", { textContent: "#" + channel })]),
+      closeButton,
+    ]),
+    list,
+    form,
+  );
+  panel.hidden = false;
+  document.querySelectorAll("#channels li").forEach((li) => li.classList.toggle("is-open", li.dataset.channel === channel));
+  panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+  refreshChannelMessages(channel, list);
+  channelPollTimer = setInterval(() => refreshChannelMessages(channel, list), 3000);
+}
+
+document.getElementById("join-channel-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const input = document.getElementById("join-channel-input");
+  const channel = input.value.trim().toLowerCase();
+  if (!channel) return;
+  document.getElementById("channels-panel").open = true;
+  openChannelPanel(channel);
+  input.value = "";
+});
+
 // Known serviceIds get a recognizable icon and a human-readable name; anything else (a service this
 // app has never heard of, e.g. one an operator registered locally) still gets a card, just with a
 // generic icon and a name derived from the raw id — "some card" beats "silently missing" for an
@@ -1061,11 +1259,17 @@ let refreshCycleId = 0;
 async function refreshAll() {
   const cycleId = ++refreshCycleId;
   try {
-    const [status, peers, services] = await Promise.all([fetchJson("/api/status"), fetchJson("/api/peers"), fetchJson("/api/services")]);
+    const [status, peers, services, channels] = await Promise.all([
+      fetchJson("/api/status"),
+      fetchJson("/api/peers"),
+      fetchJson("/api/services"),
+      fetchJson("/api/channels"),
+    ]);
     if (cycleId !== refreshCycleId) return; // superseded by a newer refresh while this one was in flight
     renderStats(status);
     renderPeers(peers);
     renderServices(services);
+    renderChannels(channels);
     await refreshContent();
     firstLoadDone = true;
     setDashboardError();

@@ -27,6 +27,14 @@ import {
 } from "./encryption.js";
 import { PeerDirectory } from "./peer-directory.js";
 import { MessageHistory, MAX_MESSAGE_TEXT_LENGTH } from "./message-history.js";
+import {
+  PublicChannels,
+  channelContentName,
+  parseChannelFromContentName,
+  isValidChannelName,
+  extractChannelMessagePayload,
+  type ChannelMessage,
+} from "./public-channels.js";
 import { RoutingTable } from "./routing-table.js";
 import { ServiceDirectory } from "./service-directory.js";
 import { serviceSigningPayload, verifyServiceAnnouncement, type ServiceAnnouncement, type ServiceHandler } from "./service.js";
@@ -87,6 +95,10 @@ export interface NomadNodeOptions {
   maxMessageHistoryPeers?: number;
   /** Max messages kept per conversation in `messageHistory` — the oldest is dropped once exceeded. */
   maxMessagesPerPeer?: number;
+  /** Max distinct public channels tracked in `publicChannels` at once (spec §57 resource limits). */
+  maxPublicChannels?: number;
+  /** Max messages kept per channel in `publicChannels` — the oldest is dropped once exceeded. */
+  maxMessagesPerChannel?: number;
 }
 
 interface ContentWaiter {
@@ -97,6 +109,25 @@ interface ContentWaiter {
 
 /** Bounds how many alternate providers a single content request will remember (spec §57 resource limits). */
 const MAX_CONTENT_CANDIDATES = 16;
+
+/**
+ * Bounds how many `getContent()` fetches `considerChannelMessage()` can
+ * have in flight at once (found by review) — without this, a single
+ * inbound `SYNC_RESPONSE`/burst of `CONTENT_ANNOUNCE`s naming hundreds of
+ * distinct `chat:<channel>` entries would make this node self-originate a
+ * `CONTENT_QUERY` flood for every single one of them, all at once and
+ * completely unthrottled: `rate-limit.ts`'s per-peer limiter only gates
+ * packets this node *receives*, never ones it originates itself via
+ * `floodExcept()` — the exact amplification class `docs/security.md` #39
+ * already closed for `NewsGateway`'s own outbound `CONTENT_ANNOUNCE`s
+ * (`MAX_EMERGENCY_ANNOUNCES_PER_SYNC`), reintroduced here on the *reactive*
+ * fetch side instead of the announcing side. Only the proactive fetch is
+ * capped, not the underlying knowledge: an entry beyond the cap is still
+ * accepted into `remoteCatalog` as usual (`acceptCatalogEntry()`) and
+ * simply isn't eagerly turned into a channel message — same "limit the
+ * action, not the information" shape as #39's own fix.
+ */
+const MAX_CONCURRENT_CHANNEL_FETCHES = 16;
 
 /**
  * Outranks any trust level `TrustManager` can actually assign (spec §54's
@@ -326,6 +357,8 @@ export class NomadNode extends EventEmitter {
   readonly services: ServiceDirectory;
   /** Local-only history of 1:1 private chat messages sent/received via `sendPrivateMessage()` (spec §56 "private messages") — never signed or propagated, purely for a thin HTTP client (`web-ui.ts`'s `/api/messages`) to poll. */
   readonly messageHistory: MessageHistory;
+  /** Local, best-effort view of public (unencrypted) chat channels this node has learned about — built from already-verified `content://` publications (`chat:<channel>` naming convention, `public-channels.ts`), unlike `messageHistory` which is never itself part of the mesh's own propagated state. */
+  readonly publicChannels: PublicChannels;
 
   private readonly defaultTtl: number;
   private readonly contentRequestTimeoutMs: number;
@@ -349,6 +382,8 @@ export class NomadNode extends EventEmitter {
   >();
   /** In-flight `callService()` invocations currently awaiting a *local* handler (`withServiceTimeout()`) — tracked separately from `pendingServiceCalls` (which only ever holds remote, network-bound calls) so `stop()` can reject these too instead of leaving them alive past shutdown, found by review. */
   private readonly pendingLocalServiceCalls = new Set<{ reject: (err: Error) => void }>();
+  /** Content ids `considerChannelMessage()` currently has a `getContent()` fetch in flight for — bounds concurrency to `MAX_CONCURRENT_CHANNEL_FETCHES` (see its own doc comment) and avoids issuing a second fetch for a content id already being retrieved. */
+  private readonly pendingChannelFetches = new Set<string>();
   private started = false;
 
   constructor(options: NomadNodeOptions = {}) {
@@ -408,6 +443,11 @@ export class NomadNode extends EventEmitter {
       maxPeers: options.maxMessageHistoryPeers,
       maxMessagesPerPeer: options.maxMessagesPerPeer,
       trustRank: (peer) => trustRank(this.trust.get(peer)),
+    });
+    this.publicChannels = new PublicChannels({
+      maxChannels: options.maxPublicChannels,
+      maxMessagesPerChannel: options.maxMessagesPerChannel,
+      trustRank: (author) => trustRank(this.trust.get(author)),
     });
   }
 
@@ -670,6 +710,51 @@ export class NomadNode extends EventEmitter {
     const text = extractChatText(payload);
     if (text !== undefined) this.messageHistory.record(destination, "sent", text);
     return packet.id;
+  }
+
+  /**
+   * Publishes a message to a public (unencrypted) chat channel
+   * (`docs/next-steps.md` Opzione J) — a `content://` publication named
+   * `chat:<channel>` (`channelContentName()`, `public-channels.ts`), signed
+   * and flooded via `CONTENT_ANNOUNCE` (`{ announce: true, priority:
+   * Priority.MESSAGING }`) exactly like any other announced content — no
+   * new packet type, no protocol change (spec §55's existing content
+   * signature already covers `name`, so a relay can't retag a message into
+   * a different channel). `channel` is normalized to lowercase before
+   * validation so a caller doesn't have to pre-normalize it; throws if the
+   * normalized name still doesn't validate (`isValidChannelName()`), or if
+   * `text` is empty or exceeds `MAX_MESSAGE_TEXT_LENGTH` — same length cap
+   * as a 1:1 private message, one canonical limit for both.
+   *
+   * Records the message into this node's own `publicChannels` immediately
+   * — a locally-originated `CONTENT_ANNOUNCE` never loops back to its own
+   * sender's `handleContentAnnounce()`, so without this a node's own sends
+   * would never appear in its own channel history at all. Every *other*
+   * node's messages (and a relay re-learning of its own earlier forward)
+   * go through `considerChannelMessage()` instead, on receipt.
+   */
+  publishChannelMessage(channel: string, text: string): ChannelMessage {
+    const normalized = channel.toLowerCase();
+    if (!isValidChannelName(normalized)) {
+      throw new Error(`invalid channel name: ${JSON.stringify(channel)}`);
+    }
+    if (text.length === 0 || text.length > MAX_MESSAGE_TEXT_LENGTH) {
+      throw new Error(`channel message text must be 1-${MAX_MESSAGE_TEXT_LENGTH} characters`);
+    }
+    // The timestamp is embedded in the signed payload bytes, not read back from
+    // ContentMetadata.createdAt — content.ts's SignableContentFields doesn't cover createdAt, so a
+    // relay could otherwise rewrite it in transit without invalidating the signature (found by
+    // review, see ChannelMessage.timestamp's doc comment in public-channels.ts).
+    const timestamp = Date.now();
+    const metadata = this.publishContent(
+      channelContentName(normalized),
+      "application/json",
+      Buffer.from(JSON.stringify({ text, timestamp }), "utf8"),
+      { announce: true, priority: Priority.MESSAGING },
+    );
+    const message: ChannelMessage = { channel: normalized, author: this.nodeId, text, timestamp, contentId: metadata.contentId };
+    this.publicChannels.record(message);
+    return message;
   }
 
   /** Resolves once `nodeId`'s encryption key is known (immediately, if already is), or rejects after `timeoutMs`. */
@@ -1502,7 +1587,10 @@ export class NomadNode extends EventEmitter {
    */
   private handleContentAnnounce(packet: Packet<ContentAnnouncePayload>): void {
     const accepted = this.acceptCatalogEntry(packet.payload?.metadata);
-    if (accepted) this.emit("content:announced", accepted);
+    if (accepted) {
+      this.emit("content:announced", accepted);
+      this.considerChannelMessage(accepted);
+    }
   }
 
   /**
@@ -1519,9 +1607,54 @@ export class NomadNode extends EventEmitter {
     const accepted: ContentMetadata[] = [];
     for (const metadata of entries) {
       const result = this.acceptCatalogEntry(metadata);
-      if (result) accepted.push(result);
+      if (result) {
+        accepted.push(result);
+        this.considerChannelMessage(result);
+      }
     }
     if (accepted.length > 0) this.emit("catalog-sync", accepted);
+  }
+
+  /**
+   * Kicks off fetching the bytes of a newly-learned piece of content, if
+   * (and only if) its name matches the `chat:<channel>` convention
+   * (`parseChannelFromContentName()`, `public-channels.ts`) — the metadata
+   * alone never carries the message text (spec §24-25, "announce is
+   * metadata-only"). Fire-and-forget: a fetch failure (provider offline,
+   * timeout) is silently dropped rather than retried — the same
+   * best-effort posture store-and-forward itself has for undeliverable
+   * traffic; the message simply never appears in `publicChannels` for this
+   * node. `getContent()` already dedups concurrent requests for the same
+   * content id, and `PublicChannels.record()` dedups by `contentId` on
+   * arrival, so calling this twice for the same content (once via
+   * `CONTENT_ANNOUNCE`, once via a racing catalog sync) is harmless.
+   *
+   * Bounded to `MAX_CONCURRENT_CHANNEL_FETCHES` fetches in flight at once
+   * (see that constant's own doc comment) — an entry beyond the cap is
+   * simply never turned into a reactive fetch, same "cap the action, not
+   * the knowledge" shape as `docs/security.md` #39.
+   */
+  private considerChannelMessage(metadata: ContentMetadata): void {
+    const channel = parseChannelFromContentName(metadata.name);
+    const publisherId = metadata.publisherId;
+    if (!channel || !publisherId) return;
+    const { contentId } = metadata;
+    if (this.pendingChannelFetches.has(contentId) || this.pendingChannelFetches.size >= MAX_CONCURRENT_CHANNEL_FETCHES) return;
+    this.pendingChannelFetches.add(contentId);
+    this.getContent(contentId, { timeoutMs: this.contentRequestTimeoutMs })
+      .then((data) => {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(data.toString("utf8"));
+        } catch {
+          return; // malformed — never trust content shape just because the signature verified
+        }
+        const message = extractChannelMessagePayload(parsed);
+        if (!message) return;
+        this.publicChannels.record({ channel, author: publisherId, text: message.text, timestamp: message.timestamp, contentId });
+      })
+      .catch(() => {})
+      .finally(() => this.pendingChannelFetches.delete(contentId));
   }
 
   /** Replies with directory entries the requester doesn't already know about (spec §52) — mirrors handleSyncRequest for content. */

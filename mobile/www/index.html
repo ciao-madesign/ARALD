@@ -36,6 +36,7 @@
     <g id="icon-newspaper"><rect x="2" y="4.5" width="14" height="15" rx="1.6"/><path d="M16 8.5h3.5a2.5 2.5 0 0 1 2.5 2.5v8a2.5 2.5 0 0 1-2.5 2.5H16"/><line x1="5.5" y1="8.5" x2="12.5" y2="8.5"/><line x1="5.5" y1="12" x2="12.5" y2="12"/><line x1="5.5" y1="15.5" x2="10" y2="15.5"/></g>
     <g id="icon-wrench"><path d="M14.5 6.4a4 4 0 1 1-5.4 5.4L3 18l3 3 6.2-6.1a4 4 0 0 1 5.4-5.4l-3 3-2-2z"/></g>
     <g id="icon-send"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></g>
+    <g id="icon-message-circle"><path d="M4 5.5h16a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5H9l-4.5 4v-4H4A1.5 1.5 0 0 1 2.5 16V7A1.5 1.5 0 0 1 4 5.5z"/></g>
     <!-- Il marchio Nomad-Net ("Waypoint" — vedi Field Guide, Artifact pubblicato): un centro (te) e
          cinque bracci asimmetrici verso i nodi vicini, il più lungo sempre come "direzione di
          marcia". Qui in versione monocromatica coerente con il resto dello sprite (stroke+dot
@@ -138,12 +139,25 @@
         </summary>
         <ul id="content"></ul>
       </details>
+
+      <details class="panel" id="channels-panel">
+        <summary>
+          <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-message-circle"></use></svg> Canali <span class="count" id="channels-count"></span></h2>
+          <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+        </summary>
+        <form id="join-channel-form">
+          <input id="join-channel-input" type="text" placeholder="Nome canale, es. generale" autocomplete="off" autocapitalize="off" spellcheck="false">
+          <button type="submit">Apri</button>
+        </form>
+        <ul id="channels"></ul>
+      </details>
     </div>
 
-    <!-- Fuori dai due <details> sopra (deliberatamente): una conversazione aperta non deve sparire
-         solo perché "Vicini connessi" viene ricollassato — stesso principio di #service-call-panel,
-         mai annidato dentro un contenitore che potrebbe nascondersi da solo. -->
+    <!-- Fuori dai <details> sopra (deliberatamente): un pannello aperto (chat 1:1 o canale) non deve
+         sparire solo perché la sezione da cui è stato aperto viene ricollassata — stesso principio di
+         #service-call-panel, mai annidato dentro un contenitore che potrebbe nascondersi da solo. -->
     <div id="chat-panel" hidden></div>
+    <div id="channel-panel" hidden></div>
 
     <div id="dashboard-error-wrap" hidden>
       <p id="dashboard-error" class="error" role="alert" aria-live="polite"></p>

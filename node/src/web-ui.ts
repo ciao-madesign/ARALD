@@ -174,6 +174,21 @@ interface ContentEntry {
   availableThrough?: string;
 }
 
+interface ChannelSummary {
+  channel: string;
+  messageCount: number;
+  /** `timestamp` of the most recent message this node has learned for `channel` — lets a client sort/highlight by recent activity without fetching every channel's full history. */
+  lastActivity: number;
+}
+
+/** Every public channel this node currently has at least one message for (spec's content-centric design has no channel-creation step, so "known channels" only ever means "channels this node has actually learned a message in") — public/no-auth, same tier as `/api/content`, since channel messages are explicitly not private (spec §56 only calls out 1:1 private messages, not public channels). */
+function buildChannelList(node: NomadNode): ChannelSummary[] {
+  return node.publicChannels.list().map((channel) => {
+    const messages = node.publicChannels.get(channel);
+    return { channel, messageCount: messages.length, lastActivity: messages[messages.length - 1].timestamp };
+  });
+}
+
 function buildStatus(node: NomadNode, internetStatus: () => "ONLINE" | "OFFLINE", networkName: string | undefined): StatusPayload {
   // Uses listKnownContent()'s own dedup-by-contentId (contentStore.size + remoteCatalog.size would
   // double-count anything present in both — e.g. learned via catalog sync and later actually
@@ -665,6 +680,10 @@ export class WebUiServer {
         void this.handleSendMessage(req, res);
         return;
       }
+      if (url.pathname === "/api/channel-messages") {
+        void this.handleSendChannelMessage(req, res);
+        return;
+      }
       res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("Method Not Allowed");
       return;
@@ -718,6 +737,16 @@ export class WebUiServer {
 
     if (url.pathname === "/api/messages") {
       this.handleGetMessages(req, res, url);
+      return;
+    }
+
+    if (url.pathname === "/api/channels") {
+      sendJson(res, 200, buildChannelList(this.node));
+      return;
+    }
+
+    if (url.pathname === "/api/channel-messages") {
+      this.handleGetChannelMessages(res, url);
       return;
     }
 
@@ -958,6 +987,87 @@ export class WebUiServer {
       // silently become a misleading 404.
       const message = (err as Error).message;
       sendJson(res, message.includes("encryption key") ? 404 : 502, { error: message });
+    }
+  }
+
+  /**
+   * `GET /api/channel-messages?channel=<name>` — the message history for a
+   * public channel (`node.publicChannels`), oldest first. Unlike
+   * `/api/messages` (1:1 private chat), this is unauthenticated, same tier
+   * as `/api/peers`/`/api/services`/`/api/content` — a public channel's
+   * whole point is that its contents are public mesh state, not "Private
+   * messages" (spec §56), so there is nothing here to gate on read.
+   */
+  private handleGetChannelMessages(res: ServerResponse, url: URL): void {
+    const channel = url.searchParams.get("channel");
+    if (!channel) {
+      sendJson(res, 400, { error: "'channel' query parameter is required" });
+      return;
+    }
+    sendJson(res, 200, { messages: this.node.publicChannels.get(channel.toLowerCase()) });
+  }
+
+  /**
+   * `POST /api/channel-messages` — publishes a message to a public channel
+   * (body `{ channel, text }`) via `NomadNode.publishChannelMessage()`.
+   * Same auth as `POST /api/call`/`POST /api/messages` — reading a public
+   * channel needs no password, but *posting* to one is still an action
+   * gated behind pairing, same as every other write this class exposes.
+   */
+  private async handleSendChannelMessage(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.allowServiceCalls || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+
+    let raw: Buffer;
+    try {
+      raw = await readRequestBody(req, MAX_MESSAGE_BODY_BYTES, MAX_CALL_BODY_READ_MS);
+    } catch (err) {
+      if (res.writableEnded || res.destroyed) return; // connection already gone — nothing to answer
+      if (err instanceof BodyTooLargeError) {
+        sendJson(res, 413, { error: "request body too large" });
+      } else if (err instanceof Error && err.message.includes("timed out")) {
+        sendJson(res, 408, { error: "timed out waiting for the request body" });
+      } else {
+        sendJson(res, 400, { error: "failed to read request body" });
+      }
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = raw.length === 0 ? {} : JSON.parse(raw.toString("utf8"));
+    } catch {
+      sendJson(res, 400, { error: "malformed JSON body" });
+      return;
+    }
+
+    const body = parsed as { channel?: unknown; text?: unknown } | null;
+    const channel = body?.channel;
+    if (typeof channel !== "string" || channel.length === 0) {
+      sendJson(res, 400, { error: "'channel' must be a non-empty string" });
+      return;
+    }
+    const text = body?.text;
+    if (typeof text !== "string" || text.length === 0) {
+      sendJson(res, 400, { error: "'text' must be a non-empty string" });
+      return;
+    }
+
+    try {
+      const message = this.node.publishChannelMessage(channel, text);
+      sendJson(res, 200, { message });
+    } catch (err) {
+      // publishChannelMessage()'s own validation throws (invalid channel name, text length) — the
+      // caller's input was rejected, not a downstream failure, so 400 rather than handleCall()'s
+      // 502 convention for unexpected service failures.
+      sendJson(res, 400, { error: (err as Error).message });
     }
   }
 
