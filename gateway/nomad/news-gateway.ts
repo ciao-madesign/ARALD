@@ -1,5 +1,7 @@
 import type { NomadNode } from "../../node/src/node.js";
 import { BoundedFifoMap } from "../../node/src/bounded-map.js";
+import { Priority } from "../../node/src/packet.js";
+import { computeContentId } from "../../node/src/content.js";
 import { parseFeed, MAX_FEED_BYTES } from "./rss-feed.js";
 
 /**
@@ -65,6 +67,9 @@ const MAX_DIGEST_HEADLINES = 20;
 /** Caps a single headline title's contribution to the digest prompt (`sanitizeTitleForPrompt()`) — `MAX_DIGEST_HEADLINES` alone only bounds the *count* of titles, not their length, so an otherwise-valid feed (`rss-feed.ts` has no per-title length cap of its own) could still make each of the 20 admitted titles enormous. */
 const MAX_DIGEST_TITLE_CHARS = 200;
 
+/** Caps how many EMERGENCY-priority `CONTENT_ANNOUNCE` floods a single `syncNews()` call can originate — see the comment at its own use site in `syncNews()` for why this is needed (rate-limit.ts only gates *received* packets, never ones this node originates itself). */
+const MAX_EMERGENCY_ANNOUNCES_PER_SYNC = 5;
+
 /**
  * Prepares a single (untrusted, feed-sourced) headline title for inclusion
  * in the digest prompt's bullet list: collapses any newline/carriage-return
@@ -86,6 +91,25 @@ function sanitizeTitleForPrompt(title: string): string {
 function buildDigestPrompt(headlines: readonly NewsHeadline[]): string {
   const bulletList = headlines.map((h) => `- ${sanitizeTitleForPrompt(h.title)}`).join("\n");
   return `Riassumi in breve, in italiano, le seguenti notizie:\n${bulletList}`;
+}
+
+/**
+ * Default `isEmergencyHeadline` classifier (`NewsGatewayOptions`) — flags a
+ * headline as an emergency bulletin (spec's "P0", `docs/next-steps.md`
+ * Opzione I) when its RSS/Atom `<category>` contains one of these keywords,
+ * case-insensitively. A guess, not a standard: no feed format defines what
+ * "emergency" means, so this is a reasonable default for the rifugio
+ * alpino/Protezione Civile use case the proposal itself names as the most
+ * concrete one — an operator with a feed that tags emergencies differently
+ * (or not by category at all) is expected to override it via
+ * `NewsGatewayOptions.isEmergencyHeadline`, not fight this default.
+ */
+const DEFAULT_EMERGENCY_CATEGORY_KEYWORDS = ["emergenza", "allerta", "allarme", "protezione civile"];
+
+function defaultIsEmergencyHeadline(headline: NewsHeadline): boolean {
+  if (!headline.category) return false;
+  const category = headline.category.toLowerCase();
+  return DEFAULT_EMERGENCY_CATEGORY_KEYWORDS.some((keyword) => category.includes(keyword));
 }
 
 /**
@@ -168,8 +192,41 @@ async function fetchTextBounded(url: string, maxBytes: number): Promise<string> 
  *   and a request for "the news" shouldn't hang on it when a recent
  *   snapshot is already sitting in memory.
  */
+export interface NewsGatewayOptions {
+  /**
+   * Classifies a headline as an emergency bulletin (spec's "P0",
+   * `docs/next-steps.md` Opzione I `service://emergency-news`) — such a
+   * headline is published with `{ announce: true, priority: Priority.EMERGENCY }`
+   * (`syncNews()`), so it reaches already-connected peers immediately via
+   * `CONTENT_ANNOUNCE` instead of waiting for a pull query or catalog sync,
+   * and is what `service://emergency-news` (`registerEmergencyNewsService()`)
+   * answers with. Defaults to `defaultIsEmergencyHeadline` (a category
+   * keyword match) — override when a feed doesn't use `<category>` for this
+   * or uses different wording.
+   */
+  isEmergencyHeadline?: (headline: NewsHeadline) => boolean;
+}
+
 export class NewsGateway {
-  /** headline id -> contentId last published for it, so a re-sync that returns an unchanged headline doesn't re-report it — same dedup shape as `KiwixGateway.publishedByPath`, but bounded (see `MAX_TRACKED_HEADLINES`) since this one gateway can now refresh itself unattended via `startAutoSync()`. */
+  /**
+   * headline id -> contentId last published for it, so a re-sync that
+   * returns an unchanged headline doesn't re-report it — same dedup shape
+   * as `KiwixGateway.publishedByPath`, but bounded (see
+   * `MAX_TRACKED_HEADLINES`) since this one gateway can now refresh itself
+   * unattended via `startAutoSync()`.
+   *
+   * **Accepted limitation, found by review**: purely in-memory, like every
+   * other piece of this instance's own state — a process restart empties
+   * it, so the first `syncNews()` after a restart treats every headline
+   * still in the feed as "changed", including one still tagged as an
+   * emergency that every peer already learned about before the restart —
+   * `syncNews()` re-announces it once at `Priority.EMERGENCY` as if it
+   * were new. `MAX_EMERGENCY_ANNOUNCES_PER_SYNC` bounds how bad a single
+   * restart (or a crash loop) can make this, but doesn't eliminate it — a
+   * real fix would need `publishedById` (or at least the emergency subset
+   * of it) persisted across restarts, which no other state in this class
+   * has either; not attempted here.
+   */
   private readonly publishedById = new BoundedFifoMap<string, string>({ maxSize: MAX_TRACKED_HEADLINES });
   /** Snapshot from the most recent successful `syncNews()` — what `service://news` actually answers with, never a live call per invocation. */
   private cachedHeadlines: NewsHeadline[] = [];
@@ -187,16 +244,25 @@ export class NewsGateway {
   private syncGeneration = 0;
   /** Same purpose as `syncGeneration`, for `generateDigest()`/`startDigestAutoRefresh()` — a `service://ai` call can be multi-hop (spec §35-36) and is not guaranteed to resolve in the order it was sent, so a slow tick's stale response must not clobber a fresher digest a later tick already committed. */
   private digestGeneration = 0;
+  private readonly isEmergencyHeadline: (headline: NewsHeadline) => boolean;
 
   constructor(
     private readonly node: NomadNode,
     /** URL of an RSS or Atom feed, e.g. `http://127.0.0.1:PORT/feed.xml`. No default/fake fallback — see the class doc comment. */
     private readonly feedUrl: string,
-  ) {}
+    options: NewsGatewayOptions = {},
+  ) {
+    this.isEmergencyHeadline = options.isEmergencyHeadline ?? defaultIsEmergencyHeadline;
+  }
 
   /** The most recent successful sync's headlines — what `service://news` currently answers with. Empty before the first successful `syncNews()`. */
   get headlines(): readonly NewsHeadline[] {
     return this.cachedHeadlines;
+  }
+
+  /** The subset of `headlines` this instance's `isEmergencyHeadline` classifier flags as high-priority (spec's "P0") — what `service://emergency-news` answers with. Computed on read, not separately cached — `cachedHeadlines` is already the single source of truth, and the classifier is a pure function of a headline's own fields. */
+  get emergencyHeadlines(): readonly NewsHeadline[] {
+    return this.cachedHeadlines.filter((headline) => this.isEmergencyHeadline(headline));
   }
 
   /** The most recently generated AI digest (`generateDigest()`) — undefined until the first call succeeds. */
@@ -244,6 +310,16 @@ export class NewsGateway {
    * If a newer `syncNews()` call has already started (and possibly already
    * committed) by the time this one's response arrives, this call's result
    * is discarded — see `syncGeneration`.
+   *
+   * A headline this instance's `isEmergencyHeadline` classifier flags —
+   * and only when it's new/changed this sync, never a repeat of one
+   * already known — is published with `{ announce: true, priority:
+   * Priority.EMERGENCY }` (spec's "P0", `service://emergency-news`), so it
+   * reaches already-connected peers immediately via `CONTENT_ANNOUNCE`
+   * instead of waiting for a pull query or catalog sync. Only the headline
+   * tier is announced this way — the article body still publishes
+   * normally, fetched on demand once a reader actually wants the full
+   * text, same as any other headline.
    */
   async syncNews(): Promise<NewsHeadline[]> {
     const generation = ++this.syncGeneration;
@@ -262,6 +338,18 @@ export class NewsGateway {
 
     const headlines: NewsHeadline[] = [];
     const changed: NewsHeadline[] = [];
+    // Caps how many EMERGENCY-priority CONTENT_ANNOUNCE floods this single syncNews() call can
+    // originate (found by review) — rate-limit.ts only gates packets *received* from a connected
+    // peer, never ones this node originates itself via floodExcept(), so without this cap a
+    // hostile/misbehaving --news-url backend (already a documented threat elsewhere in this class,
+    // e.g. publishedById's own bound) could tag every item in a feed of up to MAX_ITEMS_PER_FEED
+    // (rss-feed.ts) as an emergency and/or rotate ids to make each sync look "all new", making this
+    // node itself flood the mesh at its highest priority completely unthrottled. A legitimate feed
+    // rarely has more than a handful of genuinely new P0 bulletins in one sync window — this bounds
+    // the worst case, not the routine one. Only the proactive broadcast is capped: an emergency
+    // headline beyond the cap is still published normally and still counted by `emergencyHeadlines`
+    // (service://emergency-news still lists it) — a node just has to discover it the pull way.
+    let emergencyAnnouncesThisSync = 0;
     for (const item of parsed.items) {
       // Unconditional, every tick, for every item — publishedById's dedup check below only applies
       // to the headline tier, not this one: an unchanged article is re-signed and re-published just
@@ -283,9 +371,36 @@ export class NewsGateway {
         updatedAt: item.updatedAt,
         articleContentId: articleMetadata.contentId,
       };
-      const headlineMetadata = this.node.publishContent(headline.title, "application/json", Buffer.from(JSON.stringify(headline), "utf8"));
+      const headlineBytes = Buffer.from(JSON.stringify(headline), "utf8");
+      // Computed before publishing so isChanged is known ahead of the announce decision below —
+      // an unchanged headline is still republished every tick (see the comment above this loop),
+      // but must never be re-announced: CONTENT_ANNOUNCE at EMERGENCY priority is meant for "this
+      // just happened", not a repeat broadcast of a bulletin every node already has. This does mean
+      // computeContentId() runs twice per item every tick (once here, once again inside
+      // publishContent() over the identical bytes) — accepted duplicate hashing (noted by review),
+      // negligible cost for a small JSON blob; avoiding it would mean publishContent() accepting a
+      // precomputed id or deciding announce options after the fact, out of scope here.
+      const headlineContentId = computeContentId(headlineBytes);
+      const isChanged = this.publishedById.get(headline.id) !== headlineContentId;
+      const isEmergency = isChanged && this.isEmergencyHeadline(headline) && emergencyAnnouncesThisSync < MAX_EMERGENCY_ANNOUNCES_PER_SYNC;
+      if (isEmergency) emergencyAnnouncesThisSync++;
+      const headlineMetadata = this.node.publishContent(
+        headline.title,
+        "application/json",
+        headlineBytes,
+        isEmergency ? { announce: true, priority: Priority.EMERGENCY } : undefined,
+      );
+      // publishContent() (node.ts) computes its own contentId as computeContentId(data) over the
+      // exact buffer passed in — headlineContentId above used the same function on the same
+      // headlineBytes, so these are provably equal today, not just "by convention". This assertion
+      // exists so a future change to how publishContent() derives its contentId (found by review:
+      // nothing today ties the two computations together) fails loudly here instead of silently
+      // leaving isChanged/isEmergency decided against a stale hash shape.
+      if (headlineMetadata.contentId !== headlineContentId) {
+        throw new Error("internal error: headline content id computed ahead of publishContent() diverged from the id it actually assigned");
+      }
       headlines.push(headline);
-      if (this.publishedById.get(headline.id) !== headlineMetadata.contentId) {
+      if (isChanged) {
         this.publishedById.set(headline.id, headlineMetadata.contentId);
         changed.push(headline);
       }
@@ -412,6 +527,25 @@ export class NewsGateway {
   registerNewsService(): void {
     this.node.registerService("service://news", "1.0.0", ["headlines"], async () => {
       return { headlines: this.cachedHeadlines, digest: this.cachedDigest?.text, digestContentId: this.cachedDigest?.contentId };
+    });
+  }
+
+  /**
+   * Registers `service://emergency-news` (spec's "P0", `docs/next-steps.md`
+   * Opzione I) — a sub-case of `service://news` that answers with only
+   * `emergencyHeadlines`, the subset of the cache `isEmergencyHeadline`
+   * flags. Reuses the same "always instant, never a live call" posture as
+   * `registerNewsService()` — a separate service rather than a field on
+   * `service://news`'s own response (which already carries `digest`) so a
+   * caller who only cares about emergencies (e.g. a dashboard widget) can
+   * discover/call this one specifically, without pulling the full headline
+   * list every time. `{ headlines: [] }` before any sync has completed, or
+   * simply when nothing currently in cache qualifies as an emergency —
+   * both an honest "nothing to report", not an error.
+   */
+  registerEmergencyNewsService(): void {
+    this.node.registerService("service://emergency-news", "1.0.0", ["headlines"], async () => {
+      return { headlines: this.emergencyHeadlines };
     });
   }
 }

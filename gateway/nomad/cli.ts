@@ -140,8 +140,9 @@ async function main(): Promise<void> {
     try {
       await newsGateway.syncNews();
       newsGateway.registerNewsService();
+      newsGateway.registerEmergencyNewsService();
       newsGateway.startAutoSync(NEWS_SYNC_INTERVAL_MS, (err) => console.error("service://news sync failed:", err));
-      console.log(`Registered service://news (syncing every ${NEWS_SYNC_INTERVAL_MS / 1000}s from ${newsFeedUrl})`);
+      console.log(`Registered service://news and service://emergency-news (syncing every ${NEWS_SYNC_INTERVAL_MS / 1000}s from ${newsFeedUrl})`);
 
       // service://ai is already registered locally above (aiGateway.registerAiService()), so this
       // composes the two gateways via the mesh's own service-call mechanism rather than a direct
