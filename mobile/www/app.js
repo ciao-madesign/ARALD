@@ -199,6 +199,87 @@ async function sendChannelMessage(channel, text) {
   return body.message;
 }
 
+/** GET /api/groups (node/src/web-ui.ts) — the encrypted groups this device is a member of. Authenticated, same tier as fetchMessages(): a group's name/membership is private (spec §56), not public mesh state like a channel's. */
+async function fetchGroups() {
+  const res = await fetchWithTimeout(apiUrl("/api/groups"), { headers: { Authorization: "Bearer " + networkPassword } }, READ_TIMEOUT_MS);
+  if (res.status === 401) {
+    handlePasswordRejected();
+    throw new Error("password di rete non valida");
+  }
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return res.json();
+}
+
+/** GET /api/group-messages?groupId=... (node/src/web-ui.ts) — the decrypted message history for a group this device is a member of. Same auth as fetchGroups(). */
+async function fetchGroupMessages(groupId) {
+  const res = await fetchWithTimeout(
+    apiUrl("/api/group-messages?groupId=" + encodeURIComponent(groupId)),
+    { headers: { Authorization: "Bearer " + networkPassword } },
+    READ_TIMEOUT_MS,
+  );
+  if (res.status === 401) {
+    handlePasswordRejected();
+    throw new Error("password di rete non valida");
+  }
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const body = await res.json();
+  return body.messages;
+}
+
+/** POST /api/group-messages (node/src/web-ui.ts) — sends a message to a group this device is already a member of. Same err.status convention as sendChatMessage()/sendChannelMessage(). */
+async function sendGroupMessage(groupId, text) {
+  const res = await fetchWithTimeout(
+    apiUrl("/api/group-messages"),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + networkPassword },
+      body: JSON.stringify({ groupId, text }),
+    },
+    CALL_TIMEOUT_MS,
+  );
+  let body;
+  try {
+    body = await res.json();
+  } catch {
+    const err = new Error("risposta non valida dal gateway (HTTP " + res.status + ")");
+    err.status = res.status;
+    throw err;
+  }
+  if (!res.ok) {
+    const err = new Error(body.error || "HTTP " + res.status);
+    err.status = res.status;
+    throw err;
+  }
+  return body.message;
+}
+
+/** POST /api/groups (node/src/web-ui.ts) — creates a new encrypted group with a fixed membership decided now (no add/remove-member in this v1, see groups.ts). Same err.status convention as the others above. */
+async function createGroup(name, members) {
+  const res = await fetchWithTimeout(
+    apiUrl("/api/groups"),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + networkPassword },
+      body: JSON.stringify({ name, members }),
+    },
+    CALL_TIMEOUT_MS,
+  );
+  let body;
+  try {
+    body = await res.json();
+  } catch {
+    const err = new Error("risposta non valida dal gateway (HTTP " + res.status + ")");
+    err.status = res.status;
+    throw err;
+  }
+  if (!res.ok) {
+    const err = new Error(body.error || "HTTP " + res.status);
+    err.status = res.status;
+    throw err;
+  }
+  return body.group;
+}
+
 /**
  * Probes whether `password` is accepted by `baseUrl`'s POST /api/call, without invoking any real
  * service (see PROBE_SERVICE_ID above) — used during setup so a wrong network password is caught
@@ -331,6 +412,7 @@ function showSetupScreen(errorMessage) {
   clearInterval(refreshTimer);
   closeChatPanel();
   closeChannelPanel();
+  closeGroupPanel();
 
   const needsAddress = addressFieldNeeded();
   document.getElementById("address-field").hidden = !needsAddress;
@@ -641,6 +723,7 @@ function renderSkeletons() {
   listSkeleton(document.getElementById("services"), 3);
   listSkeleton(document.getElementById("content"), 3);
   listSkeleton(document.getElementById("channels"), 2);
+  listSkeleton(document.getElementById("groups"), 2);
 }
 
 function showDashboard() {
@@ -652,8 +735,10 @@ function showDashboard() {
   contentSeenIds = new Set();
   lastContentQuery = null;
   channelSeenNames = new Set();
+  groupSeenIds = new Set();
   closeChatPanel();
   closeChannelPanel();
+  closeGroupPanel();
   renderSkeletons();
   const main = document.getElementById("dashboard-main");
   main.focus({ preventScroll: true }); // announces the screen change to screen-reader users
@@ -743,6 +828,7 @@ function renderPeers(peers) {
     list.append(li);
   }
   peerSeenIds = nextSeen;
+  renderGroupMemberPicker(peers);
 }
 
 let channelSeenNames = new Set();
@@ -776,6 +862,64 @@ function renderChannels(channels) {
     list.append(li);
   }
   channelSeenNames = nextSeen;
+}
+
+let groupSeenIds = new Set();
+
+function renderGroups(groups) {
+  const list = document.getElementById("groups");
+  list.removeAttribute("aria-busy");
+  document.getElementById("groups-count").textContent = groups.length > 0 ? String(groups.length) : "";
+  if (renderEmptyIfNeeded(list, groups, "Nessun gruppo ancora. Creane uno qui sopra.", "lock")) {
+    groupSeenIds = new Set();
+    return;
+  }
+  const nextSeen = new Set();
+  for (const g of groups) {
+    nextSeen.add(g.groupId);
+    const memberCount = g.members.length + 1; // + this device itself, not listed among its own members
+    const li = el("li", null, [
+      el("div", { className: "row" }, [
+        el("span", { className: "row-title", textContent: g.name, title: g.name }),
+        el("span", { className: "muted", textContent: memberCount === 2 ? "2 membri" : memberCount + " membri" }),
+      ]),
+    ]);
+    li.dataset.groupId = g.groupId;
+    const openButton = el("button", { className: "call-button", textContent: "Apri" });
+    openButton.addEventListener("click", () => openGroupPanel(g.groupId, g.name));
+    li.append(openButton);
+    if (openGroup === g.groupId) li.classList.add("is-open");
+    if (!groupSeenIds.has(g.groupId)) li.classList.add("enter");
+    list.append(li);
+  }
+  groupSeenIds = nextSeen;
+}
+
+/**
+ * Rebuilds the checkbox list inside #create-group-form from the currently known peers — only those
+ * with `canMessage` (an encryption key already known), the same bar `createGroup()` itself (node.ts)
+ * enforces before it will invite anyone. Rebuilt on every peers refresh (not cached from the moment
+ * the panel was opened) so a peer that connects while the "Gruppi" section happens to be open
+ * becomes selectable without needing to re-open the section.
+ */
+function renderGroupMemberPicker(peers) {
+  const picker = document.getElementById("group-member-picker");
+  const previouslyChecked = new Set(Array.from(picker.querySelectorAll("input:checked")).map((input) => input.value));
+  picker.textContent = "";
+  const eligible = peers.filter((p) => p.canMessage);
+  if (eligible.length === 0) {
+    picker.append(el("div", { className: "empty muted", textContent: "Nessun vicino raggiungibile ancora — connettiti a qualcuno prima di creare un gruppo." }));
+    return;
+  }
+  for (const p of eligible) {
+    const checkbox = el("input", { type: "checkbox" });
+    checkbox.value = p.nodeId;
+    checkbox.id = "group-member-" + p.nodeId;
+    checkbox.checked = previouslyChecked.has(p.nodeId);
+    const label = el("label", { className: "group-member-option" }, [checkbox, el("span", { textContent: p.shortLabel })]);
+    label.htmlFor = checkbox.id;
+    picker.append(label);
+  }
 }
 
 function setCallSubmitBusy(submit, busy) {
@@ -1117,6 +1261,155 @@ document.getElementById("join-channel-form").addEventListener("submit", (event) 
   input.value = "";
 });
 
+// ---------- encrypted groups (docs/next-steps.md Opzione J) — same shared-panel pattern as public
+// channels above, plus author labels like a channel (a group has more than one other member, unlike
+// 1:1 chat) but never a public/unauthenticated read path (a group's contents ARE "Private messages",
+// spec §56, unlike a public channel's). ----------
+
+let openGroup = null;
+let groupPollTimer = null;
+
+function closeGroupPanel() {
+  openGroup = null;
+  clearInterval(groupPollTimer);
+  groupPollTimer = null;
+  const panel = document.getElementById("group-panel");
+  panel.hidden = true;
+  panel.textContent = "";
+  document.querySelectorAll("#groups li.is-open").forEach((li) => li.classList.remove("is-open"));
+}
+
+function renderGroupMessages(list, messages) {
+  const wasScrolledToBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 24;
+  if (renderEmptyIfNeeded(list, messages, "Nessun messaggio ancora. Scrivine uno.")) return;
+  for (const m of messages) {
+    const isMine = m.senderId === myNodeId;
+    const bubbleChildren = [el("div", { className: "chat-bubble", textContent: m.text })];
+    const children = isMine
+      ? bubbleChildren
+      : [el("div", { className: "chat-author muted", textContent: "NODE-" + m.senderId.slice(0, 8) }), ...bubbleChildren];
+    children.push(el("div", { className: "chat-timestamp muted", textContent: timeAgo(m.timestamp) }));
+    list.append(el("li", { className: "chat-message " + (isMine ? "is-sent" : "is-received") }, children));
+  }
+  if (wasScrolledToBottom) list.scrollTop = list.scrollHeight;
+}
+
+async function refreshGroupMessages(groupId, list) {
+  try {
+    const messages = await fetchGroupMessages(groupId);
+    if (openGroup !== groupId) return; // panel closed/switched while this was in flight
+    renderGroupMessages(list, messages);
+  } catch {
+    // Best-effort background poll, same posture as refreshChatMessages()/refreshChannelMessages().
+  }
+}
+
+/** Opens (or scrolls to, if already open) the shared group panel for `groupId`. */
+function openGroupPanel(groupId, name) {
+  if (openGroup === groupId) {
+    document.getElementById("group-panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    return;
+  }
+  closeGroupPanel();
+  openGroup = groupId;
+  const panel = document.getElementById("group-panel");
+  panel.textContent = "";
+
+  const closeButton = el("button", { className: "icon-button", type: "button" }, [iconEl("x")]);
+  closeButton.setAttribute("aria-label", "Chiudi");
+  closeButton.addEventListener("click", closeGroupPanel);
+
+  const list = el("ul", { className: "chat-messages" });
+  list.setAttribute("aria-live", "polite");
+  listSkeleton(list, 2);
+
+  const input = el("input", { type: "text", placeholder: "Scrivi un messaggio..." });
+  input.autocomplete = "off";
+  const submit = el("button", { className: "call-submit", type: "submit" }, [iconEl("send"), el("span", { textContent: "Invia" })]);
+  const form = el("form", { className: "chat-compose" }, [input, submit]);
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+    input.disabled = true;
+    submit.disabled = true;
+    try {
+      await sendGroupMessage(groupId, text);
+      input.value = "";
+      vibrate(10);
+      await refreshGroupMessages(groupId, list);
+    } catch (err) {
+      if (err.status === 401) {
+        handlePasswordRejected();
+        return;
+      }
+      showToast(err.message, "alert-circle");
+      vibrate([12, 40, 12]);
+    } finally {
+      input.disabled = false;
+      submit.disabled = false;
+      input.focus({ preventScroll: true });
+    }
+  });
+
+  panel.append(
+    el("div", { className: "call-panel-header" }, [
+      el("div", { className: "call-panel-title" }, [iconEl("lock"), el("span", { textContent: name })]),
+      closeButton,
+    ]),
+    list,
+    form,
+  );
+  panel.hidden = false;
+  document.querySelectorAll("#groups li").forEach((li) => li.classList.toggle("is-open", li.dataset.groupId === groupId));
+  panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+  refreshGroupMessages(groupId, list);
+  groupPollTimer = setInterval(() => refreshGroupMessages(groupId, list), 3000);
+}
+
+function setCreateGroupBusy(submit, busy) {
+  submit.disabled = busy;
+  submit.textContent = busy ? "Creazione..." : "Crea gruppo cifrato";
+}
+
+document.getElementById("create-group-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const nameInput = document.getElementById("create-group-name");
+  const name = nameInput.value.trim();
+  if (!name) return;
+  const members = Array.from(document.querySelectorAll("#group-member-picker input:checked")).map((input) => input.value);
+  if (members.length === 0) {
+    showToast("Seleziona almeno un vicino per il gruppo", "alert-circle");
+    return;
+  }
+  const submit = event.target.querySelector("button[type=submit]");
+  setCreateGroupBusy(submit, true);
+  try {
+    const group = await createGroup(name, members);
+    nameInput.value = "";
+    document.querySelectorAll("#group-member-picker input:checked").forEach((input) => (input.checked = false));
+    vibrate(10);
+    document.getElementById("groups-panel").open = true;
+    openGroupPanel(group.groupId, group.name);
+    // The sidebar list otherwise wouldn't show the new group until the next periodic 5s refreshAll()
+    // tick — an unnecessary wait given the server already told us it exists (the createGroup()
+    // response above). Not awaited: nothing here depends on it finishing, same "fire and let the
+    // dashboard catch up" posture as the join-channel-form flow relies on refreshAll()'s own poll for.
+    refreshAll().catch(() => {});
+  } catch (err) {
+    if (err.status === 401) {
+      handlePasswordRejected();
+      return;
+    }
+    showToast(err.message, "alert-circle");
+    vibrate([12, 40, 12]);
+  } finally {
+    setCreateGroupBusy(submit, false);
+  }
+});
+
 // Known serviceIds get a recognizable icon and a human-readable name; anything else (a service this
 // app has never heard of, e.g. one an operator registered locally) still gets a card, just with a
 // generic icon and a name derived from the raw id — "some card" beats "silently missing" for an
@@ -1259,17 +1552,19 @@ let refreshCycleId = 0;
 async function refreshAll() {
   const cycleId = ++refreshCycleId;
   try {
-    const [status, peers, services, channels] = await Promise.all([
+    const [status, peers, services, channels, groups] = await Promise.all([
       fetchJson("/api/status"),
       fetchJson("/api/peers"),
       fetchJson("/api/services"),
       fetchJson("/api/channels"),
+      fetchGroups(),
     ]);
     if (cycleId !== refreshCycleId) return; // superseded by a newer refresh while this one was in flight
     renderStats(status);
     renderPeers(peers);
     renderServices(services);
     renderChannels(channels);
+    renderGroups(groups);
     await refreshContent();
     firstLoadDone = true;
     setDashboardError();

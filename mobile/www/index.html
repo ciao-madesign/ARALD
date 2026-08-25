@@ -151,13 +151,28 @@
         </form>
         <ul id="channels"></ul>
       </details>
+
+      <details class="panel" id="groups-panel">
+        <summary>
+          <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-lock"></use></svg> Gruppi <span class="count" id="groups-count"></span></h2>
+          <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+        </summary>
+        <form id="create-group-form">
+          <input id="create-group-name" type="text" placeholder="Nome gruppo" autocomplete="off" autocapitalize="off" spellcheck="false">
+          <div id="group-member-picker" class="group-member-picker"></div>
+          <button type="submit">Crea gruppo cifrato</button>
+        </form>
+        <ul id="groups"></ul>
+      </details>
     </div>
 
-    <!-- Fuori dai <details> sopra (deliberatamente): un pannello aperto (chat 1:1 o canale) non deve
-         sparire solo perché la sezione da cui è stato aperto viene ricollassata — stesso principio di
-         #service-call-panel, mai annidato dentro un contenitore che potrebbe nascondersi da solo. -->
+    <!-- Fuori dai <details> sopra (deliberatamente): un pannello aperto (chat 1:1, canale o gruppo)
+         non deve sparire solo perché la sezione da cui è stato aperto viene ricollassata — stesso
+         principio di #service-call-panel, mai annidato dentro un contenitore che potrebbe
+         nascondersi da solo. -->
     <div id="chat-panel" hidden></div>
     <div id="channel-panel" hidden></div>
+    <div id="group-panel" hidden></div>
 
     <div id="dashboard-error-wrap" hidden>
       <p id="dashboard-error" class="error" role="alert" aria-live="polite"></p>

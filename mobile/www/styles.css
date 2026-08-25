@@ -474,6 +474,33 @@ li.skel-row { display: flex; flex-direction: column; }
 }
 .chat-author { font-size: 0.7em; font-weight: 600; margin-bottom: 0.15em; padding: 0 0.2em; }
 
+/* ---------- encrypted groups (docs/next-steps.md Opzione J) — same shared-panel shape as public
+   channels above, plus a create-group form with a member picker. ---------- */
+
+#create-group-form { display: flex; flex-direction: column; gap: 0.5em; margin-bottom: 0.8em; }
+#create-group-name {
+  padding: 0.55em 0.75em; border-radius: 0.5em; border: 1px solid var(--border);
+  background: var(--bg); color: var(--ink);
+}
+#create-group-name:focus-visible { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
+.group-member-picker { display: flex; flex-direction: column; gap: 0.3em; max-height: 9em; overflow-y: auto; }
+.group-member-picker .empty { padding: 0.2em 0; }
+.group-member-option { display: flex; align-items: center; gap: 0.5em; font-size: 0.88em; }
+.group-member-option input[type="checkbox"] { accent-color: var(--accent); width: 1.1em; height: 1.1em; flex: none; }
+#create-group-form button[type="submit"] {
+  align-self: flex-start; border-radius: 0.5em; padding: 0.55em 1em; background: var(--accent);
+  color: var(--accent-ink); border: none; font-weight: 600;
+}
+#create-group-form button[type="submit"]:active { transform: scale(0.97); }
+#create-group-form button[type="submit"]:disabled { opacity: 0.6; }
+
+/* #group-panel reuses #chat-panel's own look exactly, same as #channel-panel above. */
+#group-panel:not([hidden]) {
+  margin-top: 1em; padding: 1em; border: 1px solid var(--accent); background: var(--accent-soft);
+  clip-path: polygon(0 0, calc(100% - 1em) 0, 100% 1em, 100% 100%, 0 100%);
+  animation: item-in 220ms var(--ease);
+}
+
 /* :not([hidden]) — same reason as #setup-screen above: an author rule setting `display` at equal
    specificity to the UA stylesheet's `[hidden] { display: none }` wins over it (author styles beat
    UA styles on a specificity tie), so an unguarded `display: flex` here would keep an error banner

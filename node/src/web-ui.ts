@@ -174,6 +174,19 @@ interface ContentEntry {
   availableThrough?: string;
 }
 
+interface GroupSummary {
+  groupId: string;
+  name: string;
+  members: string[];
+  createdBy: string;
+  createdAt: number;
+}
+
+/** `GroupInfo` minus `key` — the group's symmetric key never leaves this node over HTTP, even to an authenticated caller (the mobile app never needs it directly; the server does the encrypting/decrypting on its behalf). */
+function toGroupSummary(info: { groupId: string; name: string; members: string[]; createdBy: string; createdAt: number }): GroupSummary {
+  return { groupId: info.groupId, name: info.name, members: info.members, createdBy: info.createdBy, createdAt: info.createdAt };
+}
+
 interface ChannelSummary {
   channel: string;
   messageCount: number;
@@ -684,6 +697,14 @@ export class WebUiServer {
         void this.handleSendChannelMessage(req, res);
         return;
       }
+      if (url.pathname === "/api/groups") {
+        void this.handleCreateGroup(req, res);
+        return;
+      }
+      if (url.pathname === "/api/group-messages") {
+        void this.handleSendGroupMessage(req, res);
+        return;
+      }
       res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("Method Not Allowed");
       return;
@@ -747,6 +768,16 @@ export class WebUiServer {
 
     if (url.pathname === "/api/channel-messages") {
       this.handleGetChannelMessages(res, url);
+      return;
+    }
+
+    if (url.pathname === "/api/groups") {
+      this.handleGetGroups(req, res);
+      return;
+    }
+
+    if (url.pathname === "/api/group-messages") {
+      this.handleGetGroupMessages(req, res, url);
       return;
     }
 
@@ -1068,6 +1099,180 @@ export class WebUiServer {
       // caller's input was rejected, not a downstream failure, so 400 rather than handleCall()'s
       // 502 convention for unexpected service failures.
       sendJson(res, 400, { error: (err as Error).message });
+    }
+  }
+
+  /**
+   * `GET /api/groups` — the encrypted groups this node is a member of
+   * (`node.groups`), never including the group key itself
+   * (`toGroupSummary()`). Same auth tier as `/api/messages` — unlike a
+   * public channel, a group's name/membership is private information
+   * (spec §56), not public mesh state.
+   */
+  private handleGetGroups(req: IncomingMessage, res: ServerResponse): void {
+    if (!this.allowServiceCalls || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+    sendJson(res, 200, this.node.groups.listGroups().map(toGroupSummary));
+  }
+
+  /**
+   * `GET /api/group-messages?groupId=...` — the decrypted message history
+   * for a group this node is a member of (`node.groups`), oldest first.
+   * Same auth as `GET /api/groups`. An unknown `groupId` (never joined, or
+   * a typo) returns an empty list rather than a 404 — mirrors
+   * `handleGetChannelMessages()`'s own "unknown channel" behavior, not
+   * something worth distinguishing from "no messages yet".
+   */
+  private handleGetGroupMessages(req: IncomingMessage, res: ServerResponse, url: URL): void {
+    if (!this.allowServiceCalls || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+    const groupId = url.searchParams.get("groupId");
+    if (!groupId) {
+      sendJson(res, 400, { error: "'groupId' query parameter is required" });
+      return;
+    }
+    sendJson(res, 200, { messages: this.node.groups.getMessages(groupId) });
+  }
+
+  /**
+   * `POST /api/groups` — creates a new encrypted group (body
+   * `{ name, members: string[] }`) via `NomadNode.createGroup()`. Same auth
+   * as `POST /api/messages`. A 404 when a member's encryption key isn't
+   * known yet mirrors `handleSendMessage()`'s identical mapping; a 400 for
+   * `createGroup()`'s own input validation (empty name, no members).
+   */
+  private async handleCreateGroup(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.allowServiceCalls || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+
+    let raw: Buffer;
+    try {
+      raw = await readRequestBody(req, MAX_MESSAGE_BODY_BYTES, MAX_CALL_BODY_READ_MS);
+    } catch (err) {
+      if (res.writableEnded || res.destroyed) return; // connection already gone — nothing to answer
+      if (err instanceof BodyTooLargeError) {
+        sendJson(res, 413, { error: "request body too large" });
+      } else if (err instanceof Error && err.message.includes("timed out")) {
+        sendJson(res, 408, { error: "timed out waiting for the request body" });
+      } else {
+        sendJson(res, 400, { error: "failed to read request body" });
+      }
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = raw.length === 0 ? {} : JSON.parse(raw.toString("utf8"));
+    } catch {
+      sendJson(res, 400, { error: "malformed JSON body" });
+      return;
+    }
+
+    const body = parsed as { name?: unknown; members?: unknown } | null;
+    const name = body?.name;
+    if (typeof name !== "string" || name.length === 0) {
+      sendJson(res, 400, { error: "'name' must be a non-empty string" });
+      return;
+    }
+    const members = body?.members;
+    if (!Array.isArray(members) || !members.every((m) => typeof m === "string")) {
+      sendJson(res, 400, { error: "'members' must be an array of node id strings" });
+      return;
+    }
+
+    try {
+      const info = this.node.createGroup(name, members);
+      sendJson(res, 200, { group: toGroupSummary(info) });
+    } catch (err) {
+      // createGroup()'s own throws are either input validation (bad name/no members, 400) or an
+      // unreachable member's encryption key not being known yet — the same "can't reach this
+      // recipient (yet)" condition handleSendMessage() already maps to 404.
+      const message = (err as Error).message;
+      sendJson(res, message.includes("encryption key") ? 404 : 400, { error: message });
+    }
+  }
+
+  /**
+   * `POST /api/group-messages` — sends a message to a group this node is
+   * already a member of (body `{ groupId, text }`) via
+   * `NomadNode.sendGroupMessage()`. Same auth as `POST /api/groups`; a 404
+   * for an unknown `groupId` (not a member), a 400 for an invalid `text`.
+   */
+  private async handleSendGroupMessage(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.allowServiceCalls || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+
+    let raw: Buffer;
+    try {
+      raw = await readRequestBody(req, MAX_MESSAGE_BODY_BYTES, MAX_CALL_BODY_READ_MS);
+    } catch (err) {
+      if (res.writableEnded || res.destroyed) return; // connection already gone — nothing to answer
+      if (err instanceof BodyTooLargeError) {
+        sendJson(res, 413, { error: "request body too large" });
+      } else if (err instanceof Error && err.message.includes("timed out")) {
+        sendJson(res, 408, { error: "timed out waiting for the request body" });
+      } else {
+        sendJson(res, 400, { error: "failed to read request body" });
+      }
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = raw.length === 0 ? {} : JSON.parse(raw.toString("utf8"));
+    } catch {
+      sendJson(res, 400, { error: "malformed JSON body" });
+      return;
+    }
+
+    const body = parsed as { groupId?: unknown; text?: unknown } | null;
+    const groupId = body?.groupId;
+    if (typeof groupId !== "string" || groupId.length === 0) {
+      sendJson(res, 400, { error: "'groupId' must be a non-empty string" });
+      return;
+    }
+    const text = body?.text;
+    if (typeof text !== "string" || text.length === 0) {
+      sendJson(res, 400, { error: "'text' must be a non-empty string" });
+      return;
+    }
+
+    try {
+      const message = this.node.sendGroupMessage(groupId, text);
+      sendJson(res, 200, { message });
+    } catch (err) {
+      // sendGroupMessage()'s own throws are either "not a known group" (404, not a member) or
+      // text-length validation (400) — same split as handleCreateGroup() above.
+      const message = (err as Error).message;
+      sendJson(res, message.includes("not a known group") ? 404 : 400, { error: message });
     }
   }
 
