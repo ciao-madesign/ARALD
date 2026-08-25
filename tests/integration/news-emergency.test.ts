@@ -266,4 +266,99 @@ describe("NewsGateway emergency headlines (service://emergency-news)", () => {
 
     await far.node.stop();
   });
+
+  it("does not re-announce an old, unchanged emergency headline after enough unrelated routine headlines evict its entry from publishedById (regression: found by a follow-up review round)", async () => {
+    // The announce decision used to be gated on isChanged (publishedById.get(id) !== contentId) —
+    // publishedById is a plain FIFO shared by *every* tracked headline (bounded at
+    // MAX_TRACKED_HEADLINES, 4096, news-gateway.ts), not just emergency ones. A large enough burst
+    // of unrelated *routine* headlines during ordinary long-running operation (no restart needed)
+    // can evict an old, still-unchanged emergency headline's entry there — making isChanged true
+    // again on its next appearance and re-announcing it mesh-wide at emergency priority for content
+    // that never actually changed. This reproduces that exact scenario.
+    let currentBatch: TestHeadline[] = [emergenza];
+    const started = await startTestNewsServer(() => currentBatch);
+    server = started.server;
+
+    const gw = makeNode("gateway");
+    const far = makeNode("far");
+    gatewayNode = gw;
+    await Promise.all([gw, far].map(({ node }) => node.start()));
+    await gw.node.connect({ host: "127.0.0.1", port: far.transport.port });
+
+    let announceCount = 0;
+    far.node.on("content:announced", () => announceCount++);
+
+    gateway = new NewsGateway(gw.node, started.url);
+    await gateway.syncNews(); // emergenza is new -> announces once
+    const metadata = gw.node.contentStore.list().find((m) => m.name === emergenza.title)!;
+    await waitFor(() => far.node.remoteCatalog.has(metadata.contentId));
+    expect(announceCount).toBe(1);
+
+    // Flood > MAX_TRACKED_HEADLINES (4096) distinct *routine* headlines, in batches — none of these
+    // match the emergency classifier, so none of them should ever announce, but by the end
+    // publishedById's FIFO has necessarily evicted emergenza's own entry (inserted before any of
+    // these, and never refreshed in place since re-set() on an existing key doesn't move it).
+    const BATCHES = 5;
+    const PER_BATCH = 1000; // 5 * 1000 = 5000 > 4096
+    for (let batchIndex = 0; batchIndex < BATCHES; batchIndex++) {
+      currentBatch = Array.from({ length: PER_BATCH }, (_, i) => {
+        const id = `routine-batch${batchIndex}-${i}`;
+        return { id, title: id, summary: "s", url: "https://example.test/" + id, publishedAt: "2026-01-01T00:00:00.000Z", category: "escursionismo" };
+      });
+      await gateway.syncNews();
+    }
+    expect(BATCHES * PER_BATCH).toBeGreaterThan(4096); // sanity: this really did exceed publishedById's cap
+    await new Promise((resolve) => setTimeout(resolve, 200)); // time for any of these to have wrongly announced
+    expect(announceCount).toBe(1); // still just emergenza's own first announce — no routine headline ever announces
+
+    // Re-sync the *same, unchanged* emergency headline alone — publishedById no longer remembers it
+    // (evicted above), so the old isChanged-only gate would see it as "new" and re-announce it.
+    currentBatch = [emergenza];
+    await gateway.syncNews();
+    await new Promise((resolve) => setTimeout(resolve, 200)); // time for a second broadcast to have arrived, if there were one
+
+    expect(announceCount).toBe(1); // still just the first one
+    await far.node.stop();
+  });
+
+  it("still re-announces an emergency headline whose id was already announced once, when its content genuinely changes", async () => {
+    // Guards the specific comparison announcedEmergencyById's dedup relies on: it must compare by
+    // *content id*, not merely by id presence — found missing test coverage in a follow-up review
+    // round, since the sibling "does not re-announce ... unchanged" test only exercises the
+    // unchanged-content path. A plausible-looking simplification (checking .has(id) instead of
+    // .get(id) === contentId) would pass every other test in this file but silently stop
+    // re-announcing an escalating bulletin's updated version — exactly what this test would catch.
+    let currentSummary = "Prima versione del bollettino.";
+    const started = await startTestNewsServer(() => [{ ...emergenza, summary: currentSummary }]);
+    server = started.server;
+
+    const gw = makeNode("gateway");
+    const far = makeNode("far");
+    gatewayNode = gw;
+    await Promise.all([gw, far].map(({ node }) => node.start()));
+    await gw.node.connect({ host: "127.0.0.1", port: far.transport.port });
+
+    let announceCount = 0;
+    far.node.on("content:announced", () => announceCount++);
+
+    gateway = new NewsGateway(gw.node, started.url);
+    await gateway.syncNews(); // first version — new, announces
+    const firstMetadata = gw.node.contentStore.list().find((m) => m.name === emergenza.title)!;
+    await waitFor(() => far.node.remoteCatalog.has(firstMetadata.contentId));
+    expect(announceCount).toBe(1);
+
+    // Same id, genuinely different content (a new articleContentId embedded in the headline bytes,
+    // since the article body's summary changed) — a real "the bulletin got updated" scenario, not a
+    // no-op resync.
+    currentSummary = "Aggiornamento: evacuazione immediata richiesta.";
+    const changed = await gateway.syncNews();
+    expect(changed.map((h) => h.id)).toEqual([emergenza.id]); // syncNews() itself agrees this changed
+
+    const secondMetadata = gw.node.contentStore.list().find((m) => m.name === emergenza.title && m.contentId !== firstMetadata.contentId);
+    expect(secondMetadata).toBeDefined(); // a genuinely new content id was published for the updated headline
+    await waitFor(() => far.node.remoteCatalog.has(secondMetadata!.contentId));
+    expect(announceCount).toBe(2); // the updated version reached already-connected peers too, not just the first
+
+    await far.node.stop();
+  });
 });

@@ -71,6 +71,17 @@ const MAX_DIGEST_TITLE_CHARS = 200;
 const MAX_EMERGENCY_ANNOUNCES_PER_SYNC = 5;
 
 /**
+ * Smaller, independent bound for `announcedEmergencyById` — deliberately
+ * *not* `publishedById` (see that field's own doc comment for why this
+ * exists as a separate map). Sized well below `MAX_TRACKED_HEADLINES`
+ * since it only ever holds headlines the emergency classifier actually
+ * flagged and that were actually announced — expected to be a small
+ * fraction of total feed volume in any real deployment (an emergency
+ * bulletin feed is not most of the traffic).
+ */
+const MAX_TRACKED_EMERGENCY_HEADLINES = 512;
+
+/**
  * Prepares a single (untrusted, feed-sourced) headline title for inclusion
  * in the digest prompt's bullet list: collapses any newline/carriage-return
  * into a space so a title can never break out of its own `- ` bullet line
@@ -213,21 +224,55 @@ export class NewsGateway {
    * returns an unchanged headline doesn't re-report it — same dedup shape
    * as `KiwixGateway.publishedByPath`, but bounded (see
    * `MAX_TRACKED_HEADLINES`) since this one gateway can now refresh itself
-   * unattended via `startAutoSync()`.
+   * unattended via `startAutoSync()`. Feeds `service://news`'s "changed"
+   * reporting only — the emergency-announce decision uses its own,
+   * separate `announcedEmergencyById` below, not this map (see there for
+   * why).
    *
    * **Accepted limitation, found by review**: purely in-memory, like every
    * other piece of this instance's own state — a process restart empties
    * it, so the first `syncNews()` after a restart treats every headline
-   * still in the feed as "changed", including one still tagged as an
-   * emergency that every peer already learned about before the restart —
-   * `syncNews()` re-announces it once at `Priority.EMERGENCY` as if it
-   * were new. `MAX_EMERGENCY_ANNOUNCES_PER_SYNC` bounds how bad a single
-   * restart (or a crash loop) can make this, but doesn't eliminate it — a
-   * real fix would need `publishedById` (or at least the emergency subset
-   * of it) persisted across restarts, which no other state in this class
-   * has either; not attempted here.
+   * still in the feed as "changed". This no longer causes a spurious
+   * emergency re-announce on its own (see `announcedEmergencyById`, which
+   * has the exact same in-memory/restart limitation, still accepted for
+   * the same reason nothing else in this class persists across restarts
+   * either) — it only means `service://news`'s own "changed" list looks
+   * different right after a restart, a cosmetic/reporting concern, not a
+   * network-flooding one.
    */
   private readonly publishedById = new BoundedFifoMap<string, string>({ maxSize: MAX_TRACKED_HEADLINES });
+  /**
+   * headline id -> contentId last *announced* at `Priority.EMERGENCY` —
+   * deliberately a separate map from `publishedById`, not reused for the
+   * announce decision, found by a follow-up review round: `publishedById`
+   * is a plain FIFO shared by *every* tracked headline (bounded at
+   * `MAX_TRACKED_HEADLINES`, 4096), so a large enough burst of unrelated
+   * *routine* headlines during ordinary long-running operation — no
+   * restart needed — could evict an old, still-unchanged emergency
+   * headline's entry there, making `isChanged` true again on its next
+   * appearance and re-announcing it mesh-wide at emergency priority for
+   * content that never actually changed. This map only ever holds
+   * headlines the emergency classifier flagged and that were actually
+   * announced (its own, much smaller, independent bound — see
+   * `MAX_TRACKED_EMERGENCY_HEADLINES`), so the same class of eviction
+   * would need far more *emergency-flagged* items specifically, not just
+   * any routine traffic, to reproduce.
+   *
+   * **Narrowed, not eliminated — accepted, same as every other bounded
+   * structure in this codebase (spec §57).** A deployment that genuinely
+   * accumulates more than `MAX_TRACKED_EMERGENCY_HEADLINES` (512) distinct
+   * announced-emergency ids over its uptime (e.g. a long high-alert period
+   * with many rolling regional bulletins) will eventually evict its oldest
+   * entry the same way `publishedById` could before this fix — an
+   * unchanged bulletin from early in that period could then re-announce
+   * once more. `MAX_EMERGENCY_ANNOUNCES_PER_SYNC` only throttles how fast
+   * a single sync can *approach* that threshold; it doesn't raise it. What
+   * this fix actually buys is raising the bar from "any 4096 mixed
+   * headlines, routine traffic included" to "512 headlines this instance
+   * itself classified as emergency" — a much larger, harder-to-reach, and
+   * purely emergency-scoped threshold, not an unbounded guarantee.
+   */
+  private readonly announcedEmergencyById = new BoundedFifoMap<string, string>({ maxSize: MAX_TRACKED_EMERGENCY_HEADLINES });
   /** Snapshot from the most recent successful `syncNews()` — what `service://news` actually answers with, never a live call per invocation. */
   private cachedHeadlines: NewsHeadline[] = [];
   /** Snapshot from the most recent successful `generateDigest()` — undefined until the first call succeeds. */
@@ -312,14 +357,14 @@ export class NewsGateway {
    * is discarded — see `syncGeneration`.
    *
    * A headline this instance's `isEmergencyHeadline` classifier flags —
-   * and only when it's new/changed this sync, never a repeat of one
-   * already known — is published with `{ announce: true, priority:
-   * Priority.EMERGENCY }` (spec's "P0", `service://emergency-news`), so it
-   * reaches already-connected peers immediately via `CONTENT_ANNOUNCE`
-   * instead of waiting for a pull query or catalog sync. Only the headline
-   * tier is announced this way — the article body still publishes
-   * normally, fetched on demand once a reader actually wants the full
-   * text, same as any other headline.
+   * and only when this exact version of it (by content id) hasn't already
+   * been announced, see `announcedEmergencyById` — is published with
+   * `{ announce: true, priority: Priority.EMERGENCY }` (spec's "P0",
+   * `service://emergency-news`), so it reaches already-connected peers
+   * immediately via `CONTENT_ANNOUNCE` instead of waiting for a pull query
+   * or catalog sync. Only the headline tier is announced this way — the
+   * article body still publishes normally, fetched on demand once a
+   * reader actually wants the full text, same as any other headline.
    */
   async syncNews(): Promise<NewsHeadline[]> {
     const generation = ++this.syncGeneration;
@@ -348,7 +393,10 @@ export class NewsGateway {
     // rarely has more than a handful of genuinely new P0 bulletins in one sync window — this bounds
     // the worst case, not the routine one. Only the proactive broadcast is capped: an emergency
     // headline beyond the cap is still published normally and still counted by `emergencyHeadlines`
-    // (service://emergency-news still lists it) — a node just has to discover it the pull way.
+    // (service://emergency-news still lists it) — a node just has to discover it the pull way. A
+    // cap-deferred headline is never recorded in announcedEmergencyById (only an isEmergency===true
+    // headline is), so it isn't stuck pull-only forever either — it's simply eligible to announce
+    // again on a later, less crowded sync, unlike a genuinely already-announced one.
     let emergencyAnnouncesThisSync = 0;
     for (const item of parsed.items) {
       // Unconditional, every tick, for every item — publishedById's dedup check below only applies
@@ -382,8 +430,18 @@ export class NewsGateway {
       // precomputed id or deciding announce options after the fact, out of scope here.
       const headlineContentId = computeContentId(headlineBytes);
       const isChanged = this.publishedById.get(headline.id) !== headlineContentId;
-      const isEmergency = isChanged && this.isEmergencyHeadline(headline) && emergencyAnnouncesThisSync < MAX_EMERGENCY_ANNOUNCES_PER_SYNC;
-      if (isEmergency) emergencyAnnouncesThisSync++;
+      // Deliberately checked against announcedEmergencyById, not isChanged/publishedById above —
+      // found by a follow-up review round: publishedById is a FIFO shared across *all* tracked
+      // headlines, so a burst of unrelated routine headlines could evict an old, still-unchanged
+      // emergency headline's entry there, making isChanged true again and re-announcing it mesh-wide
+      // for content that never actually changed. announcedEmergencyById tracks only ever-announced
+      // emergency headlines in its own, smaller, independent bound — see its own doc comment.
+      const alreadyAnnouncedThisVersion = this.announcedEmergencyById.get(headline.id) === headlineContentId;
+      const isEmergency = !alreadyAnnouncedThisVersion && this.isEmergencyHeadline(headline) && emergencyAnnouncesThisSync < MAX_EMERGENCY_ANNOUNCES_PER_SYNC;
+      if (isEmergency) {
+        emergencyAnnouncesThisSync++;
+        this.announcedEmergencyById.set(headline.id, headlineContentId);
+      }
       const headlineMetadata = this.node.publishContent(
         headline.title,
         "application/json",
