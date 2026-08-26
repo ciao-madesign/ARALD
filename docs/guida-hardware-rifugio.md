@@ -3,7 +3,7 @@
 Questo documento è pensato per **due persone diverse**, in due momenti diversi:
 
 1. **Chi allestisce il dispositivo la prima volta** — serve un minimo di manualità (collegare cavi, inserire una scheda), ma **nessuna competenza di programmazione**. Una parte (sezione 2) richiede invece un minimo di esperienza con i computer — se non c'è nessuno disponibile, va chiesto aiuto una tantum a chi ha donato/consigliato il dispositivo, o alla comunità che segue il progetto.
-2. **Chi gestisce il rifugio ogni giorno** (sezioni 3-5) — qui **non serve nessuna competenza informatica o elettronica**. Accendere, verificare che funzioni, far connettere gli ospiti: tre gesti semplici, spiegati passo passo.
+2. **Il rifugista** (chi gestisce il rifugio ogni giorno, sezioni 3-5) — qui **non serve nessuna competenza informatica o elettronica**. Accendere, verificare che funzioni, far connettere gli ospiti: tre gesti semplici, spiegati passo passo.
 
 > **Nota sullo stato del progetto**: quanto descritto qui riguarda la parte già pronta oggi — un nodo collegato via Wi-Fi che gli smartphone degli ospiti raggiungono con l'app mobile (pairing "come una rete Wi-Fi", nome rete + password, anche via QR — già implementato e verificato, vedi `docs/security.md` voci #23-25/#42). Il collegamento diretto via Bluetooth tra dispositivi (senza passare dal Wi-Fi del rifugio) esiste solo in versione simulata in questo momento, non su hardware radio reale — vedi `docs/deployment.md` e `docs/roadmap.md`. Questa guida non è mai stata eseguita fisicamente in un rifugio vero: è il piano di riferimento per la prima installazione reale, scritto con la stessa cura del resto della documentazione tecnica di questo repository.
 
@@ -39,7 +39,7 @@ Questa parte va fatta **una sola volta**, prima di portare il dispositivo al rif
    - una **password** breve e facile da leggere ad alta voce (lo stesso stile già usato dall'app mobile del progetto — vedi `mobile/README.md` e `docs/security.md` voce #24).
 4. **Copiare il software Nomad-Net** sulla scheda (la cartella `node/` di questo repository, già compilata — `npm run build -w node`) e configurarlo per **avviarsi automaticamente all'accensione** (un servizio di sistema, non un comando da digitare ogni volta).
 5. **Inserire la scheda nel Raspberry Pi**, collegare l'alimentazione, aspettare 2-3 minuti e verificare che la rete Wi-Fi configurata al punto 3 compaia cercando le reti disponibili da un telefono.
-6. **Stampare un'etichetta o un piccolo cartello** con su scritto, a caratteri leggibili: il nome della rete Wi-Fi, la password, e — se possibile — il codice QR di pairing generato dalla pagina web del dispositivo stesso (`GET /api/pairing`, spiegato in `docs/security.md`). Va **attaccato fisicamente sul contenitore** del dispositivo o vicino ad esso: è la cosa che il gestore del rifugio userà ogni giorno, senza dover accendere nessun computer per recuperarla.
+6. **Stampare un'etichetta o un piccolo cartello** con su scritto, a caratteri leggibili: il nome della rete Wi-Fi, la password, e — se possibile — il codice QR di pairing generato dalla pagina web del dispositivo stesso (`GET /api/pairing`, spiegato in `docs/security.md`). Va **attaccato fisicamente sul contenitore** del dispositivo o vicino ad esso: è la cosa che il rifugista userà ogni giorno, senza dover accendere nessun computer per recuperarla.
 7. **Preparare una seconda scheda identica** (copia esatta della prima) da tenere come ricambio al rifugio — vedi sezione 4.
 
 Da qui in poi, il dispositivo è pronto e **non richiede più nessuna competenza tecnica** per essere usato.
@@ -57,7 +57,7 @@ Da qui in poi, il dispositivo è pronto e **non richiede più nessuna competenza
 
 ---
 
-## 4. Uso quotidiano (per chi gestisce il rifugio — nessuna competenza richiesta)
+## 4. Uso quotidiano (per il rifugista — nessuna competenza richiesta)
 
 ### Come si accende / spegne
 Il dispositivo **resta sempre acceso**, come un router Wi-Fi di casa: non c'è un interruttore da premere ogni giorno. Va scollegato dalla corrente solo se serve davvero spostarlo o se qualcuno lo richiede esplicitamente per manutenzione (sezione 5).
@@ -87,7 +87,7 @@ Anche qui, gesti semplici — non serve competenza tecnica, solo un minimo di at
 - **Pannello solare** (se presente): controllare che non sia coperto da neve, foglie o sporco che ne riducono la resa, soprattutto dopo temporali o nevicate.
 - **Batteria tampone / power bank**: le batterie si esauriscono nel tempo (in genere dopo qualche anno di uso continuo) — se il dispositivo comincia a spegnersi non appena manca la corrente principale, è probabile che vada sostituita. Non è un'emergenza: il dispositivo torna a funzionare normalmente appena la corrente torna.
 - **Scheda di ricambio**: se il dispositivo smette di funzionare e non si riaccende nemmeno ricollegando bene l'alimentazione, si può provare a **sostituire la scheda microSD** con quella di ricambio preparata alla sezione 2 (si estrae quella vecchia, si inserisce quella nuova, si ricollega la corrente). Se questo passaggio mette a disagio, meglio comunque chiedere aiuto piuttosto che forzare qualcosa.
-- **Backup periodico**: chi ha preparato il dispositivo (sezione 2) dovrebbe, una volta ogni tanto, fare una copia aggiornata della scheda microSD — non è un compito per il gestore del rifugio.
+- **Backup periodico**: chi ha preparato il dispositivo (sezione 2) dovrebbe, una volta ogni tanto, fare una copia aggiornata della scheda microSD — non è un compito per il rifugista.
 
 ---
 
