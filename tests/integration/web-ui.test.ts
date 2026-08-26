@@ -258,6 +258,45 @@ describe("WebUiServer (spec §59)", () => {
     expect((await fetch(`${baseUrl()}/api/status`, { method: "POST" })).status).toBe(405);
   });
 
+  it("redirects every known OS captive-portal probe path to / with a 302, no auth required", async () => {
+    node = new NomadNode({ displayName: "N" });
+    webUi = new WebUiServer(node, { port: 0 }); // allowServiceCalls off — must still work on every deployment
+    await webUi.start();
+
+    const probePaths = [
+      "/hotspot-detect.html",
+      "/library/test/success.html",
+      "/generate_204",
+      "/gen_204",
+      "/connecttest.txt",
+      "/ncsi.txt",
+      "/success.txt",
+    ];
+    for (const path of probePaths) {
+      const res = await fetch(`${baseUrl()}${path}`, { redirect: "manual" });
+      expect(res.status, `expected 302 for ${path}`).toBe(302);
+      expect(res.headers.get("location"), `expected Location: / for ${path}`).toBe("/");
+    }
+  });
+
+  it("a path that merely resembles a captive-portal probe path still 404s, unaffected by the new redirect logic", async () => {
+    node = new NomadNode({ displayName: "N" });
+    webUi = new WebUiServer(node, { port: 0 });
+    await webUi.start();
+
+    expect((await fetch(`${baseUrl()}/generate_204x`, { redirect: "manual" })).status).toBe(404);
+    expect((await fetch(`${baseUrl()}/HOTSPOT-DETECT.HTML`, { redirect: "manual" })).status).toBe(404); // exact-match, not case-insensitive
+  });
+
+  it("a captive-portal probe path only redirects for GET, not other methods", async () => {
+    node = new NomadNode({ displayName: "N" });
+    webUi = new WebUiServer(node, { port: 0 });
+    await webUi.start();
+
+    const res = await fetch(`${baseUrl()}/generate_204`, { method: "POST" });
+    expect(res.status).toBe(405); // falls through to the generic POST-to-an-unregistered-path rejection, never redirected
+  });
+
   it("binds to loopback by default, not every interface", async () => {
     node = new NomadNode({ displayName: "N" });
     webUi = new WebUiServer(node, { port: 0 });

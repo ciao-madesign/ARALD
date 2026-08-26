@@ -92,6 +92,34 @@ export interface WebUiOptions {
 
 const WILDCARD_OR_LOOPBACK_HOSTS = new Set(["0.0.0.0", "127.0.0.1", "localhost", "::", "::1"]);
 
+/**
+ * The exact paths iOS/macOS, Android, Windows, and Firefox/Linux each
+ * request automatically right after joining a Wi-Fi network, to decide
+ * whether to show their own "Sign in to network" popup — well-known,
+ * externally-defined by each OS, not something this project controls:
+ *   - Apple: `/hotspot-detect.html`, `/library/test/success.html`
+ *     (expects a specific "Success" HTML page)
+ *   - Android/ChromeOS: `/generate_204`, `/gen_204` (expects HTTP 204, empty body)
+ *   - Windows: `/connecttest.txt` (expects "Microsoft Connect Test"), `/ncsi.txt` (expects "Microsoft NCSI")
+ *   - Firefox/Linux (NetworkManager): `/success.txt` (expects "success\n")
+ * This node answers every one of them with the same 302 to `/` (see the
+ * call site) — different from what each OS expects as "already online",
+ * which is exactly what makes each of them conclude there's a captive
+ * portal and open a browser on their own. Not guaranteed on every
+ * OS/version (this project doesn't control that behavior) — the manual
+ * QR/network-name+password pairing flow (`docs/guida-hardware-rifugio.md`)
+ * always remains available as a fallback regardless.
+ */
+const CAPTIVE_PORTAL_PROBE_PATHS = new Set([
+  "/hotspot-detect.html",
+  "/library/test/success.html",
+  "/generate_204",
+  "/gen_204",
+  "/connecttest.txt",
+  "/ncsi.txt",
+  "/success.txt",
+]);
+
 /** Best-effort LAN IPv4 address for this machine — see `WebUiOptions.publicHost`'s doc comment for why this is a fallback, not the primary source of truth. */
 function detectLanIPv4(): string | undefined {
   const interfaces = networkInterfaces();
@@ -719,6 +747,24 @@ export class WebUiServer {
     // req.method is provably GET or HEAD by this point — both earlier branches (POST, everything
     // else) already returned — so req.url can be trusted directly, no fallback-to-"/" ternary needed.
     const url = new URL(req.url ?? "/", "http://localhost");
+
+    // Captive-portal auto-redirect: once this node's own Wi-Fi access point resolves every DNS name
+    // to itself (dnsmasq wildcard config, docs/guida-hardware-rifugio.md — outside this npm
+    // workspace, OS-level setup), a phone that just joined the network still requests these exact
+    // well-known paths, on whatever hostname each OS itself picked (never this node's real address —
+    // matched on `url.pathname` alone, never `Host`, for exactly that reason) to decide whether to
+    // show its own "Sign in to network" popup. Answering with anything other than what each OS
+    // expects as "already online" (Apple/Android/Windows/Firefox each expect different exact
+    // content — see CAPTIVE_PORTAL_PROBE_PATHS's own doc comment) makes it conclude there's a
+    // captive portal and open a browser on its own, pointed at Location — this node's own dashboard.
+    // GET only: every OS's real probe is a GET; matching HEAD too would just be surface no real
+    // client exercises. Always active, no new WebUiOptions flag: a fixed redirect on a handful of
+    // paths no other route uses has no security implication worth gating (unlike allowServiceCalls).
+    if (req.method === "GET" && CAPTIVE_PORTAL_PROBE_PATHS.has(url.pathname)) {
+      res.writeHead(302, { Location: "/" });
+      res.end();
+      return;
+    }
 
     if (url.pathname === "/") {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Length": Buffer.byteLength(PAGE_HTML) });

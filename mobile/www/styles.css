@@ -407,6 +407,11 @@ li.skel-row { display: flex; flex-direction: column; }
   background: var(--bg); color: var(--ink); font-family: inherit; resize: vertical;
 }
 .call-form textarea:focus-visible { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
+.translate-language-select {
+  width: 100%; padding: 0.55em 0.7em; border-radius: 0.5em; border: 1px solid var(--border);
+  background: var(--bg); color: var(--ink); font-family: inherit; font-size: 0.95em;
+}
+.translate-language-select:focus-visible { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
 .call-form .call-submit {
   align-self: flex-start; padding: 0.5em 1em; border: none;
   background: var(--accent); color: var(--accent-ink); font-weight: 600; font-size: 0.88em;

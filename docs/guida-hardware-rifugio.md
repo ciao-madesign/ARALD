@@ -37,6 +37,31 @@ Questa parte va fatta **una sola volta**, prima di portare il dispositivo al rif
 3. Nelle opzioni avanzate di Raspberry Pi Imager, **configurare la rete Wi-Fi del dispositivo come punto di accesso** (access point) con:
    - un **nome rete** riconoscibile, ad esempio `NOMAD-<nome del rifugio>` (es. `NOMAD-RIFUGIO-ALPI`);
    - una **password** breve e facile da leggere ad alta voce (lo stesso stile già usato dall'app mobile del progetto — vedi `mobile/README.md` e `docs/security.md` voce #24).
+
+   **Passo facoltativo ma consigliato — apertura automatica del browser**: di norma, dopo essersi collegati alla rete Wi-Fi, un ospite deve aprire da sé l'app o il browser per raggiungere il dispositivo. Configurando anche il DNS del punto di accesso perché risponda con l'indirizzo del dispositivo stesso a **qualunque** nome a dominio richiesto (non solo il proprio), il telefono dell'ospite — per come iOS, Android, Windows e la maggior parte dei browser sono già fatti — **apre da solo un popup "Accedi alla rete"** puntato sulla pagina del dispositivo, esattamente come succede già oggi collegandosi al Wi-Fi di un hotel o di un aeroporto. Il software Nomad-Net (`node/src/web-ui.ts`) riconosce già le richieste che iOS/Android/Windows/Firefox mandano automaticamente per decidere se mostrare quel popup, e risponde in modo da farlo comparire puntato sulla home page — questa parte è già pronta e testata in automatico (vedi `docs/security.md`), **manca solo la configurazione di rete** che segue, che va fatta con `hostapd` (il punto di accesso Wi-Fi vero e proprio) e `dnsmasq` (il server DNS/DHCP che fa "credere" a ogni telefono di dover raggiungere il dispositivo per qualunque sito):
+
+   ```
+   # /etc/hostapd/hostapd.conf — il punto di accesso Wi-Fi
+   interface=wlan0
+   driver=nl80211
+   ssid=NOMAD-RIFUGIO-ALPI
+   hw_mode=g
+   channel=7
+   wpa=2
+   wpa_passphrase=K7XM2QRT
+   wpa_key_mgmt=WPA-PSK
+   rsn_pairwise=CCMP
+   ```
+
+   ```
+   # /etc/dnsmasq.conf — DHCP (assegna un indirizzo ad ogni telefono) + DNS (fa "credere" che ogni
+   # sito sia il dispositivo stesso, indispensabile per far comparire il popup automatico sopra)
+   interface=wlan0
+   dhcp-range=192.168.4.2,192.168.4.100,255.255.255.0,24h
+   address=/#/192.168.4.1
+   ```
+
+   L'indirizzo `192.168.4.1` è quello che il dispositivo stesso assume sulla propria interfaccia Wi-Fi (`wlan0`) quando fa da punto di accesso — va assegnato allo stesso modo nella configurazione di rete del sistema operativo (fuori dai due file sopra, con `dhcpcd`/`NetworkManager` a seconda della versione di Raspberry Pi OS). Chi non ha esperienza con questi due file può comunque saltare questo passo facoltativo: senza, tutto il resto della guida funziona identico, l'unica differenza è che l'ospite dovrà aprire l'app o il browser da sé invece che vederselo aprire in automatico — il metodo con QR/nome rete e password resta sempre disponibile.
 4. **Copiare il software Nomad-Net** sulla scheda (la cartella `node/` di questo repository, già compilata — `npm run build -w node`) e configurarlo per **avviarsi automaticamente all'accensione** (un servizio di sistema, non un comando da digitare ogni volta).
 5. **Inserire la scheda nel Raspberry Pi**, collegare l'alimentazione, aspettare 2-3 minuti e verificare che la rete Wi-Fi configurata al punto 3 compaia cercando le reti disponibili da un telefono.
 6. **Stampare un'etichetta o un piccolo cartello** con su scritto, a caratteri leggibili: il nome della rete Wi-Fi, la password, e — se possibile — il codice QR di pairing generato dalla pagina web del dispositivo stesso (`GET /api/pairing`, spiegato in `docs/security.md`). Va **attaccato fisicamente sul contenitore** del dispositivo o vicino ad esso: è la cosa che il rifugista userà ogni giorno, senza dover accendere nessun computer per recuperarla.
@@ -70,7 +95,8 @@ Il dispositivo **resta sempre acceso**, come un router Wi-Fi di casa: non c'è u
 1. L'ospite apre le impostazioni Wi-Fi del proprio telefono (esattamente come farebbe per collegarsi a una qualunque rete Wi-Fi).
 2. Cerca il nome rete scritto sul cartello (es. `NOMAD-RIFUGIO-ALPI`) e inserisce la password indicata.
 3. Se ha installato l'app Nomad-Net, può anche **inquadrare il QR code** sul cartello invece di digitare nome e password a mano.
-4. Una volta collegato, l'ospite può usare l'app (o la pagina web che il dispositivo mostra automaticamente) per vedere contenuti, servizi e messaggi disponibili — senza bisogno di alcuna connessione a Internet.
+4. Se il dispositivo è stato configurato con il passo facoltativo della sezione 2 ("apertura automatica del browser"), spesso **non serve nemmeno il passo 3**: appena il telefono si collega, si apre da solo un popup con la pagina del dispositivo — esattamente come collegandosi al Wi-Fi di un hotel. Non è garantito su ogni telefono/versione di sistema operativo, quindi il metodo manuale (passo 2-3) resta sempre disponibile come alternativa.
+5. Una volta collegato, l'ospite può usare l'app (o la pagina web che il dispositivo mostra) per vedere contenuti, servizi e messaggi disponibili — senza bisogno di alcuna connessione a Internet.
 
 ### Cosa NON fare
 - **Non scollegare bruscamente** la corrente se non è necessario: se possibile, meglio aspettare un momento di calma (poche persone collegate) prima di staccare il cavo per manutenzione — un'interruzione improvvisa, ripetuta nel tempo, può rovinare la scheda di memoria.

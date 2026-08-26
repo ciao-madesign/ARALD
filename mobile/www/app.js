@@ -932,11 +932,28 @@ function setCallSubmitBusy(submit, busy) {
   }
 }
 
+/** Mirrors gateway/nomad/translate-gateway.ts's SUPPORTED_LANGUAGES — kept in sync by hand, same accepted situation as SERVICE_ICONS/SERVICE_LABELS below (mobile/www and gateway/nomad are separate runtimes with no shared import path). */
+const TRANSLATE_LANGUAGES = { it: "Italiano", en: "Inglese", de: "Tedesco", fr: "Francese", es: "Spagnolo" };
+
 function buildCallForm(service) {
   const isAi = service.serviceId === "service://ai";
-  const input = isAi
-    ? el("textarea", { placeholder: "Scrivi una domanda..." })
-    : el("textarea", { placeholder: "Payload JSON, es. {}", value: "{}" });
+  const isTranslate = service.serviceId === "service://translation";
+
+  let input, languageSelect;
+  if (isTranslate) {
+    input = el("textarea", { placeholder: "Scrivi il testo da tradurre..." });
+    languageSelect = el("select", { className: "translate-language-select" });
+    for (const [code, label] of Object.entries(TRANSLATE_LANGUAGES)) {
+      const option = el("option", { textContent: label });
+      option.value = code;
+      languageSelect.append(option);
+    }
+  } else if (isAi) {
+    input = el("textarea", { placeholder: "Scrivi una domanda..." });
+  } else {
+    input = el("textarea", { placeholder: "Payload JSON, es. {}", value: "{}" });
+  }
+
   const submit = el("button", { className: "call-submit" });
   setCallSubmitBusy(submit, false);
   const result = el("div", { className: "call-result", textContent: "" });
@@ -946,7 +963,9 @@ function buildCallForm(service) {
 
   submit.addEventListener("click", async () => {
     let payload;
-    if (isAi) {
+    if (isTranslate) {
+      payload = { text: input.value, targetLanguage: languageSelect.value };
+    } else if (isAi) {
       payload = { prompt: input.value };
     } else {
       try {
@@ -963,7 +982,10 @@ function buildCallForm(service) {
       const value = await callService(service.serviceId, payload);
       result.hidden = false;
       result.className = "call-result";
-      const rendered = isAi && value && typeof value.response === "string" ? value.response : JSON.stringify(value, null, 2);
+      let rendered;
+      if (isAi && value && typeof value.response === "string") rendered = value.response;
+      else if (isTranslate && value && typeof value.translatedText === "string") rendered = value.translatedText;
+      else rendered = JSON.stringify(value, null, 2);
       result.textContent = rendered;
       vibrate(10);
     } catch (err) {
@@ -980,7 +1002,8 @@ function buildCallForm(service) {
     }
   });
 
-  return el("div", { className: "call-form" }, [input, submit, result]);
+  const children = isTranslate ? [input, languageSelect, submit, result] : [input, submit, result];
+  return el("div", { className: "call-form" }, children);
 }
 
 // Tracks which service currently has an open call form. The form itself lives in a single shared
@@ -1414,9 +1437,9 @@ document.getElementById("create-group-form").addEventListener("submit", async (e
 // app has never heard of, e.g. one an operator registered locally) still gets a card, just with a
 // generic icon and a name derived from the raw id — "some card" beats "silently missing" for an
 // unrecognized-but-available service.
-const SERVICE_ICONS = { "service://ai": "sparkles", "service://kiwix-search": "book", "service://news": "newspaper" };
+const SERVICE_ICONS = { "service://ai": "sparkles", "service://kiwix-search": "book", "service://news": "newspaper", "service://translation": "translate" };
 const DEFAULT_SERVICE_ICON = "wrench";
-const SERVICE_LABELS = { "service://ai": "Assistente AI", "service://kiwix-search": "Enciclopedia", "service://news": "Notizie" };
+const SERVICE_LABELS = { "service://ai": "Assistente AI", "service://kiwix-search": "Enciclopedia", "service://news": "Notizie", "service://translation": "Traduttore" };
 
 function serviceLabel(serviceId) {
   if (SERVICE_LABELS[serviceId]) return SERVICE_LABELS[serviceId];
