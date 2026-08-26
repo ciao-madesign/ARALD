@@ -281,6 +281,85 @@ async function createGroup(name, members) {
 }
 
 /**
+ * GET /api/location-registry (node/src/web-ui.ts) — every currently-shared position this gateway
+ * knows about. Only ever populated on a *dedicated* location-registry node with `exposeLocationRegistry`
+ * turned on (docs/next-steps.md Opzione J) — an ordinary gateway 404s here, which this treats as "not
+ * offered here" (returns null), same graceful-degradation posture already used for /api/pairing's QR
+ * fields, rather than an error worth surfacing. A rejected password (401) is still surfaced via
+ * handlePasswordRejected(), same as every other authenticated read below.
+ */
+async function fetchLocationRegistry() {
+  const res = await fetchWithTimeout(apiUrl("/api/location-registry"), { headers: { Authorization: "Bearer " + networkPassword } }, READ_TIMEOUT_MS);
+  if (res.status === 404) return null;
+  if (res.status === 401) {
+    handlePasswordRejected();
+    throw new Error("password di rete non valida");
+  }
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return res.json();
+}
+
+/**
+ * POST /api/location-report (node/src/web-ui.ts) — shares this device's current position with
+ * whatever `service://location-registry` the currently-paired gateway can discover on the mesh.
+ * Works on any ordinary gateway (unlike fetchLocationRegistry() above, gated only on the same
+ * network password every other write endpoint needs) — sharing is the sender's side of the exchange,
+ * unrelated to whether *this* gateway itself is a dedicated registry. Same err.status convention as
+ * sendChatMessage()/createGroup().
+ */
+async function shareLocationReport(lat, lon, accuracy) {
+  const res = await fetchWithTimeout(
+    apiUrl("/api/location-report"),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + networkPassword },
+      body: JSON.stringify({ lat, lon, accuracy }),
+    },
+    CALL_TIMEOUT_MS,
+  );
+  let body;
+  try {
+    body = await res.json();
+  } catch {
+    const err = new Error("risposta non valida dal gateway (HTTP " + res.status + ")");
+    err.status = res.status;
+    throw err;
+  }
+  if (!res.ok) {
+    const err = new Error(body.error || "HTTP " + res.status);
+    err.status = res.status;
+    throw err;
+  }
+  return body;
+}
+
+/**
+ * Reads this device's current position — the Capacitor native plugin when running inside the native
+ * app shell (`window.Capacitor.Plugins.Geolocation`, added to mobile/package.json specifically for
+ * this: unlike QR scanning, there is no reasonable way to read hardware GPS without either it or the
+ * browser's own Geolocation API), falling back to the standard `navigator.geolocation` — a real,
+ * non-experimental Web API (unlike `BarcodeDetector`), which is also what makes this testable via
+ * Playwright's geolocation mocking in this sandbox (no native Android build available here, see
+ * mobile/README.md). Rejects with a message meant to be shown to the user as-is (permission denied,
+ * position unavailable, timed out, or "not supported at all").
+ */
+async function getCurrentPosition() {
+  const nativeGeolocation = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Geolocation;
+  if (nativeGeolocation && typeof nativeGeolocation.getCurrentPosition === "function") {
+    const pos = await nativeGeolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 10000 });
+    return { lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy ?? undefined };
+  }
+  if (!navigator.geolocation) throw new Error("Geolocalizzazione non disponibile su questo dispositivo.");
+  return new Promise((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy ?? undefined }),
+      (err) => reject(new Error(err.message || "Impossibile ottenere la posizione")),
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
+  });
+}
+
+/**
  * Probes whether `password` is accepted by `baseUrl`'s POST /api/call, without invoking any real
  * service (see PROBE_SERVICE_ID above) — used during setup so a wrong network password is caught
  * with a clear error immediately, instead of only surfacing the first time the user taps "Chiama".
@@ -921,6 +1000,75 @@ function renderGroupMemberPicker(peers) {
     picker.append(label);
   }
 }
+
+// ---------- location sharing (docs/next-steps.md Opzione J) ----------
+
+let locationReportSeenIds = new Set();
+
+/**
+ * `reports` is `null` when GET /api/location-registry 404s on this gateway — this device isn't
+ * paired to a dedicated registry node with `exposeLocationRegistry` on (node/src/web-ui.ts), the
+ * ordinary case for most gateways. The whole panel stays hidden in that case (never an empty
+ * "nessuna posizione" panel on every gateway that simply doesn't offer this), same graceful
+ * degradation already used for /api/pairing's optional QR fields.
+ */
+function renderLocationReports(reports) {
+  const panel = document.getElementById("location-registry-panel");
+  if (reports === null) {
+    panel.hidden = true;
+    locationReportSeenIds = new Set();
+    return;
+  }
+  panel.hidden = false;
+  const list = document.getElementById("location-registry");
+  list.removeAttribute("aria-busy");
+  document.getElementById("location-registry-count").textContent = reports.length > 0 ? String(reports.length) : "";
+  if (renderEmptyIfNeeded(list, reports, "Nessuna posizione condivisa ancora.", "map-pin")) {
+    locationReportSeenIds = new Set();
+    return;
+  }
+  const nextSeen = new Set();
+  for (const r of reports) {
+    nextSeen.add(r.reporterId);
+    const tags = [el("span", { className: "tag mono", textContent: r.lat.toFixed(4) + ", " + r.lon.toFixed(4) })];
+    if (r.accuracy !== undefined) tags.push(el("span", { className: "tag", textContent: "±" + Math.round(r.accuracy) + " m" }));
+    const li = el("li", null, [
+      el("div", { className: "row" }, [
+        el("span", { className: "row-title mono", textContent: "NODE-" + r.reporterId.slice(0, 8), title: r.reporterId }),
+        el("span", { className: "muted", textContent: timeAgo(r.timestamp) }),
+      ]),
+      el("div", { className: "tags" }, tags),
+    ]);
+    if (!locationReportSeenIds.has(r.reporterId)) li.classList.add("enter");
+    list.append(li);
+  }
+  locationReportSeenIds = nextSeen;
+}
+
+document.getElementById("share-location-button").addEventListener("click", async () => {
+  const button = document.getElementById("share-location-button");
+  const status = document.getElementById("share-location-status");
+  button.disabled = true;
+  status.classList.remove("error");
+  status.textContent = "Individuazione della posizione...";
+  try {
+    const { lat, lon, accuracy } = await getCurrentPosition();
+    status.textContent = "Condivisione in corso...";
+    await shareLocationReport(lat, lon, accuracy);
+    status.textContent = "Posizione condivisa.";
+    vibrate(15);
+    showToast("Posizione condivisa", "map-pin");
+    // Best-effort refresh of the read panel — only ever shows anything if this same device also
+    // happens to be paired to a registry node (unusual but harmless); failure here is silently
+    // ignored, same posture as every other background poll in this file.
+    fetchLocationRegistry().then(renderLocationReports).catch(() => {});
+  } catch (err) {
+    status.classList.add("error");
+    status.textContent = "Errore: " + err.message;
+  } finally {
+    button.disabled = false;
+  }
+});
 
 function setCallSubmitBusy(submit, busy) {
   submit.disabled = busy;
@@ -1575,12 +1723,13 @@ let refreshCycleId = 0;
 async function refreshAll() {
   const cycleId = ++refreshCycleId;
   try {
-    const [status, peers, services, channels, groups] = await Promise.all([
+    const [status, peers, services, channels, groups, locationReports] = await Promise.all([
       fetchJson("/api/status"),
       fetchJson("/api/peers"),
       fetchJson("/api/services"),
       fetchJson("/api/channels"),
       fetchGroups(),
+      fetchLocationRegistry(),
     ]);
     if (cycleId !== refreshCycleId) return; // superseded by a newer refresh while this one was in flight
     renderStats(status);
@@ -1588,6 +1737,7 @@ async function refreshAll() {
     renderServices(services);
     renderChannels(channels);
     renderGroups(groups);
+    renderLocationReports(locationReports);
     await refreshContent();
     firstLoadDone = true;
     setDashboardError();

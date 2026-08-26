@@ -262,6 +262,13 @@ header { display: flex; align-items: flex-start; justify-content: space-between;
 .trail-gauge .gauge-label { font-size: 1.05em; font-weight: 700; }
 .trail-gauge .gauge-detail { font-size: 0.78em; color: var(--muted); margin-top: 0.25em; line-height: 1.5; }
 
+/* A single, always-visible commitment — opt-in per spec (docs/next-steps.md Opzione J: mai un
+   invio automatico/periodico), quindi non nascosto dietro un <details> come le sezioni più
+   tecniche sotto: lo stesso principio "un utente comune deve vedere subito cosa può fare" già
+   applicato al pannello Servizi. */
+#share-location-panel { display: flex; flex-direction: column; gap: 0.5em; margin-bottom: 1.2em; }
+#share-location-status:empty { display: none; }
+
 .panels-grid { display: flex; flex-direction: column; gap: 1em; }
 
 /* Angolo tagliato in alto a destra invece di un raggio uniforme — la firma strutturale del sistema

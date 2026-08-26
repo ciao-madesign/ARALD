@@ -202,6 +202,11 @@ Oggi esiste solo cifratura punto-a-punto: una chiave condivisa per coppia di nod
 
 ### Tracciamento posizione
 
+**✅ Fatto (`docs/security.md` voce #44) — ultimo candidato dell'intero piano d'insieme.** Le tre decisioni segnalate qui sotto come necessarie prima del codice sono state raccolte esplicitamente con l'utente: opt-in per invio (mai campionamento periodico), solo l'ultima posizione nota per mittente (nessuna cronologia), lettura riservata a operatori fidati. Su quest'ultimo punto l'analisi tecnica sotto (riuso di `TrustLevel`) si è rivelata **aggirabile** una volta verificato il codice reale (`fromNodeId` di una `SERVICE_REQUEST` non è autenticato crittograficamente) — risolto con un nodo registro dedicato e una password di rete propria (riuso del meccanismo HTTP già esistente per `/api/groups`) invece del controllo TrustLevel qui sotto ipotizzato. Tutto il resto di questa analisi si è rivelato accurato: `PeerDirectory`/store-and-forward davvero sufficienti senza nuovo protocollo di consegna, `service://location-registry` per la scoperta, `sendPrivateMessage()` mai `publishContent()`, limite di dimensione fin dall'inizio (`maxReportAgeMs`/eviction pesata sulla fiducia), plugin Capacitor Geolocation lato mobile (prima vera eccezione a "niente dipendenze esterne", motivata in dettaglio in `docs/security.md` voce #44). Il limite di *traffic analysis* segnalato sotto resta un limite reale e accettato, non affrontato da questa implementazione (fuori scope, stesso trattamento di sistemi analoghi come Signal/Tor).
+
+<details>
+<summary>Analisi originale (21 agosto 2026), mantenuta come riferimento storico di come il design è stato pensato</summary>
+
 **La parte difficile è già coperta.** `PeerDirectory` propaga le chiavi di cifratura mesh-wide (stesso meccanismo del catalog sync, non solo tra vicini diretti connessi ora) — un dispositivo può quindi già cifrare `sendPrivateMessage()` per un nodo "registro" a molti hop di distanza, mai incontrato direttamente, e se il registro è irraggiungibile al momento della segnalazione, store-and-forward la mette in coda e la consegna al primo incontro utile lungo il percorso. È esattamente lo scenario "segnalo la posizione, il primo dispositivo mesh che incrocio la porta avanti fino al registro" — nessun nuovo protocollo di consegna da progettare.
 
 **Cosa serve di nuovo:**
@@ -215,18 +220,20 @@ Oggi esiste solo cifratura punto-a-punto: una chiave condivisa per coppia di nod
 - **Traffic analysis**: anche cifrato, un relay lungo il percorso vede "il nodo X manda periodicamente qualcosa al nodo registro" — questo da solo rivela che X sta condividendo la posizione, anche senza leggerne il contenuto. Limite noto e accettato in sistemi analoghi (Signal, Tor); va documentato onestamente come limite residuo, non preteso di essere risolto da questa feature.
 - **Consenso ed etica**: qui i dati sono la posizione di persone reali — la specifica stessa elenca esplicitamente "posizione" tra i dati **da minimizzare** (`docs/SPECIFICATION.md` §56: "Da minimizzare: identificatori persistenti, posizione, cronologia dei contatti, contenuti richiesti"). Questo non è un'opinione di design aggiunta ora, è già un principio dichiarato nella specifica. Prima di scrivere codice serve: opt-in esplicito e revocabile lato utente (mai attivo di default), un controllo su chi può interrogare il registro (riuserebbe `TrustLevel`/`TrustManager` già esistente), e una decisione esplicita su quanto a lungo conservare le segnalazioni (minimizzazione nel tempo, non solo nello spazio). Questa è una discussione da fare con l'utente prima dell'implementazione, non una scelta tecnica che si può prendere da soli.
 
+</details>
+
 ### Come procedere, se si riprende
 
 1. ~~Chat 1:1~~ ✅ Fatta (voce #36).
 2. ✅ Canali pubblici — fatti, voce #40. Costruiti dopo il meccanismo di priorità/broadcast per contenuti condiviso con l'Opzione I, come pianificato.
 3. ~~Chat private/di gruppo cifrate~~ ✅ Fatte (voce #42) — v1 a membership fissa, scelta esplicita dell'utente; vedi sopra per il dettaglio.
-4. Tracciamento posizione — richiede prima una decisione esplicita con l'utente su consenso/conservazione/autorizzazione (non solo codice), poi: `service://location-registry` + gateway registro + lato mobile. **Ultimo candidato rimasto dell'intera Opzione J.**
+4. ~~Tracciamento posizione~~ ✅ Fatto (voce #44) — nodo registro dedicato con password propria al posto del controllo `TrustLevel` qui sopra ipotizzato, poi rivelatosi aggirabile; vedi sopra per il dettaglio completo. **Con questa, l'intera Opzione J è completa.**
 
-Stesso workflow a doppio check di ogni voce precedente per qualunque di questi pezzi si scelga di implementare.
+Stesso workflow a doppio check di ogni voce precedente per qualunque lavoro sostanziale futuro in questo repository.
 
-## Piano d'insieme (25 agosto 2026, aggiornato dopo #28-42) — come ordinare tutti i candidati aperti
+## Piano d'insieme (26 agosto 2026, aggiornato dopo #28-44) — come ordinare tutti i candidati aperti
 
-Con l'Opzione I (news evoluto) **completata per intero**, l'Opzione J **completata per intero a eccezione del tracciamento posizione** (chat 1:1, canali pubblici e ora anche chat private/di gruppo cifrate tutte fatte) — e con il debito di design UI mobile, `ContentStore`, l'intera evoluzione news, il prerequisito architetturale condiviso, e l'intera messaggistica dell'Opzione J **già completati** (voci #28-42, `docs/security.md` — vedi "Stato del progetto" in `CLAUDE.md`), questo piano riordina i candidati **rimasti** — che oggi è **uno solo** — per dipendenze reali, non solo per data di scoperta. Le fasi "0" - "5" e "7" sono barrate sotto come riferimento storico di come questo piano è stato pensato, non perché vadano ancora fatte; **solo la Fase 6 (tracciamento posizione) resta aperta**.
+Con l'Opzione I (news evoluto) **completata per intero** e l'Opzione J **completata per intero** (chat 1:1, canali pubblici, chat private/di gruppo cifrate e ora anche il tracciamento posizione tutte fatte) — e con il debito di design UI mobile, `ContentStore`, l'intera evoluzione news, il prerequisito architetturale condiviso, e l'intera messaggistica dell'Opzione J **già completati** (voci #28-44, `docs/security.md` — vedi "Stato del progetto" in `CLAUDE.md`), **questo piano non ha più candidati pianificati aperti**. Le fasi "0" - "7" sono barrate sotto come riferimento storico di come questo piano è stato pensato, non perché vadano ancora fatte.
 
 ~~**Fase 0 — `ContentStore` senza limite di dimensione.**~~ ✅ Fatta (voce #32).
 
@@ -244,7 +251,7 @@ Con l'Opzione I (news evoluto) **completata per intero**, l'Opzione J **completa
 
 ~~**Fase 5 (ex Fase 4, unico pezzo rimasto) — Canali pubblici di chat.**~~ ✅ Fatta (voce #40).
 
-**Fase 6 — Richiede prima una decisione esplicita con l'utente, non solo codice. Unico candidato rimasto dell'intero piano.** Tracciamento posizione (Opzione J): consenso, conservazione, autorizzazione all'interrogazione del registro vanno decisi **con** l'utente prima di scrivere il gateway registro o il lato mobile — la specifica stessa (§56) elenca la posizione tra i dati da minimizzare, non è una scelta tecnica da prendere in autonomia.
+~~**Fase 6 — Richiede prima una decisione esplicita con l'utente, non solo codice.**~~ ✅ Fatta (`docs/security.md` voce #44) — tracciamento posizione (Opzione J): le tre decisioni (consenso, conservazione, autorizzazione all'interrogazione del registro) raccolte esplicitamente con l'utente prima del codice, come richiesto qui sotto; il controllo TrustLevel sull'autorizzazione, qui inizialmente ipotizzato, si è rivelato aggirabile durante l'esplorazione tecnica e sostituito con un nodo registro dedicato a password propria — vedi "Tracciamento posizione" sopra per il dettaglio completo. **Con questa, l'intero piano d'insieme è completo.**
 
 ~~**Fase 7 — Il pezzo di design crittografico più sostanzioso.**~~ ✅ Fatta (voce #42) — chat private/di gruppo cifrate (Opzione J), v1 a membership fissa (key-wrapping AES-256-GCM + firma Ed25519 del mittente, `node/src/groups.ts`); gestione ingresso/uscita dal gruppo/rotazione chiave esplicitamente fuori scope, scelta dell'utente — vedi "Messaggistica" sopra e `docs/security.md` voce #42 per il dettaglio completo. Con questa, l'intera messaggistica dell'Opzione J è completa.
 

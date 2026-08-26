@@ -47,6 +47,7 @@ import {
   type GroupMessage,
   type GroupMessagePacketPayload,
 } from "./groups.js";
+import { LocationRegistry, extractLocationReport, type LocationReportPayload } from "./location-registry.js";
 import { RoutingTable } from "./routing-table.js";
 import { ServiceDirectory } from "./service-directory.js";
 import { serviceSigningPayload, verifyServiceAnnouncement, type ServiceAnnouncement, type ServiceHandler } from "./service.js";
@@ -115,6 +116,10 @@ export interface NomadNodeOptions {
   maxGroups?: number;
   /** Max messages kept per group in `groups` — the oldest is dropped once exceeded. */
   maxMessagesPerGroup?: number;
+  /** Max distinct reporters tracked in `locationRegistry` at once (spec §57 resource limits). */
+  maxLocationReports?: number;
+  /** A location report older than this (by its own sender-stamped timestamp) is treated as absent by `locationRegistry` — see `LocationRegistryOptions.maxReportAgeMs`. Undefined (default) never expires a report on its own. */
+  maxLocationReportAgeMs?: number;
 }
 
 interface ContentWaiter {
@@ -169,6 +174,9 @@ const OWN_CONTENT_TRUST_RANK = trustRank(TrustLevel.ADMIN) + 1;
  * worst case; extra entries beyond this are silently dropped, not rejected outright.
  */
 const MAX_ROUTES_PER_ANNOUNCE = 512;
+
+/** Discovery-only service id a dedicated location-registry node advertises via `registerAsLocationRegistry()` — see that method's doc comment for why its handler never actually does anything with a `SERVICE_REQUEST`. */
+const LOCATION_REGISTRY_SERVICE_ID = "service://location-registry";
 
 interface PendingContentEntry {
   contentId: string;
@@ -377,6 +385,17 @@ export class NomadNode extends EventEmitter {
   readonly publicChannels: PublicChannels;
   /** Encrypted group chats this node is a member of — created via `createGroup()` or joined via a `PRIVATE_MESSAGE` invite (`considerGroupInvite()`), never a mesh-wide catalog the way `publicChannels`/`remoteCatalog` are (spec §56, docs/next-steps.md Opzione J, groups.ts). */
   readonly groups: Groups;
+  /**
+   * Opportunistically-shared positions this node has received via
+   * `PRIVATE_MESSAGE` (`shareLocation()`/`considerLocationReport()`,
+   * location-registry.ts) — latest report per sender only, consent-gated at
+   * the sender's end (a report only ever arrives because its sender
+   * explicitly called `shareLocation()` toward this node). A normal node
+   * never exposes this over HTTP at all; only a node explicitly started
+   * with `WebUiOptions.exposeLocationRegistry` does, see `location-registry.ts`'s
+   * own doc comment for the full access-control reasoning.
+   */
+  readonly locationRegistry: LocationRegistry;
 
   private readonly defaultTtl: number;
   private readonly contentRequestTimeoutMs: number;
@@ -471,6 +490,11 @@ export class NomadNode extends EventEmitter {
       maxGroups: options.maxGroups,
       maxMessagesPerGroup: options.maxMessagesPerGroup,
       trustRank: (createdBy) => trustRank(this.trust.get(createdBy)),
+    });
+    this.locationRegistry = new LocationRegistry({
+      maxReports: options.maxLocationReports,
+      maxReportAgeMs: options.maxLocationReportAgeMs,
+      trustRank: (reporterId) => trustRank(this.trust.get(reporterId)),
     });
   }
 
@@ -886,6 +910,68 @@ export class NomadNode extends EventEmitter {
     this.emit("group:invited", invite.groupId, senderId);
   }
 
+  /**
+   * Shares this node's own current position with a chosen location registry
+   * (`docs/next-steps.md` Opzione J "tracciamento posizione") — explicit,
+   * opt-in, one report per call, never automatic/periodic sampling: there is
+   * no background timer anywhere in this codebase that could call this on
+   * its own. Discovers `service://location-registry`'s current provider
+   * (same "discover then invoke" shape as `callService()`), then sends it a
+   * `location-report`-shaped `PRIVATE_MESSAGE` — never `publishContent()`,
+   * which is the opposite of what a personal position needs (cacheable and
+   * discoverable by anyone in the mesh). `timestamp` is stamped here with
+   * this node's own clock, once, never accepted as an argument — the same
+   * reasoning already applied to `publishChannelMessage()`/`sendGroupMessage()`'s
+   * own timestamps: an HTTP caller (`web-ui.ts`'s `POST /api/location-report`)
+   * must never be able to backdate/forge one.
+   *
+   * Throws (same as `sendPrivateMessage()`) if no registry is discovered
+   * within `options.timeoutMs`, or if the registry's encryption key isn't
+   * known yet.
+   */
+  async shareLocation(location: { lat: number; lon: number; accuracy?: number }, options: { timeoutMs?: number } = {}): Promise<void> {
+    if (typeof location.lat !== "number" || !Number.isFinite(location.lat) || location.lat < -90 || location.lat > 90) {
+      throw new Error("shareLocation: 'lat' must be a finite number in [-90, 90]");
+    }
+    if (typeof location.lon !== "number" || !Number.isFinite(location.lon) || location.lon < -180 || location.lon > 180) {
+      throw new Error("shareLocation: 'lon' must be a finite number in [-180, 180]");
+    }
+    if (
+      location.accuracy !== undefined &&
+      (typeof location.accuracy !== "number" || !Number.isFinite(location.accuracy) || location.accuracy < 0)
+    ) {
+      throw new Error("shareLocation: 'accuracy' must be a non-negative finite number");
+    }
+    const provider = await this.discoverService(LOCATION_REGISTRY_SERVICE_ID, options);
+    const payload: LocationReportPayload = {
+      type: "location-report",
+      lat: location.lat,
+      lon: location.lon,
+      accuracy: location.accuracy,
+      timestamp: Date.now(),
+    };
+    this.sendPrivateMessage(provider.providerId, payload);
+  }
+
+  /**
+   * Handles a `location-report`-shaped `PRIVATE_MESSAGE` payload (from
+   * `handlePrivateMessage()`, after successful decryption) — records it into
+   * `locationRegistry`, keyed by `senderId` (the decrypted message's
+   * `packet.source`), **never** a field out of the payload itself — same
+   * authentication boundary already established for `considerGroupInvite()`/
+   * `GroupInfo.createdBy`. Any node can passively receive and store a report
+   * addressed to it (`handlePrivateMessage()` only ever decrypts messages
+   * addressed to this node, so a report only ever arrives here because its
+   * sender specifically chose to `shareLocation()` toward this node) — the
+   * real access-control boundary is entirely on the *read* side
+   * (`web-ui.ts`'s `exposeLocationRegistry`), not here.
+   */
+  private considerLocationReport(senderId: string, report: LocationReportPayload | undefined): void {
+    if (!report) return;
+    this.locationRegistry.record(senderId, report);
+    this.emit("location:reported", senderId);
+  }
+
   /** Resolves once `nodeId`'s encryption key is known (immediately, if already is), or rejects after `timeoutMs`. */
   waitForPeerKey(nodeId: string, options: { timeoutMs?: number } = {}): Promise<string> {
     const known = this.peerDirectory.getKey(nodeId);
@@ -937,6 +1023,38 @@ export class NomadNode extends EventEmitter {
       this.originate<ServiceAnnouncePayload>(MessageType.SERVICE_ANNOUNCE, { announcement }, { priority: Priority.SERVICE }),
     );
     return announcement;
+  }
+
+  /**
+   * Opts this node into being a **location registry** — a node other nodes'
+   * `shareLocation()` calls can discover and send reports to
+   * (`docs/next-steps.md` Opzione J). **Never called automatically**: only
+   * an operator who explicitly wants this node to collect shared positions
+   * should call it (and, to actually read them back, also start its
+   * `WebUiServer` with `exposeLocationRegistry: true` — a separate opt-in,
+   * see `location-registry.ts`).
+   *
+   * Registers `service://location-registry` purely so `discoverService()`
+   * can find a provider (spec §35's existing announce/query mechanism,
+   * reused as-is) — the handler itself is never meaningfully invoked: the
+   * real read/write paths are `shareLocation()`/`considerLocationReport()`,
+   * both over `PRIVATE_MESSAGE`, **not** `SERVICE_REQUEST` (a `SERVICE_REQUEST`'s
+   * caller identity is not cryptographically authenticated, see
+   * `location-registry.ts`'s doc comment for why that ruled out doing this
+   * as an ordinary service call). A stray direct `callService("service://location-registry", ...)`
+   * from some other caller is rejected with a clear error instead of silently
+   * doing nothing.
+   */
+  registerAsLocationRegistry(): ServiceAnnouncement {
+    return this.registerService(
+      LOCATION_REGISTRY_SERVICE_ID,
+      "1.0.0",
+      ["location-registry"],
+      () => {
+        throw new Error(`${LOCATION_REGISTRY_SERVICE_ID} is discovery-only — send a location report via shareLocation(), not callService()`);
+      },
+      { resourceRequirements: "richiede WebUiOptions.exposeLocationRegistry per la lettura via HTTP" },
+    );
   }
 
   /**
@@ -1892,6 +2010,7 @@ export class NomadNode extends EventEmitter {
       const text = extractChatText(payload);
       if (text !== undefined) this.messageHistory.record(packet.source, "received", text);
       this.considerGroupInvite(packet.source, extractGroupInvite(payload));
+      this.considerLocationReport(packet.source, extractLocationReport(payload));
       this.emit("private-message", { ...packet, payload });
     } catch (err) {
       this.emit("private-message:failed", packet.source, (err as Error).message);
