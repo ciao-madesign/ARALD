@@ -17,15 +17,16 @@ Un solo nodo, pensato per costare poco, consumare pochissimo e non avere parti c
 
 ### Opzione A — Router Wi-Fi con OpenWrt (consigliata)
 
-**Quale modello comprare**: serve un router che abbia OpenWrt **già preinstallato di fabbrica** (non un router generico a cui installarlo da soli, passaggio più delicato e non necessario) — la gamma **GL.iNet** è oggi la scelta più semplice per questo, perché ogni modello lo ha già pronto con un'interfaccia web guidata. Modelli consigliati (specifiche verificate, prezzi indicativi da verificare al momento dell'acquisto):
+**Quale modello comprare**: serve un router che abbia OpenWrt **già preinstallato di fabbrica** (non un router generico a cui installarlo da soli, passaggio più delicato e non necessario) — la gamma **GL.iNet** è oggi la scelta più semplice per questo, perché ogni modello lo ha già pronto con un'interfaccia web guidata.
 
-| Modello | RAM / memoria | Prezzo indicativo | Quando sceglierlo |
+**Requisito che conta più di RAM/flash dichiarate: il chip deve essere ARM, non MIPS/Atheros più vecchio.** I core MIPS 24Kc usati nei modelli GL.iNet più economici (es. MediaTek MT7628 del "Mango", Qualcomm Atheros QCA9563 dello "Slate"/AR750S) **non hanno un'unità floating-point (FPU) hardware** — Node.js (il motore V8) genera istruzioni in virgola mobile e **non funziona senza FPU hardware**, un'incompatibilità nota e documentata, non solo "prestazioni scarse". Esiste in teoria un workaround (ricompilare il kernel con emulazione software della FPU), ma è lento e richiede compilare firmware custom — non adatto a questa guida. I modelli con chip **MediaTek "Filogic"** (MT7981/MT7986, entrambi ARM Cortex-A53) **non hanno questo problema** — è il criterio di scelta più importante, prima ancora del prezzo. Modelli consigliati (specifiche verificate, prezzi indicativi da verificare al momento dell'acquisto):
+
+| Modello | Chip / RAM / memoria | Prezzo indicativo | Quando sceglierlo |
 |---|---|---|---|
-| **GL.iNet GL-MT3000 "Beryl AX"** | 512 MB RAM, 256 MB flash, porta USB 3.0 per spazio extra | 50-65 € | **Scelta di riferimento per questo progetto** — RAM/flash abbondanti per far girare Nomad-Net senza problemi, consumo bassissimo (2,6-5 W, ottimo con pannello solare), formato tascabile |
-| **GL.iNet GL-MT6000 "Flint 2"** | 1 GB RAM, 8 GB di memoria interna eMMC (non solo flash) | 130-150 € | Se il budget lo permette e si vuole margine per il futuro (più dispositivi collegati, più contenuti in cache) — più grande e con un consumo un po' più alto (router "da tavolo", non tascabile), ma zero pensieri di spazio |
-| **GL.iNet GL-AR750S "Slate"** | 128 MB RAM, 16 MB flash | 50-60 € | Solo come ripiego se i due sopra non si trovano — la memoria flash da 16 MB è molto risicata per Node.js, **serve quasi sicuramente** la chiavetta USB della riga sotto configurata come spazio extra |
+| **GL.iNet GL-MT3000 "Beryl AX"** | MediaTek MT7981 (ARM Cortex-A53), 512 MB RAM, 256 MB flash, porta USB 3.0 per spazio extra | 50-65 € | **Scelta di riferimento per questo progetto** — RAM/flash abbondanti per far girare Nomad-Net senza problemi, consumo bassissimo (2,6-5 W, ottimo con pannello solare), formato tascabile |
+| **GL.iNet GL-MT6000 "Flint 2"** | MediaTek MT7986 (ARM Cortex-A53), 1 GB RAM, 8 GB di memoria interna eMMC (non solo flash) | 130-150 € | Se il budget lo permette e si vuole margine per il futuro (più dispositivi collegati, più contenuti in cache) — più grande e con un consumo un po' più alto (router "da tavolo", non tascabile), ma zero pensieri di spazio |
 
-Da evitare per questo progetto: i modelli più economici della stessa gamma (es. GL.iNet "Mango", 128 MB RAM/16 MB flash) — troppo risicati per far girare comodamente Node.js insieme al resto del sistema, anche con una chiavetta USB.
+**Da evitare per questo progetto, indipendentemente dal prezzo**: qualunque modello GL.iNet basato su chip MIPS/Atheros più vecchio — non solo il "Mango" (MediaTek MT7628, 128 MB RAM/16 MB flash) ma anche lo **"Slate"/GL-AR750S** (Qualcomm Atheros QCA9563), inizialmente indicato in una versione precedente di questa guida come ripiego economico e poi scartato dopo aver verificato che monta lo stesso core MIPS 24Kc senza FPU — l'incompatibilità con Node.js è la stessa del Mango, non solo "poca memoria". Prima di comprare un modello diverso da quelli in tabella, verificarne il chip (pagina prodotto GL.iNet o [OpenWrt Table of Hardware](https://openwrt.org/toh/start)) e assicurarsi che sia una famiglia ARM (Cortex-A53 o superiore), non MIPS.
 
 | Componente | A cosa serve | Spesa indicativa | Note per l'acquisto |
 |---|---|---|---|
@@ -35,7 +36,7 @@ Da evitare per questo progetto: i modelli più economici della stessa gamma (es.
 | **Power bank USB-C con passthrough** (si carica e alimenta il dispositivo contemporaneamente), *al posto di un vero UPS* | stessa funzione della batteria tampone dell'Opzione B: tiene acceso il router per un po' se manca la corrente | 20-30 € | Facoltativo se il rifugio ha corrente stabile tutto l'anno |
 | **Pannello solare piccolo (5-10 W) + regolatore di carica USB**, *solo se non c'è una presa di corrente vicino al punto di installazione* | alimenta il dispositivo dove non arriva un cavo | 30-40 € | Non necessario se si collega a una presa già esistente |
 
-**Spesa totale indicativa**: circa **60-80 €** con il GL-MT3000 "Beryl AX" consigliato (collegandosi a una presa esistente), **90-120 €** con pannello solare incluso — più alta con il GL-MT6000 "Flint 2" (vedi tabella sopra), più bassa (ma con un margine di RAM/flash minore) con lo Slate.
+**Spesa totale indicativa**: circa **60-80 €** con il GL-MT3000 "Beryl AX" consigliato (collegandosi a una presa esistente), **90-120 €** con pannello solare incluso — più alta con il GL-MT6000 "Flint 2" (vedi tabella sopra).
 
 ### Opzione B — Scheda singola (SBC), es. Raspberry Pi
 
