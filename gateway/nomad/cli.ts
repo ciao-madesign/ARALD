@@ -6,6 +6,7 @@ import { FakeOllamaServer } from "./fake-ollama-server.js";
 import { AiGateway } from "./ai-gateway.js";
 import { NewsGateway } from "./news-gateway.js";
 import { InternetGateway } from "./internet-gateway.js";
+import { registerTranslateService } from "./translate-gateway.js";
 
 /** How often NewsGateway re-syncs against `--news-url` when given (`docs/security.md`: "aggiornato ogni volta che si può"). */
 const NEWS_SYNC_INTERVAL_MS = 5 * 60 * 1000;
@@ -133,6 +134,13 @@ async function main(): Promise<void> {
 
   const aiGateway = new AiGateway(node, aiBaseUrl);
   aiGateway.registerAiService();
+
+  // service://translation composes service://ai via node.callService() (translate-gateway.ts),
+  // never a direct AiGateway reference — same pattern as NewsGateway.generateDigest() below.
+  // Unconditional: no CLI flag of its own needed, it has no external URL — it just needs
+  // service://ai to exist, which is already always registered above (real backend or fake).
+  registerTranslateService(node);
+  console.log("Registered service://translation (composes service://ai)");
 
   let newsGateway: NewsGateway | undefined;
   const newsFeedUrl = args["news-url"];

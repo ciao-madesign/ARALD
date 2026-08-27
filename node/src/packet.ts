@@ -25,6 +25,8 @@ export enum MessageType {
   SERVICE_QUERY = "SERVICE_QUERY",
   SERVICE_REQUEST = "SERVICE_REQUEST",
   SERVICE_RESPONSE = "SERVICE_RESPONSE",
+  /** Broadcast, end-to-end encrypted group chat message (docs/next-steps.md Opzione J) — see node/src/groups.ts. */
+  GROUP_MESSAGE = "GROUP_MESSAGE",
 }
 
 /**

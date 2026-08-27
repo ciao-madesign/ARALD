@@ -88,9 +88,55 @@ export interface WebUiOptions {
    * existing text-only pairing panel rather than emitting a guess that might be wrong.
    */
   publicHost?: string;
+  /**
+   * Enables `GET /api/location-registry` — this node's own copy of
+   * opportunistically-shared positions (`node.locationRegistry`,
+   * spec/docs/next-steps.md Opzione J "tracciamento posizione"). Off by
+   * default and **independent of `allowServiceCalls`**: a location registry
+   * is meant to run on a *separate, dedicated* node with its own network
+   * password, distributed only to trusted operators, never to the general
+   * guest-facing gateway — see `node/src/location-registry.ts`'s doc
+   * comment for the full reasoning (a naive TrustLevel check inside a
+   * `service://...` handler was considered and rejected as spoofable).
+   * When true, `networkPassword` is required (the constructor throws
+   * otherwise), same as `allowServiceCalls`. Sending a report
+   * (`POST /api/location-report`) is a *different*, unrelated gate — it
+   * only needs `allowServiceCalls`, the same as any other outgoing private
+   * message, since sharing a position works on any ordinary gateway a phone
+   * is paired to, not just a dedicated registry node.
+   */
+  exposeLocationRegistry?: boolean;
 }
 
 const WILDCARD_OR_LOOPBACK_HOSTS = new Set(["0.0.0.0", "127.0.0.1", "localhost", "::", "::1"]);
+
+/**
+ * The exact paths iOS/macOS, Android, Windows, and Firefox/Linux each
+ * request automatically right after joining a Wi-Fi network, to decide
+ * whether to show their own "Sign in to network" popup — well-known,
+ * externally-defined by each OS, not something this project controls:
+ *   - Apple: `/hotspot-detect.html`, `/library/test/success.html`
+ *     (expects a specific "Success" HTML page)
+ *   - Android/ChromeOS: `/generate_204`, `/gen_204` (expects HTTP 204, empty body)
+ *   - Windows: `/connecttest.txt` (expects "Microsoft Connect Test"), `/ncsi.txt` (expects "Microsoft NCSI")
+ *   - Firefox/Linux (NetworkManager): `/success.txt` (expects "success\n")
+ * This node answers every one of them with the same 302 to `/` (see the
+ * call site) — different from what each OS expects as "already online",
+ * which is exactly what makes each of them conclude there's a captive
+ * portal and open a browser on their own. Not guaranteed on every
+ * OS/version (this project doesn't control that behavior) — the manual
+ * QR/network-name+password pairing flow (`docs/guida-hardware-rifugio.md`)
+ * always remains available as a fallback regardless.
+ */
+const CAPTIVE_PORTAL_PROBE_PATHS = new Set([
+  "/hotspot-detect.html",
+  "/library/test/success.html",
+  "/generate_204",
+  "/gen_204",
+  "/connecttest.txt",
+  "/ncsi.txt",
+  "/success.txt",
+]);
 
 /** Best-effort LAN IPv4 address for this machine — see `WebUiOptions.publicHost`'s doc comment for why this is a fallback, not the primary source of truth. */
 function detectLanIPv4(): string | undefined {
@@ -172,6 +218,19 @@ interface ContentEntry {
    * fabricated. `undefined` when no route is known yet either.
    */
   availableThrough?: string;
+}
+
+interface GroupSummary {
+  groupId: string;
+  name: string;
+  members: string[];
+  createdBy: string;
+  createdAt: number;
+}
+
+/** `GroupInfo` minus `key` — the group's symmetric key never leaves this node over HTTP, even to an authenticated caller (the mobile app never needs it directly; the server does the encrypting/decrypting on its behalf). */
+function toGroupSummary(info: { groupId: string; name: string; members: string[]; createdBy: string; createdAt: number }): GroupSummary {
+  return { groupId: info.groupId, name: info.name, members: info.members, createdBy: info.createdBy, createdAt: info.createdAt };
 }
 
 interface ChannelSummary {
@@ -605,6 +664,7 @@ export class WebUiServer {
   private readonly node: NomadNode;
   private readonly internetStatus: () => "ONLINE" | "OFFLINE";
   private readonly allowServiceCalls: boolean;
+  private readonly exposeLocationRegistry: boolean;
   private readonly networkName: string | undefined;
   private readonly networkPassword: string | undefined;
   private readonly publicHost: string | undefined;
@@ -620,6 +680,10 @@ export class WebUiServer {
     }
     this.networkName = this.allowServiceCalls ? (options.networkName ?? node.displayName) : undefined;
     this.networkPassword = options.networkPassword;
+    this.exposeLocationRegistry = options.exposeLocationRegistry ?? false;
+    if (this.exposeLocationRegistry && !options.networkPassword) {
+      throw new Error("WebUiServer: exposeLocationRegistry requires a networkPassword");
+    }
     const boundHost = options.host ?? "127.0.0.1";
     this.publicHost = options.publicHost ?? (WILDCARD_OR_LOOPBACK_HOSTS.has(boundHost) ? detectLanIPv4() : boundHost);
     this.httpServer = new LoopbackHttpServer((req, res) => this.handleRequest(req, res), {
@@ -645,19 +709,23 @@ export class WebUiServer {
     // A mobile client (docs/next-steps.md Opzione H) is a separate origin from this server (a
     // Capacitor WebView, not a page this server itself served), so its fetch()es are cross-origin
     // and blocked by the browser/WebView's own CORS enforcement unless this response explicitly
-    // allows it — tied to allowServiceCalls specifically, the same flag that already opts a
-    // deployment into "an external client is expected to talk to this", rather than a separate
-    // toggle. Applied uniformly up front (every response, including 404s) instead of sprinkled
-    // through each branch below.
-    if (this.allowServiceCalls) {
+    // allows it — tied to allowServiceCalls OR exposeLocationRegistry, the two flags that opt a
+    // deployment into "an external client is expected to talk to this" (a dedicated location-registry
+    // node may run with exposeLocationRegistry alone, allowServiceCalls off — its one authenticated
+    // GET endpoint still needs this same cross-origin allowance for a phone to read it, found by
+    // review: this condition originally checked allowServiceCalls only, which would have silently
+    // CORS-blocked exactly the deployment this feature's own design doc calls out as the intended one).
+    // Applied uniformly up front (every response, including 404s) instead of sprinkled through each
+    // branch below.
+    if (this.allowServiceCalls || this.exposeLocationRegistry) {
       res.setHeader("Access-Control-Allow-Origin", "*");
     }
 
     if (req.method === "OPTIONS") {
-      // A cross-origin POST with a custom `Authorization` header and a JSON Content-Type is a
-      // "non-simple" request, so a real browser/WebView sends this preflight before the actual
-      // POST /api/call — only relevant (and only answered) when that endpoint is actually reachable.
-      if (this.allowServiceCalls) {
+      // A cross-origin GET/POST with a custom `Authorization` header and (for POST) a JSON
+      // Content-Type is a "non-simple" request, so a real browser/WebView sends this preflight first
+      // — relevant whenever at least one authenticated endpoint is reachable at all.
+      if (this.allowServiceCalls || this.exposeLocationRegistry) {
         res.writeHead(204, {
           "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
           "Access-Control-Allow-Headers": "Content-Type, Authorization",
@@ -684,6 +752,18 @@ export class WebUiServer {
         void this.handleSendChannelMessage(req, res);
         return;
       }
+      if (url.pathname === "/api/groups") {
+        void this.handleCreateGroup(req, res);
+        return;
+      }
+      if (url.pathname === "/api/group-messages") {
+        void this.handleSendGroupMessage(req, res);
+        return;
+      }
+      if (url.pathname === "/api/location-report") {
+        void this.handleShareLocation(req, res);
+        return;
+      }
       res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("Method Not Allowed");
       return;
@@ -698,6 +778,24 @@ export class WebUiServer {
     // req.method is provably GET or HEAD by this point — both earlier branches (POST, everything
     // else) already returned — so req.url can be trusted directly, no fallback-to-"/" ternary needed.
     const url = new URL(req.url ?? "/", "http://localhost");
+
+    // Captive-portal auto-redirect: once this node's own Wi-Fi access point resolves every DNS name
+    // to itself (dnsmasq wildcard config, docs/guida-hardware-rifugio.md — outside this npm
+    // workspace, OS-level setup), a phone that just joined the network still requests these exact
+    // well-known paths, on whatever hostname each OS itself picked (never this node's real address —
+    // matched on `url.pathname` alone, never `Host`, for exactly that reason) to decide whether to
+    // show its own "Sign in to network" popup. Answering with anything other than what each OS
+    // expects as "already online" (Apple/Android/Windows/Firefox each expect different exact
+    // content — see CAPTIVE_PORTAL_PROBE_PATHS's own doc comment) makes it conclude there's a
+    // captive portal and open a browser on its own, pointed at Location — this node's own dashboard.
+    // GET only: every OS's real probe is a GET; matching HEAD too would just be surface no real
+    // client exercises. Always active, no new WebUiOptions flag: a fixed redirect on a handful of
+    // paths no other route uses has no security implication worth gating (unlike allowServiceCalls).
+    if (req.method === "GET" && CAPTIVE_PORTAL_PROBE_PATHS.has(url.pathname)) {
+      res.writeHead(302, { Location: "/" });
+      res.end();
+      return;
+    }
 
     if (url.pathname === "/") {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Length": Buffer.byteLength(PAGE_HTML) });
@@ -747,6 +845,21 @@ export class WebUiServer {
 
     if (url.pathname === "/api/channel-messages") {
       this.handleGetChannelMessages(res, url);
+      return;
+    }
+
+    if (url.pathname === "/api/groups") {
+      this.handleGetGroups(req, res);
+      return;
+    }
+
+    if (url.pathname === "/api/group-messages") {
+      this.handleGetGroupMessages(req, res, url);
+      return;
+    }
+
+    if (url.pathname === "/api/location-registry") {
+      this.handleGetLocationRegistry(req, res);
       return;
     }
 
@@ -1068,6 +1181,271 @@ export class WebUiServer {
       // caller's input was rejected, not a downstream failure, so 400 rather than handleCall()'s
       // 502 convention for unexpected service failures.
       sendJson(res, 400, { error: (err as Error).message });
+    }
+  }
+
+  /**
+   * `GET /api/groups` — the encrypted groups this node is a member of
+   * (`node.groups`), never including the group key itself
+   * (`toGroupSummary()`). Same auth tier as `/api/messages` — unlike a
+   * public channel, a group's name/membership is private information
+   * (spec §56), not public mesh state.
+   */
+  private handleGetGroups(req: IncomingMessage, res: ServerResponse): void {
+    if (!this.allowServiceCalls || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+    sendJson(res, 200, this.node.groups.listGroups().map(toGroupSummary));
+  }
+
+  /**
+   * `GET /api/group-messages?groupId=...` — the decrypted message history
+   * for a group this node is a member of (`node.groups`), oldest first.
+   * Same auth as `GET /api/groups`. An unknown `groupId` (never joined, or
+   * a typo) returns an empty list rather than a 404 — mirrors
+   * `handleGetChannelMessages()`'s own "unknown channel" behavior, not
+   * something worth distinguishing from "no messages yet".
+   */
+  private handleGetGroupMessages(req: IncomingMessage, res: ServerResponse, url: URL): void {
+    if (!this.allowServiceCalls || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+    const groupId = url.searchParams.get("groupId");
+    if (!groupId) {
+      sendJson(res, 400, { error: "'groupId' query parameter is required" });
+      return;
+    }
+    sendJson(res, 200, { messages: this.node.groups.getMessages(groupId) });
+  }
+
+  /**
+   * `POST /api/groups` — creates a new encrypted group (body
+   * `{ name, members: string[] }`) via `NomadNode.createGroup()`. Same auth
+   * as `POST /api/messages`. A 404 when a member's encryption key isn't
+   * known yet mirrors `handleSendMessage()`'s identical mapping; a 400 for
+   * `createGroup()`'s own input validation (empty name, no members).
+   */
+  private async handleCreateGroup(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.allowServiceCalls || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+
+    let raw: Buffer;
+    try {
+      raw = await readRequestBody(req, MAX_MESSAGE_BODY_BYTES, MAX_CALL_BODY_READ_MS);
+    } catch (err) {
+      if (res.writableEnded || res.destroyed) return; // connection already gone — nothing to answer
+      if (err instanceof BodyTooLargeError) {
+        sendJson(res, 413, { error: "request body too large" });
+      } else if (err instanceof Error && err.message.includes("timed out")) {
+        sendJson(res, 408, { error: "timed out waiting for the request body" });
+      } else {
+        sendJson(res, 400, { error: "failed to read request body" });
+      }
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = raw.length === 0 ? {} : JSON.parse(raw.toString("utf8"));
+    } catch {
+      sendJson(res, 400, { error: "malformed JSON body" });
+      return;
+    }
+
+    const body = parsed as { name?: unknown; members?: unknown } | null;
+    const name = body?.name;
+    if (typeof name !== "string" || name.length === 0) {
+      sendJson(res, 400, { error: "'name' must be a non-empty string" });
+      return;
+    }
+    const members = body?.members;
+    if (!Array.isArray(members) || !members.every((m) => typeof m === "string")) {
+      sendJson(res, 400, { error: "'members' must be an array of node id strings" });
+      return;
+    }
+
+    try {
+      const info = this.node.createGroup(name, members);
+      sendJson(res, 200, { group: toGroupSummary(info) });
+    } catch (err) {
+      // createGroup()'s own throws are either input validation (bad name/no members, 400) or an
+      // unreachable member's encryption key not being known yet — the same "can't reach this
+      // recipient (yet)" condition handleSendMessage() already maps to 404.
+      const message = (err as Error).message;
+      sendJson(res, message.includes("encryption key") ? 404 : 400, { error: message });
+    }
+  }
+
+  /**
+   * `POST /api/group-messages` — sends a message to a group this node is
+   * already a member of (body `{ groupId, text }`) via
+   * `NomadNode.sendGroupMessage()`. Same auth as `POST /api/groups`; a 404
+   * for an unknown `groupId` (not a member), a 400 for an invalid `text`.
+   */
+  private async handleSendGroupMessage(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.allowServiceCalls || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+
+    let raw: Buffer;
+    try {
+      raw = await readRequestBody(req, MAX_MESSAGE_BODY_BYTES, MAX_CALL_BODY_READ_MS);
+    } catch (err) {
+      if (res.writableEnded || res.destroyed) return; // connection already gone — nothing to answer
+      if (err instanceof BodyTooLargeError) {
+        sendJson(res, 413, { error: "request body too large" });
+      } else if (err instanceof Error && err.message.includes("timed out")) {
+        sendJson(res, 408, { error: "timed out waiting for the request body" });
+      } else {
+        sendJson(res, 400, { error: "failed to read request body" });
+      }
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = raw.length === 0 ? {} : JSON.parse(raw.toString("utf8"));
+    } catch {
+      sendJson(res, 400, { error: "malformed JSON body" });
+      return;
+    }
+
+    const body = parsed as { groupId?: unknown; text?: unknown } | null;
+    const groupId = body?.groupId;
+    if (typeof groupId !== "string" || groupId.length === 0) {
+      sendJson(res, 400, { error: "'groupId' must be a non-empty string" });
+      return;
+    }
+    const text = body?.text;
+    if (typeof text !== "string" || text.length === 0) {
+      sendJson(res, 400, { error: "'text' must be a non-empty string" });
+      return;
+    }
+
+    try {
+      const message = this.node.sendGroupMessage(groupId, text);
+      sendJson(res, 200, { message });
+    } catch (err) {
+      // sendGroupMessage()'s own throws are either "not a known group" (404, not a member) or
+      // text-length validation (400) — same split as handleCreateGroup() above.
+      const message = (err as Error).message;
+      sendJson(res, message.includes("not a known group") ? 404 : 400, { error: message });
+    }
+  }
+
+  /**
+   * `GET /api/location-registry` — every currently-known, non-expired
+   * shared position (`node.locationRegistry.list()`, spec/docs/next-steps.md
+   * Opzione J). Gated on `exposeLocationRegistry` specifically, **not**
+   * `allowServiceCalls` — see `WebUiOptions.exposeLocationRegistry`'s doc
+   * comment for why these are deliberately independent flags. 404 when this
+   * node hasn't opted in, same "don't confirm what you're guarding" posture
+   * as `handleCall()`.
+   */
+  private handleGetLocationRegistry(req: IncomingMessage, res: ServerResponse): void {
+    if (!this.exposeLocationRegistry || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+    sendJson(res, 200, this.node.locationRegistry.list());
+  }
+
+  /**
+   * `POST /api/location-report` — shares this node's own current position
+   * (body `{ lat, lon, accuracy? }`) via `NomadNode.shareLocation()`. Gated
+   * on `allowServiceCalls` like `POST /api/messages` — works on **any**
+   * gateway a phone is paired to, not just a dedicated registry node (it's
+   * the sender's side of the exchange, unrelated to `exposeLocationRegistry`,
+   * which only gates *reading* a registry back). `lat`/`lon`/`accuracy`'s
+   * actual range validation happens inside `shareLocation()` itself — this
+   * only checks they're numbers before calling it, same split as
+   * `handleCreateGroup()`'s shallow shape check before `createGroup()`'s own
+   * deeper validation.
+   */
+  private async handleShareLocation(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.allowServiceCalls || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+
+    let raw: Buffer;
+    try {
+      raw = await readRequestBody(req, MAX_MESSAGE_BODY_BYTES, MAX_CALL_BODY_READ_MS);
+    } catch (err) {
+      if (res.writableEnded || res.destroyed) return; // connection already gone — nothing to answer
+      if (err instanceof BodyTooLargeError) {
+        sendJson(res, 413, { error: "request body too large" });
+      } else if (err instanceof Error && err.message.includes("timed out")) {
+        sendJson(res, 408, { error: "timed out waiting for the request body" });
+      } else {
+        sendJson(res, 400, { error: "failed to read request body" });
+      }
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = raw.length === 0 ? {} : JSON.parse(raw.toString("utf8"));
+    } catch {
+      sendJson(res, 400, { error: "malformed JSON body" });
+      return;
+    }
+
+    const body = parsed as { lat?: unknown; lon?: unknown; accuracy?: unknown } | null;
+    if (typeof body?.lat !== "number" || typeof body?.lon !== "number") {
+      sendJson(res, 400, { error: "'lat' and 'lon' must be numbers" });
+      return;
+    }
+    if (body.accuracy !== undefined && typeof body.accuracy !== "number") {
+      sendJson(res, 400, { error: "'accuracy' must be a number" });
+      return;
+    }
+
+    try {
+      await this.node.shareLocation({ lat: body.lat, lon: body.lon, accuracy: body.accuracy });
+      sendJson(res, 200, { ok: true });
+    } catch (err) {
+      // shareLocation()'s own throws are either its own input validation (out-of-range lat/lon/accuracy,
+      // always prefixed "shareLocation:", 400) or "no registry discovered"/"encryption key not known
+      // yet" (both effectively "can't reach a registry right now") — mapped to 404, the same
+      // convention handleSendMessage()/handleCreateGroup() already use for an unreachable recipient.
+      const message = (err as Error).message;
+      sendJson(res, message.startsWith("shareLocation:") ? 400 : 404, { error: message });
     }
   }
 

@@ -83,6 +83,18 @@ describe("malformed packet payloads never crash the node", () => {
   it("survives a SERVICE_RESPONSE with no payload fields at all", () => expectSurvives(MessageType.SERVICE_RESPONSE, {}));
   it("survives a SERVICE_RESPONSE with a garbage announcement", () =>
     expectSurvives(MessageType.SERVICE_RESPONSE, { serviceId: "x", announcement: { serviceId: null } }));
+  it("survives a GROUP_MESSAGE with no payload fields at all", () => expectSurvives(MessageType.GROUP_MESSAGE, {}));
+  it("survives a GROUP_MESSAGE with a garbage groupId/senderId/signature", () =>
+    expectSurvives(MessageType.GROUP_MESSAGE, { groupId: 42, senderId: null, nonce: "x", ciphertext: "y", authTag: "z", signature: {} }));
+  it("survives a GROUP_MESSAGE with a well-formed-looking but unverifiable signature for a group this node doesn't know", () =>
+    expectSurvives(MessageType.GROUP_MESSAGE, {
+      groupId: "0".repeat(32),
+      senderId: "0".repeat(64),
+      nonce: "00".repeat(12),
+      ciphertext: "00".repeat(16),
+      authTag: "00".repeat(16),
+      signature: "00".repeat(64),
+    }));
 
   // CONTENT_* handlers (handleContentQuery/handleContentFound/handleContentNotFound/
   // handleContentRequest/handleContentChunk/handleContentComplete, node.ts) used to access

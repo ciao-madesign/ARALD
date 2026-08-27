@@ -26,6 +26,8 @@ Un gateway è una funzione software, non un hardware specifico: qualunque nodo c
 
 ## Pilot: rifugio alpino (§103, caso d'uso prioritario §6.2)
 
+Per la componentistica minima e le istruzioni passo passo di installazione/gestione di un singolo nodo fisso (comprensibili anche a un operatore senza competenze informatiche o elettroniche, es. il gestore del rifugio) vedi [`guida-hardware-rifugio.md`](./guida-hardware-rifugio.md).
+
 Configurazione target:
 
 - 1 NOMAD server (Docker, Debian-based)

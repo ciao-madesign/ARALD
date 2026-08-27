@@ -35,6 +35,19 @@ import {
   extractChannelMessagePayload,
   type ChannelMessage,
 } from "./public-channels.js";
+import {
+  Groups,
+  extractGroupInvite,
+  verifyGroupMessage,
+  decryptGroupMessage,
+  signGroupMessage,
+  generateGroupId,
+  generateGroupKey,
+  type GroupInfo,
+  type GroupMessage,
+  type GroupMessagePacketPayload,
+} from "./groups.js";
+import { LocationRegistry, extractLocationReport, type LocationReportPayload } from "./location-registry.js";
 import { RoutingTable } from "./routing-table.js";
 import { ServiceDirectory } from "./service-directory.js";
 import { serviceSigningPayload, verifyServiceAnnouncement, type ServiceAnnouncement, type ServiceHandler } from "./service.js";
@@ -99,6 +112,14 @@ export interface NomadNodeOptions {
   maxPublicChannels?: number;
   /** Max messages kept per channel in `publicChannels` — the oldest is dropped once exceeded. */
   maxMessagesPerChannel?: number;
+  /** Max distinct encrypted groups tracked in `groups` at once (spec §57 resource limits). */
+  maxGroups?: number;
+  /** Max messages kept per group in `groups` — the oldest is dropped once exceeded. */
+  maxMessagesPerGroup?: number;
+  /** Max distinct reporters tracked in `locationRegistry` at once (spec §57 resource limits). */
+  maxLocationReports?: number;
+  /** A location report older than this (by its own sender-stamped timestamp) is treated as absent by `locationRegistry` — see `LocationRegistryOptions.maxReportAgeMs`. Undefined (default) never expires a report on its own. */
+  maxLocationReportAgeMs?: number;
 }
 
 interface ContentWaiter {
@@ -153,6 +174,9 @@ const OWN_CONTENT_TRUST_RANK = trustRank(TrustLevel.ADMIN) + 1;
  * worst case; extra entries beyond this are silently dropped, not rejected outright.
  */
 const MAX_ROUTES_PER_ANNOUNCE = 512;
+
+/** Discovery-only service id a dedicated location-registry node advertises via `registerAsLocationRegistry()` — see that method's doc comment for why its handler never actually does anything with a `SERVICE_REQUEST`. */
+const LOCATION_REGISTRY_SERVICE_ID = "service://location-registry";
 
 interface PendingContentEntry {
   contentId: string;
@@ -359,6 +383,19 @@ export class NomadNode extends EventEmitter {
   readonly messageHistory: MessageHistory;
   /** Local, best-effort view of public (unencrypted) chat channels this node has learned about — built from already-verified `content://` publications (`chat:<channel>` naming convention, `public-channels.ts`), unlike `messageHistory` which is never itself part of the mesh's own propagated state. */
   readonly publicChannels: PublicChannels;
+  /** Encrypted group chats this node is a member of — created via `createGroup()` or joined via a `PRIVATE_MESSAGE` invite (`considerGroupInvite()`), never a mesh-wide catalog the way `publicChannels`/`remoteCatalog` are (spec §56, docs/next-steps.md Opzione J, groups.ts). */
+  readonly groups: Groups;
+  /**
+   * Opportunistically-shared positions this node has received via
+   * `PRIVATE_MESSAGE` (`shareLocation()`/`considerLocationReport()`,
+   * location-registry.ts) — latest report per sender only, consent-gated at
+   * the sender's end (a report only ever arrives because its sender
+   * explicitly called `shareLocation()` toward this node). A normal node
+   * never exposes this over HTTP at all; only a node explicitly started
+   * with `WebUiOptions.exposeLocationRegistry` does, see `location-registry.ts`'s
+   * own doc comment for the full access-control reasoning.
+   */
+  readonly locationRegistry: LocationRegistry;
 
   private readonly defaultTtl: number;
   private readonly contentRequestTimeoutMs: number;
@@ -448,6 +485,16 @@ export class NomadNode extends EventEmitter {
       maxChannels: options.maxPublicChannels,
       maxMessagesPerChannel: options.maxMessagesPerChannel,
       trustRank: (author) => trustRank(this.trust.get(author)),
+    });
+    this.groups = new Groups({
+      maxGroups: options.maxGroups,
+      maxMessagesPerGroup: options.maxMessagesPerGroup,
+      trustRank: (createdBy) => trustRank(this.trust.get(createdBy)),
+    });
+    this.locationRegistry = new LocationRegistry({
+      maxReports: options.maxLocationReports,
+      maxReportAgeMs: options.maxLocationReportAgeMs,
+      trustRank: (reporterId) => trustRank(this.trust.get(reporterId)),
     });
   }
 
@@ -757,6 +804,174 @@ export class NomadNode extends EventEmitter {
     return message;
   }
 
+  /**
+   * Creates a new end-to-end encrypted group chat (spec §56, docs/next-steps.md
+   * Opzione J) with a fixed membership decided now — this v1 has no
+   * "leave"/"remove member" operation, so there's nothing that would ever
+   * need to trigger a key rotation (see `GroupInfo`'s doc comment in
+   * groups.ts for why that's an explicit scope choice, not an oversight).
+   *
+   * Generates a fresh random group id and AES-256-GCM key, then sends each
+   * member an invite as an ordinary `PRIVATE_MESSAGE` (`sendPrivateMessage()`
+   * — same unicast encryption already used for 1:1 chat, no new transport
+   * crypto). Throws before sending anything if any member's encryption key
+   * isn't known yet (`peerDirectory`) — same "fail before partially acting"
+   * posture as `sendPrivateMessage()` itself, so a typo'd/unreachable member
+   * id never produces a half-delivered invite set.
+   */
+  createGroup(name: string, memberIds: string[]): GroupInfo {
+    if (name.length === 0 || name.length > 128) {
+      throw new Error("group name must be 1-128 characters");
+    }
+    const members = [...new Set(memberIds)].filter((id) => id !== this.nodeId);
+    if (members.length === 0) {
+      throw new Error("a group needs at least one other member");
+    }
+    for (const memberId of members) {
+      if (!this.peerDirectory.getKey(memberId)) {
+        throw new Error(`cannot create group: encryption key for ${memberId} is not yet known`);
+      }
+    }
+    const groupId = generateGroupId();
+    const key = generateGroupKey();
+    const createdAt = Date.now();
+    const info: GroupInfo = { groupId, name, key, members, createdBy: this.nodeId, createdAt };
+    for (const memberId of members) {
+      this.sendPrivateMessage(memberId, {
+        type: "group-invite",
+        groupId,
+        name,
+        groupKey: key.toString("hex"),
+        members,
+        createdBy: this.nodeId,
+        createdAt,
+      });
+    }
+    this.groups.addGroup(info);
+    return info;
+  }
+
+  /**
+   * Sends a message to a group this node is already a member of — a
+   * broadcast `GROUP_MESSAGE` (like `CONTENT_ANNOUNCE`/`publishChannelMessage()`,
+   * flooded to the whole mesh via `floodExcept()`), encrypted with the
+   * group's shared key and signed by this node's own Ed25519 identity (see
+   * `groupMessageSigningPayload()`'s doc comment in groups.ts for why the
+   * signature is needed on top of the AES-GCM auth tag). Throws if `groupId`
+   * isn't a group this node knows about — matches `sendPrivateMessage()`'s
+   * "fail loudly, don't silently drop" posture for an unknown destination.
+   *
+   * Records the message into this node's own `groups` history immediately
+   * — a self-originated broadcast never loops back to `handleGroupMessage()`,
+   * same reasoning already documented on `publishChannelMessage()`.
+   */
+  sendGroupMessage(groupId: string, text: string): GroupMessage {
+    const info = this.groups.getGroup(groupId);
+    if (!info) {
+      throw new Error(`cannot send to group ${groupId}: not a known group`);
+    }
+    if (text.length === 0 || text.length > MAX_MESSAGE_TEXT_LENGTH) {
+      throw new Error(`group message text must be 1-${MAX_MESSAGE_TEXT_LENGTH} characters`);
+    }
+    const timestamp = Date.now();
+    const payload = signGroupMessage(this.identity, groupId, info.key, { text, timestamp });
+    const packet = this.originate<GroupMessagePacketPayload>(MessageType.GROUP_MESSAGE, payload, { priority: Priority.MESSAGING });
+    void this.floodExcept(packet);
+    const message: GroupMessage = { groupId, senderId: this.nodeId, text, timestamp, messageId: payload.signature };
+    this.groups.recordMessage(message);
+    return message;
+  }
+
+  /**
+   * Handles a `group-invite`-shaped `PRIVATE_MESSAGE` payload (from
+   * `handlePrivateMessage()`, after successful decryption) — records the
+   * new group locally if it isn't already known. `senderId` (the decrypted
+   * message's `packet.source`) is used as `GroupInfo.createdBy`, **not**
+   * `invite.createdBy`: the latter is a self-declared field inside the
+   * decrypted payload, unauthenticated on its own (found by review — see
+   * `GroupInfo.createdBy`'s doc comment in groups.ts for the trust-ranking
+   * attack this closes). `senderId` is the trustworthy one here — the
+   * invite's authenticity already comes from `PRIVATE_MESSAGE`'s own
+   * per-peer ECDH encryption (only `senderId` could have produced bytes
+   * that decrypt successfully with our shared key), the same trust
+   * boundary `handlePrivateMessage()` already relies on for
+   * `messageHistory`.
+   */
+  private considerGroupInvite(senderId: string, invite: ReturnType<typeof extractGroupInvite>): void {
+    if (!invite) return;
+    this.groups.addGroup({
+      groupId: invite.groupId,
+      name: invite.name,
+      key: Buffer.from(invite.groupKey, "hex"),
+      members: invite.members,
+      createdBy: senderId,
+      createdAt: invite.createdAt,
+    });
+    this.emit("group:invited", invite.groupId, senderId);
+  }
+
+  /**
+   * Shares this node's own current position with a chosen location registry
+   * (`docs/next-steps.md` Opzione J "tracciamento posizione") — explicit,
+   * opt-in, one report per call, never automatic/periodic sampling: there is
+   * no background timer anywhere in this codebase that could call this on
+   * its own. Discovers `service://location-registry`'s current provider
+   * (same "discover then invoke" shape as `callService()`), then sends it a
+   * `location-report`-shaped `PRIVATE_MESSAGE` — never `publishContent()`,
+   * which is the opposite of what a personal position needs (cacheable and
+   * discoverable by anyone in the mesh). `timestamp` is stamped here with
+   * this node's own clock, once, never accepted as an argument — the same
+   * reasoning already applied to `publishChannelMessage()`/`sendGroupMessage()`'s
+   * own timestamps: an HTTP caller (`web-ui.ts`'s `POST /api/location-report`)
+   * must never be able to backdate/forge one.
+   *
+   * Throws (same as `sendPrivateMessage()`) if no registry is discovered
+   * within `options.timeoutMs`, or if the registry's encryption key isn't
+   * known yet.
+   */
+  async shareLocation(location: { lat: number; lon: number; accuracy?: number }, options: { timeoutMs?: number } = {}): Promise<void> {
+    if (typeof location.lat !== "number" || !Number.isFinite(location.lat) || location.lat < -90 || location.lat > 90) {
+      throw new Error("shareLocation: 'lat' must be a finite number in [-90, 90]");
+    }
+    if (typeof location.lon !== "number" || !Number.isFinite(location.lon) || location.lon < -180 || location.lon > 180) {
+      throw new Error("shareLocation: 'lon' must be a finite number in [-180, 180]");
+    }
+    if (
+      location.accuracy !== undefined &&
+      (typeof location.accuracy !== "number" || !Number.isFinite(location.accuracy) || location.accuracy < 0)
+    ) {
+      throw new Error("shareLocation: 'accuracy' must be a non-negative finite number");
+    }
+    const provider = await this.discoverService(LOCATION_REGISTRY_SERVICE_ID, options);
+    const payload: LocationReportPayload = {
+      type: "location-report",
+      lat: location.lat,
+      lon: location.lon,
+      accuracy: location.accuracy,
+      timestamp: Date.now(),
+    };
+    this.sendPrivateMessage(provider.providerId, payload);
+  }
+
+  /**
+   * Handles a `location-report`-shaped `PRIVATE_MESSAGE` payload (from
+   * `handlePrivateMessage()`, after successful decryption) — records it into
+   * `locationRegistry`, keyed by `senderId` (the decrypted message's
+   * `packet.source`), **never** a field out of the payload itself — same
+   * authentication boundary already established for `considerGroupInvite()`/
+   * `GroupInfo.createdBy`. Any node can passively receive and store a report
+   * addressed to it (`handlePrivateMessage()` only ever decrypts messages
+   * addressed to this node, so a report only ever arrives here because its
+   * sender specifically chose to `shareLocation()` toward this node) — the
+   * real access-control boundary is entirely on the *read* side
+   * (`web-ui.ts`'s `exposeLocationRegistry`), not here.
+   */
+  private considerLocationReport(senderId: string, report: LocationReportPayload | undefined): void {
+    if (!report) return;
+    this.locationRegistry.record(senderId, report);
+    this.emit("location:reported", senderId);
+  }
+
   /** Resolves once `nodeId`'s encryption key is known (immediately, if already is), or rejects after `timeoutMs`. */
   waitForPeerKey(nodeId: string, options: { timeoutMs?: number } = {}): Promise<string> {
     const known = this.peerDirectory.getKey(nodeId);
@@ -808,6 +1023,38 @@ export class NomadNode extends EventEmitter {
       this.originate<ServiceAnnouncePayload>(MessageType.SERVICE_ANNOUNCE, { announcement }, { priority: Priority.SERVICE }),
     );
     return announcement;
+  }
+
+  /**
+   * Opts this node into being a **location registry** — a node other nodes'
+   * `shareLocation()` calls can discover and send reports to
+   * (`docs/next-steps.md` Opzione J). **Never called automatically**: only
+   * an operator who explicitly wants this node to collect shared positions
+   * should call it (and, to actually read them back, also start its
+   * `WebUiServer` with `exposeLocationRegistry: true` — a separate opt-in,
+   * see `location-registry.ts`).
+   *
+   * Registers `service://location-registry` purely so `discoverService()`
+   * can find a provider (spec §35's existing announce/query mechanism,
+   * reused as-is) — the handler itself is never meaningfully invoked: the
+   * real read/write paths are `shareLocation()`/`considerLocationReport()`,
+   * both over `PRIVATE_MESSAGE`, **not** `SERVICE_REQUEST` (a `SERVICE_REQUEST`'s
+   * caller identity is not cryptographically authenticated, see
+   * `location-registry.ts`'s doc comment for why that ruled out doing this
+   * as an ordinary service call). A stray direct `callService("service://location-registry", ...)`
+   * from some other caller is rejected with a clear error instead of silently
+   * doing nothing.
+   */
+  registerAsLocationRegistry(): ServiceAnnouncement {
+    return this.registerService(
+      LOCATION_REGISTRY_SERVICE_ID,
+      "1.0.0",
+      ["location-registry"],
+      () => {
+        throw new Error(`${LOCATION_REGISTRY_SERVICE_ID} is discovery-only — send a location report via shareLocation(), not callService()`);
+      },
+      { resourceRequirements: "richiede WebUiOptions.exposeLocationRegistry per la lettura via HTTP" },
+    );
   }
 
   /**
@@ -1314,6 +1561,10 @@ export class NomadNode extends EventEmitter {
         this.handleServiceResponse(packet as Packet<ServiceResponsePayload>);
         break;
 
+      case MessageType.GROUP_MESSAGE:
+        this.handleGroupMessage(packet as Packet<GroupMessagePacketPayload>);
+        break;
+
       default:
         break;
     }
@@ -1758,9 +2009,49 @@ export class NomadNode extends EventEmitter {
       const payload: unknown = JSON.parse(decryptFromPeer(sharedKey, packet.payload).toString("utf8"));
       const text = extractChatText(payload);
       if (text !== undefined) this.messageHistory.record(packet.source, "received", text);
+      this.considerGroupInvite(packet.source, extractGroupInvite(payload));
+      this.considerLocationReport(packet.source, extractLocationReport(payload));
       this.emit("private-message", { ...packet, payload });
     } catch (err) {
       this.emit("private-message:failed", packet.source, (err as Error).message);
+    }
+  }
+
+  /**
+   * Handles a broadcast `GROUP_MESSAGE` (spec §56, groups.ts). Every node
+   * in the mesh sees this packet (it's flooded like `CONTENT_ANNOUNCE`), so
+   * two checks happen in a specific order: first the sender's Ed25519
+   * signature is verified (`verifyGroupMessage()` — cheap, and meaningful
+   * even to a non-member: it proves the claimed sender really produced this
+   * packet, independent of the group key), *then* the group is looked up
+   * locally — if this node isn't a member (the ordinary case for most of
+   * the mesh, not an error), the ciphertext is simply never decrypted or
+   * stored. A signature or shape failure is dropped the same defensive way
+   * as every other packet handler in this codebase. A *decryption* failure
+   * for a group we ARE a member of is different — that's an anomaly (a
+   * tampered packet, or a key mismatch), so it's surfaced via
+   * `group-message:failed` rather than silently swallowed like the
+   * "not a member" case above.
+   */
+  private handleGroupMessage(packet: Packet<GroupMessagePacketPayload>): void {
+    const verified = verifyGroupMessage(packet.payload);
+    if (!verified) return;
+    const info = this.groups.getGroup(verified.groupId);
+    if (!info) return; // not a member of this group — the ordinary case, nothing to decrypt
+    try {
+      const plaintext = decryptGroupMessage(verified, info.key);
+      if (!plaintext) return;
+      const message: GroupMessage = {
+        groupId: verified.groupId,
+        senderId: verified.senderId,
+        text: plaintext.text,
+        timestamp: plaintext.timestamp,
+        messageId: verified.signature,
+      };
+      this.groups.recordMessage(message);
+      this.emit("group-message", message);
+    } catch (err) {
+      this.emit("group-message:failed", verified.groupId, (err as Error).message);
     }
   }
 

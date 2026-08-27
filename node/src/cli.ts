@@ -50,20 +50,37 @@ async function main(): Promise<void> {
   node.on("peer:connected", (peerId: string) => console.log(`[PEER] connected: ${peerId}`));
   node.on("peer:disconnected", (peerId: string) => console.log(`[PEER] disconnected: ${peerId}`));
 
+  // Never automatic — only a node an operator explicitly designates as a location registry
+  // (docs/next-steps.md Opzione J "tracciamento posizione") registers service://location-registry,
+  // so other nodes' shareLocation() can discover it. See registerAsLocationRegistry()'s own doc
+  // comment in node.ts for why reading the collected reports back also needs --expose-location-registry
+  // below (a separate opt-in) — registering this service alone doesn't expose anything over HTTP.
+  if (args["register-as-location-registry"] === "true") {
+    node.registerAsLocationRegistry();
+    console.log("Registered as a location registry (service://location-registry)");
+  }
+
   // Off by default (spec §59 web interface) — only started when explicitly requested, since it
   // opens a second listening socket even though it's loopback-bound by default (web-ui.ts).
   let webUi: WebUiServer | undefined;
   if (args["web-port"]) {
     const allowServiceCalls = args["allow-service-calls"] === "true";
+    const exposeLocationRegistry = args["expose-location-registry"] === "true";
+    // A dedicated location-registry node (docs/next-steps.md Opzione J) needs the same
+    // networkName/networkPassword pairing mechanism as any other mobile-facing node — just handed
+    // out separately to trusted operators only, never to guests, which is exactly what makes it a
+    // *different* node's password rather than a new access-control mechanism of its own.
+    const needsNetworkPassword = allowServiceCalls || exposeLocationRegistry;
     // Generated fresh every run, printed/shown once, never persisted — the mobile client (Opzione H,
     // docs/next-steps.md) is expected to be paired by re-entering this each time the node restarts,
     // the same "out of band, by the operator" trust model as a Wi-Fi router's own password.
-    const networkName = allowServiceCalls ? (args["network-name"] ?? displayName) : undefined;
-    const networkPassword = allowServiceCalls ? (args["network-password"] ?? generateNetworkPassword()) : undefined;
+    const networkName = needsNetworkPassword ? (args["network-name"] ?? displayName) : undefined;
+    const networkPassword = needsNetworkPassword ? (args["network-password"] ?? generateNetworkPassword()) : undefined;
     webUi = new WebUiServer(node, {
       port: Number(args["web-port"]),
       host: args["web-host"],
       allowServiceCalls,
+      exposeLocationRegistry,
       networkName,
       networkPassword,
       publicHost: args["public-host"],
@@ -71,13 +88,21 @@ async function main(): Promise<void> {
     await webUi.start();
     const webHost = args["web-host"] ?? "127.0.0.1";
     console.log(`Web UI: http://${webHost}:${webUi.port}`);
-    if (allowServiceCalls) {
+    if (needsNetworkPassword) {
       console.log(`Mobile network name: ${networkName}`);
       console.log(`Mobile network password: ${networkPassword}`);
-      console.log(`(anche visibili, con QR da inquadrare, sulla pagina web sopra, sezione "Collega un telefono")`);
+      // handlePairing() (web-ui.ts) only serves /api/pairing (and thus the QR panel) when
+      // allowServiceCalls is on — an exposeLocationRegistry-only node still has networkName/
+      // networkPassword above for a human to relay verbally/by hand, just no QR shortcut for it.
+      if (allowServiceCalls) {
+        console.log(`(anche visibili, con QR da inquadrare, sulla pagina web sopra, sezione "Collega un telefono")`);
+      }
       if (!args["web-host"]) {
         console.log(`Note: --web-host wasn't set, so the Web UI is still loopback-only — a phone on the same Wi-Fi can't reach it yet.`);
       }
+    }
+    if (exposeLocationRegistry) {
+      console.log(`Location registry read endpoint exposed: GET /api/location-registry (stessa password di rete)`);
     }
   }
 

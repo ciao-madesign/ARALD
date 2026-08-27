@@ -262,6 +262,13 @@ header { display: flex; align-items: flex-start; justify-content: space-between;
 .trail-gauge .gauge-label { font-size: 1.05em; font-weight: 700; }
 .trail-gauge .gauge-detail { font-size: 0.78em; color: var(--muted); margin-top: 0.25em; line-height: 1.5; }
 
+/* A single, always-visible commitment — opt-in per spec (docs/next-steps.md Opzione J: mai un
+   invio automatico/periodico), quindi non nascosto dietro un <details> come le sezioni più
+   tecniche sotto: lo stesso principio "un utente comune deve vedere subito cosa può fare" già
+   applicato al pannello Servizi. */
+#share-location-panel { display: flex; flex-direction: column; gap: 0.5em; margin-bottom: 1.2em; }
+#share-location-status:empty { display: none; }
+
 .panels-grid { display: flex; flex-direction: column; gap: 1em; }
 
 /* Angolo tagliato in alto a destra invece di un raggio uniforme — la firma strutturale del sistema
@@ -407,6 +414,11 @@ li.skel-row { display: flex; flex-direction: column; }
   background: var(--bg); color: var(--ink); font-family: inherit; resize: vertical;
 }
 .call-form textarea:focus-visible { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
+.translate-language-select {
+  width: 100%; padding: 0.55em 0.7em; border-radius: 0.5em; border: 1px solid var(--border);
+  background: var(--bg); color: var(--ink); font-family: inherit; font-size: 0.95em;
+}
+.translate-language-select:focus-visible { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
 .call-form .call-submit {
   align-self: flex-start; padding: 0.5em 1em; border: none;
   background: var(--accent); color: var(--accent-ink); font-weight: 600; font-size: 0.88em;
@@ -473,6 +485,33 @@ li.skel-row { display: flex; flex-direction: column; }
   animation: item-in 220ms var(--ease);
 }
 .chat-author { font-size: 0.7em; font-weight: 600; margin-bottom: 0.15em; padding: 0 0.2em; }
+
+/* ---------- encrypted groups (docs/next-steps.md Opzione J) — same shared-panel shape as public
+   channels above, plus a create-group form with a member picker. ---------- */
+
+#create-group-form { display: flex; flex-direction: column; gap: 0.5em; margin-bottom: 0.8em; }
+#create-group-name {
+  padding: 0.55em 0.75em; border-radius: 0.5em; border: 1px solid var(--border);
+  background: var(--bg); color: var(--ink);
+}
+#create-group-name:focus-visible { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
+.group-member-picker { display: flex; flex-direction: column; gap: 0.3em; max-height: 9em; overflow-y: auto; }
+.group-member-picker .empty { padding: 0.2em 0; }
+.group-member-option { display: flex; align-items: center; gap: 0.5em; font-size: 0.88em; }
+.group-member-option input[type="checkbox"] { accent-color: var(--accent); width: 1.1em; height: 1.1em; flex: none; }
+#create-group-form button[type="submit"] {
+  align-self: flex-start; border-radius: 0.5em; padding: 0.55em 1em; background: var(--accent);
+  color: var(--accent-ink); border: none; font-weight: 600;
+}
+#create-group-form button[type="submit"]:active { transform: scale(0.97); }
+#create-group-form button[type="submit"]:disabled { opacity: 0.6; }
+
+/* #group-panel reuses #chat-panel's own look exactly, same as #channel-panel above. */
+#group-panel:not([hidden]) {
+  margin-top: 1em; padding: 1em; border: 1px solid var(--accent); background: var(--accent-soft);
+  clip-path: polygon(0 0, calc(100% - 1em) 0, 100% 1em, 100% 100%, 0 100%);
+  animation: item-in 220ms var(--ease);
+}
 
 /* :not([hidden]) — same reason as #setup-screen above: an author rule setting `display` at equal
    specificity to the UA stylesheet's `[hidden] { display: none }` wins over it (author styles beat
