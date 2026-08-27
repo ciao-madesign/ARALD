@@ -5,6 +5,7 @@ import { KiwixGateway } from "./kiwix-gateway.js";
 import { FakeOllamaServer } from "./fake-ollama-server.js";
 import { AiGateway } from "./ai-gateway.js";
 import { NewsGateway } from "./news-gateway.js";
+import { InternetGateway } from "./internet-gateway.js";
 import { registerTranslateService } from "./translate-gateway.js";
 
 /** How often NewsGateway re-syncs against `--news-url` when given (`docs/security.md`: "aggiornato ogni volta che si può"). */
@@ -174,6 +175,31 @@ async function main(): Promise<void> {
     }
   } else {
     console.log(`service://news not registered — no --news-url given (an RSS/Atom feed URL)`);
+  }
+
+  // Opt-in, same posture as --news-url: nothing about "Internet senza Internet" is offered unless
+  // an operator explicitly asks for it (docs/next-steps.md, discussione 25 agosto 2026). --internet-fetch
+  // enables kind: "rss" (gated only by the SSRF guard + parseFeed() itself); --internet-allowed-hosts
+  // (comma-separated) is required in addition for kind: "text" to ever succeed — no default list is
+  // shipped, the operator decides what they trust.
+  if (args["internet-fetch"] !== undefined) {
+    const allowedTextHosts = (args["internet-allowed-hosts"] ?? "")
+      .split(",")
+      .map((h) => h.trim())
+      .filter((h) => h.length > 0);
+    const internetGateway = new InternetGateway(node, {
+      allowedTextHosts,
+      maxRequestsPerPeerPerWindow: parsePositiveInt(args["internet-max-requests-per-peer"], 10, "internet-max-requests-per-peer"),
+      maxRequestsPerWindow: parsePositiveInt(args["internet-max-requests-global"], 60, "internet-max-requests-global"),
+      windowMs: parsePositiveInt(args["internet-window-ms"], 60_000, "internet-window-ms"),
+      maxResponseBytes: parsePositiveInt(args["internet-max-response-bytes"], 1_000_000, "internet-max-response-bytes"),
+    });
+    internetGateway.registerInternetFetchService();
+    console.log(
+      `Registered service://internet-fetch (kind: rss always available; kind: text allowed hosts: ${allowedTextHosts.length > 0 ? allowedTextHosts.join(", ") : "(nessuno — kind: text sempre rifiutato)"})`,
+    );
+  } else {
+    console.log(`service://internet-fetch not registered — no --internet-fetch given`);
   }
 
   console.log("Nomad-Net NOMAD Gateway");
