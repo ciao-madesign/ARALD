@@ -1723,13 +1723,14 @@ let refreshCycleId = 0;
 async function refreshAll() {
   const cycleId = ++refreshCycleId;
   try {
-    const [status, peers, services, channels, groups, locationReports] = await Promise.all([
+    const [status, peers, services, channels, groups, locationReports, mapInfoResult] = await Promise.all([
       fetchJson("/api/status"),
       fetchJson("/api/peers"),
       fetchJson("/api/services"),
       fetchJson("/api/channels"),
       fetchGroups(),
       fetchLocationRegistry(),
+      fetchMapInfo(),
     ]);
     if (cycleId !== refreshCycleId) return; // superseded by a newer refresh while this one was in flight
     renderStats(status);
@@ -1738,6 +1739,7 @@ async function refreshAll() {
     renderChannels(channels);
     renderGroups(groups);
     renderLocationReports(locationReports);
+    renderMapAvailability(mapInfoResult);
     await refreshContent();
     firstLoadDone = true;
     setDashboardError();

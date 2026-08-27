@@ -96,6 +96,26 @@
   <p id="scanner-error" class="error" role="alert" aria-live="assertive" hidden></p>
 </section>
 
+<!-- Visualizzatore di tile raster scritto da zero (mapview.js) — nessuna libreria di mappe: questo
+     ambiente non ha accesso a internet reale per scaricare/vendorizzare una libreria come Leaflet, e
+     il progetto non ha mai introdotto una dipendenza di terze parti in mobile/www/ (vedi CLAUDE.md).
+     Stesso pattern a schermo intero di #scanner-overlay sopra, unico altro overlay del progetto. -->
+<section id="map-overlay" hidden>
+  <div id="map-viewport"><div id="map-tiles-layer"></div></div>
+  <div class="map-controls">
+    <button type="button" id="map-zoom-in" aria-label="Aumenta zoom">+</button>
+    <button type="button" id="map-zoom-out" aria-label="Riduci zoom">−</button>
+    <button type="button" id="map-locate" aria-label="Centra sulla mia posizione">
+      <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-map-pin"></use></svg>
+    </button>
+  </div>
+  <button type="button" id="map-close" aria-label="Chiudi mappa">
+    <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-x"></use></svg>
+  </button>
+  <p id="map-attribution"></p>
+  <p id="map-error" class="error" role="alert" aria-live="assertive" hidden></p>
+</section>
+
 <section id="dashboard-screen" hidden>
   <header>
     <div class="header-identity">
@@ -130,6 +150,15 @@
         <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-map-pin"></use></svg> Condividi la mia posizione
       </button>
       <p id="share-location-status" class="muted" role="status" aria-live="polite"></p>
+    </div>
+
+    <!-- Nascosto finché GET /api/map-info non risponde (mai un 404) — stesso degrado onesto già
+         usato per #location-registry-panel: non ogni gateway ha mappe offline configurate
+         (docs/next-steps.md), la maggior parte non le avrà mai. -->
+    <div id="map-panel" class="panel" hidden>
+      <button type="button" id="open-map-button" class="call-submit">
+        <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-map-pin"></use></svg> Apri mappa
+      </button>
     </div>
 
     <div class="panels-grid">
@@ -202,6 +231,11 @@
 
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
+<!-- mapview.js prima di app.js: app.js chiama fetchMapInfo()/renderMapAvailability() (definite in
+     mapview.js) in modo sincrono dal proprio codice di avvio (showDashboard() -> refreshAll(), per
+     un dispositivo già paired) — se l'ordine fosse invertito, quella chiamata fallirebbe con un
+     ReferenceError alla primissima apertura della dashboard. -->
+<script src="mapview.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

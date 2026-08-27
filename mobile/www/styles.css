@@ -240,6 +240,68 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
 #scanner-cancel:active { transform: scale(0.96); }
 #scanner-overlay .error { position: relative; margin-top: 1em; max-width: 24em; text-align: center; }
 
+/* ---------- mappa offline (docs/next-steps.md) — visualizzatore scritto da zero, mapview.js ---------- */
+
+#map-overlay:not([hidden]) {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  background: var(--bg);
+  animation: fade-in 200ms var(--ease);
+  overflow: hidden;
+}
+#map-viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none; /* il pan/zoom lo gestisce mapview.js via pointer events, non lo scroll nativo */
+}
+#map-viewport.is-dragging { cursor: grabbing; }
+#map-tiles-layer { position: absolute; top: 0; left: 0; }
+#map-tiles-layer img {
+  position: absolute;
+  width: 256px;
+  height: 256px;
+  user-select: none;
+  pointer-events: none; /* il drag lo intercetta #map-viewport, mai una singola tile */
+}
+.map-controls {
+  position: absolute;
+  right: 1em;
+  bottom: 1.5em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+  z-index: 1;
+}
+.map-controls button, #map-close {
+  width: 2.6em;
+  height: 2.6em;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: var(--shadow-sm);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.2em;
+  transition: transform 100ms var(--ease);
+}
+.map-controls button:active, #map-close:active { transform: scale(0.94); }
+#map-close { position: absolute; top: 1em; right: 1em; z-index: 1; }
+#map-attribution {
+  position: absolute;
+  left: 0.6em;
+  bottom: 0.5em;
+  z-index: 1;
+  font-size: 0.72em;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--bg) 75%, transparent);
+  padding: 0.15em 0.5em;
+  border-radius: 0.4em;
+}
+#map-overlay .error { position: absolute; inset: 40% 1.5em auto; text-align: center; z-index: 1; }
+
 /* ---------- dashboard ---------- */
 
 #dashboard-screen:not([hidden]) { animation: screen-in 320ms var(--ease); }

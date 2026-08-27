@@ -1,13 +1,15 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { networkInterfaces } from "node:os";
-import { BodyTooLargeError, LoopbackHttpServer, readRequestBody, sendJson } from "./loopback-http-server.js";
+import { BodyTooLargeError, LoopbackHttpServer, readRequestBody, sendBinary, sendJson } from "./loopback-http-server.js";
 import type { NomadNode } from "./node.js";
 import type { ContentMetadata } from "./content.js";
 import { MAX_MESSAGE_TEXT_LENGTH, type StoredMessage } from "./message-history.js";
 import type { TrustLevel } from "./trust.js";
 import { encodeQr, qrToSvg } from "./qrcode.js";
 import { raceTimeout } from "./async-timeout.js";
+import type { MbtilesReader } from "./map-tiles.js";
+import { BoundedFifoMap } from "./bounded-map.js";
 
 export interface WebUiOptions {
   /** Port to listen on; 0 (default) lets the OS assign one — useful in tests, mirrors TcpTransport's own `port` convention. */
@@ -106,9 +108,34 @@ export interface WebUiOptions {
    * is paired to, not just a dedicated registry node.
    */
   exposeLocationRegistry?: boolean;
+  /**
+   * Enables `GET /api/map-info` and `GET /api/map-tiles/:z/:x/:y` — offline
+   * topographic map tiles read from a local MBTiles file (`map-tiles.ts`),
+   * `docs/next-steps.md`. Pass an already-opened `MbtilesReader` (opening
+   * and validating the file is the caller's job — `cli.ts` — so this class
+   * never needs to know about file paths). Off by default (`undefined`),
+   * same "not registered, not offered" posture as every other opt-in
+   * feature here.
+   *
+   * Deliberately **unauthenticated**, unlike `exposeLocationRegistry`: map
+   * tiles are terrain data, not personal/private information (spec §56
+   * only calls out positions/messages, never geography, as something to
+   * protect) — same tier as `/api/content`/`/api/channels`. Serving a tile
+   * also costs only a local disk read against a file the operator already
+   * has, never a live outbound fetch — unlike `InternetGateway`, there is
+   * no metered-bandwidth concern to gate against with a password either.
+   */
+  mapTiles?: MbtilesReader;
 }
 
 const WILDCARD_OR_LOOPBACK_HOSTS = new Set(["0.0.0.0", "127.0.0.1", "localhost", "::", "::1"]);
+
+// GET /api/map-tiles/:z/:x/:y rate limiting (handleGetMapTile()/checkMapTileRateLimit() below) —
+// found by review: unlike every other endpoint here, this one runs a synchronous node:sqlite query
+// per request with no authentication gating it.
+export const MAP_TILE_RATE_LIMIT_WINDOW_MS = 10_000;
+export const MAX_MAP_TILE_REQUESTS_PER_WINDOW = 300; // generous for a real pan/zoom burst — see the handler's own doc comment
+const MAX_TRACKED_MAP_TILE_RATE_LIMIT_IPS = 4096; // same bound InternetGateway uses for its own per-caller rate limit state
 
 /**
  * The exact paths iOS/macOS, Android, Windows, and Firefox/Linux each
@@ -668,6 +695,10 @@ export class WebUiServer {
   private readonly networkName: string | undefined;
   private readonly networkPassword: string | undefined;
   private readonly publicHost: string | undefined;
+  private readonly mapTiles: MbtilesReader | undefined;
+  private readonly mapTileRateLimitState = new BoundedFifoMap<string, { windowStart: number; count: number }>({
+    maxSize: MAX_TRACKED_MAP_TILE_RATE_LIMIT_IPS,
+  });
   private cachedPairingInfo: PairingInfo | undefined;
   private readonly httpServer: LoopbackHttpServer;
 
@@ -684,6 +715,7 @@ export class WebUiServer {
     if (this.exposeLocationRegistry && !options.networkPassword) {
       throw new Error("WebUiServer: exposeLocationRegistry requires a networkPassword");
     }
+    this.mapTiles = options.mapTiles;
     const boundHost = options.host ?? "127.0.0.1";
     this.publicHost = options.publicHost ?? (WILDCARD_OR_LOOPBACK_HOSTS.has(boundHost) ? detectLanIPv4() : boundHost);
     this.httpServer = new LoopbackHttpServer((req, res) => this.handleRequest(req, res), {
@@ -716,8 +748,11 @@ export class WebUiServer {
     // review: this condition originally checked allowServiceCalls only, which would have silently
     // CORS-blocked exactly the deployment this feature's own design doc calls out as the intended one).
     // Applied uniformly up front (every response, including 404s) instead of sprinkled through each
-    // branch below.
-    if (this.allowServiceCalls || this.exposeLocationRegistry) {
+    // branch below. mapTiles joins this condition for the same reason exposeLocationRegistry was
+    // added to it (found by review at the time): a map-only deployment with neither of the other two
+    // flags on would otherwise have its own unauthenticated endpoints silently CORS-blocked for the
+    // one cross-origin client (the mobile app) that actually needs to reach them.
+    if (this.allowServiceCalls || this.exposeLocationRegistry || this.mapTiles !== undefined) {
       res.setHeader("Access-Control-Allow-Origin", "*");
     }
 
@@ -725,7 +760,7 @@ export class WebUiServer {
       // A cross-origin GET/POST with a custom `Authorization` header and (for POST) a JSON
       // Content-Type is a "non-simple" request, so a real browser/WebView sends this preflight first
       // — relevant whenever at least one authenticated endpoint is reachable at all.
-      if (this.allowServiceCalls || this.exposeLocationRegistry) {
+      if (this.allowServiceCalls || this.exposeLocationRegistry || this.mapTiles !== undefined) {
         res.writeHead(204, {
           "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
           "Access-Control-Allow-Headers": "Content-Type, Authorization",
@@ -860,6 +895,16 @@ export class WebUiServer {
 
     if (url.pathname === "/api/location-registry") {
       this.handleGetLocationRegistry(req, res);
+      return;
+    }
+
+    if (url.pathname === "/api/map-info") {
+      this.handleGetMapInfo(res);
+      return;
+    }
+
+    if (url.pathname.startsWith("/api/map-tiles/")) {
+      this.handleGetMapTile(req, res, url.pathname);
       return;
     }
 
@@ -1378,6 +1423,124 @@ export class WebUiServer {
       return;
     }
     sendJson(res, 200, this.node.locationRegistry.list());
+  }
+
+  /**
+   * `GET /api/map-info` — this gateway's map name/zoom range/bounds, so
+   * `mapview.js` knows what it can ask for before it asks. 404 when
+   * `mapTiles` isn't configured (`WebUiOptions.mapTiles`), same "don't
+   * confirm what you're not offering" posture as every other capability-gated
+   * endpoint here — never authenticated, see that option's own doc comment
+   * for why.
+   */
+  private handleGetMapInfo(res: ServerResponse): void {
+    if (!this.mapTiles) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    sendJson(res, 200, this.mapTiles.metadata);
+  }
+
+  /**
+   * `GET /api/map-tiles/:z/:x/:y` — raw tile bytes read straight from the
+   * local MBTiles file (`map-tiles.ts`), never routed through
+   * `ContentStore`/the mesh (see `MbtilesReader`'s doc comment for why).
+   * 404 for every "nothing to serve" case alike — feature not configured,
+   * malformed or out-of-range z/x/y in the path, or a z/x/y this file
+   * simply has no tile for — a client can't distinguish these from each
+   * other and doesn't need to: all four mean "don't draw a tile here".
+   *
+   * **Rate-limited** (`checkMapTileRateLimit()` below), unlike every other
+   * endpoint on this class — found by review: `MbtilesReader.getTile()` is
+   * a synchronous `node:sqlite` query on Node's single thread, and this
+   * endpoint is unauthenticated and reachable by anyone on the LAN. The
+   * MBTiles spec doesn't guarantee a `(zoom_level, tile_column, tile_row)`
+   * index exists in an operator-supplied file — without one, a burst of
+   * guaranteed-miss requests (e.g. wildly out-of-range x/y) forces a full
+   * table scan each, which could stall this node's single event loop for
+   * everyone. Bounding z/x/y against the file's own declared range (below)
+   * closes the cheap, obviously-wrong case at zero query cost; the rate
+   * limit is the real backstop, same reasoning `InternetGateway` already
+   * applies to its own unauthenticated caller (`docs/security.md` #45) —
+   * keyed by source IP here rather than a mesh node id, since a raw TCP
+   * connection's peer address isn't spoofable the cheap way `fromNodeId` is
+   * on a `SERVICE_REQUEST`, making a per-IP limit alone (no global tier)
+   * meaningful on its own.
+   */
+  private handleGetMapTile(req: IncomingMessage, res: ServerResponse, pathname: string): void {
+    if (!this.mapTiles) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    const parts = pathname.slice("/api/map-tiles/".length).split("/");
+    // `parts.some((p) => p === "")` matters on its own: Number("") is 0, not NaN, so without this an
+    // empty segment (e.g. a trailing slash, "/api/map-tiles/10/512/") would silently parse as z=10/
+    // x=512/y=0 instead of being rejected as malformed — found by review, same Number("")===0 footgun
+    // map-tiles.ts's own parseFiniteInt() already guards against for MBTiles metadata parsing.
+    if (parts.length !== 3 || parts.some((part) => part === "")) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    const [z, x, y] = parts.map((part) => Number(part));
+    // z capped at a fixed, sane absolute bound *before* computing 2**z below — real maps never go
+    // anywhere near this deep (z20 is already sub-meter resolution), and without this cap a z far
+    // beyond it would make 2**z overflow to Infinity, turning the "in range" check below into a
+    // silent no-op instead of a rejection.
+    if (![z, x, y].every((n) => Number.isInteger(n) && n >= 0) || z > 30) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    const { minzoom, maxzoom } = this.mapTiles.metadata;
+    const maxTileIndex = 2 ** z - 1;
+    if ((minzoom !== undefined && z < minzoom) || (maxzoom !== undefined && z > maxzoom) || x > maxTileIndex || y > maxTileIndex) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.checkMapTileRateLimit(req)) {
+      sendJson(res, 429, { error: "too many map tile requests, slow down" });
+      return;
+    }
+    const tile = this.mapTiles.getTile(z, x, y);
+    if (!tile) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    // A given z/x/y always resolves to the same bytes for the lifetime of this MBTiles file (never
+    // mutated by this reader), so the browser can cache tiles indefinitely instead of re-requesting
+    // the same ones on every pan — mapview.js deliberately rebuilds its tile grid on every render
+    // rather than keeping its own DOM-level cache, relying on exactly this for repeat-view speed.
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    sendBinary(res, 200, this.mapTiles.metadata.contentType, tile);
+  }
+
+  /**
+   * `true` when this request may proceed, `false` once the calling IP has
+   * exceeded `MAX_MAP_TILE_REQUESTS_PER_WINDOW` within `MAP_TILE_RATE_LIMIT_WINDOW_MS`
+   * — generous enough for legitimate rapid panning/zooming (a viewport
+   * redraw requests a few dozen tiles at once, most already
+   * browser-cached via the `Cache-Control` above) while still bounding the
+   * worst case from a single source. No `evictionScore`/trust weighting
+   * here (unlike `InternetGateway`'s `rateLimitState`) — a source IP isn't
+   * a mesh identity an attacker can mint for free the way a fake
+   * `fromNodeId` is, so a plain FIFO bound on tracked IPs is enough.
+   */
+  private checkMapTileRateLimit(req: IncomingMessage): boolean {
+    const key = req.socket.remoteAddress ?? "unknown";
+    const now = Date.now();
+    const entry = this.mapTileRateLimitState.get(key);
+    if (!entry || now - entry.windowStart >= MAP_TILE_RATE_LIMIT_WINDOW_MS) {
+      this.mapTileRateLimitState.set(key, { windowStart: now, count: 1 });
+      return true;
+    }
+    if (entry.count >= MAX_MAP_TILE_REQUESTS_PER_WINDOW) return false;
+    entry.count++;
+    return true;
   }
 
   /**

@@ -1,6 +1,7 @@
 import { NomadNode } from "./node.js";
 import { TcpTransport } from "./transports/tcp.js";
 import { WebUiServer, generateNetworkPassword } from "./web-ui.js";
+import { MbtilesReader } from "./map-tiles.js";
 
 function parseArgs(argv: string[]): Record<string, string> {
   const args: Record<string, string> = {};
@@ -63,6 +64,10 @@ async function main(): Promise<void> {
   // Off by default (spec §59 web interface) — only started when explicitly requested, since it
   // opens a second listening socket even though it's loopback-bound by default (web-ui.ts).
   let webUi: WebUiServer | undefined;
+  // Declared outside the block below so shutdown() can close() it — node:sqlite's DatabaseSync
+  // holds an open file handle until then, same reasoning any other opened resource in this file
+  // (webUi's socket, the node's transports) already gets a matching shutdown-time close.
+  let mapTiles: MbtilesReader | undefined;
   if (args["web-port"]) {
     const allowServiceCalls = args["allow-service-calls"] === "true";
     const exposeLocationRegistry = args["expose-location-registry"] === "true";
@@ -76,6 +81,24 @@ async function main(): Promise<void> {
     // the same "out of band, by the operator" trust model as a Wi-Fi router's own password.
     const networkName = needsNetworkPassword ? (args["network-name"] ?? displayName) : undefined;
     const networkPassword = needsNetworkPassword ? (args["network-password"] ?? generateNetworkPassword()) : undefined;
+
+    // Opt-in, same posture as --expose-location-registry — nothing about offline map tiles is
+    // offered unless an operator explicitly points at a prepared MBTiles file
+    // (docs/next-steps.md). No network-password gate needed here: unlike the location registry,
+    // map tiles aren't personal data (see WebUiOptions.mapTiles's own doc comment) — reading and
+    // opening the file happens once, up front, so a bad/missing file is reported here and the node
+    // simply starts without the feature, same non-fatal posture already used for NewsGateway.
+    if (args["map-file"]) {
+      try {
+        mapTiles = new MbtilesReader(args["map-file"]);
+        console.log(
+          `Map tiles loaded: "${mapTiles.metadata.name}" (${mapTiles.metadata.format}, zoom ${mapTiles.metadata.minzoom ?? "?"}-${mapTiles.metadata.maxzoom ?? "?"})`,
+        );
+      } catch (err) {
+        console.error(`Map tiles not loaded — ${(err as Error).message}`);
+      }
+    }
+
     webUi = new WebUiServer(node, {
       port: Number(args["web-port"]),
       host: args["web-host"],
@@ -84,6 +107,7 @@ async function main(): Promise<void> {
       networkName,
       networkPassword,
       publicHost: args["public-host"],
+      mapTiles,
     });
     await webUi.start();
     const webHost = args["web-host"] ?? "127.0.0.1";
@@ -104,10 +128,14 @@ async function main(): Promise<void> {
     if (exposeLocationRegistry) {
       console.log(`Location registry read endpoint exposed: GET /api/location-registry (stessa password di rete)`);
     }
+    if (mapTiles) {
+      console.log(`Map tiles exposed: GET /api/map-info, GET /api/map-tiles/:z/:x/:y (non autenticati — non dati sensibili)`);
+    }
   }
 
   const shutdown = async (): Promise<void> => {
     if (webUi) await webUi.stop();
+    mapTiles?.close();
     await node.stop();
     process.exit(0);
   };
