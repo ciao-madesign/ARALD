@@ -3,6 +3,7 @@ import { BoundedFifoMap } from "../../node/src/bounded-map.js";
 import { Priority } from "../../node/src/packet.js";
 import { computeContentId } from "../../node/src/content.js";
 import { parseFeed, MAX_FEED_BYTES } from "./rss-feed.js";
+import { fetchTextBounded } from "./fetch-bounded.js";
 
 /**
  * One news headline — deliberately lean: title and metadata only, never the
@@ -121,51 +122,6 @@ function defaultIsEmergencyHeadline(headline: NewsHeadline): boolean {
   if (!headline.category) return false;
   const category = headline.category.toLowerCase();
   return DEFAULT_EMERGENCY_CATEGORY_KEYWORDS.some((keyword) => category.includes(keyword));
-}
-
-/**
- * Fetches `url` and reads its body as text, aborting as soon as more than
- * `maxBytes` have arrived rather than buffering an unbounded response in
- * full first — `res.text()` alone would download the entire body before
- * `parseFeed()`'s own `MAX_FEED_BYTES` check ever got a chance to reject
- * it, so a hostile/misbehaving `--news-url` backend (spec §57) could still
- * force this node to hold an arbitrarily large response in memory (found
- * by review; empirically confirmed before this fix existed). Mirrors
- * `node/src/loopback-http-server.ts`'s `readRequestBody()`/`BodyTooLargeError`
- * pattern, applied to an outbound fetch instead of an inbound request.
- * Falls back to buffering the whole response only if the runtime doesn't
- * expose a streaming body (`res.body` undefined) — not expected under
- * Node's `fetch()`, kept only as a defensive fallback.
- */
-async function fetchTextBounded(url: string, maxBytes: number): Promise<string> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`news feed fetch failed (HTTP ${res.status})`);
-  if (!res.body) {
-    // Not expected from Node's fetch() for a normal response with a body — kept only as a
-    // defensive fallback (e.g. a future runtime/polyfill difference). Still bounded: this can only
-    // ever buffer whatever the backend actually sent, then reject it after the fact, rather than
-    // silently accepting an unbounded body the way an unchecked res.text() would (found by review:
-    // this branch originally had no size check at all, reintroducing the exact vulnerability the
-    // streaming path below exists to close).
-    const text = await res.text();
-    if (Buffer.byteLength(text, "utf8") > maxBytes) throw new Error(`news feed response exceeded ${maxBytes} bytes`);
-    return text;
-  }
-
-  const reader = res.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel();
-      throw new Error(`news feed response exceeded ${maxBytes} bytes`);
-    }
-    chunks.push(value);
-  }
-  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8");
 }
 
 /**
