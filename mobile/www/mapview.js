@@ -83,9 +83,12 @@ function renderMapAvailability(info) {
  */
 function renderMapTiles() {
   const layer = document.getElementById("map-tiles-layer");
+  const pinsLayer = document.getElementById("map-pins-layer");
   layer.textContent = "";
   if (!mapState) {
     layer.style.transform = "";
+    pinsLayer.style.transform = "";
+    renderMapPins();
     return;
   }
 
@@ -95,6 +98,7 @@ function renderMapTiles() {
   const maxTileIndex = Math.pow(2, zoom) - 1;
 
   layer.style.transform = `translate(${-topLeft.x}px, ${-topLeft.y}px)`;
+  pinsLayer.style.transform = layer.style.transform;
 
   const firstTileX = Math.floor(topLeft.x / TILE_SIZE);
   const firstTileY = Math.floor(topLeft.y / TILE_SIZE);
@@ -113,6 +117,31 @@ function renderMapTiles() {
       img.src = apiUrl(`/api/map-tiles/${zoom}/${tx}/${ty}`);
       layer.append(img);
     }
+  }
+  renderMapPins();
+}
+
+/**
+ * Draws known drops (docs/next-steps.md — bacheca, concept credited to BitChat's BoardManager,
+ * Unlicense/public domain) as pins on the map, at the same world-pixel coordinates renderMapTiles()
+ * positions tiles at — `knownDrops` is a global populated by app.js's renderDrops() on every
+ * refreshAll() cycle, kept in sync independently of whether the map overlay happens to be open.
+ * Urgent drops get the same accent color as their #drops list badge (var(--bad)).
+ */
+function renderMapPins() {
+  const layer = document.getElementById("map-pins-layer");
+  layer.textContent = "";
+  if (!mapState || typeof knownDrops === "undefined") return;
+  for (const d of knownDrops) {
+    if (typeof d.lat !== "number" || typeof d.lon !== "number") continue;
+    const { x, y } = lonLatToWorldPx(d.lon, d.lat, mapState.zoom);
+    const pin = document.createElement("div");
+    pin.className = "map-pin" + (d.urgent ? " is-urgent" : "");
+    pin.style.left = x + "px";
+    pin.style.top = y + "px";
+    pin.title = d.label || d.text || "";
+    pin.innerHTML = `<svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-${d.urgent ? "alert-triangle" : "map-pin"}"></use></svg>`;
+    layer.append(pin);
   }
 }
 
@@ -172,7 +201,9 @@ function moveDrag(event) {
   const dy = event.clientY - dragState.startY;
   const viewport = document.getElementById("map-viewport");
   const topLeft = topLeftWorldPx(dragState.baseCenterPx, viewport);
-  document.getElementById("map-tiles-layer").style.transform = `translate(${-topLeft.x + dx}px, ${-topLeft.y + dy}px)`;
+  const transform = `translate(${-topLeft.x + dx}px, ${-topLeft.y + dy}px)`;
+  document.getElementById("map-tiles-layer").style.transform = transform;
+  document.getElementById("map-pins-layer").style.transform = transform;
 }
 
 function endDrag(event) {

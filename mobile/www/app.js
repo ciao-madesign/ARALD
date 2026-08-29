@@ -281,6 +281,38 @@ async function createGroup(name, members) {
 }
 
 /**
+ * POST /api/drops (node/src/web-ui.ts) — publishes a drop (a location-tagged public notice,
+ * docs/next-steps.md; concept credited to BitChat's mesh-local BoardManager, Unlicense/public domain —
+ * see node/src/drops.ts's own doc comment). `lat`/`lon` are always the caller's own current position
+ * (see createDropFromHere()'s doc comment below), never typed in by hand.
+ */
+async function createDrop({ text, lat, lon, label, urgent }) {
+  const res = await fetchWithTimeout(
+    apiUrl("/api/drops"),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + networkPassword },
+      body: JSON.stringify({ text, lat, lon, label, urgent }),
+    },
+    CALL_TIMEOUT_MS,
+  );
+  let body;
+  try {
+    body = await res.json();
+  } catch {
+    const err = new Error("risposta non valida dal gateway (HTTP " + res.status + ")");
+    err.status = res.status;
+    throw err;
+  }
+  if (!res.ok) {
+    const err = new Error(body.error || "HTTP " + res.status);
+    err.status = res.status;
+    throw err;
+  }
+  return body.drop;
+}
+
+/**
  * GET /api/location-registry (node/src/web-ui.ts) — every currently-shared position this gateway
  * knows about. Only ever populated on a *dedicated* location-registry node with `exposeLocationRegistry`
  * turned on (docs/next-steps.md Opzione J) — an ordinary gateway 404s here, which this treats as "not
@@ -347,16 +379,45 @@ async function getCurrentPosition() {
   const nativeGeolocation = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Geolocation;
   if (nativeGeolocation && typeof nativeGeolocation.getCurrentPosition === "function") {
     const pos = await nativeGeolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 10000 });
-    return { lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy ?? undefined };
+    const result = { lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy ?? undefined };
+    myLastKnownPosition = result;
+    return result;
   }
   if (!navigator.geolocation) throw new Error("Geolocalizzazione non disponibile su questo dispositivo.");
   return new Promise((resolve, reject) => {
     navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy ?? undefined }),
+      (pos) => {
+        const result = { lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy ?? undefined };
+        myLastKnownPosition = result;
+        resolve(result);
+      },
       (err) => reject(new Error(err.message || "Impossibile ottenere la posizione")),
       { enableHighAccuracy: true, timeout: 10000 },
     );
   });
+}
+
+/**
+ * Last position `getCurrentPosition()` actually resolved with, this session only — never persisted,
+ * never sampled on its own (this app only ever reads GPS in direct response to a tap, same "never
+ * automatic" posture as location sharing itself, docs/next-steps.md). Used only to show a rough
+ * "distance from me" on bacheca drops (`renderDrops()`) without forcing a fresh GPS read just to
+ * render a list; `null` until the user has shared their position or created a drop at least once.
+ */
+let myLastKnownPosition = null;
+
+/**
+ * Great-circle distance between two lat/lon points in meters (standard haversine formula, public
+ * domain math — no licensing concern, unlike anything that might come from BitChat/NOMAD). Used only
+ * to show a rough "distance from me" on bacheca drops (renderDrops()) when myLastKnownPosition is known.
+ */
+function haversineDistanceMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
 }
 
 /**
@@ -1045,6 +1106,103 @@ function renderLocationReports(reports) {
   locationReportSeenIds = nextSeen;
 }
 
+// ---------- bacheca / drops (docs/next-steps.md — concept credited to BitChat's mesh-local
+// BoardManager, Unlicense/public domain; see node/src/drops.ts's own doc comment) ----------
+
+let dropSeenIds = new Set();
+
+/**
+ * The full list from the latest GET /api/drops, kept independently of whether the offline map
+ * overlay (mapview.js) happens to be open — mapview.js's renderMapPins() reads this global to draw
+ * drop pins without app.js needing to know anything about map/tile coordinate space.
+ */
+let knownDrops = [];
+
+/**
+ * `drops` is always an array (GET /api/drops is unauthenticated and offered on every gateway,
+ * unlike the location registry) — the panel itself is always visible, never capability-gated.
+ * Urgent drops are sorted first (Array.prototype.sort is stable, so within each group the
+ * server's own newest-first order, node/src/drops.ts's Drops.list(), is preserved).
+ */
+function renderDrops(drops) {
+  knownDrops = drops;
+  renderMapPins();
+  const list = document.getElementById("drops");
+  document.getElementById("drops-count").textContent = drops.length > 0 ? String(drops.length) : "";
+  if (renderEmptyIfNeeded(list, drops, "Nessuna segnalazione ancora.", "alert-triangle")) {
+    dropSeenIds = new Set();
+    return;
+  }
+  const sorted = [...drops].sort((a, b) => (b.urgent ? 1 : 0) - (a.urgent ? 1 : 0));
+  const nextSeen = new Set();
+  for (const d of sorted) {
+    nextSeen.add(d.dropId);
+    const tags = [];
+    if (d.urgent) tags.push(el("span", { className: "tag urgent", textContent: "Urgente" }));
+    if (myLastKnownPosition) {
+      const distance = haversineDistanceMeters(myLastKnownPosition.lat, myLastKnownPosition.lon, d.lat, d.lon);
+      tags.push(el("span", { className: "tag", textContent: distance < 1000 ? Math.round(distance) + " m" : (distance / 1000).toFixed(1) + " km" }));
+    }
+    const li = el("li", null, [
+      el("div", { className: "row" }, [
+        el("span", { className: "row-title", textContent: d.label || "Segnalazione", title: d.label || "Segnalazione" }),
+        el("span", { className: "muted", textContent: timeAgo(d.timestamp) }),
+      ]),
+      el("div", { textContent: d.text }),
+      el("div", { className: "tags" }, tags),
+    ]);
+    if (d.urgent) li.classList.add("is-urgent");
+    if (!dropSeenIds.has(d.dropId)) li.classList.add("enter");
+    list.append(li);
+  }
+  dropSeenIds = nextSeen;
+}
+
+function setCreateDropBusy(submit, busy) {
+  submit.disabled = busy;
+  submit.textContent = busy ? "Invio..." : "Segnala qui";
+}
+
+document.getElementById("create-drop-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const labelInput = document.getElementById("create-drop-label");
+  const textInput = document.getElementById("create-drop-text");
+  const urgentInput = document.getElementById("create-drop-urgent");
+  const status = document.getElementById("create-drop-status");
+  const text = textInput.value.trim();
+  if (!text) return;
+  const label = labelInput.value.trim();
+  const urgent = urgentInput.checked;
+  const submit = event.target.querySelector("button[type=submit]");
+  setCreateDropBusy(submit, true);
+  status.classList.remove("error");
+  status.textContent = "Individuazione della posizione...";
+  try {
+    const { lat, lon } = await getCurrentPosition();
+    status.textContent = "Invio in corso...";
+    await createDrop({ text, lat, lon, label: label || undefined, urgent });
+    textInput.value = "";
+    labelInput.value = "";
+    urgentInput.checked = false;
+    status.textContent = "Segnalazione pubblicata.";
+    vibrate(urgent ? [15, 40, 15] : 10);
+    showToast("Segnalazione pubblicata", "alert-triangle");
+    // Same "fire and let the dashboard catch up" posture as createGroup()'s submit handler —
+    // the panel would otherwise wait for the next periodic 5s refreshAll() tick.
+    refreshAll().catch(() => {});
+  } catch (err) {
+    if (err.status === 401) {
+      handlePasswordRejected();
+      return;
+    }
+    status.classList.add("error");
+    status.textContent = "Errore: " + err.message;
+    vibrate([12, 40, 12]);
+  } finally {
+    setCreateDropBusy(submit, false);
+  }
+});
+
 document.getElementById("share-location-button").addEventListener("click", async () => {
   const button = document.getElementById("share-location-button");
   const status = document.getElementById("share-location-status");
@@ -1723,11 +1881,12 @@ let refreshCycleId = 0;
 async function refreshAll() {
   const cycleId = ++refreshCycleId;
   try {
-    const [status, peers, services, channels, groups, locationReports, mapInfoResult] = await Promise.all([
+    const [status, peers, services, channels, drops, groups, locationReports, mapInfoResult] = await Promise.all([
       fetchJson("/api/status"),
       fetchJson("/api/peers"),
       fetchJson("/api/services"),
       fetchJson("/api/channels"),
+      fetchJson("/api/drops"),
       fetchGroups(),
       fetchLocationRegistry(),
       fetchMapInfo(),
@@ -1737,6 +1896,7 @@ async function refreshAll() {
     renderPeers(peers);
     renderServices(services);
     renderChannels(channels);
+    renderDrops(drops);
     renderGroups(groups);
     renderLocationReports(locationReports);
     renderMapAvailability(mapInfoResult);

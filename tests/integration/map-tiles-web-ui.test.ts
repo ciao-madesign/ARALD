@@ -187,14 +187,17 @@ describe("WebUiServer map tiles (docs/next-steps.md)", () => {
     expect(preflight.status).toBe(204);
   });
 
-  it("without mapTiles configured, no CORS headers are sent and OPTIONS 404s (unchanged pre-existing behavior)", async () => {
+  it("without mapTiles configured, CORS headers are still sent — GET /api/drops (docs/next-steps.md) is offered unconditionally, so the CORS gate is no longer tied to mapTiles/allowServiceCalls/exposeLocationRegistry", async () => {
+    // Behavior intentionally changed by the drops feature (web-ui.test.ts has the full regression
+    // test for the CORS gate itself) — kept here only to show map-tiles-specific endpoints aren't
+    // somehow still gated on mapTiles for CORS purposes even when mapTiles itself is unconfigured.
     node = new NomadNode({ displayName: "N" });
     webUi = new WebUiServer(node, { port: 0 });
     await webUi.start();
 
     const res = await fetch(`${baseUrl()}/api/content`);
-    expect(res.headers.get("access-control-allow-origin")).toBeNull();
+    expect(res.headers.get("access-control-allow-origin")).toBe("*");
     const preflight = await fetch(`${baseUrl()}/api/map-tiles/10/512/300`, { method: "OPTIONS" });
-    expect(preflight.status).toBe(404);
+    expect(preflight.status).toBe(204);
   });
 });

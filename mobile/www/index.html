@@ -101,7 +101,7 @@
      il progetto non ha mai introdotto una dipendenza di terze parti in mobile/www/ (vedi CLAUDE.md).
      Stesso pattern a schermo intero di #scanner-overlay sopra, unico altro overlay del progetto. -->
 <section id="map-overlay" hidden>
-  <div id="map-viewport"><div id="map-tiles-layer"></div></div>
+  <div id="map-viewport"><div id="map-tiles-layer"></div><div id="map-pins-layer"></div></div>
   <div class="map-controls">
     <button type="button" id="map-zoom-in" aria-label="Aumenta zoom">+</button>
     <button type="button" id="map-zoom-out" aria-label="Riduci zoom">−</button>
@@ -188,6 +188,24 @@
           <button type="submit">Apri</button>
         </form>
         <ul id="channels"></ul>
+      </details>
+
+      <details class="panel" id="drops-panel">
+        <summary>
+          <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-alert-triangle"></use></svg> Bacheca <span class="count" id="drops-count"></span></h2>
+          <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+        </summary>
+        <form id="create-drop-form">
+          <input id="create-drop-label" type="text" placeholder="Etichetta breve (opzionale), es. Frana sul sentiero" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="100">
+          <textarea id="create-drop-text" placeholder="Descrivi la segnalazione..." rows="2" required></textarea>
+          <label class="checkbox-row">
+            <input type="checkbox" id="create-drop-urgent">
+            <span>Urgente (pericolo reale)</span>
+          </label>
+          <button type="submit">Segnala qui</button>
+          <p id="create-drop-status" class="muted" role="status" aria-live="polite"></p>
+        </form>
+        <ul id="drops"></ul>
       </details>
 
       <details class="panel" id="groups-panel">

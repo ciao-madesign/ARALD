@@ -266,6 +266,15 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
   user-select: none;
   pointer-events: none; /* il drag lo intercetta #map-viewport, mai una singola tile */
 }
+#map-pins-layer { position: absolute; top: 0; left: 0; pointer-events: none; }
+.map-pin {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  color: var(--accent);
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
+}
+.map-pin svg { width: 26px; height: 26px; }
+.map-pin.is-urgent { color: var(--bad); }
 .map-controls {
   position: absolute;
   right: 1em;
@@ -567,6 +576,25 @@ li.skel-row { display: flex; flex-direction: column; }
 }
 #create-group-form button[type="submit"]:active { transform: scale(0.97); }
 #create-group-form button[type="submit"]:disabled { opacity: 0.6; }
+
+/* ---------- bacheca "drop" (docs/next-steps.md — concetto ispirato al BoardManager di BitChat, licenza Unlicense/dominio pubblico) ---------- */
+
+#create-drop-form { display: flex; flex-direction: column; gap: 0.5em; margin-bottom: 0.8em; }
+#create-drop-label, #create-drop-text {
+  padding: 0.55em 0.75em; border-radius: 0.5em; border: 1px solid var(--border);
+  background: var(--bg); color: var(--ink); font: inherit; resize: vertical;
+}
+#create-drop-label:focus-visible, #create-drop-text:focus-visible { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
+.checkbox-row { display: flex; align-items: center; gap: 0.5em; font-size: 0.88em; }
+.checkbox-row input[type="checkbox"] { accent-color: var(--bad); width: 1.1em; height: 1.1em; flex: none; }
+#create-drop-form button[type="submit"] {
+  align-self: flex-start; border-radius: 0.5em; padding: 0.55em 1em; background: var(--accent);
+  color: var(--accent-ink); border: none; font-weight: 600;
+}
+#create-drop-form button[type="submit"]:active { transform: scale(0.97); }
+#create-drop-form button[type="submit"]:disabled { opacity: 0.6; }
+#drops .tag.urgent { background: var(--bad-soft); color: var(--bad); font-weight: 600; }
+#drops li.is-urgent { border-left: 3px solid var(--bad); padding-left: 0.6em; }
 
 /* #group-panel reuses #chat-panel's own look exactly, same as #channel-panel above. */
 #group-panel:not([hidden]) {

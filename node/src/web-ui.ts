@@ -741,34 +741,29 @@ export class WebUiServer {
     // A mobile client (docs/next-steps.md Opzione H) is a separate origin from this server (a
     // Capacitor WebView, not a page this server itself served), so its fetch()es are cross-origin
     // and blocked by the browser/WebView's own CORS enforcement unless this response explicitly
-    // allows it — tied to allowServiceCalls OR exposeLocationRegistry, the two flags that opt a
-    // deployment into "an external client is expected to talk to this" (a dedicated location-registry
-    // node may run with exposeLocationRegistry alone, allowServiceCalls off — its one authenticated
-    // GET endpoint still needs this same cross-origin allowance for a phone to read it, found by
-    // review: this condition originally checked allowServiceCalls only, which would have silently
-    // CORS-blocked exactly the deployment this feature's own design doc calls out as the intended one).
-    // Applied uniformly up front (every response, including 404s) instead of sprinkled through each
-    // branch below. mapTiles joins this condition for the same reason exposeLocationRegistry was
-    // added to it (found by review at the time): a map-only deployment with neither of the other two
-    // flags on would otherwise have its own unauthenticated endpoints silently CORS-blocked for the
-    // one cross-origin client (the mobile app) that actually needs to reach them.
-    if (this.allowServiceCalls || this.exposeLocationRegistry || this.mapTiles !== undefined) {
-      res.setHeader("Access-Control-Allow-Origin", "*");
-    }
+    // allows it. This used to be conditional on allowServiceCalls/exposeLocationRegistry/mapTiles —
+    // the flags that opt a deployment into "an external client is expected to talk to this" — but
+    // GET/POST /api/drops (bacheca, docs/next-steps.md) broke that assumption: unlike every other
+    // cross-origin-relevant endpoint before it, it's offered unconditionally on every node, with no
+    // opt-in flag of its own (found by review: a node started with none of the three flags — a
+    // legitimate shape, e.g. a read-only bulletin node — would otherwise have silently CORS-blocked
+    // exactly the always-on Bacheca panel the mobile app shows on every gateway, the same bug class
+    // already found and fixed twice before for exposeLocationRegistry and mapTiles when *they* were
+    // added). Since there is now always at least one endpoint meant to be reachable cross-origin,
+    // the header is unconditional — applied uniformly up front (every response, including 404s)
+    // instead of sprinkled through each branch below.
+    res.setHeader("Access-Control-Allow-Origin", "*");
 
     if (req.method === "OPTIONS") {
       // A cross-origin GET/POST with a custom `Authorization` header and (for POST) a JSON
-      // Content-Type is a "non-simple" request, so a real browser/WebView sends this preflight first
-      // — relevant whenever at least one authenticated endpoint is reachable at all.
-      if (this.allowServiceCalls || this.exposeLocationRegistry || this.mapTiles !== undefined) {
-        res.writeHead(204, {
-          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type, Authorization",
-          "Access-Control-Max-Age": "600",
-        });
-      } else {
-        res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-      }
+      // Content-Type is a "non-simple" request, so a real browser/WebView sends this preflight
+      // first — unconditional for the same reason the header above is, now that at least one
+      // cross-origin-relevant endpoint is always reachable.
+      res.writeHead(204, {
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        "Access-Control-Max-Age": "600",
+      });
       res.end();
       return;
     }
@@ -785,6 +780,10 @@ export class WebUiServer {
       }
       if (url.pathname === "/api/channel-messages") {
         void this.handleSendChannelMessage(req, res);
+        return;
+      }
+      if (url.pathname === "/api/drops") {
+        void this.handleCreateDrop(req, res);
         return;
       }
       if (url.pathname === "/api/groups") {
@@ -880,6 +879,11 @@ export class WebUiServer {
 
     if (url.pathname === "/api/channel-messages") {
       this.handleGetChannelMessages(res, url);
+      return;
+    }
+
+    if (url.pathname === "/api/drops") {
+      sendJson(res, 200, this.node.drops.list());
       return;
     }
 
@@ -1226,6 +1230,87 @@ export class WebUiServer {
       // caller's input was rejected, not a downstream failure, so 400 rather than handleCall()'s
       // 502 convention for unexpected service failures.
       sendJson(res, 400, { error: (err as Error).message });
+    }
+  }
+
+  /**
+   * `POST /api/drops` — publishes a drop (body `{ text, lat, lon, label?, urgent?, expiresInMs? }`)
+   * via `NomadNode.publishDrop()`. Same auth as `POST /api/channel-messages` — reading drops needs
+   * no password (`GET /api/drops`, public mesh content), but *creating* one is still gated behind
+   * pairing like every other write this class exposes. `lat`/`lon`/`urgent`'s deeper validation
+   * happens inside `publishDrop()` itself — this only checks shallow types, same split already used
+   * by `handleShareLocation()`/`handleCreateGroup()`.
+   */
+  private async handleCreateDrop(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.allowServiceCalls || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+
+    let raw: Buffer;
+    try {
+      raw = await readRequestBody(req, MAX_MESSAGE_BODY_BYTES, MAX_CALL_BODY_READ_MS);
+    } catch (err) {
+      if (res.writableEnded || res.destroyed) return; // connection already gone — nothing to answer
+      if (err instanceof BodyTooLargeError) {
+        sendJson(res, 413, { error: "request body too large" });
+      } else if (err instanceof Error && err.message.includes("timed out")) {
+        sendJson(res, 408, { error: "timed out waiting for the request body" });
+      } else {
+        sendJson(res, 400, { error: "failed to read request body" });
+      }
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = raw.length === 0 ? {} : JSON.parse(raw.toString("utf8"));
+    } catch {
+      sendJson(res, 400, { error: "malformed JSON body" });
+      return;
+    }
+
+    const body = parsed as { text?: unknown; lat?: unknown; lon?: unknown; label?: unknown; urgent?: unknown; expiresInMs?: unknown } | null;
+    const text = body?.text;
+    if (typeof text !== "string" || text.length === 0) {
+      sendJson(res, 400, { error: "'text' must be a non-empty string" });
+      return;
+    }
+    if (typeof body?.lat !== "number" || typeof body?.lon !== "number") {
+      sendJson(res, 400, { error: "'lat' and 'lon' must be numbers" });
+      return;
+    }
+    const label = body.label;
+    if (label !== undefined && typeof label !== "string") {
+      sendJson(res, 400, { error: "'label' must be a string" });
+      return;
+    }
+    const urgent = body.urgent ?? false;
+    if (typeof urgent !== "boolean") {
+      sendJson(res, 400, { error: "'urgent' must be a boolean" });
+      return;
+    }
+    const expiresInMs = body.expiresInMs;
+    if (expiresInMs !== undefined && typeof expiresInMs !== "number") {
+      sendJson(res, 400, { error: "'expiresInMs' must be a number" });
+      return;
+    }
+
+    try {
+      const drop = this.node.publishDrop({ text, lat: body.lat, lon: body.lon, label, urgent, expiresInMs });
+      sendJson(res, 200, { drop });
+    } catch (err) {
+      // publishDrop()'s own validation throws for both a rejected input (bad lat/lon/text/label —
+      // 400, same convention as handleSendChannelMessage()) and an exhausted urgent-drop rate limit
+      // (429) — distinguished by message content, same split already used elsewhere in this class
+      // (e.g. handleShareLocation()) for a single throwing call covering more than one failure mode.
+      const message = (err as Error).message;
+      sendJson(res, message.includes("too many urgent drops") ? 429 : 400, { error: message });
     }
   }
 
