@@ -2,7 +2,7 @@
 
 Riferimento completo: [`SPECIFICATION.md`](./SPECIFICATION.md) §8-9, §39-40, §85-86, §103-104.
 
-> Nessuno degli scenari descritti in questo documento è ancora eseguibile: richiedono le milestone 6-19 (BLE, mobile, integrazione NOMAD, gateway, store-and-forward — vedi [`roadmap.md`](./roadmap.md)), non ancora implementate. Questo documento descrive il *target* di deployment verso cui il codice attuale (Milestone 0-5, solo TCP su LAN/localhost) è il primo gradino.
+> Nessuno degli scenari descritti in questo documento è ancora eseguibile in una forma reale/fisica: la logica applicativa di quasi ogni milestone della roadmap (0-7, 12, 13, 15, 16, 20, più i numerosi follow-up in `docs/security.md`) è completa e validata in puro software — store-and-forward, sincronizzazione, cifratura E2E, routing, un gateway NOMAD con più sotto-servizi, un'app mobile, mappe offline, bacheca e chat incluse — ma resta bloccata su forme hardware/Docker/rete reali per le sole milestone 8/9/10/11/14/17/18/19 (BLE fisico, build Android nativa, Project NOMAD via Docker, Wi-Fi Direct, hardware fisico del nodo — vedi [`roadmap.md`](./roadmap.md) per il dettaglio di cosa è bloccato da cosa). Questo documento descrive il *target* di deployment fisico verso cui quel lavoro software è il prerequisito già pronto.
 
 ## Principio: nodi infrastrutturali, non "ogni telefono è un router" (§85)
 

@@ -545,10 +545,10 @@ Da studiare come riferimento di design (non da importare come codice, vedi §52 
 
 **Non pianificato, nessuna decisione presa**: entrambi i punti restano riferimento di design per una sessione futura, da riprendere solo dopo una discussione esplicita con l'utente su se il modello di minaccia di Nomad-Net (diverso da quello di BitChat) giustifichi il costo — coerente con la disciplina già in uso in questo repository di non implementare mai codice ispirato a BitChat senza prima una decisione esplicita e una citazione della fonte.
 
-Modello zero-trust previsto (§52):
+Modello zero-trust (§52) — **fatto per i messaggi privati**, questa nota descriveva uno stato futuro scritto prima che la cifratura E2E esistesse ed era rimasta non aggiornata dopo:
 
 ```
 Sender -> encrypt -> Relay (opaque packet) -> Relay -> Receiver -> decrypt
 ```
 
-Un relay instrada senza poter leggere il payload di un `DATA` o `CONTENT_CHUNK` privato. Questo resta da fare: oggi l'autenticità (firma) è garantita, la riservatezza no.
+Un relay instrada `PRIVATE_MESSAGE`/`GROUP_MESSAGE` senza poter leggerne il payload — cifratura X25519+AES-256-GCM (`node/src/encryption.ts`), vedi "Cifratura end-to-end dei messaggi privati" più sopra e voce #42 per i gruppi. `DATA` resta invece deliberatamente in chiaro (nessun cambiamento): non porta comunicazione privata, è usato solo per la meccanica di routing/relay generica (il resto della suite di test si appoggia alla sua forma in chiaro), e `CONTENT_CHUNK` trasporta contenuto pubblicato via `publishContent()` — pubblico e firmato per definizione (spec §24), mai pensato per restare confidenziale a un relay. Nessuna riservatezza mancante da questi due tipi, quindi: sono semplicemente fuori dal perimetro a cui questo modello si applica.
