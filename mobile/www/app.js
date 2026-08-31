@@ -1426,14 +1426,32 @@ function renderNewsResult(container, value) {
   container.append(list);
 }
 
+/** Renders a service://flatnotes-search result (`{ results: [{path, title}] }`) as a readable list instead of raw JSON — same reasoning as renderNewsResult() above. */
+function renderNoteSearchResult(container, value) {
+  container.textContent = "";
+  const results = Array.isArray(value && value.results) ? value.results : [];
+  if (results.length === 0) {
+    container.append(el("p", { className: "muted", textContent: "Nessuna nota trovata." }));
+    return;
+  }
+  const list = el("ul", { className: "news-headline-list" });
+  for (const r of results) {
+    if (!r || typeof r.title !== "string") continue;
+    list.append(el("li", null, [el("div", { className: "news-headline-title", textContent: r.title })]));
+  }
+  container.append(list);
+}
+
 function buildCallForm(service) {
   const isAi = service.serviceId === "service://ai";
   const isTranslate = service.serviceId === "service://translation";
   const isNews = service.serviceId === "service://news";
   const isInternetFetch = service.serviceId === "service://internet-fetch";
-  const isGuided = isAi || isTranslate || isNews || isInternetFetch;
+  const isFlatnotesSearch = service.serviceId === "service://flatnotes-search";
+  const isFlatnotesCreate = service.serviceId === "service://flatnotes-create";
+  const isGuided = isAi || isTranslate || isNews || isInternetFetch || isFlatnotesSearch || isFlatnotesCreate;
 
-  let input, languageSelect, internetKindSelect, internetUrlInput;
+  let input, languageSelect, internetKindSelect, internetUrlInput, noteTitleInput, noteContentInput;
   if (isTranslate) {
     input = el("textarea", { placeholder: "Scrivi il testo da tradurre..." });
     languageSelect = el("select", { className: "translate-language-select" });
@@ -1454,6 +1472,11 @@ function buildCallForm(service) {
     internetUrlInput.autocomplete = "off";
     internetUrlInput.autocapitalize = "off";
     internetUrlInput.spellcheck = false;
+  } else if (isFlatnotesSearch) {
+    input = el("input", { type: "text", placeholder: "Cerca nelle note..." });
+  } else if (isFlatnotesCreate) {
+    noteTitleInput = el("input", { type: "text", placeholder: "Titolo (facoltativo)" });
+    noteContentInput = el("textarea", { placeholder: "Scrivi qui la tua nota..." });
   } else if (!isNews) {
     // Fallback for a service this app has no dedicated form for — a custom gateway an operator
     // registered locally, or a future service not yet in the four branches above. Kept working (never
@@ -1461,8 +1484,8 @@ function buildCallForm(service) {
     input = el("textarea", { placeholder: "Payload JSON, es. {}", value: "{}" });
   }
 
-  const submitLabel = isNews ? "Vedi le notizie" : "Invia";
-  const submitIcon = isNews ? "newspaper" : "send";
+  const submitLabel = isNews ? "Vedi le notizie" : isFlatnotesSearch ? "Cerca" : isFlatnotesCreate ? "Salva nota" : "Invia";
+  const submitIcon = isNews ? "newspaper" : isFlatnotesSearch ? "search" : isFlatnotesCreate ? "edit" : "send";
   const submit = el("button", { className: "call-submit" });
   setCallSubmitBusy(submit, false, submitLabel, submitIcon);
   const result = el("div", { className: "call-result", textContent: "" });
@@ -1487,6 +1510,25 @@ function buildCallForm(service) {
         return;
       }
       payload = { kind: internetKindSelect.value, url };
+    } else if (isFlatnotesSearch) {
+      const q = input.value.trim();
+      if (!q) {
+        result.hidden = false;
+        result.className = "call-result is-error";
+        result.textContent = "Scrivi qualcosa da cercare.";
+        return;
+      }
+      payload = { q };
+    } else if (isFlatnotesCreate) {
+      const content = noteContentInput.value.trim();
+      if (!content) {
+        result.hidden = false;
+        result.className = "call-result is-error";
+        result.textContent = "Scrivi qualcosa prima di salvare.";
+        return;
+      }
+      const title = noteTitleInput.value.trim();
+      payload = title ? { title, content } : { content };
     } else {
       try {
         payload = JSON.parse(input.value || "{}");
@@ -1515,6 +1557,16 @@ function buildCallForm(service) {
         result.textContent = value.response;
       } else if (isTranslate && value && typeof value.translatedText === "string") {
         result.textContent = value.translatedText;
+      } else if (isFlatnotesSearch) {
+        renderNoteSearchResult(result, value);
+      } else if (isFlatnotesCreate && value && typeof value.path === "string") {
+        result.textContent = "";
+        result.append(
+          el("p", { textContent: "Nota salvata." }),
+          el("p", { className: "muted", textContent: "La trovi tra i \"Contenuti della rete\"." }),
+        );
+        noteTitleInput.value = "";
+        noteContentInput.value = "";
       } else {
         result.textContent = JSON.stringify(value, null, 2);
       }
@@ -1537,6 +1589,7 @@ function buildCallForm(service) {
   if (!isGuided) children.push(el("p", { className: "call-form-advanced-warning" }, [iconEl("alert-circle"), el("span", { textContent: "Questo servizio non ha un modulo semplificato — il testo qui sotto va scritto in formato tecnico (JSON)." })]));
   if (isTranslate) children.push(input, languageSelect);
   else if (isInternetFetch) children.push(internetKindSelect, internetUrlInput);
+  else if (isFlatnotesCreate) children.push(noteTitleInput, noteContentInput);
   else if (input) children.push(input);
   children.push(submit, result);
   return el("div", { className: "call-form" }, children);
@@ -1975,9 +2028,9 @@ document.getElementById("create-group-form").addEventListener("submit", async (e
 // app has never heard of, e.g. one an operator registered locally) still gets a card, just with a
 // generic icon and a name derived from the raw id — "some card" beats "silently missing" for an
 // unrecognized-but-available service.
-const SERVICE_ICONS = { "service://ai": "sparkles", "service://kiwix-search": "book", "service://news": "newspaper", "service://translation": "translate", "service://internet-fetch": "cloud" };
+const SERVICE_ICONS = { "service://ai": "sparkles", "service://kiwix-search": "book", "service://news": "newspaper", "service://translation": "translate", "service://internet-fetch": "cloud", "service://flatnotes-search": "search", "service://flatnotes-create": "edit" };
 const DEFAULT_SERVICE_ICON = "wrench";
-const SERVICE_LABELS = { "service://ai": "Assistente AI", "service://kiwix-search": "Enciclopedia", "service://news": "Notizie", "service://translation": "Traduttore", "service://internet-fetch": "Pagine da internet" };
+const SERVICE_LABELS = { "service://ai": "Assistente AI", "service://kiwix-search": "Enciclopedia", "service://news": "Notizie", "service://translation": "Traduttore", "service://internet-fetch": "Pagine da internet", "service://flatnotes-search": "Cerca nelle note", "service://flatnotes-create": "Scrivi una nota" };
 
 /**
  * One-line, plain-language explanation shown under each service card — added after a UX audit found
@@ -1993,6 +2046,8 @@ const SERVICE_DESCRIPTIONS = {
   "service://news": "Le ultime notizie raccolte da questa rete.",
   "service://translation": "Traduci un testo in un'altra lingua.",
   "service://internet-fetch": "Recupera una pagina o un feed da internet vero, se questa rete è collegata.",
+  "service://flatnotes-search": "Cerca tra le note già scritte su questa rete.",
+  "service://flatnotes-create": "Scrivi una nota nel quaderno condiviso — sarà leggibile da chiunque sia connesso.",
 };
 
 function serviceLabel(serviceId) {
