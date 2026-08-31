@@ -5,8 +5,8 @@
    qui, non solo nel documento di brand. */
 :root {
   color-scheme: light dark;
-  --bg: #e4e6da; --card: #ffffff; --border: #c9cdbc; --ink: #1e231f; --muted: #5f6656;
-  --accent: #c9a227; --accent-soft: #f1e6be; --accent-ink: #241505;
+  --bg: #eef0e3; --card: #ffffff; --border: #c9cdbc; --ink: #1e231f; --muted: #5f6656;
+  --accent: #c9a227; --accent-2: #e7b74a; --accent-soft: #f1e6be; --accent-ink: #241505;
   --signal: #35607c; --signal-soft: #d9e6ec; --signal-ink: #eaf3f8;
   --good: #3f5636; --good-soft: #dee7d6;
   --warn: #8f5518; --warn-soft: #f2dec4;
@@ -14,13 +14,20 @@
   --off: #5f6656; --off-soft: #e3e5d8;
   --shadow-sm: 0 1px 2px rgba(30, 35, 31, 0.10);
   --shadow-md: 0 4px 14px rgba(30, 35, 31, 0.14);
+  /* Terzo/quarto livello di profondità (voce #50): --shadow-lg per un pannello davvero "sopra" il
+     resto (mai per una card ordinaria, quella resta a --shadow-sm/md); --shadow-glow è riservato al
+     "faro" — l'unica azione che conta ora, mai diffuso su ogni bottone accent. */
+  --shadow-lg: 0 10px 28px -6px rgba(26, 32, 21, 0.22), 0 3px 8px rgba(26, 32, 21, 0.10);
+  --shadow-glow: 0 8px 26px -6px rgba(201, 162, 39, 0.45);
   --skeleton-base: #dbdecf; --skeleton-shine: #edefe4;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #14170f; --card: #232921; --border: #343b32; --ink: #edeae0; --muted: #8b9184;
-    --accent: #ddbe55; --accent-soft: #3d3315; --accent-ink: #1b1002;
+    /* Notte topografica invece del bruno-oliva di prima — stessa struttura pietra/inchiostro, un
+       blu-carbone più freddo al posto di un marrone caldo (voce #50). */
+    --bg: #10151a; --card: #1a2329; --border: #2b363c; --ink: #edeae0; --muted: #93a099;
+    --accent: #e3b64c; --accent-2: #f2cf7a; --accent-soft: #35290f; --accent-ink: #1c1204;
     --signal: #7fb3d1; --signal-soft: #1e323d; --signal-ink: #08161c;
     --good: #7fa36e; --good-soft: #26331f;
     --warn: #e0954b; --warn-soft: #3a2814;
@@ -28,14 +35,50 @@
     --off: #9aa090; --off-soft: #2a2e26;
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
     --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 14px 34px -8px rgba(0, 0, 0, 0.55), 0 3px 10px rgba(0, 0, 0, 0.4);
+    --shadow-glow: 0 10px 30px -6px rgba(227, 182, 76, 0.35);
     --skeleton-base: #262b22; --skeleton-shine: #313629;
   }
+}
+
+/* Tipografia reale (voce #50) — il Field Guide originale (voce #31) proponeva già Fraunces/Overpass/
+   Overpass Mono, ma l'app non aveva mai caricato nessun font: girava su system-ui puro. File
+   auto-ospitati (fonts/, sottoinsieme "latin" del carattere reale, 5 file/~100KB in tutto — solo i
+   pesi realmente usati sotto, niente scaricato "perché poteva servire") invece di un
+   collegamento a fonts.googleapis.com — un'app pensata per funzionare senza internet (rifugio,
+   emergenza) non può dipendere da una CDN esterna per caricare i propri font. unicode-range limita
+   ogni face al set latino: un carattere fuori range (es. cirillico scritto in una nota) ricade
+   correttamente sul fallback di sistema invece di mostrare un quadratino vuoto. */
+@font-face {
+  font-family: "Overpass"; font-style: normal; font-weight: 400; font-display: swap;
+  src: url("fonts/overpass-400.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Overpass"; font-style: normal; font-weight: 600; font-display: swap;
+  src: url("fonts/overpass-600.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Overpass"; font-style: normal; font-weight: 700; font-display: swap;
+  src: url("fonts/overpass-700.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Overpass Mono"; font-style: normal; font-weight: 400; font-display: swap;
+  src: url("fonts/overpass-mono-400.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Fraunces"; font-style: normal; font-weight: 600; font-display: swap;
+  src: url("fonts/fraunces-600.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
 body {
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: "Overpass", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   background: var(--bg); color: var(--ink);
   margin: 0;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
@@ -43,9 +86,13 @@ body {
   font-size: 16px;
 }
 
-.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+/* Fraunces per i titoli che contano davvero (wordmark — h1 sotto — e titolo del pannello aperto,
+   .call-panel-title più sotto) — mai per il testo che si legge di corsa mentre si cammina, che resta
+   Overpass. Stesso principio del Field Guide: un serif con carattere solo dove serve peso. */
+
+.mono { font-family: "Overpass Mono", ui-monospace, "SF Mono", Menlo, monospace; }
 .muted { color: var(--muted); }
-h1 { margin: 0; font-size: 1.3em; letter-spacing: 0.02em; }
+h1 { margin: 0; font-size: 1.35em; font-weight: 600; letter-spacing: 0; font-family: "Fraunces", Georgia, serif; }
 .dot { color: var(--accent); } /* the wordmark's separator, echoing the mark's own beacon-colored center node */
 h2 {
   margin: 0 0 0.8em; font-size: 0.92em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
@@ -74,7 +121,10 @@ input, textarea { font: inherit; }
 button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
+  /* animation-delay was missing here (voce #50 review): without it, the new per-item list stagger
+     (.panel li.enter:nth-child(n), più sotto) lascia una voce invisibile fino a 200ms — un ritardo
+     percepibile come movimento residuo — prima di scattare a `animation-duration: 0.001ms`. */
+  *, *::before, *::after { animation-duration: 0.001ms !important; animation-delay: 0s !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
 }
 
 /* ---------- icons ---------- */
@@ -144,18 +194,38 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
 #setup-form .password-row input:focus-visible { outline: none; box-shadow: none; }
 #setup-form .password-row .icon-button { margin-right: 0.2em; }
 
-/* The one deliberate beacon moment on this screen: the single action the whole form leads to. */
+/* The one deliberate beacon moment on this screen: the single action the whole form leads to. The
+   only button in the app with the full "faro" treatment (voce #50) — gradient depth, a real glow,
+   and a slow breathing ring — precisely because it's the only one where that emphasis is earned;
+   every other accent-colored button below gets the gradient for a consistent richer look but not
+   the glow/pulse, which stays reserved for a genuine single commitment (this, and the one open
+   service/chat/channel/group panel's own submit — see .call-form .call-submit below). */
 #setup-form button[type="submit"] {
+  position: relative;
   margin-top: 1.4em;
   padding: 0.85em;
   border: none;
-  background: var(--accent);
+  background: linear-gradient(155deg, var(--accent-2), var(--accent));
   color: var(--accent-ink);
   font-weight: 600;
+  box-shadow: var(--shadow-glow);
   display: flex; align-items: center; justify-content: center; gap: 0.6em;
-  transition: opacity 150ms var(--ease), transform 100ms var(--ease);
+  transition: opacity 150ms var(--ease), transform 100ms var(--ease), box-shadow 220ms var(--ease);
   clip-path: polygon(0 0, calc(100% - 0.6em) 0, 100% 0.6em, 100% 100%, 0 100%);
 }
+/* inset: 0 (not a negative inset) — clip-path's percentage/calc terms resolve against the box the
+   property is applied to, so a ::after box a different size than the button would compute its own
+   (misaligned) cut corner instead of copying the button's. Matching the box exactly keeps `inherit`
+   truthful; the ring "growing outward" comes from `transform: scale()` in the keyframe instead, which
+   scales the already-correct clipped shape uniformly and never touches the clip-path math. */
+#setup-form button[type="submit"]::after {
+  content: ""; position: absolute; inset: 0;
+  clip-path: inherit;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  animation: beacon-pulse 2.8s var(--ease) infinite;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) { #setup-form button[type="submit"]::after { display: none; } }
 /* clip-path clips the whole painted box, outline included — the generic :focus-visible rule's
    outline-offset (2-3px *outside* the border box) falls entirely in the area this button's own
    clip-path polygon has already cut away near the top-right corner, so on an unclipped platform the
@@ -163,7 +233,8 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
    clears both this cut (0.6em) and .call-submit's (0.5em) with margin, staying inside the polygon. */
 #setup-form button[type="submit"]:focus-visible { outline-offset: -0.65em; }
 #setup-form button[type="submit"]:active { transform: scale(0.98); }
-#setup-form button[type="submit"]:disabled { opacity: 0.7; cursor: default; }
+#setup-form button[type="submit"]:disabled { opacity: 0.7; cursor: default; box-shadow: none; }
+#setup-form button[type="submit"]:disabled::after { display: none; }
 #setup-form button[type="submit"]:disabled:active { transform: none; }
 
 /* :not([hidden]) on both rules below — same specificity-vs-UA-stylesheet reason as .error/.toast:
@@ -356,7 +427,17 @@ header { display: flex; align-items: flex-start; justify-content: space-between;
 .panel ul { list-style: none; margin: 0; padding: 0; }
 .panel li { padding: 0.6em 0; border-top: 1px solid var(--border); }
 .panel li:first-child { border-top: none; padding-top: 0; }
-.panel li.enter { animation: item-in 260ms var(--ease); }
+/* Le cose arrivano, non compaiono (voce #50): un piccolo scarto per riga invece di un blocco che
+   appare tutto insieme — `both` cattura la voce nel suo stato iniziale (invisibile) per l'intera
+   durata del ritardo, altrimenti lampeggerebbe visibile prima di animarsi. Tetto a 6 righe: oltre
+   quel numero lo scarto smette di crescere, altrimenti l'ultima voce di una lista lunga aspetterebbe
+   inutilmente. */
+.panel li.enter { animation: item-in 260ms var(--ease) both; }
+.panel li.enter:nth-child(2) { animation-delay: 40ms; }
+.panel li.enter:nth-child(3) { animation-delay: 80ms; }
+.panel li.enter:nth-child(4) { animation-delay: 120ms; }
+.panel li.enter:nth-child(5) { animation-delay: 160ms; }
+.panel li.enter:nth-child(n+6) { animation-delay: 200ms; }
 .empty { color: var(--muted); font-style: italic; padding: 0.3em 0; display: flex; align-items: center; gap: 0.5em; }
 .empty .icon { color: var(--off); }
 
@@ -445,6 +526,13 @@ li.skel-row { display: flex; flex-direction: column; }
   min-height: 11.5em;
   padding: 1.1em 0.9em; border: 1px solid var(--border); background: var(--bg);
   clip-path: polygon(0 0, calc(100% - 0.9em) 0, 100% 0.9em, 100% 100%, 0 100%);
+  transition: transform 200ms var(--ease), box-shadow 200ms var(--ease), background-color 200ms var(--ease);
+}
+/* hover: hover — solo su dispositivi con un vero puntatore (mouse/trackpad): senza questa guardia un
+   tocco lascerebbe la card "sollevata" fino al tocco successivo su un touchscreen, dove :hover resta
+   attivo più a lungo di un vero passaggio del mouse (voce #50). */
+@media (hover: hover) {
+  .service-cards .service-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); background: var(--card); }
 }
 /* `.panel li:first-child { border-top: none; padding-top: 0 }` (one class + pseudo-class + element)
    outranks the rule above on the first card, stripping its top border/padding — three selector
@@ -475,12 +563,12 @@ li.skel-row { display: flex; flex-direction: column; }
 /* ---------- pannello di chiamata condiviso (mai dentro una card — vedi sopra) ---------- */
 
 #service-call-panel:not([hidden]) {
-  margin-top: 1em; padding: 1em; border: 1px solid var(--accent); background: var(--accent-soft);
+  margin-top: 1em; padding: 1em; border: 1px solid var(--accent); background: var(--accent-soft); box-shadow: var(--shadow-lg);
   clip-path: polygon(0 0, calc(100% - 1em) 0, 100% 1em, 100% 100%, 0 100%);
   animation: item-in 220ms var(--ease);
 }
 .call-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 0.6em; margin-bottom: 0.8em; }
-.call-panel-title { display: flex; align-items: center; gap: 0.55em; font-weight: 700; min-width: 0; }
+.call-panel-title { display: flex; align-items: center; gap: 0.55em; font-weight: 600; font-family: "Fraunces", Georgia, serif; font-size: 1.05em; min-width: 0; }
 .call-panel-title .icon { color: var(--accent); flex: none; }
 .call-panel-title span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -504,24 +592,41 @@ li.skel-row { display: flex; flex-direction: column; }
   background: var(--bg); color: var(--ink); font-family: inherit; font-size: 0.95em;
 }
 .translate-language-select:focus-visible { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
+/* Il secondo (e ultimo) bottone con il trattamento "faro" pieno (voce #50) — coerente con il commento
+   preesistente su .call-button più sopra ("keeps the beacon treatment for the actual in-progress
+   action"): un solo pannello di servizio può essere aperto alla volta, quindi resta un singolo
+   bottone che pulsa, mai diffuso. .chat-compose .call-submit (sotto) riusa la stessa classe ma non è
+   un discendente di .call-form, quindi non eredita nulla di questo — resta piatto, coerente con
+   un'azione che si ripete a ogni messaggio, non una singola in corso. */
 .call-form .call-submit {
+  position: relative;
   align-self: flex-start; padding: 0.5em 1em; border: none;
-  background: var(--accent); color: var(--accent-ink); font-weight: 600; font-size: 0.88em;
+  background: linear-gradient(155deg, var(--accent-2), var(--accent)); color: var(--accent-ink); font-weight: 600; font-size: 0.88em;
+  box-shadow: var(--shadow-glow);
   display: inline-flex; align-items: center; gap: 0.5em;
-  transition: transform 100ms var(--ease), opacity 150ms var(--ease);
+  transition: transform 100ms var(--ease), opacity 150ms var(--ease), box-shadow 220ms var(--ease);
   clip-path: polygon(0 0, calc(100% - 0.5em) 0, 100% 0.5em, 100% 100%, 0 100%);
 }
+.call-form .call-submit::after {
+  content: ""; position: absolute; inset: 0;
+  clip-path: inherit;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  animation: beacon-pulse 2.8s var(--ease) infinite;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) { .call-form .call-submit::after { display: none; } }
 /* Same clip-path-clips-the-outline fix as #setup-form button[type="submit"] above. */
 .call-form .call-submit:focus-visible { outline-offset: -0.65em; }
 .call-form .call-submit:active { transform: scale(0.96); }
-.call-form .call-submit:disabled { opacity: 0.7; }
+.call-form .call-submit:disabled { opacity: 0.7; box-shadow: none; }
+.call-form .call-submit:disabled::after { display: none; }
 .call-result { font-size: 0.85em; padding: 0.6em; border-radius: 0.5em; background: var(--bg); border: 1px solid var(--border); white-space: pre-wrap; word-break: break-word; animation: item-in 200ms var(--ease); }
 .call-result.is-error { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
 
 /* ---------- chat 1:1 (docs/next-steps.md Opzione J) — riusa il pannello condiviso sopra ---------- */
 
 #chat-panel:not([hidden]) {
-  margin-top: 1em; padding: 1em; border: 1px solid var(--accent); background: var(--accent-soft);
+  margin-top: 1em; padding: 1em; border: 1px solid var(--accent); background: var(--accent-soft); box-shadow: var(--shadow-lg);
   clip-path: polygon(0 0, calc(100% - 1em) 0, 100% 1em, 100% 100%, 0 100%);
   animation: item-in 220ms var(--ease);
 }
@@ -559,13 +664,13 @@ li.skel-row { display: flex; flex-direction: column; }
   background: var(--bg); color: var(--ink);
 }
 #join-channel-form input:focus-visible { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
-#join-channel-form button { flex: none; border-radius: 0.5em; padding: 0.55em 1em; background: var(--accent); color: var(--accent-ink); border: none; font-weight: 600; }
+#join-channel-form button { flex: none; border-radius: 0.5em; padding: 0.55em 1em; background: linear-gradient(155deg, var(--accent-2), var(--accent)); color: var(--accent-ink); border: none; font-weight: 600; }
 #join-channel-form button:active { transform: scale(0.97); }
 
 /* #channel-panel reuses #chat-panel's own look exactly (cut-corner accent border) — same visual
    language for "a conversation is open", whether 1:1 or a group channel. */
 #channel-panel:not([hidden]) {
-  margin-top: 1em; padding: 1em; border: 1px solid var(--accent); background: var(--accent-soft);
+  margin-top: 1em; padding: 1em; border: 1px solid var(--accent); background: var(--accent-soft); box-shadow: var(--shadow-lg);
   clip-path: polygon(0 0, calc(100% - 1em) 0, 100% 1em, 100% 100%, 0 100%);
   animation: item-in 220ms var(--ease);
 }
@@ -585,7 +690,7 @@ li.skel-row { display: flex; flex-direction: column; }
 .group-member-option { display: flex; align-items: center; gap: 0.5em; font-size: 0.88em; }
 .group-member-option input[type="checkbox"] { accent-color: var(--accent); width: 1.1em; height: 1.1em; flex: none; }
 #create-group-form button[type="submit"] {
-  align-self: flex-start; border-radius: 0.5em; padding: 0.55em 1em; background: var(--accent);
+  align-self: flex-start; border-radius: 0.5em; padding: 0.55em 1em; background: linear-gradient(155deg, var(--accent-2), var(--accent));
   color: var(--accent-ink); border: none; font-weight: 600;
 }
 #create-group-form button[type="submit"]:active { transform: scale(0.97); }
@@ -602,7 +707,7 @@ li.skel-row { display: flex; flex-direction: column; }
 .checkbox-row { display: flex; align-items: center; gap: 0.5em; font-size: 0.88em; }
 .checkbox-row input[type="checkbox"] { accent-color: var(--bad); width: 1.1em; height: 1.1em; flex: none; }
 #create-drop-form button[type="submit"] {
-  align-self: flex-start; border-radius: 0.5em; padding: 0.55em 1em; background: var(--accent);
+  align-self: flex-start; border-radius: 0.5em; padding: 0.55em 1em; background: linear-gradient(155deg, var(--accent-2), var(--accent));
   color: var(--accent-ink); border: none; font-weight: 600;
 }
 #create-drop-form button[type="submit"]:active { transform: scale(0.97); }
@@ -612,7 +717,7 @@ li.skel-row { display: flex; flex-direction: column; }
 
 /* #group-panel reuses #chat-panel's own look exactly, same as #channel-panel above. */
 #group-panel:not([hidden]) {
-  margin-top: 1em; padding: 1em; border: 1px solid var(--accent); background: var(--accent-soft);
+  margin-top: 1em; padding: 1em; border: 1px solid var(--accent); background: var(--accent-soft); box-shadow: var(--shadow-lg);
   clip-path: polygon(0 0, calc(100% - 1em) 0, 100% 1em, 100% 100%, 0 100%);
   animation: item-in 220ms var(--ease);
 }
@@ -697,7 +802,7 @@ li.skel-row { display: flex; flex-direction: column; }
   position: fixed; left: 50%; bottom: calc(1.4em + env(safe-area-inset-bottom));
   transform: translate(-50%, 0); z-index: 20;
   background: var(--ink); color: var(--bg); padding: 0.7em 1.1em; border-radius: 999px;
-  font-size: 0.85em; font-weight: 600; box-shadow: var(--shadow-md);
+  font-size: 0.85em; font-weight: 600; box-shadow: var(--shadow-lg);
 }
 .toast.is-leaving { animation: toast-out 220ms var(--ease) forwards; }
 .toast .icon { color: var(--good); }
@@ -711,6 +816,9 @@ li.skel-row { display: flex; flex-direction: column; }
 @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
 @keyframes toast-out { to { opacity: 0; transform: translate(-50%, 8px); } }
+/* Il faro respira — un anello che si dissolve verso l'esterno, mai un lampeggio (voce #50). Riservato
+   a #setup-form button[type="submit"], l'unico bottone dell'app che se lo merita davvero. */
+@keyframes beacon-pulse { 0% { opacity: 0.6; transform: scale(1); } 100% { opacity: 0; transform: scale(1.12); } }
 
 /* ---------- tablet / wide layout ---------- */
 
