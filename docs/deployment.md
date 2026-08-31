@@ -66,8 +66,26 @@ Scenario: Internet e rete cellulare assenti, alcuni nodi spenti, alcuni nodi mob
 
 Metriche da raccogliere (vedi anche §76-79): tempo di discovery, percentuale di messaggi consegnati, percentuale di contenuti disponibili, tempo di sincronizzazione tra segmenti, consumo batteria, traffico generato, numero medio di hop.
 
-## Non ancora pianificato in dettaglio
+## Pilot: eventi affollati (§6.4)
 
-Eventi affollati, scuole, spedizioni/navi, comunità locali (§6.4-6.7) sono casi d'uso validi secondo la specifica ma non hanno ancora un piano di pilot dedicato: il rifugio alpino e lo scenario di emergenza sono i due deployment prioritari.
+A differenza di rifugio ed emergenza, qui la mesh **non sostituisce** la connettività ma la **moltiplica**: lo scenario presuppone un gateway con accesso a Internet reale (spec: "Nodi collegati a Internet + rete locale distribuita"), usato per raggiungere in scala migliaia di dispositivi su un sito con copertura cellulare probabilmente satura, non per sopravvivere alla sua assenza. È il caso d'uso più vicino a ciò che Nomad-Net fa già bene senza modifiche: contenuto statico pubblicato una volta e replicato via `CONTENT_ANNOUNCE` (voce #34) o canali pubblici (voce #40), letto da un numero di client molto più alto (migliaia, non decine) ma per una durata breve (la durata dell'evento, non un deployment permanente).
+
+Configurazione target: 1+ gateway con Internet reale che fa anche da sorgente di sincronizzazione iniziale, alcuni nodi fissi/portatili sparsi sul sito per estendere la copertura Wi-Fi/BLE nelle zone morte, migliaia di smartphone come client opportunistici. Contenuti tipici: programma, mappe del sito, lineup, FAQ, orari, istruzioni, sicurezza — tutti statici, adatti al pattern content-addressed già esistente, nessun nuovo servizio necessario.
+
+## Pilot: scuole (§6.5)
+
+Rispetto a rifugio/eventi, lo scenario è più stabile e meno esigente sul lato rete: un solo edificio, utenti che tornano ogni giorno (stessa base predicibile), nessun bisogno di store-and-forward multi-hop esteso perché tutti i dispositivi restano vicini fisicamente. L'enfasi è sulla dimensione e stabilità nel tempo del catalogo statico (libri, Wikipedia offline, corsi, mappe, documentazione — spec §6.5), non sulla resilienza a partizioni di rete.
+
+Configurazione target: 1 nodo gateway fisso con lo stesso ruolo del "PC"/mini-PC del rifugio (Kiwix/Wikipedia offline via `KiwixGateway`, AI locale via `AiGateway`/Ollama — nessun nuovo servizio necessario), eventualmente 1-2 nodi di estensione per la copertura dell'edificio, decine/centinaia di smartphone e tablet studenteschi come client.
+
+## Pilot: spedizioni / navi / ambienti remoti (§6.6)
+
+Molto vicino al modello già descritto per rifugio ed emergenza (nodo/i autosufficienti, nessuna connettività esterna) — la differenza principale è che qui l'intero cluster di nodi **viaggia** insieme al gruppo, senza il "ritorno di Internet" periodico che un rifugio può avere quando qualcuno scende a valle: l'assenza di connettività va pianificata per l'intera durata della spedizione (settimane/mesi), non come un'interruzione temporanea. Configurazione target: essenzialmente la stessa del pilot rifugio (gateway + "PC" per contenuti pesanti/AI), dimensionata per autosufficienza energetica prolungata (pannello solare/generatore) e con tutti i contenuti caricati una volta prima della partenza, dato che non c'è modo di aggiungerne altri in corsa.
+
+## Comunità locali (§6.7) — nessun pilot dedicato per ora
+
+La specifica stessa segnala questo come "caso d'uso più debole come primo prodotto, per l'esistenza di alternative quando Internet funziona" (§6.7) — non un candidato su cui investire lavoro preventivo. Le funzionalità richieste (bacheca, chat, file, documenti, comunicazioni, informazioni locali) sono già tutte disponibili come funzionalità generali della mesh (Bacheca/drops voce #47, Canali pubblici voce #40, Gruppi cifrati voce #42, contenuti via `content://`): un eventuale deployment "di quartiere" userebbe gli stessi nodi già pronti per rifugio/emergenza, senza richiedere alcun lavoro software dedicato. Da riprendere solo se emergesse una richiesta concreta.
+
+## Non ancora pianificato in dettaglio
 
 **Benchmark hardware reale, prerequisito per scegliere tra "tutto in uno" e il modello a due livelli sopra**: non ancora eseguito in questo ambiente (nessun accesso a hardware fisico). Servirebbe far girare un modello Ollama minimo (~0.5-1B parametri, quantizzato) su un Orange Pi Zero 2W reale, misurando token/secondo sotto carico concorrente (mentre 2-3 telefoni scaricano contenuti dalla mesh contemporaneamente, non isolato) — è l'unico modo per sapere se l'opzione "tutto in uno" è davvero percorribile o se conviene il modello a due livelli fin da subito.
