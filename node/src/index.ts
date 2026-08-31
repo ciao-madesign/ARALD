@@ -20,3 +20,4 @@ export * from "./web-ui.js";
 export * from "./loopback-http-server.js";
 export { TcpTransport } from "./transports/tcp.js";
 export { BleSimulatedTransport, BleMedium, type BleSimulatedTransportOptions } from "./transports/ble.js";
+export { LoraSimulatedTransport, LoraMedium, type LoraSimulatedTransportOptions } from "./transports/lora.js";
