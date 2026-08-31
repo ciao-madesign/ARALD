@@ -39,6 +39,8 @@
     <g id="icon-message-circle"><path d="M4 5.5h16a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5H9l-4.5 4v-4H4A1.5 1.5 0 0 1 2.5 16V7A1.5 1.5 0 0 1 4 5.5z"/></g>
     <g id="icon-translate"><line x1="3" y1="7" x2="16" y2="7"/><polyline points="12 3 16 7 12 11"/><line x1="8" y1="17" x2="21" y2="17"/><polyline points="12 21 8 17 12 13"/></g>
     <g id="icon-map-pin"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="2.5"/></g>
+    <g id="icon-help-circle"><circle cx="12" cy="12" r="9.5"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="1" fill="currentColor" stroke="none"/></g>
+    <g id="icon-edit"><path d="M14.5 4.5 19.5 9.5 8 21H3v-5z"/><line x1="12.5" y1="6.5" x2="17.5" y2="11.5"/></g>
     <!-- Il marchio Nomad-Net ("Waypoint" — vedi Field Guide, Artifact pubblicato): un centro (te) e
          cinque bracci asimmetrici verso i nodi vicini, il più lungo sempre come "direzione di
          marcia". Qui in versione monocromatica coerente con il resto dello sprite (stroke+dot
@@ -122,10 +124,26 @@
       <svg viewBox="0 0 24 24" class="icon icon-accent" aria-hidden="true"><use href="#icon-wifi"></use></svg>
       <div id="node-label" class="mono muted"></div>
     </div>
-    <button id="forget-network" class="link-button">Cambia rete</button>
+    <div class="header-actions">
+      <button type="button" id="show-intro" class="icon-button" aria-label="Cosa posso fare qui?">
+        <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-help-circle"></use></svg>
+      </button>
+      <button id="forget-network" class="link-button">Cambia rete</button>
+    </div>
   </header>
 
   <main id="dashboard-main" tabindex="-1">
+    <!-- Mostrato una sola volta in automatico dopo il primo pairing riuscito (stato "già visto" in
+         localStorage), sempre richiamabile dal bottone "?" nell'header sopra — mai un overlay a
+         schermo intero: una card come le altre, che si può ignorare e continuare a scorrere. -->
+    <div id="intro-banner" class="panel" hidden>
+      <button type="button" id="close-intro" class="icon-button" aria-label="Chiudi">
+        <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-x"></use></svg>
+      </button>
+      <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-waypoint"></use></svg> Cosa puoi fare qui</h2>
+      <p>Sei collegato alla rete locale di questo posto, anche senza internet. Da qui puoi: leggere notizie e contenuti già scaricati, chiedere aiuto all'assistente AI, scrivere in bacheca o nei canali pubblici, messaggiare in privato con chi è vicino, e vedere la mappa. Tutto quello che scrivi resta su questa rete locale.</p>
+    </div>
+
     <section id="home-hero">
       <h1 class="wordmark">NOMAD<span class="dot">·</span>NET</h1>
       <form id="search-form" role="search">
@@ -135,10 +153,12 @@
           <span id="search-spinner" class="mini-spinner" hidden aria-hidden="true"></span>
         </div>
       </form>
+      <p class="hint">Cerca tra i contenuti già disponibili qui — non è una ricerca su internet.</p>
     </section>
 
     <section class="panel panel-primary" id="services-panel">
       <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-plug"></use></svg> Servizi <span class="count" id="services-count"></span></h2>
+      <p class="hint">Strumenti offerti da questa rete — tocca "Chiama" su uno di questi per usarlo.</p>
       <ul id="services" class="service-cards"></ul>
       <div id="service-call-panel" hidden></div>
     </section>
@@ -162,38 +182,35 @@
     </div>
 
     <div class="panels-grid">
-      <details class="panel">
-        <summary>
-          <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-users"></use></svg> Vicini connessi <span class="count" id="peers-count"></span></h2>
-          <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
-        </summary>
-        <ul id="peers"></ul>
-      </details>
-
       <details class="panel" id="content-panel">
         <summary>
-          <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-inbox"></use></svg> Contenuti <span class="count" id="content-count"></span></h2>
-          <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+          <div class="summary-row">
+            <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-inbox"></use></svg> Contenuti della rete <span class="count" id="content-count"></span></h2>
+            <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+          </div>
+          <!-- "Contenuti scaricati" (una prima versione di questa scritta) è stato scartato da una
+               revisione: fuorviante quanto il problema che questo giro di lavoro voleva correggere,
+               perché la lista mostra anche voci "remoto" non ancora scaricate (renderContent(),
+               app.js — il pill "remoto"/"in cache" resta invariato sotto). -->
+          <p class="hint">File, pagine e mappe conosciuti su questa rete — alcuni già scaricati qui, altri recuperabili al bisogno.</p>
         </summary>
         <ul id="content"></ul>
       </details>
+    </div>
 
-      <details class="panel" id="channels-panel">
-        <summary>
-          <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-message-circle"></use></svg> Canali <span class="count" id="channels-count"></span></h2>
-          <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
-        </summary>
-        <form id="join-channel-form">
-          <input id="join-channel-input" type="text" placeholder="Nome canale, es. generale" autocomplete="off" autocapitalize="off" spellcheck="false">
-          <button type="submit">Apri</button>
-        </form>
-        <ul id="channels"></ul>
-      </details>
+    <div class="section-intro">
+      <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-users"></use></svg> Comunicare con gli altri</h2>
+      <p class="hint">Quattro modi diversi di scrivere, dal più aperto al più privato: bacheca e canali li vede chiunque sia collegato, i messaggi ai vicini e i gruppi solo chi partecipa.</p>
+    </div>
 
+    <div class="panels-grid">
       <details class="panel" id="drops-panel">
         <summary>
-          <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-alert-triangle"></use></svg> Bacheca <span class="count" id="drops-count"></span></h2>
-          <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+          <div class="summary-row">
+            <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-alert-triangle"></use></svg> Bacheca <span class="count" id="drops-count"></span></h2>
+            <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+          </div>
+          <p class="hint">Segnalazioni legate a un luogo preciso (es. un pericolo sul sentiero) — le vede chiunque passi di lì.</p>
         </summary>
         <form id="create-drop-form">
           <input id="create-drop-label" type="text" placeholder="Etichetta breve (opzionale), es. Frana sul sentiero" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="100">
@@ -208,10 +225,39 @@
         <ul id="drops"></ul>
       </details>
 
+      <details class="panel" id="channels-panel">
+        <summary>
+          <div class="summary-row">
+            <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-message-circle"></use></svg> Canali <span class="count" id="channels-count"></span></h2>
+            <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+          </div>
+          <p class="hint">Messaggi pubblici organizzati per argomento — visibili a chiunque sia collegato a questa rete.</p>
+        </summary>
+        <form id="join-channel-form">
+          <input id="join-channel-input" type="text" placeholder="Nome canale, es. generale" autocomplete="off" autocapitalize="off" spellcheck="false">
+          <button type="submit">Apri</button>
+        </form>
+        <ul id="channels"></ul>
+      </details>
+
+      <details class="panel" id="peers-panel">
+        <summary>
+          <div class="summary-row">
+            <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-users"></use></svg> Vicini connessi <span class="count" id="peers-count"></span></h2>
+            <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+          </div>
+          <p class="hint">Le persone collegate in questo momento — tocca "Messaggia" per scriverne una in privato.</p>
+        </summary>
+        <ul id="peers"></ul>
+      </details>
+
       <details class="panel" id="groups-panel">
         <summary>
-          <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-lock"></use></svg> Gruppi <span class="count" id="groups-count"></span></h2>
-          <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+          <div class="summary-row">
+            <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-lock"></use></svg> Gruppi <span class="count" id="groups-count"></span></h2>
+            <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+          </div>
+          <p class="hint">Chat private e cifrate, solo tra le persone che inviti tu.</p>
         </summary>
         <form id="create-group-form">
           <input id="create-group-name" type="text" placeholder="Nome gruppo" autocomplete="off" autocapitalize="off" spellcheck="false">
@@ -223,8 +269,11 @@
 
       <details class="panel" id="location-registry-panel" hidden>
         <summary>
-          <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-map-pin"></use></svg> Posizioni condivise <span class="count" id="location-registry-count"></span></h2>
-          <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+          <div class="summary-row">
+            <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-map-pin"></use></svg> Posizioni condivise <span class="count" id="location-registry-count"></span></h2>
+            <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+          </div>
+          <p class="hint">Dove si trovano, per ultimo, gli altri che hanno scelto di condividere la loro posizione.</p>
         </summary>
         <ul id="location-registry"></ul>
       </details>
