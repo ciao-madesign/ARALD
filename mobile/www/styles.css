@@ -5,8 +5,8 @@
    qui, non solo nel documento di brand. */
 :root {
   color-scheme: light dark;
-  --bg: #e4e6da; --card: #ffffff; --border: #c9cdbc; --ink: #1e231f; --muted: #5f6656;
-  --accent: #c9a227; --accent-soft: #f1e6be; --accent-ink: #241505;
+  --bg: #eef0e3; --card: #ffffff; --border: #c9cdbc; --ink: #1e231f; --muted: #5f6656;
+  --accent: #c9a227; --accent-2: #e7b74a; --accent-soft: #f1e6be; --accent-ink: #241505;
   --signal: #35607c; --signal-soft: #d9e6ec; --signal-ink: #eaf3f8;
   --good: #3f5636; --good-soft: #dee7d6;
   --warn: #8f5518; --warn-soft: #f2dec4;
@@ -14,13 +14,20 @@
   --off: #5f6656; --off-soft: #e3e5d8;
   --shadow-sm: 0 1px 2px rgba(30, 35, 31, 0.10);
   --shadow-md: 0 4px 14px rgba(30, 35, 31, 0.14);
+  /* Terzo/quarto livello di profondità (voce #50): --shadow-lg per un pannello davvero "sopra" il
+     resto (mai per una card ordinaria, quella resta a --shadow-sm/md); --shadow-glow è riservato al
+     "faro" — l'unica azione che conta ora, mai diffuso su ogni bottone accent. */
+  --shadow-lg: 0 10px 28px -6px rgba(26, 32, 21, 0.22), 0 3px 8px rgba(26, 32, 21, 0.10);
+  --shadow-glow: 0 8px 26px -6px rgba(201, 162, 39, 0.45);
   --skeleton-base: #dbdecf; --skeleton-shine: #edefe4;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #14170f; --card: #232921; --border: #343b32; --ink: #edeae0; --muted: #8b9184;
-    --accent: #ddbe55; --accent-soft: #3d3315; --accent-ink: #1b1002;
+    /* Notte topografica invece del bruno-oliva di prima — stessa struttura pietra/inchiostro, un
+       blu-carbone più freddo al posto di un marrone caldo (voce #50). */
+    --bg: #10151a; --card: #1a2329; --border: #2b363c; --ink: #edeae0; --muted: #93a099;
+    --accent: #e3b64c; --accent-2: #f2cf7a; --accent-soft: #35290f; --accent-ink: #1c1204;
     --signal: #7fb3d1; --signal-soft: #1e323d; --signal-ink: #08161c;
     --good: #7fa36e; --good-soft: #26331f;
     --warn: #e0954b; --warn-soft: #3a2814;
@@ -28,14 +35,50 @@
     --off: #9aa090; --off-soft: #2a2e26;
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
     --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 14px 34px -8px rgba(0, 0, 0, 0.55), 0 3px 10px rgba(0, 0, 0, 0.4);
+    --shadow-glow: 0 10px 30px -6px rgba(227, 182, 76, 0.35);
     --skeleton-base: #262b22; --skeleton-shine: #313629;
   }
+}
+
+/* Tipografia reale (voce #50) — il Field Guide originale (voce #31) proponeva già Fraunces/Overpass/
+   Overpass Mono, ma l'app non aveva mai caricato nessun font: girava su system-ui puro. File
+   auto-ospitati (fonts/, sottoinsieme "latin" del carattere reale, 5 file/~100KB in tutto — solo i
+   pesi realmente usati sotto, niente scaricato "perché poteva servire") invece di un
+   collegamento a fonts.googleapis.com — un'app pensata per funzionare senza internet (rifugio,
+   emergenza) non può dipendere da una CDN esterna per caricare i propri font. unicode-range limita
+   ogni face al set latino: un carattere fuori range (es. cirillico scritto in una nota) ricade
+   correttamente sul fallback di sistema invece di mostrare un quadratino vuoto. */
+@font-face {
+  font-family: "Overpass"; font-style: normal; font-weight: 400; font-display: swap;
+  src: url("fonts/overpass-400.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Overpass"; font-style: normal; font-weight: 600; font-display: swap;
+  src: url("fonts/overpass-600.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Overpass"; font-style: normal; font-weight: 700; font-display: swap;
+  src: url("fonts/overpass-700.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Overpass Mono"; font-style: normal; font-weight: 400; font-display: swap;
+  src: url("fonts/overpass-mono-400.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Fraunces"; font-style: normal; font-weight: 600; font-display: swap;
+  src: url("fonts/fraunces-600.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
 body {
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: "Overpass", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   background: var(--bg); color: var(--ink);
   margin: 0;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
@@ -43,9 +86,13 @@ body {
   font-size: 16px;
 }
 
-.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+/* Fraunces per i titoli che contano davvero (wordmark — h1 sotto — e titolo del pannello aperto,
+   .call-panel-title più sotto) — mai per il testo che si legge di corsa mentre si cammina, che resta
+   Overpass. Stesso principio del Field Guide: un serif con carattere solo dove serve peso. */
+
+.mono { font-family: "Overpass Mono", ui-monospace, "SF Mono", Menlo, monospace; }
 .muted { color: var(--muted); }
-h1 { margin: 0; font-size: 1.3em; letter-spacing: 0.02em; }
+h1 { margin: 0; font-size: 1.35em; font-weight: 600; letter-spacing: 0; font-family: "Fraunces", Georgia, serif; }
 .dot { color: var(--accent); } /* the wordmark's separator, echoing the mark's own beacon-colored center node */
 h2 {
   margin: 0 0 0.8em; font-size: 0.92em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
@@ -74,7 +121,10 @@ input, textarea { font: inherit; }
 button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
+  /* animation-delay was missing here (voce #50 review): without it, the new per-item list stagger
+     (.panel li.enter:nth-child(n), più sotto) lascia una voce invisibile fino a 200ms — un ritardo
+     percepibile come movimento residuo — prima di scattare a `animation-duration: 0.001ms`. */
+  *, *::before, *::after { animation-duration: 0.001ms !important; animation-delay: 0s !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
 }
 
 /* ---------- icons ---------- */
@@ -119,7 +169,11 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
 .setup-card code { background: var(--off-soft); padding: 0.1em 0.35em; border-radius: 0.25em; }
 #setup-form { display: flex; flex-direction: column; gap: 0.4em; }
 #setup-form label { font-size: 0.82em; color: var(--muted); margin-top: 0.6em; }
-#setup-form .hint { font-size: 0.78em; color: var(--muted); margin: 0.3em 0 0; }
+/* Generic one-line explanation, reused throughout the dashboard (search scope, panel subtitles,
+   service descriptions) after a UX audit found the setup screen was the ONLY place in the app that
+   ever explained anything — everything past pairing relied on icon+label alone. Promoted from a rule
+   scoped to #setup-form so the exact same look applies everywhere without duplicating the values. */
+.hint { font-size: 0.78em; color: var(--muted); margin: 0.3em 0 0; }
 #setup-form input {
   width: 100%;
   padding: 0.75em 0.8em;
@@ -140,18 +194,38 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
 #setup-form .password-row input:focus-visible { outline: none; box-shadow: none; }
 #setup-form .password-row .icon-button { margin-right: 0.2em; }
 
-/* The one deliberate beacon moment on this screen: the single action the whole form leads to. */
+/* The one deliberate beacon moment on this screen: the single action the whole form leads to. The
+   only button in the app with the full "faro" treatment (voce #50) — gradient depth, a real glow,
+   and a slow breathing ring — precisely because it's the only one where that emphasis is earned;
+   every other accent-colored button below gets the gradient for a consistent richer look but not
+   the glow/pulse, which stays reserved for a genuine single commitment (this, and the one open
+   service/chat/channel/group panel's own submit — see .call-form .call-submit below). */
 #setup-form button[type="submit"] {
+  position: relative;
   margin-top: 1.4em;
   padding: 0.85em;
   border: none;
-  background: var(--accent);
+  background: linear-gradient(155deg, var(--accent-2), var(--accent));
   color: var(--accent-ink);
   font-weight: 600;
+  box-shadow: var(--shadow-glow);
   display: flex; align-items: center; justify-content: center; gap: 0.6em;
-  transition: opacity 150ms var(--ease), transform 100ms var(--ease);
+  transition: opacity 150ms var(--ease), transform 100ms var(--ease), box-shadow 220ms var(--ease);
   clip-path: polygon(0 0, calc(100% - 0.6em) 0, 100% 0.6em, 100% 100%, 0 100%);
 }
+/* inset: 0 (not a negative inset) — clip-path's percentage/calc terms resolve against the box the
+   property is applied to, so a ::after box a different size than the button would compute its own
+   (misaligned) cut corner instead of copying the button's. Matching the box exactly keeps `inherit`
+   truthful; the ring "growing outward" comes from `transform: scale()` in the keyframe instead, which
+   scales the already-correct clipped shape uniformly and never touches the clip-path math. */
+#setup-form button[type="submit"]::after {
+  content: ""; position: absolute; inset: 0;
+  clip-path: inherit;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  animation: beacon-pulse 2.8s var(--ease) infinite;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) { #setup-form button[type="submit"]::after { display: none; } }
 /* clip-path clips the whole painted box, outline included — the generic :focus-visible rule's
    outline-offset (2-3px *outside* the border box) falls entirely in the area this button's own
    clip-path polygon has already cut away near the top-right corner, so on an unclipped platform the
@@ -159,7 +233,8 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
    clears both this cut (0.6em) and .call-submit's (0.5em) with margin, staying inside the polygon. */
 #setup-form button[type="submit"]:focus-visible { outline-offset: -0.65em; }
 #setup-form button[type="submit"]:active { transform: scale(0.98); }
-#setup-form button[type="submit"]:disabled { opacity: 0.7; cursor: default; }
+#setup-form button[type="submit"]:disabled { opacity: 0.7; cursor: default; box-shadow: none; }
+#setup-form button[type="submit"]:disabled::after { display: none; }
 #setup-form button[type="submit"]:disabled:active { transform: none; }
 
 /* :not([hidden]) on both rules below — same specificity-vs-UA-stylesheet reason as .error/.toast:
@@ -240,6 +315,77 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
 #scanner-cancel:active { transform: scale(0.96); }
 #scanner-overlay .error { position: relative; margin-top: 1em; max-width: 24em; text-align: center; }
 
+/* ---------- mappa offline (docs/next-steps.md) — visualizzatore scritto da zero, mapview.js ---------- */
+
+#map-overlay:not([hidden]) {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  background: var(--bg);
+  animation: fade-in 200ms var(--ease);
+  overflow: hidden;
+}
+#map-viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none; /* il pan/zoom lo gestisce mapview.js via pointer events, non lo scroll nativo */
+}
+#map-viewport.is-dragging { cursor: grabbing; }
+#map-tiles-layer { position: absolute; top: 0; left: 0; }
+#map-tiles-layer img {
+  position: absolute;
+  width: 256px;
+  height: 256px;
+  user-select: none;
+  pointer-events: none; /* il drag lo intercetta #map-viewport, mai una singola tile */
+}
+#map-pins-layer { position: absolute; top: 0; left: 0; pointer-events: none; }
+.map-pin {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  color: var(--accent);
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
+}
+.map-pin svg { width: 26px; height: 26px; }
+.map-pin.is-urgent { color: var(--bad); }
+.map-controls {
+  position: absolute;
+  right: 1em;
+  bottom: 1.5em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+  z-index: 1;
+}
+.map-controls button, #map-close {
+  width: 2.6em;
+  height: 2.6em;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: var(--shadow-sm);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.2em;
+  transition: transform 100ms var(--ease);
+}
+.map-controls button:active, #map-close:active { transform: scale(0.94); }
+#map-close { position: absolute; top: 1em; right: 1em; z-index: 1; }
+#map-attribution {
+  position: absolute;
+  left: 0.6em;
+  bottom: 0.5em;
+  z-index: 1;
+  font-size: 0.72em;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--bg) 75%, transparent);
+  padding: 0.15em 0.5em;
+  border-radius: 0.4em;
+}
+#map-overlay .error { position: absolute; inset: 40% 1.5em auto; text-align: center; z-index: 1; }
+
 /* ---------- dashboard ---------- */
 
 #dashboard-screen:not([hidden]) { animation: screen-in 320ms var(--ease); }
@@ -250,6 +396,7 @@ header { display: flex; align-items: flex-start; justify-content: space-between;
 .header-identity { display: flex; align-items: center; gap: 0.5em; min-width: 0; }
 .header-identity .icon { color: var(--good); }
 #node-label { font-size: 0.82em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.header-actions { display: flex; align-items: center; gap: 0.3em; flex: none; }
 
 /* Un'unica lettura ("condizione del sentiero") al posto di quattro tile numeriche isolate che
    l'utente doveva sommare mentalmente — vedi Field Guide (Artifact), plate "Dashboard". L'anello
@@ -280,20 +427,35 @@ header { display: flex; align-items: flex-start; justify-content: space-between;
 .panel ul { list-style: none; margin: 0; padding: 0; }
 .panel li { padding: 0.6em 0; border-top: 1px solid var(--border); }
 .panel li:first-child { border-top: none; padding-top: 0; }
-.panel li.enter { animation: item-in 260ms var(--ease); }
+/* Le cose arrivano, non compaiono (voce #50): un piccolo scarto per riga invece di un blocco che
+   appare tutto insieme — `both` cattura la voce nel suo stato iniziale (invisibile) per l'intera
+   durata del ritardo, altrimenti lampeggerebbe visibile prima di animarsi. Tetto a 6 righe: oltre
+   quel numero lo scarto smette di crescere, altrimenti l'ultima voce di una lista lunga aspetterebbe
+   inutilmente. */
+.panel li.enter { animation: item-in 260ms var(--ease) both; }
+.panel li.enter:nth-child(2) { animation-delay: 40ms; }
+.panel li.enter:nth-child(3) { animation-delay: 80ms; }
+.panel li.enter:nth-child(4) { animation-delay: 120ms; }
+.panel li.enter:nth-child(5) { animation-delay: 160ms; }
+.panel li.enter:nth-child(n+6) { animation-delay: 200ms; }
 .empty { color: var(--muted); font-style: italic; padding: 0.3em 0; display: flex; align-items: center; gap: 0.5em; }
 .empty .icon { color: var(--off); }
 
 /* Sezioni più tecniche (Vicini connessi, Contenuti) rese collassabili con <details>/<summary> nativi
    — niente stato JS da gestire, tastiera/screen reader già supportati dal browser (Invio/Spazio
    attivano il toggle, aria-expanded implicito). Collassate di default: la prima cosa che un utente
-   comune deve vedere è "Servizi" (cosa può fare), non un elenco di id tecnici. */
+   comune deve vedere è "Servizi" (cosa può fare), non un elenco di id tecnici.
+   Summary è una colonna (riga titolo+freccia, poi una riga di spiegazione) invece di una singola riga
+   — aggiunta dopo un audit UX: la spiegazione resta leggibile anche a sezione chiusa, così un utente
+   può decidere se aprirla senza doverlo indovinare dal solo nome. */
 details.panel > summary {
-  display: flex; align-items: center; justify-content: space-between; gap: 0.6em;
+  display: flex; flex-direction: column; gap: 0.3em;
   cursor: pointer; list-style: none; margin-bottom: 0.8em;
 }
 details.panel > summary::-webkit-details-marker, details.panel > summary::marker { display: none; }
 details.panel > summary h2 { margin: 0; }
+details.panel > summary .summary-row { display: flex; align-items: center; justify-content: space-between; gap: 0.6em; }
+details.panel > summary .hint { margin: 0; }
 details.panel:not([open]) > summary { margin-bottom: 0; }
 details.panel > summary:active { opacity: 0.7; }
 .chevron { transition: transform 200ms var(--ease); flex: none; color: var(--muted); }
@@ -364,6 +526,13 @@ li.skel-row { display: flex; flex-direction: column; }
   min-height: 11.5em;
   padding: 1.1em 0.9em; border: 1px solid var(--border); background: var(--bg);
   clip-path: polygon(0 0, calc(100% - 0.9em) 0, 100% 0.9em, 100% 100%, 0 100%);
+  transition: transform 200ms var(--ease), box-shadow 200ms var(--ease), background-color 200ms var(--ease);
+}
+/* hover: hover — solo su dispositivi con un vero puntatore (mouse/trackpad): senza questa guardia un
+   tocco lascerebbe la card "sollevata" fino al tocco successivo su un touchscreen, dove :hover resta
+   attivo più a lungo di un vero passaggio del mouse (voce #50). */
+@media (hover: hover) {
+  .service-cards .service-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); background: var(--card); }
 }
 /* `.panel li:first-child { border-top: none; padding-top: 0 }` (one class + pseudo-class + element)
    outranks the rule above on the first card, stripping its top border/padding — three selector
@@ -379,7 +548,11 @@ li.skel-row { display: flex; flex-direction: column; }
 }
 .service-card-icon .icon { width: 1.5em; height: 1.5em; }
 .service-card-name { font-weight: 700; font-size: 0.98em; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.service-card-id { font-size: 0.72em; margin-top: 0.15em; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Replaces the raw serviceId ("service://news") this card used to always show underneath its name —
+   moved to a title attribute instead (still reachable on hover/long-press), this is a one-sentence,
+   plain-language explanation in its place (SERVICE_DESCRIPTIONS, app.js). Clamped to two lines so a
+   longer sentence can't grow a card taller than its fixed-height siblings in the grid. */
+.service-card-desc { font-size: 0.78em; margin-top: 0.3em; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .service-card .tags { justify-content: center; max-height: 1.7em; overflow: hidden; }
 /* margin-top: auto (inside the column flex layout above) pins the button/pill to the card's bottom
    edge regardless of how much the icon/name/id/tags above it take up — the main reason cards read as
@@ -390,12 +563,12 @@ li.skel-row { display: flex; flex-direction: column; }
 /* ---------- pannello di chiamata condiviso (mai dentro una card — vedi sopra) ---------- */
 
 #service-call-panel:not([hidden]) {
-  margin-top: 1em; padding: 1em; border: 1px solid var(--accent); background: var(--accent-soft);
+  margin-top: 1em; padding: 1em; border: 1px solid var(--accent); background: var(--accent-soft); box-shadow: var(--shadow-lg);
   clip-path: polygon(0 0, calc(100% - 1em) 0, 100% 1em, 100% 100%, 0 100%);
   animation: item-in 220ms var(--ease);
 }
 .call-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 0.6em; margin-bottom: 0.8em; }
-.call-panel-title { display: flex; align-items: center; gap: 0.55em; font-weight: 700; min-width: 0; }
+.call-panel-title { display: flex; align-items: center; gap: 0.55em; font-weight: 600; font-family: "Fraunces", Georgia, serif; font-size: 1.05em; min-width: 0; }
 .call-panel-title .icon { color: var(--accent); flex: none; }
 .call-panel-title span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -419,24 +592,41 @@ li.skel-row { display: flex; flex-direction: column; }
   background: var(--bg); color: var(--ink); font-family: inherit; font-size: 0.95em;
 }
 .translate-language-select:focus-visible { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
+/* Il secondo (e ultimo) bottone con il trattamento "faro" pieno (voce #50) — coerente con il commento
+   preesistente su .call-button più sopra ("keeps the beacon treatment for the actual in-progress
+   action"): un solo pannello di servizio può essere aperto alla volta, quindi resta un singolo
+   bottone che pulsa, mai diffuso. .chat-compose .call-submit (sotto) riusa la stessa classe ma non è
+   un discendente di .call-form, quindi non eredita nulla di questo — resta piatto, coerente con
+   un'azione che si ripete a ogni messaggio, non una singola in corso. */
 .call-form .call-submit {
+  position: relative;
   align-self: flex-start; padding: 0.5em 1em; border: none;
-  background: var(--accent); color: var(--accent-ink); font-weight: 600; font-size: 0.88em;
+  background: linear-gradient(155deg, var(--accent-2), var(--accent)); color: var(--accent-ink); font-weight: 600; font-size: 0.88em;
+  box-shadow: var(--shadow-glow);
   display: inline-flex; align-items: center; gap: 0.5em;
-  transition: transform 100ms var(--ease), opacity 150ms var(--ease);
+  transition: transform 100ms var(--ease), opacity 150ms var(--ease), box-shadow 220ms var(--ease);
   clip-path: polygon(0 0, calc(100% - 0.5em) 0, 100% 0.5em, 100% 100%, 0 100%);
 }
+.call-form .call-submit::after {
+  content: ""; position: absolute; inset: 0;
+  clip-path: inherit;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  animation: beacon-pulse 2.8s var(--ease) infinite;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) { .call-form .call-submit::after { display: none; } }
 /* Same clip-path-clips-the-outline fix as #setup-form button[type="submit"] above. */
 .call-form .call-submit:focus-visible { outline-offset: -0.65em; }
 .call-form .call-submit:active { transform: scale(0.96); }
-.call-form .call-submit:disabled { opacity: 0.7; }
+.call-form .call-submit:disabled { opacity: 0.7; box-shadow: none; }
+.call-form .call-submit:disabled::after { display: none; }
 .call-result { font-size: 0.85em; padding: 0.6em; border-radius: 0.5em; background: var(--bg); border: 1px solid var(--border); white-space: pre-wrap; word-break: break-word; animation: item-in 200ms var(--ease); }
 .call-result.is-error { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
 
 /* ---------- chat 1:1 (docs/next-steps.md Opzione J) — riusa il pannello condiviso sopra ---------- */
 
 #chat-panel:not([hidden]) {
-  margin-top: 1em; padding: 1em; border: 1px solid var(--accent); background: var(--accent-soft);
+  margin-top: 1em; padding: 1em; border: 1px solid var(--accent); background: var(--accent-soft); box-shadow: var(--shadow-lg);
   clip-path: polygon(0 0, calc(100% - 1em) 0, 100% 1em, 100% 100%, 0 100%);
   animation: item-in 220ms var(--ease);
 }
@@ -474,13 +664,13 @@ li.skel-row { display: flex; flex-direction: column; }
   background: var(--bg); color: var(--ink);
 }
 #join-channel-form input:focus-visible { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
-#join-channel-form button { flex: none; border-radius: 0.5em; padding: 0.55em 1em; background: var(--accent); color: var(--accent-ink); border: none; font-weight: 600; }
+#join-channel-form button { flex: none; border-radius: 0.5em; padding: 0.55em 1em; background: linear-gradient(155deg, var(--accent-2), var(--accent)); color: var(--accent-ink); border: none; font-weight: 600; }
 #join-channel-form button:active { transform: scale(0.97); }
 
 /* #channel-panel reuses #chat-panel's own look exactly (cut-corner accent border) — same visual
    language for "a conversation is open", whether 1:1 or a group channel. */
 #channel-panel:not([hidden]) {
-  margin-top: 1em; padding: 1em; border: 1px solid var(--accent); background: var(--accent-soft);
+  margin-top: 1em; padding: 1em; border: 1px solid var(--accent); background: var(--accent-soft); box-shadow: var(--shadow-lg);
   clip-path: polygon(0 0, calc(100% - 1em) 0, 100% 1em, 100% 100%, 0 100%);
   animation: item-in 220ms var(--ease);
 }
@@ -500,15 +690,34 @@ li.skel-row { display: flex; flex-direction: column; }
 .group-member-option { display: flex; align-items: center; gap: 0.5em; font-size: 0.88em; }
 .group-member-option input[type="checkbox"] { accent-color: var(--accent); width: 1.1em; height: 1.1em; flex: none; }
 #create-group-form button[type="submit"] {
-  align-self: flex-start; border-radius: 0.5em; padding: 0.55em 1em; background: var(--accent);
+  align-self: flex-start; border-radius: 0.5em; padding: 0.55em 1em; background: linear-gradient(155deg, var(--accent-2), var(--accent));
   color: var(--accent-ink); border: none; font-weight: 600;
 }
 #create-group-form button[type="submit"]:active { transform: scale(0.97); }
 #create-group-form button[type="submit"]:disabled { opacity: 0.6; }
 
+/* ---------- bacheca "drop" (docs/next-steps.md — concetto ispirato al BoardManager di BitChat, licenza Unlicense/dominio pubblico) ---------- */
+
+#create-drop-form { display: flex; flex-direction: column; gap: 0.5em; margin-bottom: 0.8em; }
+#create-drop-label, #create-drop-text {
+  padding: 0.55em 0.75em; border-radius: 0.5em; border: 1px solid var(--border);
+  background: var(--bg); color: var(--ink); font: inherit; resize: vertical;
+}
+#create-drop-label:focus-visible, #create-drop-text:focus-visible { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
+.checkbox-row { display: flex; align-items: center; gap: 0.5em; font-size: 0.88em; }
+.checkbox-row input[type="checkbox"] { accent-color: var(--bad); width: 1.1em; height: 1.1em; flex: none; }
+#create-drop-form button[type="submit"] {
+  align-self: flex-start; border-radius: 0.5em; padding: 0.55em 1em; background: linear-gradient(155deg, var(--accent-2), var(--accent));
+  color: var(--accent-ink); border: none; font-weight: 600;
+}
+#create-drop-form button[type="submit"]:active { transform: scale(0.97); }
+#create-drop-form button[type="submit"]:disabled { opacity: 0.6; }
+#drops .tag.urgent { background: var(--bad-soft); color: var(--bad); font-weight: 600; }
+#drops li.is-urgent { border-left: 3px solid var(--bad); padding-left: 0.6em; }
+
 /* #group-panel reuses #chat-panel's own look exactly, same as #channel-panel above. */
 #group-panel:not([hidden]) {
-  margin-top: 1em; padding: 1em; border: 1px solid var(--accent); background: var(--accent-soft);
+  margin-top: 1em; padding: 1em; border: 1px solid var(--accent); background: var(--accent-soft); box-shadow: var(--shadow-lg);
   clip-path: polygon(0 0, calc(100% - 1em) 0, 100% 1em, 100% 100%, 0 100%);
   animation: item-in 220ms var(--ease);
 }
@@ -529,6 +738,59 @@ li.skel-row { display: flex; flex-direction: column; }
 #dashboard-error-wrap .error { text-align: left; }
 #dashboard-error-wrap #retry-refresh { margin: 0.6em auto 0; }
 
+/* ---------- passata UX per pubblico generico: rubrica locale, spiegazioni, form guidati ---------- */
+
+/* "Comunicare con gli altri" — un'intestazione di sola lettura (mai un altro <details>) che dà un
+   ombrello concettuale a Bacheca/Canali/Vicini/Gruppi sotto di lei, senza aggiungere un altro livello
+   di interazione: stesso trattamento tipografico di ogni altro <h2> di sezione. */
+.section-intro { margin: 1.2em 0 0.8em; }
+.section-intro .hint { margin-top: 0.3em; }
+
+/* Card introduttiva mostrata una sola volta dopo il primo pairing, sempre richiamabile dal bottone
+   "?" nell'header — mai un overlay a schermo intero, una card come le altre che si può ignorare. */
+#intro-banner { position: relative; background: var(--accent-soft); border-color: var(--accent); }
+#intro-banner h2 { color: var(--accent-ink); padding-right: 2.2em; }
+#intro-banner p { margin: 0; font-size: 0.9em; line-height: 1.5; }
+#intro-banner #close-intro { position: absolute; top: 0.6em; right: 0.6em; color: var(--accent-ink); }
+#intro-banner #close-intro:hover { background: rgba(0, 0, 0, 0.08); }
+
+/* Nome di una persona (rubrica locale, solo su questo dispositivo — mai trasmesso) + il bottone
+   matita che apre la modifica inline. .row-title eredita min-width:0/ellipsis dal resto dell'app per
+   restare coerente dentro un .row già stretto; l'ellissi vera però è delegata a .contact-name, per
+   non tagliare anche il bottone se il contenitore stesso dovesse mai risultare troppo stretto. */
+.contact-name-row { display: inline-flex; align-items: center; gap: 0.3em; min-width: 0; }
+.contact-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* Keeps .icon-button's own default 2.4em tap target (found by review: an earlier version shrank the
+   button itself to 1.6em, well below every other tappable icon in this touch-first app — only the
+   glyph inside should look subtle, never the actual touch target). */
+.contact-rename { flex: none; opacity: 0.6; }
+.contact-rename:hover, .contact-rename:focus-visible { opacity: 1; }
+.contact-rename .icon { width: 0.85em; height: 0.85em; }
+.contact-name-input {
+  min-width: 0; flex: 1; font: inherit; font-size: inherit; color: var(--ink);
+  background: var(--card); border: 1px solid var(--signal); border-radius: 0.3em; padding: 0.1em 0.4em;
+}
+.contact-name-input:focus { outline: none; box-shadow: 0 0 0 2px var(--signal-soft); }
+
+/* Avviso per un servizio senza modulo dedicato (SERVICE_DESCRIPTIONS/buildCallForm(), app.js) — reso
+   esplicito che non è pensato per un utente comune, invece di presentare comunque una casella JSON
+   come se lo fosse. */
+.call-form-advanced-warning {
+  display: flex; align-items: flex-start; gap: 0.5em; margin: 0;
+  font-size: 0.82em; color: var(--warn); background: var(--warn-soft);
+  border-radius: 0.5em; padding: 0.6em 0.7em;
+}
+.call-form-advanced-warning .icon { flex: none; margin-top: 0.1em; }
+
+/* Risultato di service://news (renderNewsResult(), app.js) — dentro .call-result, che ha
+   white-space:pre-wrap per il vecchio caso JSON grezzo; reimpostato a normale qui perché questo è
+   testo vero, non un blob preformattato. */
+.news-digest { white-space: normal; font-size: 0.95em; line-height: 1.5; margin: 0 0 0.8em; }
+.news-headline-list { white-space: normal; list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.6em; }
+.news-headline-list li:not(:last-child) { padding-bottom: 0.6em; border-bottom: 1px solid var(--border); }
+.news-headline-title { font-weight: 600; font-size: 0.92em; line-height: 1.4; }
+.call-result p { white-space: normal; }
+
 /* ---------- toast ---------- */
 
 /* :not([hidden]) — same specificity-vs-UA-stylesheet reason as .error above. */
@@ -540,7 +802,7 @@ li.skel-row { display: flex; flex-direction: column; }
   position: fixed; left: 50%; bottom: calc(1.4em + env(safe-area-inset-bottom));
   transform: translate(-50%, 0); z-index: 20;
   background: var(--ink); color: var(--bg); padding: 0.7em 1.1em; border-radius: 999px;
-  font-size: 0.85em; font-weight: 600; box-shadow: var(--shadow-md);
+  font-size: 0.85em; font-weight: 600; box-shadow: var(--shadow-lg);
 }
 .toast.is-leaving { animation: toast-out 220ms var(--ease) forwards; }
 .toast .icon { color: var(--good); }
@@ -554,6 +816,9 @@ li.skel-row { display: flex; flex-direction: column; }
 @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
 @keyframes toast-out { to { opacity: 0; transform: translate(-50%, 8px); } }
+/* Il faro respira — un anello che si dissolve verso l'esterno, mai un lampeggio (voce #50). Riservato
+   a #setup-form button[type="submit"], l'unico bottone dell'app che se lo merita davvero. */
+@keyframes beacon-pulse { 0% { opacity: 0.6; transform: scale(1); } 100% { opacity: 0; transform: scale(1.12); } }
 
 /* ---------- tablet / wide layout ---------- */
 

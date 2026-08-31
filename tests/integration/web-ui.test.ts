@@ -348,13 +348,17 @@ describe("WebUiServer POST /api/call", () => {
     expect(res.status).toBe(404);
   });
 
-  it("carries no CORS header at all when allowServiceCalls is off, unchanged from before this feature existed", async () => {
+  it("still carries Access-Control-Allow-Origin even when allowServiceCalls is off — GET /api/drops (docs/next-steps.md) is offered unconditionally now, so CORS can no longer be gated on allowServiceCalls/exposeLocationRegistry/mapTiles alone", async () => {
+    // Regression: found by review while adding the drops feature — the CORS gate used to be
+    // conditional on those three flags, silently CORS-blocking a mobile client on a gateway with
+    // none of them set even though such a gateway still always offers GET (and, unauthenticated
+    // preflight-wise, POST) /api/drops. See drops-web-ui.test.ts for /api/drops' own auth behavior.
     node = new NomadNode({ displayName: "N" });
     webUi = new WebUiServer(node, { port: 0 });
     await webUi.start();
 
     const res = await fetch(`${baseUrl()}/api/status`);
-    expect(res.headers.get("access-control-allow-origin")).toBeNull();
+    expect(res.headers.get("access-control-allow-origin")).toBe("*");
   });
 
   it("adds Access-Control-Allow-Origin to every response once allowServiceCalls is on, so a mobile client on a different origin can read it", async () => {
@@ -380,13 +384,13 @@ describe("WebUiServer POST /api/call", () => {
     expect(res.headers.get("access-control-allow-headers")).toMatch(/authorization/i);
   });
 
-  it("an OPTIONS request 404s when allowServiceCalls is off", async () => {
+  it("an OPTIONS preflight still answers 204 even when allowServiceCalls is off — the CORS preflight handler is unconditional (see the CORS gate regression test above), independent of whether the underlying route itself is enabled", async () => {
     node = new NomadNode({ displayName: "N" });
     webUi = new WebUiServer(node, { port: 0 });
     await webUi.start();
 
     const res = await fetch(`${baseUrl()}/api/call`, { method: "OPTIONS" });
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(204);
   });
 
   it("invokes a registered service and returns its result, given a valid pairing token", async () => {

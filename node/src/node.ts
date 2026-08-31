@@ -48,6 +48,7 @@ import {
   type GroupMessagePacketPayload,
 } from "./groups.js";
 import { LocationRegistry, extractLocationReport, type LocationReportPayload } from "./location-registry.js";
+import { Drops, DROP_CONTENT_NAME, MAX_DROP_LABEL_LENGTH, extractDropPayload, type Drop, type DropPayload } from "./drops.js";
 import { RoutingTable } from "./routing-table.js";
 import { ServiceDirectory } from "./service-directory.js";
 import { serviceSigningPayload, verifyServiceAnnouncement, type ServiceAnnouncement, type ServiceHandler } from "./service.js";
@@ -120,6 +121,8 @@ export interface NomadNodeOptions {
   maxLocationReports?: number;
   /** A location report older than this (by its own sender-stamped timestamp) is treated as absent by `locationRegistry` — see `LocationRegistryOptions.maxReportAgeMs`. Undefined (default) never expires a report on its own. */
   maxLocationReportAgeMs?: number;
+  /** Max distinct drops tracked in `drops` at once (spec §57 resource limits). */
+  maxDrops?: number;
 }
 
 interface ContentWaiter {
@@ -149,6 +152,33 @@ const MAX_CONTENT_CANDIDATES = 16;
  * action, not the information" shape as #39's own fix.
  */
 const MAX_CONCURRENT_CHANNEL_FETCHES = 16;
+
+/** Same purpose and reasoning as `MAX_CONCURRENT_CHANNEL_FETCHES` immediately above, for `considerDrop()`'s reactive fetches — a separate, independent budget rather than sharing the channel one, so a burst of one kind can never starve the other. */
+const MAX_CONCURRENT_DROP_FETCHES = 16;
+
+/**
+ * Bounds how many urgent (`Priority.EMERGENCY`) drops a single node can
+ * originate within `URGENT_DROP_RATE_LIMIT_WINDOW_MS` — found necessary
+ * during design, not by review: unlike `NewsGateway`'s
+ * `MAX_EMERGENCY_ANNOUNCES_PER_SYNC` (which throttles a periodic sync loop
+ * touching many items at once), a drop is created one at a time by an
+ * explicit human/HTTP action (`POST /api/drops`, already gated behind the
+ * network password) — the risk here is a misbehaving or compromised
+ * *paired* client calling it in a tight loop, flooding the mesh at the
+ * highest priority over and over. `rate-limit.ts` only gates packets this
+ * node *receives*, never ones it originates itself, same gap #39 closed
+ * for `NewsGateway`. Not partitioned per caller (unlike `InternetGateway`'s
+ * per-IP limiter): every caller here is already authenticated by the
+ * network password, so a single node-wide counter is enough — there's no
+ * cheap-to-mint fake identity to rotate around it the way an unauthenticated
+ * `fromNodeId`/source IP would allow elsewhere.
+ */
+const MAX_URGENT_DROPS_PER_WINDOW = 3;
+const URGENT_DROP_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
+
+/** Default/maximum lifetime for a drop (`NomadNode.publishDrop()`) — a drop is a notice tied to a moment, never a permanent fixture like a channel, so unlike `publishContent()` in general it always carries a `ttlMs`, capped so a caller can shorten it but never make it outlive this. */
+const DEFAULT_DROP_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_DROP_TTL_MS = 72 * 60 * 60 * 1000;
 
 /**
  * Outranks any trust level `TrustManager` can actually assign (spec §54's
@@ -396,6 +426,15 @@ export class NomadNode extends EventEmitter {
    * own doc comment for the full access-control reasoning.
    */
   readonly locationRegistry: LocationRegistry;
+  /**
+   * Local, best-effort view of drops — location-tagged public notices
+   * (`docs/next-steps.md`), built entirely from already-verified `content://`
+   * publications named `DROP_CONTENT_NAME` (`drops.ts`). Unlike
+   * `locationRegistry`, a drop is public mesh content (spec §56 doesn't list
+   * it as something to protect) — no dedicated-node/opt-in gating, any
+   * ordinary gateway can serve `GET /api/drops`, same tier as `publicChannels`.
+   */
+  readonly drops: Drops;
 
   private readonly defaultTtl: number;
   private readonly contentRequestTimeoutMs: number;
@@ -421,6 +460,10 @@ export class NomadNode extends EventEmitter {
   private readonly pendingLocalServiceCalls = new Set<{ reject: (err: Error) => void }>();
   /** Content ids `considerChannelMessage()` currently has a `getContent()` fetch in flight for — bounds concurrency to `MAX_CONCURRENT_CHANNEL_FETCHES` (see its own doc comment) and avoids issuing a second fetch for a content id already being retrieved. */
   private readonly pendingChannelFetches = new Set<string>();
+  /** Same purpose as `pendingChannelFetches`, for `considerDrop()` — bounds concurrency to `MAX_CONCURRENT_DROP_FETCHES`. */
+  private readonly pendingDropFetches = new Set<string>();
+  /** Sliding-window state for `MAX_URGENT_DROPS_PER_WINDOW` (see its own doc comment) — `publishDrop({ urgent: true })` checks and updates this before publishing. */
+  private urgentDropWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
   private started = false;
 
   constructor(options: NomadNodeOptions = {}) {
@@ -495,6 +538,10 @@ export class NomadNode extends EventEmitter {
       maxReports: options.maxLocationReports,
       maxReportAgeMs: options.maxLocationReportAgeMs,
       trustRank: (reporterId) => trustRank(this.trust.get(reporterId)),
+    });
+    this.drops = new Drops({
+      maxDrops: options.maxDrops,
+      trustRank: (author) => trustRank(this.trust.get(author)),
     });
   }
 
@@ -802,6 +849,73 @@ export class NomadNode extends EventEmitter {
     const message: ChannelMessage = { channel: normalized, author: this.nodeId, text, timestamp, contentId: metadata.contentId };
     this.publicChannels.record(message);
     return message;
+  }
+
+  /**
+   * Publishes a drop — a location-tagged public notice (`docs/next-steps.md`,
+   * concept credited to BitChat's mesh-local `BoardManager`, Unlicense/public
+   * domain — see `drops.ts`'s own doc comment for the full mapping onto
+   * existing Nomad-Net primitives; no code reused, only the concept).
+   * `lat`/`lon` are meant to be the caller's own current position (same
+   * "always here, right now" posture as `shareLocation()`, never an
+   * arbitrary point) — validated the same way. `expiresInMs` defaults to
+   * `DEFAULT_DROP_TTL_MS` (24h) and is capped at `MAX_DROP_TTL_MS` (72h): a
+   * drop is a notice tied to a moment, never a permanent fixture like a
+   * channel.
+   *
+   * When `urgent` is true, publishes at `Priority.EMERGENCY` (spec's "P0",
+   * same mechanism as `service://emergency-news`, `docs/security.md` #39) so
+   * it reaches already-connected peers immediately via `CONTENT_ANNOUNCE`
+   * instead of waiting for a pull query — first checking/consuming
+   * `MAX_URGENT_DROPS_PER_WINDOW` (see its own doc comment for why this
+   * differs from #39's per-sync cap) and throwing if the budget is
+   * exhausted, same "fail loudly" posture as `sendPrivateMessage()`. A
+   * non-urgent drop publishes at the ordinary `Priority.CONTENT`, no
+   * special treatment beyond what any other announced content already gets.
+   */
+  publishDrop(drop: { text: string; lat: number; lon: number; label?: string; urgent: boolean; expiresInMs?: number }): Drop {
+    if (drop.text.length === 0 || drop.text.length > MAX_MESSAGE_TEXT_LENGTH) {
+      throw new Error(`drop text must be 1-${MAX_MESSAGE_TEXT_LENGTH} characters`);
+    }
+    if (typeof drop.lat !== "number" || !Number.isFinite(drop.lat) || drop.lat < -90 || drop.lat > 90) {
+      throw new Error("publishDrop: 'lat' must be a finite number in [-90, 90]");
+    }
+    if (typeof drop.lon !== "number" || !Number.isFinite(drop.lon) || drop.lon < -180 || drop.lon > 180) {
+      throw new Error("publishDrop: 'lon' must be a finite number in [-180, 180]");
+    }
+    if (drop.label !== undefined && (drop.label.length === 0 || drop.label.length > MAX_DROP_LABEL_LENGTH)) {
+      throw new Error(`drop label must be 1-${MAX_DROP_LABEL_LENGTH} characters`);
+    }
+    // Validated *before* the urgent rate limit below is consumed — found by review: a non-positive
+    // expiresInMs would otherwise make publishContent() below throw (its ttlMs would produce an
+    // already-expired expiresAt, rejected by ContentStore.putVerified()) only *after* the urgent
+    // counter was already incremented, letting a caller burn MAX_URGENT_DROPS_PER_WINDOW's whole
+    // budget on requests that were never going to publish anything — the exact "misbehaving or
+    // compromised paired client in a tight loop" scenario the rate limit exists to stop.
+    if (drop.expiresInMs !== undefined && (!Number.isFinite(drop.expiresInMs) || drop.expiresInMs <= 0)) {
+      throw new Error("publishDrop: 'expiresInMs' must be a finite positive number");
+    }
+    if (drop.urgent) {
+      const now = Date.now();
+      if (now - this.urgentDropWindow.windowStart >= URGENT_DROP_RATE_LIMIT_WINDOW_MS) {
+        this.urgentDropWindow = { windowStart: now, count: 0 };
+      }
+      if (this.urgentDropWindow.count >= MAX_URGENT_DROPS_PER_WINDOW) {
+        throw new Error("publishDrop: too many urgent drops, try again later");
+      }
+      this.urgentDropWindow.count++;
+    }
+    const ttlMs = Math.min(drop.expiresInMs ?? DEFAULT_DROP_TTL_MS, MAX_DROP_TTL_MS);
+    const timestamp = Date.now();
+    const payload: DropPayload = { text: drop.text, lat: drop.lat, lon: drop.lon, label: drop.label, urgent: drop.urgent, timestamp };
+    const metadata = this.publishContent(DROP_CONTENT_NAME, "application/json", Buffer.from(JSON.stringify(payload), "utf8"), {
+      announce: true,
+      priority: drop.urgent ? Priority.EMERGENCY : Priority.CONTENT,
+      ttlMs,
+    });
+    const record: Drop = { ...payload, dropId: metadata.contentId, author: this.nodeId, expiresAt: metadata.expiresAt };
+    this.drops.record(record);
+    return record;
   }
 
   /**
@@ -1841,6 +1955,7 @@ export class NomadNode extends EventEmitter {
     if (accepted) {
       this.emit("content:announced", accepted);
       this.considerChannelMessage(accepted);
+      this.considerDrop(accepted);
     }
   }
 
@@ -1861,6 +1976,7 @@ export class NomadNode extends EventEmitter {
       if (result) {
         accepted.push(result);
         this.considerChannelMessage(result);
+        this.considerDrop(result);
       }
     }
     if (accepted.length > 0) this.emit("catalog-sync", accepted);
@@ -1906,6 +2022,36 @@ export class NomadNode extends EventEmitter {
       })
       .catch(() => {})
       .finally(() => this.pendingChannelFetches.delete(contentId));
+  }
+
+  /**
+   * Same shape and reasoning as `considerChannelMessage()` immediately
+   * above, for drops (`drops.ts`) — fires when a newly-learned piece of
+   * content's name matches `DROP_CONTENT_NAME` exactly. Bounded to
+   * `MAX_CONCURRENT_DROP_FETCHES` in flight (independent budget from
+   * `considerChannelMessage()`'s, see that constant's own doc comment).
+   */
+  private considerDrop(metadata: ContentMetadata): void {
+    if (metadata.name !== DROP_CONTENT_NAME) return;
+    const publisherId = metadata.publisherId;
+    if (!publisherId) return;
+    const { contentId } = metadata;
+    if (this.pendingDropFetches.has(contentId) || this.pendingDropFetches.size >= MAX_CONCURRENT_DROP_FETCHES) return;
+    this.pendingDropFetches.add(contentId);
+    this.getContent(contentId, { timeoutMs: this.contentRequestTimeoutMs })
+      .then((data) => {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(data.toString("utf8"));
+        } catch {
+          return; // malformed — never trust content shape just because the signature verified
+        }
+        const payload = extractDropPayload(parsed);
+        if (!payload) return;
+        this.drops.record({ ...payload, dropId: contentId, author: publisherId, expiresAt: metadata.expiresAt });
+      })
+      .catch(() => {})
+      .finally(() => this.pendingDropFetches.delete(contentId));
   }
 
   /** Replies with directory entries the requester doesn't already know about (spec §52) — mirrors handleSyncRequest for content. */

@@ -7,6 +7,60 @@
 
 const STORAGE_KEY_URL = "nomadnet.gatewayUrl";
 const STORAGE_KEY_PASSWORD = "nomadnet.networkPassword";
+const STORAGE_KEY_CONTACT_NAMES = "nomadnet.contactNames";
+const STORAGE_KEY_INTRO_SEEN = "nomadnet.introSeen";
+const MAX_CONTACT_NAME_LENGTH = 40;
+
+/**
+ * Nicknames for other people (docs/security.md — "Rubrica locale") — a UX-audit fix for every nodeId
+ * shown as a person being an unreadable technical id (e.g. "NODE-a3f92b1c"). Deliberately a *local*
+ * rubrica, never a protocol change: a nickname is assigned by, saved on, and only ever shown on THIS
+ * device — never transmitted, never synced with the mesh, exactly like a phone's own contact list.
+ * This also sidesteps a real risk a broadcast nickname would introduce: packet.source (and therefore
+ * any peer/author id) is never cryptographically authenticated (CLAUDE.md, "Binding crittografico"),
+ * so a name declared over the network could impersonate anyone; a name only ever chosen by the reader
+ * carries no such risk.
+ */
+// In-memory cache of the parsed contactNames blob — getContactName() is called once per row for
+// every peer/location-report/channel-or-group-message-author on every render pass, which the 3-5s
+// periodic polls repeat continuously; without this, that's a redundant localStorage.getItem() +
+// JSON.parse() of the *entire* map per row per tick (found by review). Safe to cache indefinitely:
+// setContactName() below is the map's only writer anywhere in this file, and it keeps the cache in
+// lockstep with every write, so there is no other code path that could make it go stale.
+let contactNamesCache = null;
+
+function loadContactNames() {
+  if (contactNamesCache) return contactNamesCache;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_CONTACT_NAMES);
+    const parsed = raw ? JSON.parse(raw) : {};
+    contactNamesCache = parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    contactNamesCache = {};
+  }
+  return contactNamesCache;
+}
+
+/** The nickname this device's user assigned to `nodeId`, or `fallback` (the technical id) if none. */
+function getContactName(nodeId, fallback) {
+  const name = loadContactNames()[nodeId];
+  return typeof name === "string" && name.length > 0 ? name : fallback;
+}
+
+/** Saves (or, given an empty/whitespace-only name, clears) this device's own nickname for `nodeId`. */
+function setContactName(nodeId, name) {
+  const names = loadContactNames();
+  const trimmed = (name || "").trim().slice(0, MAX_CONTACT_NAME_LENGTH);
+  if (trimmed) names[nodeId] = trimmed;
+  else delete names[nodeId];
+  contactNamesCache = names;
+  try {
+    localStorage.setItem(STORAGE_KEY_CONTACT_NAMES, JSON.stringify(names));
+  } catch {
+    // Storage full or unavailable (e.g. private browsing) — the rename just doesn't persist this
+    // time, not worth surfacing as an error for a purely cosmetic, non-destructive local preference.
+  }
+}
 
 // A serviceId no real service will ever register (real ones are always "service://..." per spec
 // §35-37) — used only to probe whether a network password is accepted by POST /api/call without
@@ -281,6 +335,38 @@ async function createGroup(name, members) {
 }
 
 /**
+ * POST /api/drops (node/src/web-ui.ts) — publishes a drop (a location-tagged public notice,
+ * docs/next-steps.md; concept credited to BitChat's mesh-local BoardManager, Unlicense/public domain —
+ * see node/src/drops.ts's own doc comment). `lat`/`lon` are always the caller's own current position
+ * (see createDropFromHere()'s doc comment below), never typed in by hand.
+ */
+async function createDrop({ text, lat, lon, label, urgent }) {
+  const res = await fetchWithTimeout(
+    apiUrl("/api/drops"),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + networkPassword },
+      body: JSON.stringify({ text, lat, lon, label, urgent }),
+    },
+    CALL_TIMEOUT_MS,
+  );
+  let body;
+  try {
+    body = await res.json();
+  } catch {
+    const err = new Error("risposta non valida dal gateway (HTTP " + res.status + ")");
+    err.status = res.status;
+    throw err;
+  }
+  if (!res.ok) {
+    const err = new Error(body.error || "HTTP " + res.status);
+    err.status = res.status;
+    throw err;
+  }
+  return body.drop;
+}
+
+/**
  * GET /api/location-registry (node/src/web-ui.ts) — every currently-shared position this gateway
  * knows about. Only ever populated on a *dedicated* location-registry node with `exposeLocationRegistry`
  * turned on (docs/next-steps.md Opzione J) — an ordinary gateway 404s here, which this treats as "not
@@ -347,16 +433,45 @@ async function getCurrentPosition() {
   const nativeGeolocation = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Geolocation;
   if (nativeGeolocation && typeof nativeGeolocation.getCurrentPosition === "function") {
     const pos = await nativeGeolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 10000 });
-    return { lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy ?? undefined };
+    const result = { lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy ?? undefined };
+    myLastKnownPosition = result;
+    return result;
   }
   if (!navigator.geolocation) throw new Error("Geolocalizzazione non disponibile su questo dispositivo.");
   return new Promise((resolve, reject) => {
     navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy ?? undefined }),
+      (pos) => {
+        const result = { lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy ?? undefined };
+        myLastKnownPosition = result;
+        resolve(result);
+      },
       (err) => reject(new Error(err.message || "Impossibile ottenere la posizione")),
       { enableHighAccuracy: true, timeout: 10000 },
     );
   });
+}
+
+/**
+ * Last position `getCurrentPosition()` actually resolved with, this session only — never persisted,
+ * never sampled on its own (this app only ever reads GPS in direct response to a tap, same "never
+ * automatic" posture as location sharing itself, docs/next-steps.md). Used only to show a rough
+ * "distance from me" on bacheca drops (`renderDrops()`) without forcing a fresh GPS read just to
+ * render a list; `null` until the user has shared their position or created a drop at least once.
+ */
+let myLastKnownPosition = null;
+
+/**
+ * Great-circle distance between two lat/lon points in meters (standard haversine formula, public
+ * domain math — no licensing concern, unlike anything that might come from BitChat/NOMAD). Used only
+ * to show a rough "distance from me" on bacheca drops (renderDrops()) when myLastKnownPosition is known.
+ */
+function haversineDistanceMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
 }
 
 /**
@@ -408,6 +523,74 @@ function iconEl(name, extraClass) {
   use.setAttribute("href", "#icon-" + name);
   svg.append(use);
   return svg;
+}
+
+/**
+ * True while a contactNameEl() rename is actively focused/being typed into somewhere on the page —
+ * checked by the periodic render functions (renderPeers/renderLocationReports/renderChannelMessages/
+ * renderGroupMessages) so a mid-edit rename is never yanked out from under the user by the next poll
+ * tick. Found by review: every renderXxx() this app has always done `list.textContent = ""` and
+ * rebuilt unconditionally on every 3-5s poll — with no guard, that blurs a focused rename <input>
+ * mid-keystroke, forcing a premature save of whatever partial text had been typed so far.
+ * Deliberately keyed off `document.activeElement`, not just "does a .contact-name-input exist in the
+ * DOM": the input is still momentarily present (just no longer focused) during the blur handler's own
+ * commit + refreshAll() call below, and that refresh must be allowed to proceed and actually replace
+ * it with the freshly-saved name — checking focus rather than mere presence is what tells the two
+ * situations apart.
+ */
+function isRenamePending() {
+  const active = document.activeElement;
+  return !!active && active.classList && active.classList.contains("contact-name-input");
+}
+
+/**
+ * A person's name (nickname if this device's user assigned one, otherwise `fallback` — the technical
+ * id already shown before this feature existed) plus a small pencil affordance to assign/change that
+ * nickname — the single place this UI builds that pairing, reused by every render function that shows
+ * a person (peers list, chat/channel/group message authors, location reports) so a rename made from
+ * any one of them is reflected everywhere the same nodeId appears, via the next refreshAll(). Inline
+ * text-edit on tap (no dialog/prompt — kept consistent with the rest of this app's custom-styled
+ * controls, never a native browser prompt()). For a spot with no room for the pencil (e.g. the chat
+ * panel's own title, or the compact group-member picker), call getContactName(nodeId, fallback)
+ * directly instead of this.
+ */
+function contactNameEl(nodeId, fallback) {
+  const custom = getContactName(nodeId, null);
+  const wrap = el("span", { className: "row-title contact-name-row" });
+  const nameSpan = el("span", { className: custom ? "contact-name" : "contact-name mono", textContent: custom || fallback, title: custom ? nodeId : fallback });
+  const renameButton = el("button", { className: "icon-button contact-rename", type: "button" }, [iconEl("edit")]);
+  renameButton.setAttribute("aria-label", custom ? "Rinomina questa persona" : "Dai un nome a questa persona");
+  wrap.append(nameSpan, renameButton);
+
+  renameButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation(); // never trigger a parent row/summary's own click handler (e.g. a <details> toggle)
+    const input = el("input", { type: "text", value: custom || "", placeholder: "Nome per te, es. Marco" });
+    input.className = "contact-name-input";
+    input.maxLength = MAX_CONTACT_NAME_LENGTH;
+    wrap.textContent = "";
+    wrap.append(input);
+    input.focus();
+    input.select();
+
+    let cancelled = false;
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        input.blur();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        cancelled = true;
+        input.blur();
+      }
+    });
+    input.addEventListener("blur", () => {
+      if (!cancelled) setContactName(nodeId, input.value);
+      refreshAll().catch(() => {});
+    });
+  });
+
+  return wrap;
 }
 
 function renderEmptyIfNeeded(list, items, message, iconName) {
@@ -819,12 +1002,39 @@ function showDashboard() {
   closeChannelPanel();
   closeGroupPanel();
   renderSkeletons();
+  updateIntroBanner(false);
   const main = document.getElementById("dashboard-main");
   main.focus({ preventScroll: true }); // announces the screen change to screen-reader users
   refreshAll();
   clearInterval(refreshTimer);
   refreshTimer = setInterval(refreshAll, 5000);
 }
+
+/**
+ * Shows #intro-banner (a plain-language "what can I do here" card) automatically once, the first
+ * time this device ever reaches the dashboard — never again on its own after that (STORAGE_KEY_INTRO_SEEN
+ * in localStorage), but always re-openable via the "?" button in the header (`forceShow`). Never an
+ * overlay: it's rendered as an ordinary panel at the top of the scrollable dashboard, so it can be
+ * scrolled past exactly like any other card, not something that has to be dismissed to proceed.
+ */
+function updateIntroBanner(forceShow) {
+  const alreadySeen = localStorage.getItem(STORAGE_KEY_INTRO_SEEN) === "1";
+  document.getElementById("intro-banner").hidden = !forceShow && alreadySeen;
+}
+
+document.getElementById("show-intro").addEventListener("click", () => {
+  updateIntroBanner(true);
+  document.getElementById("intro-banner").scrollIntoView({ behavior: "smooth", block: "start" });
+});
+
+document.getElementById("close-intro").addEventListener("click", () => {
+  try {
+    localStorage.setItem(STORAGE_KEY_INTRO_SEEN, "1");
+  } catch {
+    // Storage full/unavailable — the banner just reappears next launch, not worth surfacing an error for.
+  }
+  document.getElementById("intro-banner").hidden = true;
+});
 
 // Tracks whether the dashboard is currently showing a "gateway non raggiungibile" banner, so
 // clearing it can offer a small "connessione ristabilita" confirmation instead of just silently
@@ -876,6 +1086,7 @@ function renderStats(s) {
 let peerSeenIds = new Set();
 
 function renderPeers(peers) {
+  if (isRenamePending()) return; // never yank an in-progress rename out from under the user — see isRenamePending()
   const list = document.getElementById("peers");
   list.removeAttribute("aria-busy");
   document.getElementById("peers-count").textContent = peers.length > 0 ? String(peers.length) : "";
@@ -888,7 +1099,7 @@ function renderPeers(peers) {
     nextSeen.add(p.nodeId);
     const li = el("li", null, [
       el("div", { className: "row" }, [
-        el("span", { className: "row-title mono", textContent: p.shortLabel, title: p.shortLabel }),
+        contactNameEl(p.nodeId, p.shortLabel),
         el("span", { className: "muted", textContent: timeAgo(p.connectedAt) }),
       ]),
       el("div", { className: "tags" }, [el("span", { className: "tag", textContent: TRUST_LABELS[p.trustLevel] || p.trustLevel })]),
@@ -899,7 +1110,7 @@ function renderPeers(peers) {
     // own "Chiama" button below.
     if (p.canMessage && networkPassword) {
       const messageButton = el("button", { className: "call-button", textContent: "Messaggia" });
-      messageButton.addEventListener("click", () => openChatPanel(p.nodeId, p.shortLabel));
+      messageButton.addEventListener("click", () => openChatPanel(p.nodeId, getContactName(p.nodeId, p.shortLabel)));
       li.append(messageButton);
     }
     if (openChatPeer === p.nodeId) li.classList.add("is-open");
@@ -995,7 +1206,7 @@ function renderGroupMemberPicker(peers) {
     checkbox.value = p.nodeId;
     checkbox.id = "group-member-" + p.nodeId;
     checkbox.checked = previouslyChecked.has(p.nodeId);
-    const label = el("label", { className: "group-member-option" }, [checkbox, el("span", { textContent: p.shortLabel })]);
+    const label = el("label", { className: "group-member-option" }, [checkbox, el("span", { textContent: getContactName(p.nodeId, p.shortLabel) })]);
     label.htmlFor = checkbox.id;
     picker.append(label);
   }
@@ -1020,6 +1231,7 @@ function renderLocationReports(reports) {
     return;
   }
   panel.hidden = false;
+  if (isRenamePending()) return; // never yank an in-progress rename out from under the user — see isRenamePending()
   const list = document.getElementById("location-registry");
   list.removeAttribute("aria-busy");
   document.getElementById("location-registry-count").textContent = reports.length > 0 ? String(reports.length) : "";
@@ -1034,7 +1246,7 @@ function renderLocationReports(reports) {
     if (r.accuracy !== undefined) tags.push(el("span", { className: "tag", textContent: "±" + Math.round(r.accuracy) + " m" }));
     const li = el("li", null, [
       el("div", { className: "row" }, [
-        el("span", { className: "row-title mono", textContent: "NODE-" + r.reporterId.slice(0, 8), title: r.reporterId }),
+        contactNameEl(r.reporterId, "NODE-" + r.reporterId.slice(0, 8)),
         el("span", { className: "muted", textContent: timeAgo(r.timestamp) }),
       ]),
       el("div", { className: "tags" }, tags),
@@ -1044,6 +1256,103 @@ function renderLocationReports(reports) {
   }
   locationReportSeenIds = nextSeen;
 }
+
+// ---------- bacheca / drops (docs/next-steps.md — concept credited to BitChat's mesh-local
+// BoardManager, Unlicense/public domain; see node/src/drops.ts's own doc comment) ----------
+
+let dropSeenIds = new Set();
+
+/**
+ * The full list from the latest GET /api/drops, kept independently of whether the offline map
+ * overlay (mapview.js) happens to be open — mapview.js's renderMapPins() reads this global to draw
+ * drop pins without app.js needing to know anything about map/tile coordinate space.
+ */
+let knownDrops = [];
+
+/**
+ * `drops` is always an array (GET /api/drops is unauthenticated and offered on every gateway,
+ * unlike the location registry) — the panel itself is always visible, never capability-gated.
+ * Urgent drops are sorted first (Array.prototype.sort is stable, so within each group the
+ * server's own newest-first order, node/src/drops.ts's Drops.list(), is preserved).
+ */
+function renderDrops(drops) {
+  knownDrops = drops;
+  renderMapPins();
+  const list = document.getElementById("drops");
+  document.getElementById("drops-count").textContent = drops.length > 0 ? String(drops.length) : "";
+  if (renderEmptyIfNeeded(list, drops, "Nessuna segnalazione ancora.", "alert-triangle")) {
+    dropSeenIds = new Set();
+    return;
+  }
+  const sorted = [...drops].sort((a, b) => (b.urgent ? 1 : 0) - (a.urgent ? 1 : 0));
+  const nextSeen = new Set();
+  for (const d of sorted) {
+    nextSeen.add(d.dropId);
+    const tags = [];
+    if (d.urgent) tags.push(el("span", { className: "tag urgent", textContent: "Urgente" }));
+    if (myLastKnownPosition) {
+      const distance = haversineDistanceMeters(myLastKnownPosition.lat, myLastKnownPosition.lon, d.lat, d.lon);
+      tags.push(el("span", { className: "tag", textContent: distance < 1000 ? Math.round(distance) + " m" : (distance / 1000).toFixed(1) + " km" }));
+    }
+    const li = el("li", null, [
+      el("div", { className: "row" }, [
+        el("span", { className: "row-title", textContent: d.label || "Segnalazione", title: d.label || "Segnalazione" }),
+        el("span", { className: "muted", textContent: timeAgo(d.timestamp) }),
+      ]),
+      el("div", { textContent: d.text }),
+      el("div", { className: "tags" }, tags),
+    ]);
+    if (d.urgent) li.classList.add("is-urgent");
+    if (!dropSeenIds.has(d.dropId)) li.classList.add("enter");
+    list.append(li);
+  }
+  dropSeenIds = nextSeen;
+}
+
+function setCreateDropBusy(submit, busy) {
+  submit.disabled = busy;
+  submit.textContent = busy ? "Invio..." : "Segnala qui";
+}
+
+document.getElementById("create-drop-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const labelInput = document.getElementById("create-drop-label");
+  const textInput = document.getElementById("create-drop-text");
+  const urgentInput = document.getElementById("create-drop-urgent");
+  const status = document.getElementById("create-drop-status");
+  const text = textInput.value.trim();
+  if (!text) return;
+  const label = labelInput.value.trim();
+  const urgent = urgentInput.checked;
+  const submit = event.target.querySelector("button[type=submit]");
+  setCreateDropBusy(submit, true);
+  status.classList.remove("error");
+  status.textContent = "Individuazione della posizione...";
+  try {
+    const { lat, lon } = await getCurrentPosition();
+    status.textContent = "Invio in corso...";
+    await createDrop({ text, lat, lon, label: label || undefined, urgent });
+    textInput.value = "";
+    labelInput.value = "";
+    urgentInput.checked = false;
+    status.textContent = "Segnalazione pubblicata.";
+    vibrate(urgent ? [15, 40, 15] : 10);
+    showToast("Segnalazione pubblicata", "alert-triangle");
+    // Same "fire and let the dashboard catch up" posture as createGroup()'s submit handler —
+    // the panel would otherwise wait for the next periodic 5s refreshAll() tick.
+    refreshAll().catch(() => {});
+  } catch (err) {
+    if (err.status === 401) {
+      handlePasswordRejected();
+      return;
+    }
+    status.classList.add("error");
+    status.textContent = "Errore: " + err.message;
+    vibrate([12, 40, 12]);
+  } finally {
+    setCreateDropBusy(submit, false);
+  }
+});
 
 document.getElementById("share-location-button").addEventListener("click", async () => {
   const button = document.getElementById("share-location-button");
@@ -1070,24 +1379,79 @@ document.getElementById("share-location-button").addEventListener("click", async
   }
 });
 
-function setCallSubmitBusy(submit, busy) {
+function setCallSubmitBusy(submit, busy, idleLabel, idleIcon) {
   submit.disabled = busy;
   submit.textContent = "";
   if (busy) {
     submit.append(el("span", { className: "mini-spinner" }), el("span", { textContent: "Invio..." }));
   } else {
-    submit.append(iconEl("send"), el("span", { textContent: "Invia" }));
+    submit.append(iconEl(idleIcon || "send"), el("span", { textContent: idleLabel || "Invia" }));
   }
 }
 
 /** Mirrors gateway/nomad/translate-gateway.ts's SUPPORTED_LANGUAGES — kept in sync by hand, same accepted situation as SERVICE_ICONS/SERVICE_LABELS below (mobile/www and gateway/nomad are separate runtimes with no shared import path). */
 const TRANSLATE_LANGUAGES = { it: "Italiano", en: "Inglese", de: "Tedesco", fr: "Francese", es: "Spagnolo" };
 
+/** Content-types this app knows how to name for a human instead of showing a raw MIME string. */
+const FRIENDLY_MIME_NAMES = { "application/xml": "feed RSS/Atom", "text/plain": "testo semplice" };
+
+/**
+ * Renders a service://news result (`{ headlines, digest? }`) as a readable digest paragraph plus a
+ * title/source/date list — added after a UX audit found this service falling into the generic
+ * "JSON.stringify the response" path, unreadable to a non-technical user. Only title/source/date are
+ * shown (never the full article text): `NewsHeadline` only carries `articleContentId`, a pointer to
+ * fetch the body separately, and web-ui.ts has no endpoint that serves arbitrary content bytes over
+ * HTTP yet (only metadata, see docs/security.md voce #46) — reading the full article inline is a
+ * larger, separate feature, not something this pass can add without touching node/src/.
+ */
+function renderNewsResult(container, value) {
+  container.textContent = "";
+  if (value && typeof value.digest === "string" && value.digest) {
+    container.append(el("p", { className: "news-digest", textContent: value.digest }));
+  }
+  const headlines = Array.isArray(value && value.headlines) ? value.headlines : [];
+  if (headlines.length === 0) {
+    container.append(el("p", { className: "muted", textContent: "Nessuna notizia disponibile al momento." }));
+    return;
+  }
+  const list = el("ul", { className: "news-headline-list" });
+  for (const h of headlines) {
+    if (!h || typeof h.title !== "string") continue;
+    const publishedMs = typeof h.publishedAt === "string" ? Date.parse(h.publishedAt) : NaN;
+    const metaParts = [typeof h.source === "string" ? h.source : null, Number.isFinite(publishedMs) ? timeAgo(publishedMs) : null].filter(Boolean);
+    const rowChildren = [el("div", { className: "news-headline-title", textContent: h.title })];
+    if (metaParts.length > 0) rowChildren.push(el("div", { className: "muted", textContent: metaParts.join(" · ") }));
+    list.append(el("li", null, rowChildren));
+  }
+  container.append(list);
+}
+
+/** Renders a service://flatnotes-search result (`{ results: [{path, title}] }`) as a readable list instead of raw JSON — same reasoning as renderNewsResult() above. */
+function renderNoteSearchResult(container, value) {
+  container.textContent = "";
+  const results = Array.isArray(value && value.results) ? value.results : [];
+  if (results.length === 0) {
+    container.append(el("p", { className: "muted", textContent: "Nessuna nota trovata." }));
+    return;
+  }
+  const list = el("ul", { className: "news-headline-list" });
+  for (const r of results) {
+    if (!r || typeof r.title !== "string") continue;
+    list.append(el("li", null, [el("div", { className: "news-headline-title", textContent: r.title })]));
+  }
+  container.append(list);
+}
+
 function buildCallForm(service) {
   const isAi = service.serviceId === "service://ai";
   const isTranslate = service.serviceId === "service://translation";
+  const isNews = service.serviceId === "service://news";
+  const isInternetFetch = service.serviceId === "service://internet-fetch";
+  const isFlatnotesSearch = service.serviceId === "service://flatnotes-search";
+  const isFlatnotesCreate = service.serviceId === "service://flatnotes-create";
+  const isGuided = isAi || isTranslate || isNews || isInternetFetch || isFlatnotesSearch || isFlatnotesCreate;
 
-  let input, languageSelect;
+  let input, languageSelect, internetKindSelect, internetUrlInput, noteTitleInput, noteContentInput;
   if (isTranslate) {
     input = el("textarea", { placeholder: "Scrivi il testo da tradurre..." });
     languageSelect = el("select", { className: "translate-language-select" });
@@ -1098,12 +1462,32 @@ function buildCallForm(service) {
     }
   } else if (isAi) {
     input = el("textarea", { placeholder: "Scrivi una domanda..." });
-  } else {
+  } else if (isInternetFetch) {
+    internetKindSelect = el("select", { className: "translate-language-select" });
+    internetKindSelect.append(
+      Object.assign(el("option", { textContent: "Feed RSS" }), { value: "rss" }),
+      Object.assign(el("option", { textContent: "Pagina di testo" }), { value: "text" }),
+    );
+    internetUrlInput = el("input", { type: "text", placeholder: "Indirizzo, es. https://esempio.it/notizie.xml" });
+    internetUrlInput.autocomplete = "off";
+    internetUrlInput.autocapitalize = "off";
+    internetUrlInput.spellcheck = false;
+  } else if (isFlatnotesSearch) {
+    input = el("input", { type: "text", placeholder: "Cerca nelle note..." });
+  } else if (isFlatnotesCreate) {
+    noteTitleInput = el("input", { type: "text", placeholder: "Titolo (facoltativo)" });
+    noteContentInput = el("textarea", { placeholder: "Scrivi qui la tua nota..." });
+  } else if (!isNews) {
+    // Fallback for a service this app has no dedicated form for — a custom gateway an operator
+    // registered locally, or a future service not yet in the four branches above. Kept working (never
+    // just hidden) but clearly labeled as not meant for a casual user, per the same UX audit.
     input = el("textarea", { placeholder: "Payload JSON, es. {}", value: "{}" });
   }
 
+  const submitLabel = isNews ? "Vedi le notizie" : isFlatnotesSearch ? "Cerca" : isFlatnotesCreate ? "Salva nota" : "Invia";
+  const submitIcon = isNews ? "newspaper" : isFlatnotesSearch ? "search" : isFlatnotesCreate ? "edit" : "send";
   const submit = el("button", { className: "call-submit" });
-  setCallSubmitBusy(submit, false);
+  setCallSubmitBusy(submit, false, submitLabel, submitIcon);
   const result = el("div", { className: "call-result", textContent: "" });
   result.hidden = true;
   result.setAttribute("role", "status");
@@ -1115,6 +1499,36 @@ function buildCallForm(service) {
       payload = { text: input.value, targetLanguage: languageSelect.value };
     } else if (isAi) {
       payload = { prompt: input.value };
+    } else if (isNews) {
+      payload = {};
+    } else if (isInternetFetch) {
+      const url = internetUrlInput.value.trim();
+      if (!url) {
+        result.hidden = false;
+        result.className = "call-result is-error";
+        result.textContent = "Inserisci un indirizzo.";
+        return;
+      }
+      payload = { kind: internetKindSelect.value, url };
+    } else if (isFlatnotesSearch) {
+      const q = input.value.trim();
+      if (!q) {
+        result.hidden = false;
+        result.className = "call-result is-error";
+        result.textContent = "Scrivi qualcosa da cercare.";
+        return;
+      }
+      payload = { q };
+    } else if (isFlatnotesCreate) {
+      const content = noteContentInput.value.trim();
+      if (!content) {
+        result.hidden = false;
+        result.className = "call-result is-error";
+        result.textContent = "Scrivi qualcosa prima di salvare.";
+        return;
+      }
+      const title = noteTitleInput.value.trim();
+      payload = title ? { title, content } : { content };
     } else {
       try {
         payload = JSON.parse(input.value || "{}");
@@ -1125,16 +1539,37 @@ function buildCallForm(service) {
         return;
       }
     }
-    setCallSubmitBusy(submit, true);
+    setCallSubmitBusy(submit, true, submitLabel, submitIcon);
     try {
       const value = await callService(service.serviceId, payload);
       result.hidden = false;
       result.className = "call-result";
-      let rendered;
-      if (isAi && value && typeof value.response === "string") rendered = value.response;
-      else if (isTranslate && value && typeof value.translatedText === "string") rendered = value.translatedText;
-      else rendered = JSON.stringify(value, null, 2);
-      result.textContent = rendered;
+      if (isNews) {
+        renderNewsResult(result, value);
+      } else if (isInternetFetch && value && typeof value.contentId === "string") {
+        result.textContent = "";
+        const kindLabel = FRIENDLY_MIME_NAMES[value.mimeType] || value.mimeType || "";
+        result.append(
+          el("p", { textContent: "Scaricato e salvato su questa rete" + (kindLabel ? " (" + kindLabel + (typeof value.size === "number" ? ", " + formatBytes(value.size) : "") + ")" : "") + "." }),
+          el("p", { className: "muted", textContent: "Puoi trovarlo tra i \"Contenuti della rete\"." }),
+        );
+      } else if (isAi && value && typeof value.response === "string") {
+        result.textContent = value.response;
+      } else if (isTranslate && value && typeof value.translatedText === "string") {
+        result.textContent = value.translatedText;
+      } else if (isFlatnotesSearch) {
+        renderNoteSearchResult(result, value);
+      } else if (isFlatnotesCreate && value && typeof value.path === "string") {
+        result.textContent = "";
+        result.append(
+          el("p", { textContent: "Nota salvata." }),
+          el("p", { className: "muted", textContent: "La trovi tra i \"Contenuti della rete\"." }),
+        );
+        noteTitleInput.value = "";
+        noteContentInput.value = "";
+      } else {
+        result.textContent = JSON.stringify(value, null, 2);
+      }
       vibrate(10);
     } catch (err) {
       if (err.status === 401) {
@@ -1146,11 +1581,17 @@ function buildCallForm(service) {
       result.textContent = err.message;
       vibrate([12, 40, 12]);
     } finally {
-      setCallSubmitBusy(submit, false);
+      setCallSubmitBusy(submit, false, submitLabel, submitIcon);
     }
   });
 
-  const children = isTranslate ? [input, languageSelect, submit, result] : [input, submit, result];
+  const children = [];
+  if (!isGuided) children.push(el("p", { className: "call-form-advanced-warning" }, [iconEl("alert-circle"), el("span", { textContent: "Questo servizio non ha un modulo semplificato — il testo qui sotto va scritto in formato tecnico (JSON)." })]));
+  if (isTranslate) children.push(input, languageSelect);
+  else if (isInternetFetch) children.push(internetKindSelect, internetUrlInput);
+  else if (isFlatnotesCreate) children.push(noteTitleInput, noteContentInput);
+  else if (input) children.push(input);
+  children.push(submit, result);
   return el("div", { className: "call-form" }, children);
 }
 
@@ -1330,6 +1771,7 @@ function closeChannelPanel() {
 }
 
 function renderChannelMessages(list, messages) {
+  if (isRenamePending()) return; // never yank an in-progress rename out from under the user — see isRenamePending()
   const wasScrolledToBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 24;
   if (renderEmptyIfNeeded(list, messages, "Nessun messaggio ancora. Scrivine uno.")) return;
   for (const m of messages) {
@@ -1339,7 +1781,7 @@ function renderChannelMessages(list, messages) {
     // says who) — shown only for someone else's message, never this device's own.
     const children = isMine
       ? bubbleChildren
-      : [el("div", { className: "chat-author muted", textContent: "NODE-" + m.author.slice(0, 8) }), ...bubbleChildren];
+      : [el("div", { className: "chat-author muted" }, [contactNameEl(m.author, "NODE-" + m.author.slice(0, 8))]), ...bubbleChildren];
     children.push(el("div", { className: "chat-timestamp muted", textContent: timeAgo(m.timestamp) }));
     list.append(el("li", { className: "chat-message " + (isMine ? "is-sent" : "is-received") }, children));
   }
@@ -1451,6 +1893,7 @@ function closeGroupPanel() {
 }
 
 function renderGroupMessages(list, messages) {
+  if (isRenamePending()) return; // never yank an in-progress rename out from under the user — see isRenamePending()
   const wasScrolledToBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 24;
   if (renderEmptyIfNeeded(list, messages, "Nessun messaggio ancora. Scrivine uno.")) return;
   for (const m of messages) {
@@ -1458,7 +1901,7 @@ function renderGroupMessages(list, messages) {
     const bubbleChildren = [el("div", { className: "chat-bubble", textContent: m.text })];
     const children = isMine
       ? bubbleChildren
-      : [el("div", { className: "chat-author muted", textContent: "NODE-" + m.senderId.slice(0, 8) }), ...bubbleChildren];
+      : [el("div", { className: "chat-author muted" }, [contactNameEl(m.senderId, "NODE-" + m.senderId.slice(0, 8))]), ...bubbleChildren];
     children.push(el("div", { className: "chat-timestamp muted", textContent: timeAgo(m.timestamp) }));
     list.append(el("li", { className: "chat-message " + (isMine ? "is-sent" : "is-received") }, children));
   }
@@ -1585,9 +2028,27 @@ document.getElementById("create-group-form").addEventListener("submit", async (e
 // app has never heard of, e.g. one an operator registered locally) still gets a card, just with a
 // generic icon and a name derived from the raw id — "some card" beats "silently missing" for an
 // unrecognized-but-available service.
-const SERVICE_ICONS = { "service://ai": "sparkles", "service://kiwix-search": "book", "service://news": "newspaper", "service://translation": "translate" };
+const SERVICE_ICONS = { "service://ai": "sparkles", "service://kiwix-search": "book", "service://news": "newspaper", "service://translation": "translate", "service://internet-fetch": "cloud", "service://flatnotes-search": "search", "service://flatnotes-create": "edit" };
 const DEFAULT_SERVICE_ICON = "wrench";
-const SERVICE_LABELS = { "service://ai": "Assistente AI", "service://kiwix-search": "Enciclopedia", "service://news": "Notizie", "service://translation": "Traduttore" };
+const SERVICE_LABELS = { "service://ai": "Assistente AI", "service://kiwix-search": "Enciclopedia", "service://news": "Notizie", "service://translation": "Traduttore", "service://internet-fetch": "Pagine da internet", "service://flatnotes-search": "Cerca nelle note", "service://flatnotes-create": "Scrivi una nota" };
+
+/**
+ * One-line, plain-language explanation shown under each service card — added after a UX audit found
+ * that icon + name alone (plus a raw serviceId like "service://news", not helpful to a non-technical
+ * reader) left a first-time user with no way to know what a service actually does before tapping
+ * "Chiama". Deliberately absent for any serviceId not in this map (an operator's own custom service):
+ * no description shown at all, rather than a placeholder/empty line — same "silence over noise"
+ * posture already used elsewhere in this file (e.g. renderEmptyIfNeeded()'s callers).
+ */
+const SERVICE_DESCRIPTIONS = {
+  "service://ai": "Fai una domanda e ricevi una risposta dall'intelligenza artificiale di questa rete.",
+  "service://kiwix-search": "Cerca in un'enciclopedia scaricata, consultabile anche senza internet.",
+  "service://news": "Le ultime notizie raccolte da questa rete.",
+  "service://translation": "Traduci un testo in un'altra lingua.",
+  "service://internet-fetch": "Recupera una pagina o un feed da internet vero, se questa rete è collegata.",
+  "service://flatnotes-search": "Cerca tra le note già scritte su questa rete.",
+  "service://flatnotes-create": "Scrivi una nota nel quaderno condiviso — sarà leggibile da chiunque sia connesso.",
+};
 
 function serviceLabel(serviceId) {
   if (SERVICE_LABELS[serviceId]) return SERVICE_LABELS[serviceId];
@@ -1624,12 +2085,17 @@ function renderServices(services) {
   const nextSeen = new Set();
   for (const svc of services) {
     nextSeen.add(svc.serviceId);
-    const li = el("li", { className: "service-card" }, [
+    const children = [
       el("div", { className: "service-card-icon" }, [iconEl(SERVICE_ICONS[svc.serviceId] || DEFAULT_SERVICE_ICON)]),
-      el("div", { className: "service-card-name", textContent: serviceLabel(svc.serviceId), title: serviceLabel(svc.serviceId) }),
-      el("div", { className: "service-card-id mono muted", textContent: svc.serviceId, title: svc.serviceId }),
-      el("div", { className: "tags" }, (Array.isArray(svc.capabilities) ? svc.capabilities : []).map((c) => el("span", { className: "tag", textContent: String(c) }))),
-    ]);
+      el("div", { className: "service-card-name", textContent: serviceLabel(svc.serviceId) }),
+    ];
+    // The raw serviceId ("service://news") moves to a title attribute (still reachable on
+    // hover/long-press) instead of always-visible text — it's noise for the audience this panel is
+    // designed for, not information anyone needs to see by default. A one-line description takes its
+    // place when one is known (SERVICE_DESCRIPTIONS above); silently omitted otherwise.
+    if (SERVICE_DESCRIPTIONS[svc.serviceId]) children.push(el("div", { className: "service-card-desc muted", textContent: SERVICE_DESCRIPTIONS[svc.serviceId] }));
+    children.push(el("div", { className: "tags" }, (Array.isArray(svc.capabilities) ? svc.capabilities : []).map((c) => el("span", { className: "tag", textContent: String(c) }))));
+    const li = el("li", { className: "service-card", title: svc.serviceId }, children);
     li.dataset.serviceId = svc.serviceId;
     if (svc.serviceId === openCallServiceId) li.classList.add("is-open");
     if (svc.availability && networkPassword) {
@@ -1723,21 +2189,25 @@ let refreshCycleId = 0;
 async function refreshAll() {
   const cycleId = ++refreshCycleId;
   try {
-    const [status, peers, services, channels, groups, locationReports] = await Promise.all([
+    const [status, peers, services, channels, drops, groups, locationReports, mapInfoResult] = await Promise.all([
       fetchJson("/api/status"),
       fetchJson("/api/peers"),
       fetchJson("/api/services"),
       fetchJson("/api/channels"),
+      fetchJson("/api/drops"),
       fetchGroups(),
       fetchLocationRegistry(),
+      fetchMapInfo(),
     ]);
     if (cycleId !== refreshCycleId) return; // superseded by a newer refresh while this one was in flight
     renderStats(status);
     renderPeers(peers);
     renderServices(services);
     renderChannels(channels);
+    renderDrops(drops);
     renderGroups(groups);
     renderLocationReports(locationReports);
+    renderMapAvailability(mapInfoResult);
     await refreshContent();
     firstLoadDone = true;
     setDashboardError();

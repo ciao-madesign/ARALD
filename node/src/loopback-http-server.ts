@@ -13,6 +13,12 @@ export function sendJson(res: ServerResponse, statusCode: number, body: unknown)
   res.end(json);
 }
 
+/** `sendJson()`'s counterpart for a raw byte response (`node/src/map-tiles.ts`'s map tiles, the first non-JSON response body this project has ever served) — same `Content-Length` discipline, just a caller-supplied `Content-Type` instead of always `application/json`. */
+export function sendBinary(res: ServerResponse, statusCode: number, contentType: string, body: Buffer): void {
+  res.writeHead(statusCode, { "Content-Type": contentType, "Content-Length": body.length });
+  res.end(body);
+}
+
 /** Distinguishes "the body was too big" from every other stream failure (client disconnect, socket reset) — a caller of `readRequestBody()` needs to tell them apart to answer with the right status code instead of always claiming 413. */
 export class BodyTooLargeError extends Error {}
 

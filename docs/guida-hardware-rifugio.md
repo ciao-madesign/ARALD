@@ -5,7 +5,7 @@ Questo documento è pensato per **due persone diverse**, in due momenti diversi:
 1. **Chi allestisce il dispositivo la prima volta** — serve un minimo di manualità (collegare cavi, inserire una scheda), ma **nessuna competenza di programmazione**. Una parte (sezione 2) richiede invece un minimo di esperienza con i computer — se non c'è nessuno disponibile, va chiesto aiuto una tantum a chi ha donato/consigliato il dispositivo, o alla comunità che segue il progetto.
 2. **Il rifugista** (chi gestisce il rifugio ogni giorno, sezioni 3-5) — qui **non serve nessuna competenza informatica o elettronica**. Accendere, verificare che funzioni, far connettere gli ospiti: tre gesti semplici, spiegati passo passo.
 
-> **Nota sullo stato del progetto**: quanto descritto qui riguarda la parte già pronta oggi — un nodo collegato via Wi-Fi che gli smartphone degli ospiti raggiungono con l'app mobile (pairing "come una rete Wi-Fi", nome rete + password, anche via QR — già implementato e verificato, vedi `docs/security.md` voci #23-25/#42). Il collegamento diretto via Bluetooth tra dispositivi (senza passare dal Wi-Fi del rifugio) esiste solo in versione simulata in questo momento, non su hardware radio reale — vedi `docs/deployment.md` e `docs/roadmap.md`. Questa guida non è mai stata eseguita fisicamente in un rifugio vero: è il piano di riferimento per la prima installazione reale, scritto con la stessa cura del resto della documentazione tecnica di questo repository.
+> **Nota sullo stato del progetto**: quanto descritto qui riguarda la parte già pronta oggi — un nodo collegato via Wi-Fi che gli smartphone degli ospiti raggiungono con l'app mobile (pairing "come una rete Wi-Fi", nome rete + password, anche via QR — già implementato e verificato, vedi `docs/security.md` voci #23-25/#42). Il collegamento diretto via Bluetooth tra dispositivi (senza passare dal Wi-Fi del rifugio) esiste solo in versione simulata in questo momento, non su hardware radio reale — vedi `docs/deployment.md` e `docs/roadmap.md`. Questa guida non è mai stata eseguita fisicamente in un rifugio vero: è il piano di riferimento per la prima installazione reale, scritto con la stessa cura del resto della documentazione tecnica di questo repository. **La sezione 1c (intelligenza artificiale locale, facoltativa)** è ancora più preliminare delle altre: descrive un secondo dispositivo il cui reale bisogno/dimensionamento non è stato ancora verificato con un test hardware concreto — vedi `docs/deployment.md`, "Non ancora pianificato in dettaglio".
 
 ---
 
@@ -52,6 +52,18 @@ Un solo nodo, pensato per costare poco, consumare pochissimo e non avere parti c
 **Spesa totale indicativa**: circa **70-110 €** collegandosi a una presa esistente, **100-150 €** con pannello solare incluso.
 
 Dove comprare: qualunque negozio di elettronica (fisico od online) che vende materiale per hobbisti/reti — per l'Opzione A, anche direttamente dal produttore del router scelto (es. lo store ufficiale GL.iNet); per l'Opzione B, un negozio che vende materiale per hobbisti/Raspberry Pi. Non serve un negozio specializzato particolare.
+
+### 1c. Un secondo dispositivo per l'intelligenza artificiale locale (facoltativo)
+
+Il dispositivo scelto sopra (router o scheda singola economica) **basta da solo** per bacheca, mappe, messaggi e contenuti già pronti — non serve nient'altro per far funzionare un nodo Nomad-Net. Un'intelligenza artificiale locale (per rispondere a domande tipo "qual è il sentiero più semplice per il bivacco X?") è invece un pezzo **in più**, opzionale, che richiede un secondo dispositivo più potente — pensalo come "un cameriere piccolo e sempre presente" (il dispositivo di sopra) più "una cucina sul retro" (questo secondo dispositivo) che entra in gioco solo per le domande all'AI.
+
+**Cosa comprare**: un **mini-PC o computer usato/ricondizionato** (es. un piccolo computer da ufficio dismesso, "thin client") è oggi l'opzione più economica e semplice — spesso **50-100 €** usato, spesso già con memoria a sufficienza. Un computer normale già disponibile va bene allo stesso modo, se c'è. *(Non ancora verificata con un test reale: se in futuro emergesse che una singola scheda economica come quelle della sezione 1 riesce a fare anche questo lavoro da sola, questa sezione diventerebbe superflua — vedi la nota in cima a questa guida.)*
+
+**Dove va tenuto**: sempre al rifugio, sulla stessa rete del dispositivo principale (stesso cavo di rete, o lo stesso Wi-Fi) — non deve stare vicino all'ingresso e non ha bisogno di un'etichetta per gli ospiti: nessun ospite ci parla mai direttamente, resta "dietro le quinte". Basta una presa di corrente vicina.
+
+**Cosa cambia per l'ospite**: nulla nel modo di collegarsi — sempre lo stesso Wi-Fi, lo stesso nome rete, la stessa password. Se questo secondo dispositivo è acceso, in più rispetto al solito compaiono anche le risposte dell'intelligenza artificiale. Se è spento (es. di notte, o un guasto), tutto il resto continua a funzionare normalmente — solo l'AI non risponde finché non torna acceso.
+
+**Preparazione**: fuori dallo scopo di questa guida per ora (richiede installare Ollama e un modello di linguaggio leggero) — chi vuole aggiungere questo pezzo dovrebbe chiedere una mano a chi segue il progetto Nomad-Net. Per il confronto tecnico completo tra le diverse opzioni hardware per questo secondo dispositivo, vedi `docs/deployment.md`.
 
 ---
 
@@ -143,6 +155,9 @@ Il dispositivo **resta sempre acceso**, come un router Wi-Fi di casa: non c'è u
 3. Se ha installato l'app Nomad-Net, può anche **inquadrare il QR code** sul cartello invece di digitare nome e password a mano.
 4. Se il dispositivo è stato configurato con il passo facoltativo della sezione 2A o 2B ("apertura automatica del browser"), spesso **non serve nemmeno il passo 3**: appena il telefono si collega, si apre da solo un popup con la pagina del dispositivo — esattamente come collegandosi al Wi-Fi di un hotel. Non è garantito su ogni telefono/versione di sistema operativo, quindi il metodo manuale (passo 2-3) resta sempre disponibile come alternativa.
 5. Una volta collegato, l'ospite può usare l'app (o la pagina web che il dispositivo mostra) per vedere contenuti, servizi e messaggi disponibili — senza bisogno di alcuna connessione a Internet.
+
+### L'intelligenza artificiale (solo se è stato installato anche il secondo dispositivo della sezione 1c)
+Se al rifugio è presente anche il secondo dispositivo facoltativo, gli ospiti trovano in più una voce per fare domande all'AI. Se quel secondo dispositivo è spento o scollegato, tutto il resto continua a funzionare normalmente — semplicemente quella voce non risponde. Non è un guasto da segnalare con urgenza: basta verificare che il secondo dispositivo sia acceso e collegato, quando capita.
 
 ### Cosa NON fare
 - **Non scollegare bruscamente** la corrente se non è necessario: se possibile, meglio aspettare un momento di calma (poche persone collegate) prima di staccare il cavo per manutenzione — un'interruzione improvvisa, ripetuta nel tempo, può rovinare la memoria interna del dispositivo (la scheda microSD per l'Opzione B, la memoria flash/eMMC per l'Opzione A).

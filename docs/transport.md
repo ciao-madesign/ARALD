@@ -28,7 +28,7 @@ Definita in `node/src/transport.ts`. Il routing engine (`node/src/routing.ts`) e
 | BLE (simulato) | Implementato — Milestone 8, seguito audit, Slice 8 (vedi sotto) | `node/src/transports/ble.ts` |
 | BLE (hardware reale) | Non implementato — bloccato su hardware fisico | `node/src/transports/ble.ts` (stesso file, un adapter reale andrebbe dietro la stessa interfaccia `Transport`) |
 | Wi-Fi (LAN / Direct) | Non implementato — Milestone 14 | `node/src/transports/wifi.ts` (da creare) |
-| LoRa (simulato) | Implementato — Opzione L, `docs/next-steps.md` (vedi sotto) — affianca BLE, non lo sostituisce | `node/src/transports/lora.ts` |
+| LoRa (simulato) | Implementato — Opzione N, `docs/next-steps.md` (vedi sotto) — affianca BLE, non lo sostituisce | `node/src/transports/lora.ts` |
 | LoRa (hardware reale) | Non implementato — bloccato su hardware fisico | `node/src/transports/lora.ts` (stesso file, un adapter reale andrebbe dietro la stessa interfaccia `Transport`) |
 
 ## Base condivisa per i transport radio simulati (`node/src/transports/simulated-link.ts`)

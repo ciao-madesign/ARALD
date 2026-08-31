@@ -1,19 +1,7 @@
 import type { NomadNode } from "../../node/src/node.js";
+import { mapWithConcurrency } from "./concurrency.js";
 
 const DEFAULT_SYNC_CONCURRENCY = 8;
-
-/** Runs `fn` over `items` with at most `limit` calls in flight at once — bounds how many simultaneous requests a large NOMAD catalog sync opens against NOMAD itself, rather than firing all of them at once. */
-async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let nextIndex = 0;
-  async function worker(): Promise<void> {
-    for (let i = nextIndex++; i < items.length; i = nextIndex++) {
-      results[i] = await fn(items[i]);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
-  return results;
-}
 
 /**
  * Translates Nomad-Net's abstract APIs (spec §37 — `GET content://...`,

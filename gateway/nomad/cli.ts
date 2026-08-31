@@ -7,6 +7,8 @@ import { AiGateway } from "./ai-gateway.js";
 import { NewsGateway } from "./news-gateway.js";
 import { InternetGateway } from "./internet-gateway.js";
 import { registerTranslateService } from "./translate-gateway.js";
+import { FakeFlatnotesServer } from "./fake-flatnotes-server.js";
+import { FlatnotesGateway } from "./flatnotes-gateway.js";
 
 /** How often NewsGateway re-syncs against `--news-url` when given (`docs/security.md`: "aggiornato ogni volta che si può"). */
 const NEWS_SYNC_INTERVAL_MS = 5 * 60 * 1000;
@@ -123,6 +125,17 @@ async function main(): Promise<void> {
     console.log(`Fake Ollama server (no --ai-url given): ${aiBaseUrl}`);
   }
 
+  let fakeFlatnotes: FakeFlatnotesServer | undefined;
+  let flatnotesBaseUrl = args["flatnotes-url"];
+  if (!flatnotesBaseUrl) {
+    fakeFlatnotes = new FakeFlatnotesServer();
+    fakeFlatnotes.addNote({ path: "benvenuto", title: "Benvenuto", content: "Questo e' un quaderno condiviso: chiunque puo' leggere o aggiungere una nota." });
+    fakeFlatnotes.addNote({ path: "regole-rifugio", title: "Regole del rifugio", content: "Silenzio dopo le 22, spegnere le luci comuni, richiudere il cancello." });
+    await fakeFlatnotes.start();
+    flatnotesBaseUrl = `http://127.0.0.1:${fakeFlatnotes.port}`;
+    console.log(`Fake FlatNotes server (no --flatnotes-url given): ${flatnotesBaseUrl}`);
+  }
+
   const maxContentStoreEntries = parsePositiveInt(args["max-content-entries"], DEFAULT_MAX_CONTENT_ENTRIES, "max-content-entries");
   const node = new NomadNode({ displayName: args.id ?? `GATEWAY-${port}`, maxContentStoreEntries });
   node.addTransport(new TcpTransport(node.nodeId, port));
@@ -141,6 +154,16 @@ async function main(): Promise<void> {
   // service://ai to exist, which is already always registered above (real backend or fake).
   registerTranslateService(node);
   console.log("Registered service://translation (composes service://ai)");
+
+  const flatnotesGateway = new FlatnotesGateway(node, flatnotesBaseUrl, {
+    maxRequestsPerPeerPerWindow: parsePositiveInt(args["flatnotes-max-requests-per-peer"], 10, "flatnotes-max-requests-per-peer"),
+    maxRequestsPerWindow: parsePositiveInt(args["flatnotes-max-requests-global"], 60, "flatnotes-max-requests-global"),
+    windowMs: parsePositiveInt(args["flatnotes-window-ms"], 60_000, "flatnotes-window-ms"),
+  });
+  const publishedNotes = await flatnotesGateway.syncCatalog();
+  flatnotesGateway.registerSearchService();
+  flatnotesGateway.registerCreateService();
+  console.log(`Published ${publishedNotes.length} note(s) from FlatNotes, registered service://flatnotes-search and service://flatnotes-create`);
 
   let newsGateway: NewsGateway | undefined;
   const newsFeedUrl = args["news-url"];
@@ -216,6 +239,7 @@ async function main(): Promise<void> {
     await node.stop();
     if (fakeServer) await fakeServer.stop();
     if (fakeOllama) await fakeOllama.stop();
+    if (fakeFlatnotes) await fakeFlatnotes.stop();
     process.exit(0);
   };
   process.on("SIGINT", () => void shutdown());
