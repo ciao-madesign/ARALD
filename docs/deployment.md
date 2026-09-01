@@ -15,7 +15,7 @@ La rete non deve dipendere dalla presenza di migliaia di smartphone sempre attiv
 | Prototipo software | Mac / PC | sviluppo, nodo, gateway, simulatore NOMAD tutto sulla stessa macchina |
 | Prototipo mobile | Smartphone (Android prioritario, §47) | client, relay opportunistico, courier, cache |
 | Nodo permanente | Raspberry Pi | BLE + Wi-Fi + Ethernet, basso consumo, sempre acceso |
-| Gateway / NOMAD completo | Mini-PC | AI, cache grandi, orchestrazione Docker di Project NOMAD |
+| Gateway / NOMAD completo | Mini-PC (o **NOMAD Hub portatile su SSD avviabile**, vedi sotto) | AI, cache grandi, orchestrazione Docker di Project NOMAD |
 | Futuro/ricerca | Hardware radio dedicato (LoRa) | backbone a lunga distanza, fuori scope MVP (§45) |
 
 Il Raspberry Pi **non** è un prerequisito per iniziare (§9): è un'evoluzione, non un punto di partenza.
@@ -34,6 +34,38 @@ L'obiettivo preferito dall'utente resta un unico dispositivo tutto-in-uno (gatew
 
 **Dove stanno e come comunicano**: entrambi restano fisicamente al rifugio, sulla stessa rete locale (un cavo o lo stesso Wi-Fi) — non serve mai Internet perché i due si parlino. Il gateway interpella il "PC" solo per le richieste pesanti (una domanda all'AI, un contenuto molto grande); il resto del tempo il "PC" può restare a riposo. Per un ospite con lo smartphone il confine tra i due oggetti è invisibile: si collega a un solo Wi-Fi e vede un solo "Nomad Net del rifugio". Se il "PC" è spento (es. di notte per risparmiare corrente, o un guasto), tutto il resto continua a funzionare — bacheca, mappe, messaggi, contenuti già in cache — solo l'AI e i contenuti che erano *soltanto* sul "PC" non sono disponibili fino a quando non torna acceso.
 
+## Il NOMAD Hub come sistema portatile (SSD avviabile) — valutato dall'utente con il proprio socio, 31 agosto 2026
+
+**Decisione architetturale**: il ruolo "PC"/"NOMAD server" del modello a due livelli sopra non deve legarsi a un computer specifico. L'intero ambiente software di Project NOMAD (sistema operativo, Docker, i suoi container, dati, modelli AI) vive su un **SSD USB esterno avviabile**; qualunque computer compatibile che lo monta ed esegue il boot da quell'unità diventa temporaneamente il NOMAD Hub. Il computer in sé non è "il NOMAD Hub" — è solo l'host hardware che lo esegue in quel momento. Coerente con §8/§86 della specifica, che già distingue "gateway come funzione software" da un hardware dedicato: questa decisione applica lo stesso principio al ruolo "PC" del modello a due livelli, non solo al "gateway".
+
+```
+                 NOMAD SSD
+        Ubuntu + Docker + NOMAD
+                    │
+        ┌───────────┼───────────┐
+        │           │           │
+      Acer       Mini-PC      altro PC
+        │           │           │
+        └───────────┼───────────┘
+                    │
+                NOMAD Hub
+```
+
+**Due scenari d'uso**:
+
+1. **PC compatibile trovato sul posto** (scenario prioritario): si collega l'SSD via USB, si avvia il PC da quell'unità, Ubuntu/Docker/NOMAD partono in automatico — nessuna installazione sul computer ospite, il suo sistema operativo e i suoi dati restano invariati. Requisiti della prima build: architettura **x86-64/AMD64**, boot da USB supportato, RAM minima richiesta da NOMAD, USB3 preferibile (non bloccante — più lento su USB2), Wi-Fi o Ethernet.
+2. **Mini-PC headless dedicato**: SSD + mini-PC compatibile + alimentatore, nessun monitor/tastiera/mouse — amministrato interamente dalla rete locale, con lo smartphone come dispositivo di controllo.
+
+**Nota pratica, non bloccante ma da tenere presente per lo scenario 1**: molti PC moderni hanno il Secure Boot attivo di default, che può impedire l'avvio da un'unità esterna non firmata finché non viene disattivato dal BIOS/UEFI (a volte protetto da password) — un passo che richiede comunque un minimo di competenza tecnica e accesso fisico al menu di boot (F2/F12/Esc a seconda del produttore), quindi "qualsiasi PC compatibile trovato sul posto" nella pratica richiede o un PC con Secure Boot già disattivabile facilmente, o qualcuno capace di farlo. Da tenere distinto dal cambiare permanentemente l'ordine di boot nel BIOS (da evitare: lascerebbe il PC host incapace di avviare il proprio sistema senza l'SSD collegato) — la selezione del dispositivo di boot va fatta una tantum dal menu rapido, non salvata in modo permanente.
+
+**Smartphone come pannello di controllo — sistema distinto dalla UI mobile di Nomad-Net**: la Control UI descritta per il NOMAD Hub (stato CPU/RAM/storage, servizi, rete, AI, radio, avvio/arresto moduli, riavvio, log) parla con una **NOMAD Management API** che amministra Docker e il sistema operativo dell'host — un livello di infrastruttura sotto Project NOMAD stesso. È un sistema **separato** dall'app mobile/`WebUiServer` di Nomad-Net già implementati in questo repository (spec §59): quest'ultimo mostra lo stato della *mesh* (vicini, contenuti, servizi via `service://...`) e non ha né deve avere alcun accesso a Docker o al sistema operativo dell'host — la stessa separazione controllo/infrastruttura che la specifica del NOMAD Hub descrive al punto 4 si applica quindi due volte, non una: gateway Nomad-Net e NOMAD Hub restano due sistemi distinti anche nel loro rispettivo pannello di controllo.
+
+**Principi architetturali** (riassunti dalla specifica valutata con il socio): il disco contiene tutto il necessario per essere autonomo (Ubuntu Server, Docker Engine/Compose, NOMAD Core/Gateway/Web UI/DB, configurazioni, dati, modelli AI, software radio, script di bootstrap) sotto una struttura simile a `/opt/nomad/` (`compose/`, `config/`, `data/{database,content,cache,index}/`, `models/`, `radio/`, `logs/`, `backups/`) senza dipendenze da percorsi specifici del computer ospite; ogni componente Project NOMAD è un container Docker separato (`nomad-core`, `nomad-gateway`, `nomad-web`, `nomad-db`, `nomad-storage`, `nomad-ai`, `nomad-radio`, `nomad-monitoring`), con AI e radio moduli opzionali che non impediscono l'avvio del Core se assenti/disattivati; l'avvio automatico (BIOS/UEFI → SSD → Ubuntu → Docker → bootstrap NOMAD → servizi disponibili) verifica rete/spazio/RAM/Docker/container/database/moduli opzionali, segnalando ciò che manca senza bloccare l'avvio di ciò che invece è pronto; la prima build è x86-64 (compatibile con l'Acer e la maggior parte dei PC/mini-PC), con una build ARM64 (Raspberry Pi, Orange Pi, NanoPi e altri SBC) prevista in futuro tramite immagini Docker multi-architecture, quando possibile; un livello concettuale "NOMAD Host" astrae CPU/RAM/storage/rete/USB/hardware opzionale così il Core non deve mai essere sviluppato per un modello di PC specifico, aprendo in futuro anche la strada a un "NOMAD Box" dedicato senza riscrivere il software applicativo.
+
+**Fuori dallo scope di questo repository**: quanto sopra descrive il **confezionamento di Project NOMAD stesso** (sistema operativo, Docker, orchestrazione, driver radio) — un progetto esterno e separato (`docs/reuse-vs-new.md`), di cui questo repository non contiene il codice sorgente e che la specifica stessa definisce "non dichiarato stabile" (§4). Il gateway Nomad-Net (`gateway/nomad/`) continua a funzionare esattamente come oggi verso qualunque istanza NOMAD raggiungibile via HTTP sulla rete locale, a prescindere da come quell'istanza è stata avviata — nessun contratto (`service://ai`, `service://kiwix-search`, ecc.) cambia. Questa sezione resta quindi **documentazione di riferimento/pianificazione**, come il resto di questo file, non un piano di implementazione per codice in questo repository: non ci sono script di bootstrap, `docker-compose.yml` o immagini da costruire qui.
+
+Questo cambia anche la lettura della tabella "Alternative hardware più economiche" sotto: non è più necessario scegliere in anticipo *quale* dispositivo comprare per il ruolo "PC" — un SSD avviabile funziona su qualunque host x86-64 compatibile già disponibile (l'esempio concreto valutato dall'utente: un SSD Netac da 250 GB, avviato su un PC Acer esistente come piattaforma di sviluppo — non un investimento vincolato a quella specifica macchina, spostabile su un host migliore in futuro senza rifare nulla). Le righe della tabella restano comunque utili per chi deve *anche* comprare l'host (non ne ha già uno compatibile a disposizione), o per valutare l'accelerazione AI.
+
 ### Alternative hardware più economiche di "gateway + PC intero"
 
 Valutate in chat il 30 agosto 2026, nessuna ancora scelta come raccomandazione definitiva:
@@ -51,7 +83,7 @@ Per la componentistica minima e le istruzioni passo passo di installazione/gesti
 
 Configurazione target, nei termini del modello a due livelli sopra:
 
-- 1 "PC"/mini-PC per i contenuti pesanti e l'AI locale (il "NOMAD server" — Docker, Debian-based, corrisponde alla "cucina" della spiegazione sopra)
+- 1 "PC"/mini-PC per i contenuti pesanti e l'AI locale (il "NOMAD server"/NOMAD Hub — Docker, corrisponde alla "cucina" della spiegazione sopra; idealmente un SSD avviabile con l'intero ambiente NOMAD, vedi "Il NOMAD Hub come sistema portatile" sopra, così l'host fisico diventa intercambiabile)
 - 1 gateway sempre acceso rivolto agli ospiti (può coincidere fisicamente con il "PC" solo se si verifica che l'hardware scelto regge entrambi i ruoli, vedi sopra — altrimenti restano due dispositivi distinti sulla stessa rete locale)
 - 2-3 nodi fissi (Raspberry Pi / mini-PC) per estendere la copertura BLE/Wi-Fi
 - 10-50 smartphone come client opportunistici
@@ -80,7 +112,7 @@ Configurazione target: 1 nodo gateway fisso con lo stesso ruolo del "PC"/mini-PC
 
 ## Pilot: spedizioni / navi / ambienti remoti (§6.6)
 
-Molto vicino al modello già descritto per rifugio ed emergenza (nodo/i autosufficienti, nessuna connettività esterna) — la differenza principale è che qui l'intero cluster di nodi **viaggia** insieme al gruppo, senza il "ritorno di Internet" periodico che un rifugio può avere quando qualcuno scende a valle: l'assenza di connettività va pianificata per l'intera durata della spedizione (settimane/mesi), non come un'interruzione temporanea. Configurazione target: essenzialmente la stessa del pilot rifugio (gateway + "PC" per contenuti pesanti/AI), dimensionata per autosufficienza energetica prolungata (pannello solare/generatore) e con tutti i contenuti caricati una volta prima della partenza, dato che non c'è modo di aggiungerne altri in corsa.
+Molto vicino al modello già descritto per rifugio ed emergenza (nodo/i autosufficienti, nessuna connettività esterna) — la differenza principale è che qui l'intero cluster di nodi **viaggia** insieme al gruppo, senza il "ritorno di Internet" periodico che un rifugio può avere quando qualcuno scende a valle: l'assenza di connettività va pianificata per l'intera durata della spedizione (settimane/mesi), non come un'interruzione temporanea. Configurazione target: essenzialmente la stessa del pilot rifugio (gateway + "PC" per contenuti pesanti/AI), dimensionata per autosufficienza energetica prolungata (pannello solare/generatore) e con tutti i contenuti caricati una volta prima della partenza, dato che non c'è modo di aggiungerne altri in corsa. Il ruolo "PC" come NOMAD Hub portatile su SSD (sopra) si adatta particolarmente bene qui: l'unico oggetto da portare per quel ruolo è l'SSD stesso, avviabile su qualunque computer di bordo compatibile già presente sulla nave/spedizione, senza dover trasportare un mini-PC dedicato in più.
 
 ## Comunità locali (§6.7) — nessun pilot dedicato per ora
 
@@ -88,4 +120,6 @@ La specifica stessa segnala questo come "caso d'uso più debole come primo prodo
 
 ## Non ancora pianificato in dettaglio
 
-**Benchmark hardware reale, prerequisito per scegliere tra "tutto in uno" e il modello a due livelli sopra**: non ancora eseguito in questo ambiente (nessun accesso a hardware fisico). Servirebbe far girare un modello Ollama minimo (~0.5-1B parametri, quantizzato) su un Orange Pi Zero 2W reale, misurando token/secondo sotto carico concorrente (mentre 2-3 telefoni scaricano contenuti dalla mesh contemporaneamente, non isolato) — è l'unico modo per sapere se l'opzione "tutto in uno" è davvero percorribile o se conviene il modello a due livelli fin da subito.
+**Benchmark hardware reale, prerequisito per scegliere tra "tutto in uno" e il modello a due livelli sopra**: non ancora eseguito in questo ambiente (nessun accesso a hardware fisico). Servirebbe far girare un modello Ollama minimo (~0.5-1B parametri, quantizzato) su un Orange Pi Zero 2W reale, misurando token/secondo sotto carico concorrente (mentre 2-3 telefoni scaricano contenuti dalla mesh contemporaneamente, non isolato) — è l'unico modo per sapere se l'opzione "tutto in uno" è davvero percorribile o se conviene il modello a due livelli fin da subito. Il NOMAD Hub portatile su SSD (sopra) non elimina questo prerequisito, lo sposta solo: qualunque host x86-64 finisca per eseguire l'SSD (l'Acer di sviluppo o un altro) deve comunque avere CPU/RAM sufficienti per Docker + i container NOMAD attivi contemporaneamente — un problema di dimensionamento reale, indipendente da quale specifico computer viene usato.
+
+**Bootstrap/packaging del NOMAD Hub (Ubuntu+Docker su SSD avviabile, script di avvio automatico, immagini Docker)**: descritto come piano di riferimento sopra, non ancora costruito né testato — richiede sia hardware fisico sia l'accesso al codice sorgente di Project NOMAD (repository esterno, non incluso qui) per scrivere `docker-compose.yml`/script di bootstrap reali, nessuno dei due disponibile in questo ambiente.
