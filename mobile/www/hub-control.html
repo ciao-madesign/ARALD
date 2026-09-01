@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<title>NOMAD Hub · Pannello di controllo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#c9a227">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!--
+  Pagina statica separata da index.html/app.js, di proposito: questa parla con la NOMAD Management
+  API (amministra Docker/l'host su cui gira Project NOMAD), non con il WebUiServer della mesh — due
+  sistemi distinti (docs/deployment.md, "Il NOMAD Hub come sistema portatile") con due superfici di
+  rischio molto diverse. Non è mai linkata da index.html: un ospite pairato alla mesh non deve
+  arrivarci per caso, e la sua stessa esistenza è pensata per l'operatore, non per un visitatore.
+  Riusa styles.css (già generico, nessun riferimento alla mesh) più un piccolo blocco di stile
+  proprio in fondo a quel file, sotto un commento "NOMAD Hub". Nessuna dipendenza da app.js: le due
+  pagine non condividono stato (localStorage con chiavi diverse: nomadhub.* qui, nomadnet.* là).
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" class="icon-sprite" aria-hidden="true" focusable="false">
+  <defs>
+    <g id="hub-icon-lock"><rect x="3.5" y="10.5" width="17" height="11" rx="2"/><path d="M7 10.5V7a5 5 0 0 1 10 0v3.5"/></g>
+    <g id="hub-icon-eye"><path d="M1 12s4-7.5 11-7.5S23 12 23 12s-4 7.5-11 7.5S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></g>
+    <g id="hub-icon-eye-off"><path d="M17.7 17.7A11 11 0 0 1 12 19.5c-7 0-11-7.5-11-7.5a21 21 0 0 1 5-6M9.9 4.7A11 11 0 0 1 12 4.5c7 0 11 7.5 11 7.5a21 21 0 0 1-2.1 3.2M14.1 14.1a3 3 0 1 1-4.2-4.2"/><line x1="1" y1="1" x2="23" y2="23"/></g>
+    <g id="hub-icon-refresh"><polyline points="22.5 4.5 22.5 10 17 10"/><polyline points="1.5 19.5 1.5 14 7 14"/><path d="M3.5 9A9 9 0 0 1 18 5.6L22.5 10M1.5 14l4.5 4.4A9 9 0 0 0 20.5 15"/></g>
+    <g id="hub-icon-alert"><path d="M10.3 3.9 1.9 18a2 2 0 0 0 1.7 3h16.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9.5" x2="12" y2="13.5"/><circle cx="12" cy="17" r="1" fill="currentColor" stroke="none"/></g>
+    <g id="hub-icon-back"><polyline points="15 18 9 12 15 6"/></g>
+    <g id="hub-icon-wrench"><path d="M14.5 6.4a4 4 0 1 1-5.4 5.4L3 18l3 3 6.2-6.1a4 4 0 0 1 5.4-5.4l-3 3-2-2z"/></g>
+  </defs>
+</svg>
+
+<section id="hub-setup-screen">
+  <div class="setup-card">
+    <div class="setup-mark"><svg viewBox="0 0 24 24" class="icon icon-lg" aria-hidden="true"><use href="#hub-icon-wrench"></use></svg></div>
+    <h1>NOMAD HUB</h1>
+    <p class="lede">Pannello di controllo per chi amministra questo NOMAD Hub — non la rete Nomad-Net stessa.</p>
+    <form id="hub-setup-form">
+      <label for="hub-address-input">Indirizzo della Management API</label>
+      <input id="hub-address-input" type="text" placeholder="192.168.1.5:8420" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      <p class="hint">Te lo fornisce chi ha avviato "npm run hub" su questo host.</p>
+      <label for="hub-password-input">Password di gestione</label>
+      <div class="password-row">
+        <span class="input-icon" aria-hidden="true"><svg viewBox="0 0 24 24" class="icon"><use href="#hub-icon-lock"></use></svg></span>
+        <input id="hub-password-input" type="password" placeholder="K7XM-2QRT" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+        <button type="button" id="hub-toggle-password" class="icon-button" aria-label="Mostra password" aria-pressed="false">
+          <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#hub-icon-eye"></use></svg>
+        </button>
+      </div>
+      <p class="hint">Stampata in console quando il processo è stato avviato — mai su una pagina web, per motivi di sicurezza.</p>
+      <button type="submit" id="hub-connect-submit">
+        <span class="btn-label">Connetti</span>
+        <span class="btn-spinner" hidden></span>
+      </button>
+      <p id="hub-setup-error" class="error" role="alert" aria-live="assertive" hidden></p>
+    </form>
+  </div>
+</section>
+
+<section id="hub-dashboard-screen" hidden>
+  <header id="hub-header">
+    <h1>NOMAD HUB</h1>
+    <button type="button" id="hub-change-gateway" class="icon-button" aria-label="Cambia Management API">
+      <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#hub-icon-back"></use></svg>
+    </button>
+  </header>
+  <main id="hub-main">
+    <p class="hint">Container Docker su questo host — avvio/arresto/riavvio agiscono davvero sul demone Docker della macchina.</p>
+    <p id="hub-status-error" class="error" role="alert" aria-live="assertive" hidden></p>
+    <ul id="hub-container-list"></ul>
+  </main>
+</section>
+
+<div id="hub-toast" class="toast" role="status" hidden></div>
+
+<script src="hub-control.js"></script>
+</body>
+</html>
