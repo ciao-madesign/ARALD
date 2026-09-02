@@ -65,11 +65,16 @@ async function main(): Promise<void> {
 
   const containerNamePrefix = args["container-prefix"];
   const capabilityStoragePath = args["capability-storage-path"];
-  const server = new ManagementServer(docker, { port, managementPassword, containerNamePrefix, capabilityStoragePath });
+  const host = args["host"];
+  const server = new ManagementServer(docker, { port, host, managementPassword, containerNamePrefix, capabilityStoragePath });
   await server.start();
 
   console.log("NOMAD Hub Management API");
-  console.log(`Ascolto su porta: ${server.port}`);
+  const boundHost = host ?? "127.0.0.1";
+  console.log(`Ascolto su: http://${boundHost}:${server.port}`);
+  if (!host) {
+    console.log(`Nota: --host non impostato, quindi in ascolto solo su 127.0.0.1 — un telefono sulla stessa Wi-Fi non può ancora raggiungerlo.`);
+  }
   // Never served over HTTP (management-server.ts's own doc comment explains why) — printed here only,
   // for whoever has console/SSH access to the process that just started.
   console.log(`Password di gestione: ${managementPassword}`);
