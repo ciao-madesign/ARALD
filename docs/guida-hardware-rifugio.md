@@ -65,6 +65,8 @@ Il dispositivo scelto sopra (router o scheda singola economica) **basta da solo*
 
 **Cosa cambia per l'ospite**: nulla nel modo di collegarsi — sempre lo stesso Wi-Fi, lo stesso nome rete, la stessa password. Se questo secondo dispositivo è acceso, in più rispetto al solito compaiono anche le risposte dell'intelligenza artificiale. Se è spento (es. di notte, o un guasto), tutto il resto continua a funzionare normalmente — solo l'AI non risponde finché non torna acceso.
 
+**Terza opzione (2 settembre 2026, vedi `docs/deployment.md` "NOMAD-NET BOX e PORTABLE")**: oltre a un mini-PC usato e a un SSD avviabile (NOMAD-NET PORTABLE, sopra), esiste ora anche una configurazione di riferimento per un dispositivo dedicato singolo — **NOMAD-NET BOX**: una scheda Orange Pi 4 Pro (4 GB) più un SSD NVMe interno da 256 GB (~20-30 € per l'SSD, budget indicativo per il modello di riferimento — non serve un SSD veloce/premium), dissipatore e alimentatore USB-C. A differenza delle prime due opzioni non richiede un computer separato da trovare/riusare, ma è anche l'unica delle tre a richiedere l'acquisto di hardware dedicato invece di riusare qualcosa già disponibile. Resta comunque **non ancora verificata con un benchmark reale** in questo progetto (stessa nota in cima a questa guida) — il chip indicato (Allwinner A733) è riportato come fornito dalla specifica ricevuta, non verificato in modo indipendente.
+
 **Preparazione**: fuori dallo scopo di questa guida per ora (richiede installare Ollama e un modello di linguaggio leggero) — chi vuole aggiungere questo pezzo dovrebbe chiedere una mano a chi segue il progetto Nomad-Net. Per il confronto tecnico completo tra le diverse opzioni hardware per questo secondo dispositivo, vedi `docs/deployment.md`.
 
 ---
