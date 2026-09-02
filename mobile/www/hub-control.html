@@ -67,6 +67,13 @@
     </button>
   </header>
   <main id="hub-main">
+    <section id="hub-host-panel">
+      <h2>Host</h2>
+      <p class="hint">Hardware della macchina su cui gira questa Management API — indipendente da Docker, disponibile anche se il demone non risponde.</p>
+      <dl id="hub-host-details"></dl>
+    </section>
+
+    <h2>Container</h2>
     <p class="hint">Container Docker su questo host — avvio/arresto/riavvio agiscono davvero sul demone Docker della macchina.</p>
     <p id="hub-status-error" class="error" role="alert" aria-live="assertive" hidden></p>
     <ul id="hub-container-list"></ul>

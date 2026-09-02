@@ -902,3 +902,16 @@ li.skel-row { display: flex; flex-direction: column; }
   margin-top: 0.7em; padding: 0.7em; background: var(--bg); border: 1px solid var(--border); border-radius: 0.5em;
   font-size: 0.8em; max-height: 12em; overflow-y: auto; white-space: pre-wrap; word-break: break-word;
 }
+#hub-host-panel {
+  background: var(--card); border: 1px solid var(--border); border-radius: 0.7em; padding: 0.9em 1em;
+  box-shadow: var(--shadow-sm); margin: 1em 0 1.4em;
+}
+/* <dl>/<dt>/<dd> rows, label above value (not side-by-side) — capability-manager.ts's
+   getHardwareProfile() fields, one row per field (see renderHostCapabilities(), hub-control.js). A
+   side-by-side term/value grid (tried first) wrapped the longer values (storage, the gpu/npu/
+   bluetooth/usb3 line) into a jagged right-aligned paragraph — found by visual review — so each
+   pair stacks instead, both left-aligned, same layout every long-text label/value pair elsewhere in
+   this app already uses. */
+#hub-host-details { margin: 0.6em 0 0; display: flex; flex-direction: column; gap: 0.7em; }
+#hub-host-details dt { color: var(--muted); font-size: 0.78em; }
+#hub-host-details dd { margin: 0.1em 0 0; font-size: 0.9em; }

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { arch, cpus, platform } from "node:os";
 import { FakeDockerServer } from "../../nomad-hub/fake-docker-server.js";
 import { DockerClient } from "../../nomad-hub/docker-client.js";
 import { ManagementServer } from "../../nomad-hub/management-server.js";
@@ -39,7 +40,12 @@ describe("NOMAD Hub Management API (mocked, no real Docker)", () => {
     server = undefined;
   });
 
-  async function setup(options?: { containerNamePrefix?: string; actionRateLimitWindowMs?: number; maxActionsPerWindow?: number }): Promise<{
+  async function setup(options?: {
+    containerNamePrefix?: string;
+    actionRateLimitWindowMs?: number;
+    maxActionsPerWindow?: number;
+    capabilityStoragePath?: string;
+  }): Promise<{
     password: string;
   }> {
     fakeDocker = new FakeDockerServer();
@@ -219,5 +225,74 @@ describe("NOMAD Hub Management API (mocked, no real Docker)", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { logs: string };
     expect(body.logs).toBe("riga tty uno\nriga tty due\n");
+  });
+
+  it("GET /api/hub/capabilities requires the management password, same as every other endpoint", async () => {
+    await setup();
+    const res = await fetch(apiUrl(server!, "/api/hub/capabilities"));
+    expect(res.status).toBe(401);
+  });
+
+  it("GET /api/hub/capabilities reports real, verifiable host facts — not fabricated ones", async () => {
+    const { password } = await setup();
+    const res = await authedFetch(server!, "/api/hub/capabilities", password);
+    expect(res.status).toBe(200);
+    const profile = (await res.json()) as {
+      architecture: string;
+      platform: string;
+      cpuCores: number;
+      ramGb: number;
+      networkInterfaces: string[];
+      gpu: unknown;
+      npu: unknown;
+      bluetooth: unknown;
+      usb3: unknown;
+    };
+
+    // Cross-checked against node:os directly, on the same process running the test — these must
+    // match exactly, since getHardwareProfile() is just a thin wrapper around those same calls.
+    expect(profile.architecture).toBe(arch());
+    expect(profile.platform).toBe(platform());
+    expect(profile.cpuCores).toBe(cpus().length);
+    expect(profile.ramGb).toBeGreaterThan(0);
+    expect(Array.isArray(profile.networkInterfaces)).toBe(true);
+
+    // Never a guessed true/false — see capability-manager.ts's own doc comment for why.
+    expect(profile.gpu).toBeNull();
+    expect(profile.npu).toBeNull();
+    expect(profile.bluetooth).toBeNull();
+    expect(profile.usb3).toBeNull();
+  });
+
+  it("GET /api/hub/capabilities reports storage for capabilityStoragePath when given, falling back to null (never throwing) for a path that doesn't exist", async () => {
+    const { password } = await setup({ capabilityStoragePath: process.cwd() });
+    const res = await authedFetch(server!, "/api/hub/capabilities", password);
+    const profile = (await res.json()) as { storage: { path: string; totalGb: number; freeGb: number } | null };
+    expect(profile.storage).not.toBeNull();
+    expect(profile.storage!.path).toBe(process.cwd());
+    expect(profile.storage!.totalGb).toBeGreaterThan(0);
+
+    // Explicitly torn down before the second setup() below — afterEach() only stops whichever
+    // server/fakeDocker the module-level variables currently reference, so leaving this first pair
+    // running would leak it (still listening) once setup() reassigns those variables.
+    await server!.stop();
+    await fakeDocker!.stop();
+
+    await setup({ capabilityStoragePath: "/this/path/definitely/does/not/exist/anywhere" });
+    const badRes = await authedFetch(server!, "/api/hub/capabilities", password);
+    expect(badRes.status).toBe(200); // never a 500 — a bad storage path degrades to null, doesn't crash the endpoint
+    const badProfile = (await badRes.json()) as { storage: unknown };
+    expect(badProfile.storage).toBeNull();
+  });
+
+  it("GET /api/hub/capabilities works even when Docker itself is unreachable — it never touches DockerClient", async () => {
+    const { password } = await setup();
+    await fakeDocker!.stop(); // simulates Docker being down, without tearing down the ManagementServer itself
+    const res = await authedFetch(server!, "/api/hub/capabilities", password);
+    expect(res.status).toBe(200);
+
+    // For contrast: /api/hub/status *does* depend on Docker, and correctly degrades to 502 here.
+    const statusRes = await authedFetch(server!, "/api/hub/status", password);
+    expect(statusRes.status).toBe(502);
   });
 });

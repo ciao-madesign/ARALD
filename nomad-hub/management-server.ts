@@ -3,6 +3,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { LoopbackHttpServer, sendJson } from "../node/src/loopback-http-server.js";
 import { BoundedFifoMap } from "../node/src/bounded-map.js";
 import { DockerApiError, DockerClient, type DockerContainerSummary } from "./docker-client.js";
+import { getHardwareProfile } from "./capability-manager.js";
 
 const DEFAULT_ACTION_RATE_LIMIT_WINDOW_MS = 10_000;
 const DEFAULT_MAX_ACTIONS_PER_WINDOW = 20; // generous for a human tapping buttons, bounds a runaway script/bug — see checkActionRateLimit()'s doc comment
@@ -25,12 +26,17 @@ export interface ManagementServerOptions {
   /** Overrides for `checkActionRateLimit()`'s window — same reason every gateway in `gateway/nomad/` exposes its own rate-limit constants as options (tests need a window shorter than the production default to run in reasonable time). */
   actionRateLimitWindowMs?: number;
   maxActionsPerWindow?: number;
+  /** Filesystem path `GET /api/hub/capabilities`'s storage figures are reported for — defaults to this process's own working directory (`capability-manager.ts`'s own default) when unset. */
+  capabilityStoragePath?: string;
 }
 
 /**
  * HTTP server for the "NOMAD Management API" (`docs/deployment.md`, "Il
- * NOMAD Hub come sistema portatile") — administers the Docker containers a
- * NOMAD Hub host runs, via `DockerClient`. Deliberately **not** part of
+ * NOMAD Hub come sistema portatile"/"NOMAD-NET BOX e PORTABLE") —
+ * administers the Docker containers a NOMAD Hub host runs, via
+ * `DockerClient`, and reports the host's own hardware profile via
+ * `capability-manager.ts` (`GET /api/hub/capabilities`, independent of
+ * Docker connectivity). Deliberately **not** part of
  * `node/src/`/`gateway/nomad/`: this never touches the mesh (`NomadNode`)
  * at all, so it can't be reached by a mesh guest the way `service://...`
  * calls or `WebUiServer` endpoints can — see `nomad-hub/`'s own top-level
@@ -106,6 +112,14 @@ export class ManagementServer {
 
     if (req.method === "GET" && url.pathname === "/api/hub/status") {
       await this.handleStatus(res);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/hub/capabilities") {
+      // Independent of Docker connectivity — unlike handleStatus(), this never touches this.docker:
+      // reporting the host's own CPU/RAM/storage is useful diagnostic information precisely when
+      // Docker itself is unreachable ("does this host even have enough RAM?"), not only when it's up.
+      sendJson(res, 200, getHardwareProfile({ storagePath: this.options.capabilityStoragePath }));
       return;
     }
 

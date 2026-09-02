@@ -129,8 +129,43 @@ function showDashboard() {
   document.getElementById("hub-setup-screen").hidden = true;
   document.getElementById("hub-dashboard-screen").hidden = false;
   refreshStatus();
+  // Fetched once, not on every poll tick like refreshStatus() — a host's CPU/RAM/architecture don't
+  // change mid-session, so polling this every 4s like the container list would just be waste.
+  loadHostCapabilities();
   clearInterval(pollTimer);
   pollTimer = setInterval(refreshStatus, STATUS_POLL_MS);
+}
+
+/** `GET /api/hub/capabilities` — see capability-manager.ts (nomad-hub/) for what each field means and why gpu/npu/bluetooth/usb3 are always null rather than guessed. */
+async function loadHostCapabilities() {
+  const details = document.getElementById("hub-host-details");
+  try {
+    const profile = await hubFetch("/api/hub/capabilities");
+    renderHostCapabilities(profile);
+  } catch (err) {
+    details.textContent = "";
+    details.append(el("dt", { textContent: "Errore" }), el("dd", { textContent: err.message }));
+  }
+}
+
+function capabilityRow(term, value) {
+  return [el("dt", { textContent: term }), el("dd", { textContent: value })];
+}
+
+function renderHostCapabilities(profile) {
+  const details = document.getElementById("hub-host-details");
+  details.textContent = "";
+  const rows = [
+    capabilityRow("Architettura", profile.architecture + " (" + profile.platform + ")"),
+    capabilityRow("CPU", profile.cpuCores + " core"),
+    capabilityRow("RAM", profile.ramGb + " GB"),
+    profile.storage
+      ? capabilityRow("Storage", profile.storage.freeGb + " GB liberi su " + profile.storage.totalGb + " GB (" + profile.storage.path + ")")
+      : capabilityRow("Storage", "non rilevabile"),
+    capabilityRow("Interfacce di rete", profile.networkInterfaces.length > 0 ? profile.networkInterfaces.join(", ") : "nessuna rilevata"),
+    capabilityRow("GPU / NPU / Bluetooth / USB3", "non rilevabile da qui — richiede strumenti specifici del sistema operativo"),
+  ];
+  for (const [dt, dd] of rows) details.append(dt, dd);
 }
 
 function showSetup() {

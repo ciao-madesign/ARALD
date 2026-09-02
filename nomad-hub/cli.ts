@@ -64,7 +64,8 @@ async function main(): Promise<void> {
   }
 
   const containerNamePrefix = args["container-prefix"];
-  const server = new ManagementServer(docker, { port, managementPassword, containerNamePrefix });
+  const capabilityStoragePath = args["capability-storage-path"];
+  const server = new ManagementServer(docker, { port, managementPassword, containerNamePrefix, capabilityStoragePath });
   await server.start();
 
   console.log("NOMAD Hub Management API");
@@ -77,6 +78,7 @@ async function main(): Promise<void> {
   } else {
     console.log("Nessun filtro container: ogni container del demone Docker e' gestibile da qui.");
   }
+  console.log(`Profilo hardware su GET /api/hub/capabilities (storage riportato per: ${capabilityStoragePath ?? process.cwd()})`);
 
   const shutdown = async (): Promise<void> => {
     await server.stop();
