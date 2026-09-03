@@ -2,7 +2,9 @@
 
 **Stato**: documentazione di riferimento/pianificazione, v0.1 — **nessun codice scritto, nessun hardware costruito**. Proposta ricevuta dall'utente il 3 settembre 2026, valutata insieme all'utente prima di essere integrata qui.
 
-Tenuta in un documento **separato** da `docs/beacon.md`, su richiesta esplicita dell'utente: `docs/beacon.md` descrive i dispositivi (Beacon, Mobile Relay, Fixed Relay, Relay Registry) e la loro compatibilità con l'architettura Nomad-Net esistente; questo documento descrive invece come si arriverebbe, per gradi, a validare quei dispositivi **insieme come rete** — fino a un eventuale test sul campo con un ente reale. Per le definizioni dei dispositivi/ruoli, vedi `docs/beacon.md` — qui vengono date per assunte, senza ripeterle.
+Tenuta in un documento **separato** da `docs/beacon.md`, su richiesta esplicita dell'utente: `docs/beacon.md` descrive i dispositivi (la NOMAD Card — un unico hardware in tre profili firmware Beacon/Relay/Beacon+Relay Mode —, Fixed Relay, Relay Registry) e la loro compatibilità con l'architettura Nomad-Net esistente; questo documento descrive invece come si arriverebbe, per gradi, a validare quei dispositivi **insieme come rete** — fino a un eventuale test sul campo con un ente reale. Per le definizioni dei dispositivi/ruoli, vedi `docs/beacon.md` — qui vengono date per assunte, senza ripeterle.
+
+**Nota terminologica**: le tabelle sotto elencano ancora "Emergency Beacon" e "Mobile Relay" come voci separate con quantità proprie — riflettono la proposta originale del piano di test, ricevuta prima che l'utente decidesse di unificare l'hardware nella NOMAD Card (`docs/beacon.md`). Le quantità restano valide come conteggio di **unità configurate in un profilo firmware o nell'altro** (Beacon Mode / Relay Mode), non più come due prodotti fisici distinti.
 
 ## Perché un piano a fasi
 
@@ -116,9 +118,9 @@ Osservazione dell'utente, condivisibile: richiedere a tutti l'app NOMAD per part
 |---|---|---|
 | 1 — Infrastruttura | Fixed Relay e NOMAD-Box installati sul territorio | `docs/beacon.md`, sezione Fixed Relay |
 | 2 — Smartphone | App NOMAD come relay opportunistico | `docs/beacon.md`, ruolo "Relay" — modalità "NOMAD Relay" |
-| 3 — Beacon | Persone che portano un Emergency Beacon dedicato | `docs/beacon.md`, sezione Beacon |
-| 4 — Relay personali | Persone che portano un Mobile Relay dedicato | `docs/beacon.md`, sezione Mobile Relay |
-| 5 — Infrastruttura professionale | Droni, veicoli di soccorso, rifugi, operatori | `docs/beacon.md`, "Modalità di impiego" del Mobile Relay |
+| 3 — Beacon | Persone che portano una NOMAD Card in Beacon Mode | `docs/beacon.md`, sezione NOMAD Card |
+| 4 — Relay personali | Persone che portano una NOMAD Card in Relay Mode | `docs/beacon.md`, sezione NOMAD Card |
+| 5 — Infrastruttura professionale | Droni, veicoli di soccorso, rifugi, operatori | `docs/beacon.md`, sezione Fixed Relay |
 
 Chi non possiede un Beacon può comunque contribuire alla rete semplicemente portando uno smartphone compatibile (Livello 2) — nessun livello è prerequisito di un altro.
 
@@ -126,7 +128,7 @@ Chi non possiede un Beacon può comunque contribuire alla rete semplicemente por
 
 Il modello RECCO (dispositivo passivo, sempre integrato nell'attrezzatura, l'utente non deve fare nulla durante l'emergenza) è un riferimento pertinente per l'obiettivo a lungo termine: non "scarica NOMAD, registrati, compra un Beacon e ricordati di portarlo", ma "NOMAD è già presente nell'attrezzatura che usi". Zaini, imbraghi, caschi, giacche, kit di sicurezza, dispositivi per bambini, attrezzatura da sci/alpinismo, veicoli outdoor sono tutti possibili contenitori per un NOMAD Relay integrato dal produttore — l'utente non deve nemmeno sapere che esiste, lo porta semplicemente con sé.
 
-**Importante**: a differenza di Beacon/Mobile Relay/Fixed Relay documentati sopra (dispositivi NOMAD dedicati), questa integrazione dipende da **accordi con produttori terzi** di attrezzatura outdoor/sicurezza — una decisione commerciale/di partnership, non una questione tecnica di questo repository, nello stesso modo in cui gli enti di soccorso sopra sono una decisione di relazioni esterne dell'utente. L'idea più prossima e realizzabile è integrare NOMAD in dispositivi che hanno **già una batteria propria** (GPS outdoor, comunicatori satellitari, smartwatch, e-bike) — costo energetico marginale basso, NOMAD come strato di comunicazione complementare invece che dispositivo a sé.
+**Importante**: a differenza della NOMAD Card/Fixed Relay documentati sopra (dispositivi NOMAD dedicati), questa integrazione dipende da **accordi con produttori terzi** di attrezzatura outdoor/sicurezza — una decisione commerciale/di partnership, non una questione tecnica di questo repository, nello stesso modo in cui gli enti di soccorso sopra sono una decisione di relazioni esterne dell'utente. L'idea più prossima e realizzabile è integrare NOMAD in dispositivi che hanno **già una batteria propria** (GPS outdoor, comunicatori satellitari, smartwatch, e-bike) — costo energetico marginale basso, NOMAD come strato di comunicazione complementare invece che dispositivo a sé.
 
 ### Ruolo del Beacon in questo modello
 
