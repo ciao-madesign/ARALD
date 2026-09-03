@@ -195,6 +195,26 @@ L'unica conseguenza pratica per la documentazione di questo progetto: i "Pilot" 
 
 ---
 
+## Conformità normativa e sicurezza (UE)
+
+**Stato**: testo di riferimento fornito dall'utente lo stesso giorno — nessuna verifica indipendente delle citazioni normative specifiche in questa sessione (nessun accesso a internet reale, stessa limitazione già dichiarata altrove nel progetto per informazioni istituzionali/hardware non verificabili qui). Riguarda **tutti** i dispositivi radio di questo ecosistema (Beacon, Mobile Relay, Fixed Relay) qualora si arrivasse mai a una commercializzazione reale — nessuna implicazione per il codice o la documentazione tecnica esistente, che restano una simulazione software indipendente dal fatto che l'hardware finale sia mai certificato o meno.
+
+**Precisazione importante segnalata dall'utente**: per la commercializzazione nell'Unione Europea non basta usare un modulo radio già certificato — la conformità va valutata sul **dispositivo finale** e sulla sua **configurazione d'uso**, non sul solo componente radio.
+
+Testo fornito dall'utente, riportato come riferimento:
+
+> Tutti i dispositivi NOMAD-Net destinati alla commercializzazione o alla distribuzione sul mercato europeo dovranno essere progettati e verificati in conformità alla normativa UE applicabile alle apparecchiature radio ed elettroniche. In particolare, i dispositivi dotati di BLE e/o LoRa dovranno rispettare la Direttiva Radio Equipment Directive (RED) 2014/53/UE, comprendendo requisiti di sicurezza, compatibilità elettromagnetica (EMC) e corretto utilizzo dello spettro radio; per il Bluetooth a 2,4 GHz dovranno essere considerate le norme armonizzate applicabili, tra cui ETSI EN 300 328, mentre per le trasmissioni LoRa/SRD nella banda europea 863–870 MHz dovranno essere rispettati i limiti di potenza, banda, accesso al canale e duty-cycle previsti dalla normativa e dalle pertinenti norme ETSI, tra cui EN 300 220. I prodotti commerciali dovranno inoltre soddisfare, ove applicabili, gli obblighi relativi a RoHS, RAEE/WEEE, batterie e sicurezza elettrica, predisporre la documentazione tecnica, la Dichiarazione UE di conformità e la marcatura CE, e rispettare gli eventuali requisiti aggiuntivi applicabili alla categoria e all'uso previsto. La progettazione dovrà inoltre garantire sicurezza RF, compatibilità elettromagnetica, assenza di interferenze dannose, protezione della batteria e dei circuiti di alimentazione e, per i dispositivi destinati a servizi di emergenza, adeguati livelli di affidabilità e fail-safe. Eventuali modifiche ad antenna, potenza, firmware radio o configurazione di frequenza dovranno essere valutate nell'ambito della conformità del prodotto finale. La presente specifica non costituisce certificazione di conformità: prima della commercializzazione dovranno essere effettuate le verifiche e, ove necessario, le prove di laboratorio previste dalla normativa applicabile.
+
+### Nota specifica per NOMAD-Net: prototipo, Field Pilot e prodotto commerciale sono tre stadi diversi
+
+Mappatura sulle fasi già documentate in `docs/emergency-rescue-network.md`:
+
+- **Prototype** (Fase 0 + Fase 1/Micro Pilot sopra) — moduli radio commerciali già disponibili/certificati, focus sulla validazione tecnica, nessuna commercializzazione.
+- **Field Pilot** (Fase 2 sopra) — i dispositivi possono essere usati per prove controllate, previa verifica dei requisiti applicabili all'impiego concreto (non un via libera automatico solo perché si tratta di un "pilot").
+- **Commercial product** (stadio successivo, non ancora pianificato in questo progetto) — richiederebbe l'iter RED/CE completo sul dispositivo finale: radio, antenna, alimentazione, involucro e firmware/configurazione rilevanti tutti insieme, non certificati separatamente.
+
+**Un dettaglio tecnico segnalato esplicitamente da non fissare ancora**: questo documento e `docs/emergency-rescue-network.md` usano finora la scorciatoia pratica "LoRa banda EU868" (es. nella tabella di compatibilità del Mobile Relay sopra, e nell'esempio di record del Relay Registry) — la banda 863-870 MHz contiene però sotto-bande con limiti molto diversi tra loro (EN 300 220-2 riporta, a seconda della sotto-banda, da 25 mW/1% di duty-cycle fino a 500 mW/10%). Potenza, canali, duty-cycle, antenna e modalità di accesso al canale andranno progettati **insieme**, non scelti separatamente, quando si arriverà a definire la specifica radio definitiva — non ancora fatto, nessuna decisione presa qui.
+
 ## Roadmap di validazione e field test
 
 Come arrivare, per gradi, a validare questi dispositivi **insieme come rete** — fino a un eventuale test sul campo con un ente reale — è documentato separatamente in [`docs/emergency-rescue-network.md`](./emergency-rescue-network.md), su richiesta esplicita dell'utente: quel documento riguarda la rete nel suo insieme (fasi di test, effetto di rete/densità e livelli di partecipazione, budget indicativo, possibili partner di campo), non i singoli dispositivi descritti qui.

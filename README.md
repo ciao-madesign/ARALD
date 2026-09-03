@@ -20,7 +20,7 @@ L'utente non deve sapere quale dispositivo possiede il contenuto, quanti hop ser
 - [`docs/security.md`](docs/security.md) — identità, integrità dei contenuti, cosa manca ancora
 - [`docs/development.md`](docs/development.md) — come compilare, eseguire e testare
 - [`docs/deployment.md`](docs/deployment.md) — scenari di deployment target (rifugio, emergenza)
-- [`docs/beacon.md`](docs/beacon.md) — NOMAD-NET BEACON: espansione proposta, dispositivo fisico di richiesta di soccorso a bassissimo consumo, più NOMAD Mobile Relay e Fixed Relay/Relay Registry (trasporto opportunistico "data mule" e rete di relay fissi con registro/mappa) — documentazione di riferimento, nessun codice ancora
+- [`docs/beacon.md`](docs/beacon.md) — NOMAD-NET BEACON: espansione proposta, dispositivo fisico di richiesta di soccorso a bassissimo consumo, più NOMAD Mobile Relay, Fixed Relay/Relay Registry e una nota sulla conformità normativa UE (RED, ETSI EN 300 328/300 220, CE) per un'eventuale commercializzazione futura — documentazione di riferimento, nessun codice ancora
 - [`docs/emergency-rescue-network.md`](docs/emergency-rescue-network.md) — NOMAD-Net Emergency & Rescue Network: roadmap di validazione a fasi (prototipo, micro pilot, field pilot), effetto di rete/densità e livelli di partecipazione, e possibili partner di campo per l'ecosistema Beacon/Relay — documentazione di riferimento, nessun codice né hardware
 - [`docs/roadmap.md`](docs/roadmap.md) — stato delle milestone
 - [`docs/next-steps.md`](docs/next-steps.md) — piani d'azione concreti per le milestone candidate come prossimo passo
