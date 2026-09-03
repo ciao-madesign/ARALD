@@ -73,7 +73,7 @@ Entrambi sono visibili anche sulla pagina web del nodo stesso (`http://<host>:<w
 
 La stessa sezione "Collega un telefono" mostra anche un **QR code**: inquadrandolo con l'app mobile si compilano da soli indirizzo, nome rete e password, senza digitare nulla (`docs/security.md` voce #25). Il QR codifica l'indirizzo LAN di questo nodo — con `--web-host 0.0.0.0` viene rilevato automaticamente (`node:os.networkInterfaces()`, prima interfaccia non interna), ma su una macchina con più interfacce di rete (VPN, bridge Docker...) può individuare quella sbagliata: usa `--public-host <indirizzo>` per specificarlo esplicitamente in quel caso.
 
-## Gateway NOMAD mockato (§37, seguito audit — Slice 9-10)
+## Gateway NOMAD mockato (§37, seguito audit — voci #9/#10)
 
 Nessuna istanza Docker/Project NOMAD reale necessaria — la demo avvia anche un `FakeNomadServer` e un `FakeOllamaServer` locali, con qualche articolo/risposta d'esempio:
 

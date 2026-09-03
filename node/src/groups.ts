@@ -18,7 +18,7 @@ import { MAX_MESSAGE_TEXT_LENGTH } from "./message-history.js";
  * lifecycle with leave/remove + key rotation)**: membership is fixed at
  * creation. There is no "leave"/"remove member" operation, so there is
  * nothing that would need to trigger a key rotation for forward secrecy —
- * that tradeoff simply doesn't arise in this v1. A future slice could add
+ * that tradeoff simply doesn't arise in this v1. A future entry in this repo's changelog could add
  * membership changes, but it would need its own explicit design pass (key
  * rotation is a real, non-implicit decision — see docs/next-steps.md).
  *

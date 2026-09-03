@@ -25,7 +25,7 @@ Definita in `node/src/transport.ts`. Il routing engine (`node/src/routing.ts`) e
 |---|---|---|
 | TCP | Implementato (Milestone 1-5) | `node/src/transports/tcp.ts` |
 | WebSocket | Non implementato — alternativa equivalente a TCP per il prototipo, non necessaria avendo già TCP | — |
-| BLE (simulato) | Implementato — Milestone 8, seguito audit, Slice 8 (vedi sotto) | `node/src/transports/ble.ts` |
+| BLE (simulato) | Implementato — Milestone 8, seguito audit, voce #8 (vedi sotto) | `node/src/transports/ble.ts` |
 | BLE (hardware reale) | Non implementato — bloccato su hardware fisico | `node/src/transports/ble.ts` (stesso file, un adapter reale andrebbe dietro la stessa interfaccia `Transport`) |
 | Wi-Fi (LAN / Direct) | Non implementato — Milestone 14 | `node/src/transports/wifi.ts` (da creare) |
 | LoRa (simulato) | Implementato — Opzione N, `docs/next-steps.md` (vedi sotto) — affianca BLE, non lo sostituisce | `node/src/transports/lora.ts` |
@@ -33,7 +33,7 @@ Definita in `node/src/transport.ts`. Il routing engine (`node/src/routing.ts`) e
 
 ## Base condivisa per i transport radio simulati (`node/src/transports/simulated-link.ts`)
 
-Estratta quando `lora.ts` ha avuto bisogno esattamente della stessa meccanica già scritta per `ble.ts` (Slice 8) — connessione simulata punto-a-punto su un "medium" in-process, handshake, frammentazione/riassemblaggio a MTU — con solo i numeri (MTU/latenza/limite connessioni) e l'etichetta usata nei messaggi di errore (`radioLabel`, es. `"BLE"`/`"LoRa"`) diversi da radio a radio. Copiare quella logica in un secondo file avrebbe duplicato ~300 righe già testate — stessa classe di duplicazione già corretta una volta in questo codebase (`bounded-map.ts`). Espone `SimulatedMedium` (il registro condiviso "prossimità fisica") e `SimulatedLinkTransport implements Transport` (tutta la meccanica), configurati da ogni radio concreta.
+Estratta quando `lora.ts` ha avuto bisogno esattamente della stessa meccanica già scritta per `ble.ts` (voce #8) — connessione simulata punto-a-punto su un "medium" in-process, handshake, frammentazione/riassemblaggio a MTU — con solo i numeri (MTU/latenza/limite connessioni) e l'etichetta usata nei messaggi di errore (`radioLabel`, es. `"BLE"`/`"LoRa"`) diversi da radio a radio. Copiare quella logica in un secondo file avrebbe duplicato ~300 righe già testate — stessa classe di duplicazione già corretta una volta in questo codebase (`bounded-map.ts`). Espone `SimulatedMedium` (il registro condiviso "prossimità fisica") e `SimulatedLinkTransport implements Transport` (tutta la meccanica), configurati da ogni radio concreta.
 
 `BleMedium`/`LoraMedium` sono sottoclassi di `SimulatedMedium` con un campo privato proprio ciascuna (mai letto) — non sottoclassi vuote: senza quel campo, TypeScript le tratterebbe come strutturalmente intercambiabili (nessun errore di compilazione passando un `BleMedium` dove serve un `LoraMedium`), fondendo silenziosamente due "mesh" pensate per essere fuori portata l'una dall'altra — trovato dalla revisione, vedi `docs/security.md`.
 
@@ -46,7 +46,7 @@ Nessun radio reale, nessuna libreria `noble`/`bleno`: `BleSimulatedTransport` (u
 - **Latenza per-frammento simulata** (`latencyMs`, default 5ms): la consegna è genuinamente asincrona rispetto a `send()`, non nello stesso tick.
 - **`BleMedium`**: un registro condiviso in-process che simula la "prossimità fisica" — un `BleMedium` dedicato per due gruppi di transport simula due mesh BLE fuori portata l'una dall'altra (stesso concetto del partition sync su TCP).
 
-Semplificazioni deliberate rispetto a BLE reale (fuori scope per ciò che questo transport deve dimostrare, condivise con `lora.ts` — vedi sotto): nessuna asimmetria di ruolo central/peripheral (`connect()`/`start()` si comportano simmetricamente, come `TcpTransport`); nessuno scheduling per priorità lato invio (`PriorityQueue`, già validato a livello TCP nella Slice 4).
+Semplificazioni deliberate rispetto a BLE reale (fuori scope per ciò che questo transport deve dimostrare, condivise con `lora.ts` — vedi sotto): nessuna asimmetria di ruolo central/peripheral (`connect()`/`start()` si comportano simmetricamente, come `TcpTransport`); nessuno scheduling per priorità lato invio (`PriorityQueue`, già validato a livello TCP nella voce #4).
 
 Handshake identico a `TcpTransport`: entrambi i lati inviano un `HELLO` (anch'esso frammentato) il cui `source` rivela il proprio node id — con una differenza voluta: il lato che *accetta* una connessione ritarda l'invio del proprio `HELLO` finché non ha effettivamente deciso di accettarla (dopo aver verificato il limite di connessioni), altrimenti chi si connette potrebbe identificare l'altro lato e risolvere `connect()` con successo anche in un caso in cui l'altro lato sta per rifiutare la connessione — vedi `docs/security.md` per il dettaglio.
 

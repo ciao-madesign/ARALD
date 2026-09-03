@@ -72,7 +72,7 @@ Tre esempi concreti di servizio "reale" (nel senso di parlare con un backend HTT
 
 `SYNC_REQUEST`/`SYNC_RESPONSE`, `IDENTITY_REQUEST`/`IDENTITY_RESPONSE` e `ROUTE_ANNOUNCE` sono tutti scambiati direttamente peer-a-peer (un solo hop, come `HELLO`) — non vengono mai inoltrati/floodati oltre i due nodi coinvolti. I primi due si scambiano ogni volta che due nodi si connettono (vedi `docs/roadmap.md` milestone 13); `ROUTE_ANNOUNCE` in aggiunta ogni volta che la tabella di instradamento locale cambia (triggered update, non solo alla connessione) — vedi `docs/roadmap.md` milestone 16. `PRIVATE_MESSAGE`, a differenza di questi, **è** instradato/floodato come `DATA` (per `destination`, non un solo hop) — un relay lo inoltra senza poterlo decifrare.
 
-Tipi previsti dalla specifica ma **non ancora implementati** (§49): `ANNOUNCE`, `CAPABILITY`, `ROUTE_QUERY`, `ROUTE_REPLY`, `STORE`, `FORWARD`, `ERROR`. (I quattro `SERVICE_*` erano ancora in questa lista prima della Slice 6, seguito audit — corretto qui: sono implementati, vedi sopra.)
+Tipi previsti dalla specifica ma **non ancora implementati** (§49): `ANNOUNCE`, `CAPABILITY`, `ROUTE_QUERY`, `ROUTE_REPLY`, `STORE`, `FORWARD`, `ERROR`. (I quattro `SERVICE_*` erano ancora in questa lista prima della voce #6, seguito audit — corretto qui: sono implementati, vedi sopra.)
 
 ## TTL e deduplicazione (§19-21)
 

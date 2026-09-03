@@ -59,7 +59,7 @@ const DEFAULT_LATENCY_MS = 250;
  * `tests/integration/mixed-transport.test.ts`). No real LoRa hardware
  * (SX126x/SX127x module or an integrated board like a Heltec/TTGO "LoRa32")
  * is available in this environment — same starting point BLE itself had
- * before Slice 8, resolved the same way: a `SimulatedLinkTransport`
+ * before voce #8, resolved the same way: a `SimulatedLinkTransport`
  * (`simulated-link.ts`) configured with LoRa's own numbers, verifiable in
  * automated tests, with real hardware left for whenever it's physically
  * available.

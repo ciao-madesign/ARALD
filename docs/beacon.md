@@ -72,7 +72,7 @@ Per questo repository, l'MVP realisticamente costruibile in puro software (nessu
 | EB-Dual | BLE + LoRa | versione completa |
 | EB-GPS | BLE + LoRa + GPS | emergenza con posizione autonoma |
 
-Candidata finale della proposta: **EB-Dual**, senza partire subito da quella — stesso approccio incrementale già seguito per BOX/PORTABLE e per ogni slice di questo progetto.
+Candidata finale della proposta: **EB-Dual**, senza partire subito da quella — stesso approccio incrementale già seguito per BOX/PORTABLE e per ogni voce di questo progetto.
 
 ---
 
