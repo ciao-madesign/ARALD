@@ -15,7 +15,7 @@ import type {
  * environment yet" transport in this codebase (`transports/ble.ts`,
  * `transports/lora.ts`). Extracted (voce successiva a #45, `docs/security.md`)
  * once a second radio needed the exact same connection lifecycle/handshake/
- * fragmentation machinery `BleSimulatedTransport` (Slice 8) already had —
+ * fragmentation machinery `BleSimulatedTransport` (voce #8) already had —
  * none of it was actually BLE-specific, only the numbers (MTU, latency,
  * connection cap) and the label used in error messages were. Writing a
  * second copy would have reintroduced the same duplication this codebase
@@ -211,7 +211,7 @@ interface ConnectionEntry {
  *   that asymmetry; this one doesn't need to, since NomadNode never depends
  *   on it.
  * - No priority-based send scheduling (`PriorityQueue`, already proven at
- *   the TCP layer in Slice 4) — `send()` fires all of a packet's fragments
+ *   the TCP layer in voce #4) — `send()` fires all of a packet's fragments
  *   independently rather than queuing behind a peer's in-flight traffic.
  *   Real hardware would benefit from it at least as much as TCP does, but
  *   proving the *fragmentation* story doesn't require it too.

@@ -16,10 +16,10 @@ Stato al 14 agosto 2026, versione specifica 0.1.
 | 5 | Content discovery | ✅ Fatto | `node/src/content.ts`, `tests/integration/content-retrieval.test.ts` |
 | 6 | File transfer (chunking, verifica hash) | ✅ Fatto | incluso nel content protocol, chunking a scopo dimostrativo |
 | 7 | Cache | ✅ Fatto | `tests/integration/cache-replication.test.ts` |
-| 8 | BLE | ✅ Simulato (seguito audit, Slice 8) — hardware reale ⏳ bloccato | `node/src/transports/ble.ts`, dietro l'interfaccia `Transport` esistente, nessun radio reale |
-| 9 | Smartphone (app mobile minimale) | ✅ Fase 1 completata funzionalmente (verificata via browser) **e con una vera passata di design** (identità "Waypoint" + passata UX per pubblico non tecnico, `docs/security.md` voci #28-31/#48) — build nativa reale ⏳ bloccata | `mobile/`, client Capacitor verso un gateway (`docs/next-steps.md` Opzione H); Fase 2 (Bluetooth) bloccata sullo stesso hardware dell'Opzione A, la build Android nativa su `dl.google.com` non raggiungibile da questa sessione. Resta annotato, non pianificato in dettaglio, un possibile restyling grafico futuro — vedi `docs/next-steps.md`, sezione "Debito di design della UI mobile" |
-| 10 | NOMAD integration | ✅ Mockato (seguito audit, Slice 9-10) — Project NOMAD reale ⏳ bloccato | richiede Docker + Project NOMAD in esecuzione per la forma finale reale |
-| 11 | Gateway (`gateway/nomad/`) | ✅ Mockato (seguito audit, Slice 9-10 + voci #27/#33/#37/#39/#41/#43/#45/#49) — Docker reale ⏳ bloccato | `kiwix-gateway.ts` (`content://`, `service://kiwix-search`) + `ai-gateway.ts` (`service://ai`) + `news-gateway.ts` (`service://news`/`service://emergency-news`, RSS/Atom reale, digest AI) + `translate-gateway.ts` (`service://translation`) + `internet-gateway.ts` (`service://internet-fetch`) + `flatnotes-gateway.ts` (`service://flatnotes-search`/`-create`), verificati contro rispettivi server finti locali. "Nomad News evoluto" (`docs/next-steps.md` Opzione I) completato per intero. |
+| 8 | BLE | ✅ Simulato (seguito audit, voce #8) — hardware reale ⏳ bloccato | `node/src/transports/ble.ts`, dietro l'interfaccia `Transport` esistente, nessun radio reale |
+| 9 | Smartphone (app mobile minimale) | ✅ Passo 1 completato funzionalmente (verificato via browser) **e con una vera passata di design** (identità "Waypoint" + passata UX per pubblico non tecnico, `docs/security.md` voci #28-31/#48) — build nativa reale ⏳ bloccata | `mobile/`, client Capacitor verso un gateway (`docs/next-steps.md` Opzione H); Passo 2 (Bluetooth) bloccato sullo stesso hardware dell'Opzione A, la build Android nativa su `dl.google.com` non raggiungibile da questa sessione. Resta annotato, non pianificato in dettaglio, un possibile restyling grafico futuro — vedi `docs/next-steps.md`, sezione "Debito di design della UI mobile" |
+| 10 | NOMAD integration | ✅ Mockato (seguito audit, voci #9/#10) — Project NOMAD reale ⏳ bloccato | richiede Docker + Project NOMAD in esecuzione per la forma finale reale |
+| 11 | Gateway (`gateway/nomad/`) | ✅ Mockato (seguito audit, voci #9/#10 + voci #27/#33/#37/#39/#41/#43/#45/#49) — Docker reale ⏳ bloccato | `kiwix-gateway.ts` (`content://`, `service://kiwix-search`) + `ai-gateway.ts` (`service://ai`) + `news-gateway.ts` (`service://news`/`service://emergency-news`, RSS/Atom reale, digest AI) + `translate-gateway.ts` (`service://translation`) + `internet-gateway.ts` (`service://internet-fetch`) + `flatnotes-gateway.ts` (`service://flatnotes-search`/`-create`), verificati contro rispettivi server finti locali. "Nomad News evoluto" (`docs/next-steps.md` Opzione I) completato per intero. |
 | 12 | Store-and-forward | ✅ Fatto (scope: pacchetti unicast) | `node/src/store-and-forward.ts`, `tests/integration/store-and-forward.test.ts` — vedi limitazione nota sotto |
 | 13 | Partition synchronization | ✅ Fatto | `node/src/catalog.ts`, `tests/integration/partition-sync.test.ts` |
 | 14 | Wi-Fi high bandwidth | ⏳ Bloccato — richiede hardware/OS Wi-Fi Direct reale | `node/src/transports/wifi.ts` |
@@ -74,9 +74,9 @@ Due parti indipendenti, entrambe complete:
 
 ## Secondo giro: seguito dell'audit tecnico (concluso, più un'estensione)
 
-Con le Milestone 12, 13, 15, 16 e 20 completate, è stato eseguito un audit tecnico completo (test, sicurezza, qualità del codice — vedi [`docs/audit-report.html`](./audit-report.html)) che ha identificato ulteriori miglioramenti realizzabili in puro software, realizzati come sequenza di 9 slice pianificate più una decima aggiunta successivamente su richiesta esplicita dell'utente, tracciate in dettaglio in [`security.md`](./security.md) ("Bug corretti nel seguito dell'audit"):
+Con le Milestone 12, 13, 15, 16 e 20 completate, è stato eseguito un audit tecnico completo (test, sicurezza, qualità del codice — vedi [`docs/audit-report.html`](./audit-report.html)) che ha identificato ulteriori miglioramenti realizzabili in puro software, realizzati come sequenza di 9 voci pianificate più una decima aggiunta successivamente su richiesta esplicita dell'utente, tracciate in dettaglio in [`security.md`](./security.md) ("Bug corretti nel seguito dell'audit"):
 
-| # | Slice | Stato |
+| # | Voce | Stato |
 |---|---|---|
 | 1 | Retry al prossimo content provider quando quello attivo tace | ✅ Fatto |
 | 2 | `BoundedFifoMap` condivisa (rimossa duplicazione 5x) | ✅ Fatto |
@@ -89,11 +89,11 @@ Con le Milestone 12, 13, 15, 16 e 20 completate, è stato eseguito un audit tecn
 | 9 | Gateway NOMAD mockato contro un fake server locale (Milestone 11 senza Docker) | ✅ Fatto |
 | 10 | Gateway AI mockato (`service://ai`, spec §37) contro un fake Ollama locale | ✅ Fatto |
 
-Le Slice 8, 9 e 10 dimostrano che una parte di Milestone 8 e 11 *è* realizzabile in puro software: un transport BLE simulato (stessa interfaccia `Transport`, vincoli di MTU/frammentazione realistici, nessun radio reale) e due adapter gateway (Kiwix e AI) contro server HTTP fittizi locali invece di Project NOMAD vero. Non sostituiscono la validazione con hardware/Docker reali (restano comunque necessarie prima di un deployment vero), ma permettono di validare la logica applicativa adesso — tutte e tre le slice sono ora completate, chiudendo sia il secondo giro post-audit di 9 slice pianificate sia l'estensione con la decima.
+Le voci #8, 9 e 10 dimostrano che una parte di Milestone 8 e 11 *è* realizzabile in puro software: un transport BLE simulato (stessa interfaccia `Transport`, vincoli di MTU/frammentazione realistici, nessun radio reale) e due adapter gateway (Kiwix e AI) contro server HTTP fittizi locali invece di Project NOMAD vero. Non sostituiscono la validazione con hardware/Docker reali (restano comunque necessarie prima di un deployment vero), ma permettono di validare la logica applicativa adesso — tutte e tre le voci sono ora completate, chiudendo sia il secondo giro post-audit di 9 voci pianificate sia l'estensione con la decima.
 
 ## Ordine di lavoro consigliato per i prossimi passi
 
-Dopo la Slice 10 (l'ultima realizzata, oltre le 9 pianificate), quello che resta è bloccato su uno dei due prerequisiti esterni veri e propri:
+Dopo la voce #10 (l'ultima realizzata, oltre le 9 pianificate), quello che resta è bloccato su uno dei due prerequisiti esterni veri e propri:
 
 - **Milestone 8/9** (BLE/hardware reale, app mobile) richiedono dispositivi fisici per i test end-to-end.
 - **Milestone 10/11** (integrazione e gateway NOMAD reali) richiedono Docker e un'istanza di Project NOMAD raggiungibile.

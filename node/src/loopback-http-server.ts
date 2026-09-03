@@ -28,7 +28,7 @@ export class BodyTooLargeError extends Error {}
  * a hostile or broken client — any other stream failure rejects with the
  * original error unchanged. Shared for the same reason `sendJson()` is:
  * this exact body-reading loop (with the same `BodyTooLargeError` split)
- * showed up first in `gateway/nomad/fake-ollama-server.ts` (Slice 10, for
+ * showed up first in `gateway/nomad/fake-ollama-server.ts` (voce #10, for
  * `POST /api/generate`) and then again in `WebUiServer` (for `POST
  * /api/call`, spec §59 mobile pairing).
  *
