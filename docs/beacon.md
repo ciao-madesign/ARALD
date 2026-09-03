@@ -1,10 +1,10 @@
-# NOMAD-NET BEACON — sistema di richiesta di soccorso a bassissimo consumo
+# NOMAD-NET BEACON — ecosistema di richiesta di soccorso a bassissimo consumo
 
-**Stato**: documentazione di riferimento/pianificazione, v0.1 — **nessun codice scritto**. Proposta ricevuta dall'utente il 3 settembre 2026, analizzata e discussa prima di essere integrata qui. Stesso trattamento già riservato a **NOMAD-NET BOX e PORTABLE** (`docs/deployment.md`): un terzo ramo/espansione del progetto, non parte della specifica originale (`docs/SPECIFICATION.md`) né della roadmap (`docs/roadmap.md`), che descrive un dispositivo fisico dedicato invece di una feature del software di rete.
+**Stato**: documentazione di riferimento/pianificazione, v0.1 — **nessun codice scritto**. Proposta ricevuta dall'utente il 3 settembre 2026, analizzata e discussa prima di essere integrata qui. Stesso trattamento già riservato a **NOMAD-NET BOX e PORTABLE** (`docs/deployment.md`): un terzo ramo/espansione del progetto, non parte della specifica originale (`docs/SPECIFICATION.md`) né della roadmap (`docs/roadmap.md`), che descrive dispositivi fisici dedicati invece di feature del software di rete. Esteso lo stesso giorno con una seconda specifica ricevuta dall'utente per un componente distinto della stessa famiglia, il **NOMAD Mobile Relay** (vedi sezione dedicata sotto).
 
 ## Cos'è e cosa non è
 
-Un piccolo dispositivo fisico a batteria, con una sola funzione: **premendo un pulsante, chiedere aiuto**, anche in totale assenza di rete cellulare, Wi-Fi, Internet, smartphone o SIM. Il messaggio raggiunge la mesh Nomad-Net tramite uno o più relay (smartphone con l'app NOMAD, o nodi fissi) e arriva infine a un **Emergency Node** (es. presso un rifugio), dove un operatore umano lo vede e può rispondere.
+Un piccolo dispositivo fisico a batteria, con una sola funzione: **premendo un pulsante, chiedere aiuto**, anche in totale assenza di rete cellulare, Wi-Fi, Internet, smartphone o SIM. Il messaggio raggiunge la mesh Nomad-Net tramite uno o più relay — smartphone con l'app NOMAD, nodi fissi, o un **NOMAD Mobile Relay** dedicato (vedi sotto) — e arriva infine a un **Emergency Node** (es. presso un rifugio), dove un operatore umano lo vede e può rispondere.
 
 Non è un dispositivo general-purpose: niente navigazione, chiamate, audio, tracciamento continuo. Questo vincolo è anche ciò che rende il dispositivo economico e a bassissimo consumo (mesi/anni di standby, non giorni) — un requisito di progetto, non solo un'ottimizzazione.
 
@@ -13,7 +13,7 @@ Non è un dispositivo general-purpose: niente navigazione, chiamate, audio, trac
 | Ruolo | Cosa fa | Hardware tipico |
 |---|---|---|
 | **Beacon** | Genera l'emergenza | MCU ultra-low-power + radio (BLE e/o LoRa) + pulsante + LED — pochi euro, nessun sistema operativo generico |
-| **Relay** | Trasporta l'emergenza | Smartphone con l'app NOMAD (modalità "NOMAD Relay"), o un nodo fisso Nomad-Net qualunque |
+| **Relay** | Trasporta l'emergenza | Smartphone con l'app NOMAD (modalità "NOMAD Relay"), un nodo fisso Nomad-Net qualunque, o un **NOMAD Mobile Relay** dedicato (dispositivo "data mule" passivo, vedi sezione dedicata sotto) |
 | **Emergency Node** | Riceve, gestisce, presenta l'emergenza a un operatore | Un nodo Nomad-Net normale (Orange Pi, mini-PC, smartphone del rifugista) con un ruolo software in più |
 
 ## Relazione con Nomad-Net: molto più riuso che lavoro nuovo
@@ -74,6 +74,57 @@ Per questo repository, l'MVP realisticamente costruibile in puro software (nessu
 
 Candidata finale della proposta: **EB-Dual**, senza partire subito da quella — stesso approccio incrementale già seguito per BOX/PORTABLE e per ogni slice di questo progetto.
 
-## Prossimo passo
+---
 
-Nessun codice scritto per questa voce. Se e quando l'utente vorrà procedere, il primo passo concreto sarebbe una fase di planning esplicita (analoga a quella già fatta per il tracciamento posizione, voce #44, e per le chat cifrate, voce #42) per fissare: formato del messaggio beacon, modello di trasporto broadcast-non-connesso per il ruolo Relay, e ambito dell'MVP simulato — prima di scrivere qualunque riga di codice, seguendo lo stesso workflow a doppio check descritto in `CLAUDE.md`.
+## NOMAD Mobile Relay (Base/Passive) — dispositivo dedicato di trasporto opportunistico
+
+**Stato**: documentazione di riferimento/pianificazione — **nessun codice scritto**. Seconda specifica ricevuta dall'utente il 3 settembre 2026 (stesso giorno di BEACON), analizzata per compatibilità con l'architettura esistente prima di essere integrata qui.
+
+### Cos'è
+
+Un dispositivo fisico a basso costo, trasportato da un vettore mobile qualunque (persona, drone, veicolo, animale, mezzo di soccorso, sistema di monitoraggio), la cui unica funzione è **ricevere → memorizzare → ritrasmettere** messaggi Nomad-Net secondo il modello store-and-forward/"data mule": acquisisce un messaggio quando è fuori copertura e lo consegna quando incontra un altro nodo, senza mai richiedere Internet, GPS, Wi-Fi, SIM, display o input utente. La versione **Base/Passive** non interpreta il contenuto applicativo dei messaggi — usa solo il campo di tipo/priorità per decidere cosa tenere quando la memoria è limitata.
+
+Posizionamento nella catena (§16 della proposta, coerente con la tabella dei ruoli sopra): `Emergency Beacon → Mobile Relay → Fixed NOMAD Node → Emergency Node` — un caso d'uso tra i tanti possibili (Personal/Drone/Vehicle/Monitoring/Animal Relay, §14), il dispositivo non ha bisogno di sapere quale vettore lo trasporta né quale ruolo applicativo hanno i messaggi che porta.
+
+### Verdetto di compatibilità: valida, e più semplice del Beacon stesso
+
+La specifica è **valida e ben allineata** all'architettura Nomad-Net — anzi, verificata contro `node/src/`, risulta il componente hardware più semplice da giustificare dei tre documentati finora (BOX/PORTABLE, BEACON, questo). Il motivo: un Mobile Relay Base descritto qui **non richiede alcun nuovo formato di messaggio o protocollo** — a differenza del Beacon (che ha bisogno di un pacchetto di emergenza dedicato, sezione sopra), il Mobile Relay è per design "cieco" al contenuto che trasporta. Funzionalmente, è **un `NomadNode` esistente, configurato con un profilo minimo**: solo transport BLE/LoRa attivi, nessun servizio applicativo locale (`web-ui`, gateway, ecc.), che fa esattamente quello che `node.ts`/`routing.ts`/`store-and-forward.ts` fanno già per qualunque pacchetto della mesh. Il concetto stesso di "courier device" è già anticipato nella specifica del progetto — vedi il commento in `node/src/store-and-forward.ts`: *"a courier device reconnecting to a different segment of the mesh (spec §32)"* — questa proposta non introduce un'idea nuova, ne formalizza una già prevista come hardware dedicato.
+
+| Requisito della proposta (§) | Meccanismo Nomad-Net già esistente |
+|---|---|
+| Ricezione, memorizzazione, ritrasmissione (§2, §3, §7) | Comportamento nativo di `NomadNode`/`decideForward()` (`routing.ts`) per ogni pacchetto in transito — non richiede alcuna logica applicativa aggiuntiva |
+| Store-and-forward quando il prossimo hop non è raggiungibile (§2, §6) | `PendingDeliveryQueue` (`store-and-forward.ts`) — coda per pacchetti unicast non consegnabili subito, già pensata esplicitamente per un "courier device" (vedi sopra) |
+| Deduplicazione per `MESSAGE_ID` (§8) | `SeenCache` (`routing.ts`) — dedup per `packet.id`; nel protocollo attuale `packet.id` è un UUID globale generato alla creazione (`randomUUID()`, `packet.ts`), quindi eccede già il fallback minimo proposto (`SOURCE_ID + SEQUENCE`) |
+| TTL/hop limit per evitare che un messaggio circoli indefinitamente (§9) | `packet.ttl` decrementato ad ogni hop (`decideForward()`) — hop-based, esattamente come richiesto; **inoltre** un TTL a orologio indipendente in `PendingDeliveryQueue.ttlMs` (default 5 minuti) per i pacchetti in coda, un livello che la proposta non distingue esplicitamente ma che il codice già ha |
+| Priorità minima basata sul campo TYPE, EMERGENCY per primo (§10) | `Priority.EMERGENCY = 0` (`packet.ts`) già la priorità più alta, con scheduling reale per priorità in `TcpTransport` (`priority-queue.ts`, voce #4) |
+| Comunicazione BLE, incontro automatico con un altro nodo senza pairing manuale (§5, §7C) | `transports/ble.ts` — **simulato**, nessun hardware BLE reale in questo ambiente; l'handshake HELLO automatico esiste già (`transports/simulated-link.ts`) |
+| LoRa, banda EU868 (§5) | `transports/lora.ts` (voce #51) — **simulato**, stessa banda già menzionata nella documentazione esistente del transport LoRa |
+| Identità crittografica, autenticazione pacchetti, anti-replay, revoca di un relay compromesso (§11) | `Identity` Ed25519 (`identity.ts`) + `TrustManager` (`trust.ts`) — stesso schema usato ovunque nel progetto; il relay non possiede mai le chiavi dell'autore originale di un contenuto/messaggio firmato, quindi non può falsificarne l'origine, esattamente come richiesto ("riceve → conserva → inoltra" senza poter modificare arbitrariamente un messaggio) |
+| Nessuna dipendenza da Internet/Wi-Fi/GPS/SIM/display (§3, §4) | Coerente con un `NomadNode` a cui non viene mai istanziato `WebUiServer` né alcun gateway — non c'è nulla nel codice esistente che *imponga* queste dipendenze, sono già tutte opzionali |
+
+### Differenze reali rispetto al codice esistente (non bloccanti, ma da non ignorare)
+
+La compatibilità è alta ma non totale — tre scostamenti reali tra la proposta e il comportamento odierno, utili se mai si arrivasse a un'implementazione:
+
+1. **Eviction non pesata su priorità in `PendingDeliveryQueue`**: la coda usa `BoundedFifoMap` con eviction FIFO pura (il più vecchio esce per primo). La proposta (§10) si aspetta che, sotto pressione di memoria, i messaggi a priorità inferiore vengano scartati *prima* di quelli EMERGENCY — oggi non è così: un Mobile Relay con poca memoria potrebbe eliminare un messaggio di emergenza in coda da poco a favore di un messaggio ordinario più vecchio. Coerente con lo stesso tipo di gap già risolto altrove nel progetto per altre strutture dati (`RoutingTable`/`PeerDirectory`/`RemoteCatalog`, voci #3/#26) tramite eviction pesata — qui non ancora applicato.
+2. **TTL uniforme, non differenziato per priorità**: `PendingDeliveryQueue.ttlMs` è un singolo valore globale (default 5 minuti), mentre la proposta (§9) prevede esplicitamente un TTL più lungo per i messaggi di emergenza rispetto a quelli ordinari.
+3. **Nessun "annuncio inventario" per i pacchetti generici in coda**: il modello §7C ("annuncia i messaggi disponibili, trasferisce solo quelli non ancora ricevuti") esiste già per i contenuti pubblicati (`RemoteCatalog`, sync tra segmenti) ma non per i pacchetti generici in `PendingDeliveryQueue` — oggi un incontro tra due nodi ritrasmette per flooding (`decideForward`), con `SeenCache` che scarta i duplicati lato ricevente ma senza negoziare in anticipo *cosa* serve davvero all'altro nodo. Su un link BLE/LoRa a banda stretta e ad alta latenza, questo spreca tempo radio reale — un'ottimizzazione mai necessaria finché il transport è TCP locale.
+
+Nessuno di questi è un difetto di progetto: sono limiti che semplicemente non contavano finché non esisteva un caso d'uso (un relay fisico, a memoria/banda/energia vincolate) che li rende visibili. Stesso trattamento onesto già riservato ad altri limiti noti del progetto (`docs/security.md`, "Binding crittografico").
+
+### Cosa NON è costruibile in questo ambiente (hardware/firmware reale)
+
+Stesso principio già applicato a BOX/PORTABLE e al Beacon: tutto ciò che segue richiede hardware fisico o un firmware embedded dedicato, non pianificabile in questo repository.
+
+- MCU a basso consumo, radio BLE + LoRa reali, memoria non volatile con persistenza attraverso spegnimenti/perdita di alimentazione (§4, §6) — un vero Mobile Relay avrebbe comunque bisogno di un firmware proprio (C/embedded, non questo codice TypeScript), che *implementi lo stesso protocollo* validato qui in simulazione, non che esegua questo codice.
+- BLE Long Range/LE Coded specifico (§5) — dettaglio di PHY radio invisibile all'astrazione `Transport` attuale, quindi né validabile né invalidabile in software puro.
+- Formato fisico, involucro IP65/IP67, peso <50g, montaggio su drone/zaino/veicolo (§13) — industrial design, fuori scope.
+- Validazione reale di autonomia energetica (sleep/listen/transfer, §12) — misurabile solo su hardware reale.
+
+### Prossimo passo
+
+Nessun codice scritto per questa voce. Se l'utente vorrà procedere, il lavoro software puro più naturale sarebbe una configurazione/profilo dedicato di `NomadNode` (transport BLE/LoRa simulati soli, nessun servizio locale) più i tre affinamenti elencati sopra (eviction pesata su priorità e TTL differenziato per `PendingDeliveryQueue`, eventuale negoziazione "inventario" per pacchetti generici) — verificabile end-to-end con gli stessi pattern di test già usati per BLE/LoRa simulati, senza bisogno di alcuna decisione di design nuova paragonabile a quella richiesta dal formato messaggio del Beacon.
+
+## Prossimo passo (BEACON e Mobile Relay insieme)
+
+Nessun codice scritto per nessuna delle due voci di questo documento. Se e quando l'utente vorrà procedere, il primo passo concreto resta una fase di planning esplicita (analoga a quella già fatta per il tracciamento posizione, voce #44, e per le chat cifrate, voce #42) — necessaria soprattutto per il Beacon (formato messaggio, modello di trasporto broadcast-non-connesso), mentre per il Mobile Relay il lavoro è già in gran parte definito dal codice esistente, come descritto sopra. In ogni caso, prima di scrivere qualunque riga di codice, seguendo lo stesso workflow a doppio check descritto in `CLAUDE.md`.
