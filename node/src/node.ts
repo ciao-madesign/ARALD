@@ -49,6 +49,7 @@ import {
 } from "./groups.js";
 import { LocationRegistry, extractLocationReport, type LocationReportPayload } from "./location-registry.js";
 import { Drops, DROP_CONTENT_NAME, MAX_DROP_LABEL_LENGTH, extractDropPayload, type Drop, type DropPayload } from "./drops.js";
+import { RelayRegistry, type RelayEntry, type RelayStaticFields } from "./relay-registry.js";
 import { RoutingTable } from "./routing-table.js";
 import { ServiceDirectory } from "./service-directory.js";
 import { serviceSigningPayload, verifyServiceAnnouncement, type ServiceAnnouncement, type ServiceHandler } from "./service.js";
@@ -123,6 +124,8 @@ export interface NomadNodeOptions {
   maxLocationReportAgeMs?: number;
   /** Max distinct drops tracked in `drops` at once (spec §57 resource limits). */
   maxDrops?: number;
+  /** Max distinct relays tracked in `relayRegistry` at once (spec §57 resource limits). */
+  maxRelays?: number;
 }
 
 interface ContentWaiter {
@@ -435,6 +438,18 @@ export class NomadNode extends EventEmitter {
    * ordinary gateway can serve `GET /api/drops`, same tier as `publicChannels`.
    */
   readonly drops: Drops;
+  /**
+   * Registry of physically-deployed Fixed/Mobile Relay hardware
+   * (`docs/beacon.md`, "Fixed Relay e Registro dei relay") — static fields
+   * entered once by an operator via `registerRelay()`, dynamic online/
+   * last-seen state derived automatically from real peer connectivity (see
+   * `addTransport()`'s `peer:connected`/`peer:disconnected` wiring below).
+   * Same opt-in HTTP exposure model as `locationRegistry`
+   * (`WebUiOptions.exposeRelayRegistry`) — see `relay-registry.ts`'s own
+   * doc comment for why it needs neither lazy expiry nor trust-weighted
+   * eviction, unlike `locationRegistry`/`drops`.
+   */
+  readonly relayRegistry: RelayRegistry;
 
   private readonly defaultTtl: number;
   private readonly contentRequestTimeoutMs: number;
@@ -445,6 +460,19 @@ export class NomadNode extends EventEmitter {
   private readonly relayAssembler: ChunkAssembler;
   private readonly transports: Transport[] = [];
   private readonly peerTransport = new Map<string, Transport>();
+  /**
+   * How many currently-connected transports reference each peer id — exists solely to gate
+   * `relayRegistry.markOnline()`/`markOffline()` correctly (found by review). `peers`/`peerTransport`
+   * above are last-write-wins across multiple transports on the same node (no refcounting), which is
+   * harmless for their own existing uses (routing/pending-delivery only ever care "is there *a*
+   * route right now", not "how many") but would be a real bug for relay online/offline status: a
+   * relay simultaneously reachable via two transports (e.g. TCP and a simulated radio,
+   * `tests/integration/mixed-transport.test.ts` shows a node running both) would be wrongly marked
+   * offline the moment either single link dropped, even while the other kept it fully reachable.
+   * Deliberately scoped to just this — not a general fix for `peers`/`peerTransport`'s own
+   * last-write-wins behavior, which is a wider pre-existing shape out of scope here.
+   */
+  private readonly peerConnectionCounts = new Map<string, number>();
   private readonly pendingContentRequests = new Map<string, PendingContentEntry>();
   private readonly pendingDeliveries: PendingDeliveryQueue;
   private readonly rateLimiter: RateLimiter;
@@ -543,6 +571,7 @@ export class NomadNode extends EventEmitter {
       maxDrops: options.maxDrops,
       trustRank: (author) => trustRank(this.trust.get(author)),
     });
+    this.relayRegistry = new RelayRegistry({ maxRelays: options.maxRelays });
   }
 
   get nodeId(): string {
@@ -564,6 +593,8 @@ export class NomadNode extends EventEmitter {
       this.peers.upsert(peerId, address);
       this.peerTransport.set(peerId, transport);
       this.trust.markSeen(peerId);
+      this.peerConnectionCounts.set(peerId, (this.peerConnectionCounts.get(peerId) ?? 0) + 1);
+      this.relayRegistry.markOnline(peerId);
       this.emit("peer:connected", peerId);
       void this.flushPendingDeliveries();
       void this.startCatalogSync(peerId);
@@ -584,6 +615,16 @@ export class NomadNode extends EventEmitter {
       this.peers.remove(peerId);
       this.peerTransport.delete(peerId);
       this.rateLimiter.reset(peerId);
+      // Only mark offline once the *last* transport connected to this peer has dropped (found by
+      // review) — see peerConnectionCounts's own doc comment for why peers/peerTransport above can't
+      // be trusted for this same decision.
+      const remaining = (this.peerConnectionCounts.get(peerId) ?? 1) - 1;
+      if (remaining <= 0) {
+        this.peerConnectionCounts.delete(peerId);
+        this.relayRegistry.markOffline(peerId);
+      } else {
+        this.peerConnectionCounts.set(peerId, remaining);
+      }
       this.emit("peer:disconnected", peerId);
       const withdrawn = this.routingTable.removeRoutesVia(peerId);
       if (withdrawn.length > 0) this.broadcastWithdrawal(withdrawn, peerId);
@@ -1169,6 +1210,44 @@ export class NomadNode extends EventEmitter {
       },
       { resourceRequirements: "richiede WebUiOptions.exposeLocationRegistry per la lettura via HTTP" },
     );
+  }
+
+  /**
+   * Registers or updates a physical relay's static fields in
+   * `relayRegistry` (`web-ui.ts`'s `POST /api/relays`, gated by
+   * `WebUiOptions.exposeRelayRegistry`). Unlike `shareLocation()`, this has
+   * no mesh round-trip and no service-discovery step: the operator entering
+   * these fields is standing in front of the hardware and already knows
+   * which node's HTTP endpoint to call, so this is a direct local write.
+   *
+   * If `fields.relayId` already happens to be a currently-connected peer
+   * (the relay was already online before being registered, e.g. an
+   * operator registering it once it's already reachable), marks it online
+   * immediately instead of waiting for the next `peer:connected` event —
+   * that event already fired, possibly before this relay existed in the
+   * registry at all, so nothing would otherwise ever mark it online until
+   * its *next* reconnect.
+   *
+   * Checked against `peerTransport`, **not** `peers` (found by review):
+   * `peers` (`PeerTable`) is also populated by `handlePacket()`'s
+   * `PEER_LIST` case for every entry an already-connected peer claims,
+   * unauthenticated (`packet.source`/payload entries are never verified —
+   * see the doc comment on that case). A malicious or buggy peer could
+   * therefore make `peers.has(relayId)` true for a relay id it merely
+   * *named*, without that relay ever having connected to anything —
+   * `registerRelay()` would then mark it online with no real connection
+   * behind it, and (since no genuine `peer:connected`/`peer:disconnected`
+   * ever fires for it) nothing would ever correct that status back to
+   * offline. `peerTransport` has no such path — it's set/deleted only from
+   * this method and `addTransport()`'s own connect/disconnect callbacks
+   * (a real transport-level event), never from packet contents.
+   */
+  registerRelay(fields: RelayStaticFields): RelayEntry {
+    this.relayRegistry.upsert(fields);
+    if (this.peerTransport.has(fields.relayId)) this.relayRegistry.markOnline(fields.relayId);
+    // upsert() just set this key, so get() finding nothing here is unreachable — the non-null
+    // assertion only tells TypeScript that, it doesn't skip any real check.
+    return this.relayRegistry.get(fields.relayId)!;
   }
 
   /**

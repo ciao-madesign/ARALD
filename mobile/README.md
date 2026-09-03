@@ -1,8 +1,8 @@
 # mobile/
 
-Client mobile leggero per Nomad-Net — **Fase 1** del piano in `docs/next-steps.md` Opzione H (roadmap Milestone 9): un'app che si connette via Wi-Fi/TCP a un nodo Nomad-Net gateway già esistente, senza reimplementare il protocollo sul telefono. Non è nel workspace npm della radice, stesso precedente di `gateway/nomad/` e `tools/simulator/`.
+Client mobile leggero per Nomad-Net — **Passo 1** del piano in `docs/next-steps.md` Opzione H (roadmap Milestone 9): un'app che si connette via Wi-Fi/TCP a un nodo Nomad-Net gateway già esistente, senza reimplementare il protocollo sul telefono. Non è nel workspace npm della radice, stesso precedente di `gateway/nomad/` e `tools/simulator/`.
 
-**Decisioni prese con l'utente** (vedi `docs/next-steps.md` Opzione H per il ragionamento completo): client leggero verso un gateway, non un nodo completo; framework ibrido ([Capacitor](https://capacitorjs.com/)), non nativo puro — adeguato perché il telefono si connette *a* un gateway (ruolo BLE centrale, quando arriverà la Fase 2) e non deve mai farsi scoprire da altri telefoni (ruolo periferica, che l'ibrido supporta male).
+**Decisioni prese con l'utente** (vedi `docs/next-steps.md` Opzione H per il ragionamento completo): client leggero verso un gateway, non un nodo completo; framework ibrido ([Capacitor](https://capacitorjs.com/)), non nativo puro — adeguato perché il telefono si connette *a* un gateway (ruolo BLE centrale, quando arriverà il Passo 2) e non deve mai farsi scoprire da altri telefoni (ruolo periferica, che l'ibrido supporta male).
 
 **Debito di design — ✅ affrontato**: le prime iterazioni erano state verificate solo *funzionalmente* (Playwright contro un `NomadNode` reale), senza una vera passata di design. Affrontato su richiesta esplicita dell'utente: sprite di icone SVG coerenti, gerarchia visiva, transizioni/animazioni mirate (solo elementi nuovi in lista), skeleton di caricamento, feedback tattile (vibrazione, toast), layout tablet a tre colonne, accessibilità (aria-live, focus management, skip-link). Dettaglio completo, inclusi 5 problemi reali trovati e corretti dalla revisione, in `docs/security.md` voce #28 e `docs/next-steps.md` sezione "Debito di design della UI mobile". Tre giri di rifinitura successivi su feedback dell'utente: pannello Servizi spostato in cima con card uniformi al posto dei collegamenti rapidi (voce #29); un bug reale di icone tagliate (`viewBox` mancante sugli `<svg>`) corretto insieme a tile dei servizi resi genuinamente uniformi via CSS Grid e sezioni tecniche (Vicini/Contenuti) rese collassabili con `<details>` (voce #30); infine un rifacimento completo del linguaggio visivo — identità "Waypoint" (marchio, palette topografica, angolo tagliato come firma strutturale, quadrante "condizione del sentiero"), definita prima in un brand book (Artifact) e poi applicata a queste stesse schermate — su richiesta esplicita dell'utente, non un'altra iterazione sulle voci precedenti (voce #31).
 
@@ -52,6 +52,6 @@ cd android && ./gradlew assembleDebug   # oppure apri android/ in Android Studio
 
 `@capacitor/geolocation` (voce #44) è la prima dipendenza di runtime aggiunta oltre a `@capacitor/android`/`@capacitor/core` — usata solo se il runtime nativo la espone (`window.Capacitor.Plugins.Geolocation`); in un browser semplice (incluso questo ambiente di sviluppo, senza build Android) `app.js` ricade su `navigator.geolocation`, lo standard Web Geolocation API, senza bisogno del plugin.
 
-## Cosa manca ancora (Fase 2, `docs/next-steps.md` Opzione H)
+## Cosa manca ancora (Passo 2, `docs/next-steps.md` Opzione H)
 
 Connettività Bluetooth dal telefono — bloccata sullo stesso prerequisito hardware dell'Opzione A (BLE reale), non un blocco nuovo.
