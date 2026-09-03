@@ -36,7 +36,7 @@ A differenza di BOX/PORTABLE (che confeziona *Project NOMAD*, un progetto estern
 
 ## Cosa manca davvero (lavoro nuovo, ma in buona parte in puro software)
 
-1. **Un formato di messaggio "beacon" dedicato** — probabilmente un nuovo `MessageType` (es. `EMERGENCY_BEACON`) o, seguendo il precedente di drop/canali (voci #40/#47), una convenzione sopra un meccanismo esistente. Da decidere in fase di design, non ancora fatto.
+1. **Un formato di messaggio "beacon" dedicato** — probabilmente un nuovo `MessageType` (es. `EMERGENCY_BEACON`) o, seguendo il precedente di drop/canali (voci #40/#47), una convenzione sopra un meccanismo esistente. Da decidere in fase di design, non ancora fatto. **Vincolo aggiuntivo emerso dalla discussione sull'effetto di rete** (`docs/emergency-rescue-network.md`): il Beacon non dovrebbe restare l'unico originatore possibile di un SOS — smartphone e altri dispositivi NOMAD potrebbero generare lo stesso tipo di evento — quindi questo formato andrebbe progettato come condiviso tra più tipi di originator fin dall'inizio, non specifico del solo hardware Beacon.
 2. **Un ruolo "Relay opportunistico" senza connessione stabile** — il transport BLE simulato attuale (`transports/ble.ts`) modella un link punto-a-punto con handshake, adatto a un nodo-nodo Nomad-Net pieno. Un vero beacon BLE userebbe *advertising* broadcast non connesso (niente handshake, pacchetto ripetuto periodicamente finché non arriva un ACK) — un modello di trasporto diverso da quello che esiste oggi, anche nella sua forma simulata.
 3. **Un "Emergency Node" software** — una vista/servizio dedicato (verosimilmente un'estensione di `web-ui.ts`, sullo schema già usato da `location-registry.ts`: opt-in, endpoint autenticato) che mostra all'operatore beacon ricevuti, percorso, battery, permette ACK/risposta. Non esiste oggi.
 4. **Anti-flood specifico per un'identità beacon usa-e-getta** — lo stesso problema già affrontato per l'eviction pesata sulla fiducia (`BoundedFifoMap`, voce #3) e per gli annunci EMERGENCY auto-generati (voci #39/#47), da applicare a un beacon che non ha mai avuto una connessione TCP/mesh precedente su cui costruire fiducia.
@@ -197,7 +197,7 @@ L'unica conseguenza pratica per la documentazione di questo progetto: i "Pilot" 
 
 ## Roadmap di validazione e field test
 
-Come arrivare, per gradi, a validare questi dispositivi **insieme come rete** — fino a un eventuale test sul campo con un ente reale — è documentato separatamente in [`docs/emergency-rescue-network.md`](./emergency-rescue-network.md), su richiesta esplicita dell'utente: quel documento riguarda la rete nel suo insieme (fasi di test, budget indicativo, possibili partner di campo), non i singoli dispositivi descritti qui.
+Come arrivare, per gradi, a validare questi dispositivi **insieme come rete** — fino a un eventuale test sul campo con un ente reale — è documentato separatamente in [`docs/emergency-rescue-network.md`](./emergency-rescue-network.md), su richiesta esplicita dell'utente: quel documento riguarda la rete nel suo insieme (fasi di test, effetto di rete/densità e livelli di partecipazione, budget indicativo, possibili partner di campo), non i singoli dispositivi descritti qui.
 
 ## Prossimo passo (tutte le voci di questo documento)
 
