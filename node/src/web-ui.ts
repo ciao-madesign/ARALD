@@ -10,6 +10,7 @@ import { encodeQr, qrToSvg } from "./qrcode.js";
 import { raceTimeout } from "./async-timeout.js";
 import type { MbtilesReader } from "./map-tiles.js";
 import { BoundedFifoMap } from "./bounded-map.js";
+import { extractRelayRegistration } from "./relay-registry.js";
 
 export interface WebUiOptions {
   /** Port to listen on; 0 (default) lets the OS assign one — useful in tests, mirrors TcpTransport's own `port` convention. */
@@ -108,6 +109,25 @@ export interface WebUiOptions {
    * is paired to, not just a dedicated registry node.
    */
   exposeLocationRegistry?: boolean;
+  /**
+   * Enables `GET /api/relays` and `POST /api/relays` — this node's own copy
+   * of physically-deployed relay hardware (`node.relayRegistry`,
+   * `docs/beacon.md` "Fixed Relay e Registro dei relay"). Off by default
+   * and **independent of `allowServiceCalls`**, same reasoning and same
+   * shape as `exposeLocationRegistry`: a relay registry is meant to run on
+   * whichever node an installer is authorized to write to, gated by that
+   * node's own network password, not exposed to the general guest-facing
+   * gateway by default. When true, `networkPassword` is required (the
+   * constructor throws otherwise). Unlike `exposeLocationRegistry`/
+   * `POST /api/location-report` (whose *write* side only needs
+   * `allowServiceCalls`, since sharing a position works from any ordinary
+   * gateway a phone is paired to), both reading *and* writing the relay
+   * registry are gated on this single flag — there is no equivalent "any
+   * gateway can send one" case: registering a relay is an install-time
+   * operator action on one specific node, not something an arbitrary
+   * paired phone should be able to do just by being on the mesh.
+   */
+  exposeRelayRegistry?: boolean;
   /**
    * Enables `GET /api/map-info` and `GET /api/map-tiles/:z/:x/:y` — offline
    * topographic map tiles read from a local MBTiles file (`map-tiles.ts`),
@@ -692,6 +712,7 @@ export class WebUiServer {
   private readonly internetStatus: () => "ONLINE" | "OFFLINE";
   private readonly allowServiceCalls: boolean;
   private readonly exposeLocationRegistry: boolean;
+  private readonly exposeRelayRegistry: boolean;
   private readonly networkName: string | undefined;
   private readonly networkPassword: string | undefined;
   private readonly publicHost: string | undefined;
@@ -714,6 +735,10 @@ export class WebUiServer {
     this.exposeLocationRegistry = options.exposeLocationRegistry ?? false;
     if (this.exposeLocationRegistry && !options.networkPassword) {
       throw new Error("WebUiServer: exposeLocationRegistry requires a networkPassword");
+    }
+    this.exposeRelayRegistry = options.exposeRelayRegistry ?? false;
+    if (this.exposeRelayRegistry && !options.networkPassword) {
+      throw new Error("WebUiServer: exposeRelayRegistry requires a networkPassword");
     }
     this.mapTiles = options.mapTiles;
     const boundHost = options.host ?? "127.0.0.1";
@@ -796,6 +821,10 @@ export class WebUiServer {
       }
       if (url.pathname === "/api/location-report") {
         void this.handleShareLocation(req, res);
+        return;
+      }
+      if (url.pathname === "/api/relays") {
+        void this.handleRegisterRelay(req, res);
         return;
       }
       res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
@@ -899,6 +928,11 @@ export class WebUiServer {
 
     if (url.pathname === "/api/location-registry") {
       this.handleGetLocationRegistry(req, res);
+      return;
+    }
+
+    if (url.pathname === "/api/relays") {
+      this.handleGetRelayRegistry(req, res);
       return;
     }
 
@@ -1508,6 +1542,75 @@ export class WebUiServer {
       return;
     }
     sendJson(res, 200, this.node.locationRegistry.list());
+  }
+
+  /**
+   * `GET /api/relays` — every registered relay, static fields plus current
+   * online/last-seen state (`node.relayRegistry.list()`, `docs/beacon.md`
+   * "Fixed Relay e Registro dei relay"). Same 404-then-401 gating posture as
+   * `handleGetLocationRegistry()`, on `exposeRelayRegistry` instead.
+   */
+  private handleGetRelayRegistry(req: IncomingMessage, res: ServerResponse): void {
+    if (!this.exposeRelayRegistry || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+    sendJson(res, 200, this.node.relayRegistry.list());
+  }
+
+  /**
+   * `POST /api/relays` — registers or updates a physical relay's static
+   * fields (`node.registerRelay()`). Same 404-then-401 gating as
+   * `handleGetRelayRegistry()` — see `WebUiOptions.exposeRelayRegistry`'s
+   * doc comment for why *both* directions share this one flag, unlike
+   * location reports. Body validated by `extractRelayRegistration()`
+   * (`relay-registry.ts`) — same defensive posture as every other
+   * externally-sourced payload in this codebase, 400 on anything malformed.
+   */
+  private async handleRegisterRelay(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.exposeRelayRegistry || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+    let raw: Buffer;
+    try {
+      raw = await readRequestBody(req, MAX_MESSAGE_BODY_BYTES, MAX_CALL_BODY_READ_MS);
+    } catch (err) {
+      if (res.writableEnded || res.destroyed) return; // connection already gone — nothing to answer
+      if (err instanceof BodyTooLargeError) {
+        sendJson(res, 413, { error: "request body too large" });
+      } else if (err instanceof Error && err.message.includes("timed out")) {
+        sendJson(res, 408, { error: "timed out waiting for the request body" });
+      } else {
+        sendJson(res, 400, { error: "failed to read request body" });
+      }
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = raw.length === 0 ? {} : JSON.parse(raw.toString("utf8"));
+    } catch {
+      sendJson(res, 400, { error: "malformed JSON body" });
+      return;
+    }
+    const fields = extractRelayRegistration(parsed);
+    if (!fields) {
+      sendJson(res, 400, { error: "invalid relay registration" });
+      return;
+    }
+    const entry = this.node.registerRelay(fields);
+    sendJson(res, 200, entry);
   }
 
   /**

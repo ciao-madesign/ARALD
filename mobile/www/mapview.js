@@ -84,11 +84,14 @@ function renderMapAvailability(info) {
 function renderMapTiles() {
   const layer = document.getElementById("map-tiles-layer");
   const pinsLayer = document.getElementById("map-pins-layer");
+  const relaysLayer = document.getElementById("map-relays-layer");
   layer.textContent = "";
   if (!mapState) {
     layer.style.transform = "";
     pinsLayer.style.transform = "";
+    relaysLayer.style.transform = "";
     renderMapPins();
+    renderMapRelays();
     return;
   }
 
@@ -99,6 +102,7 @@ function renderMapTiles() {
 
   layer.style.transform = `translate(${-topLeft.x}px, ${-topLeft.y}px)`;
   pinsLayer.style.transform = layer.style.transform;
+  relaysLayer.style.transform = layer.style.transform;
 
   const firstTileX = Math.floor(topLeft.x / TILE_SIZE);
   const firstTileY = Math.floor(topLeft.y / TILE_SIZE);
@@ -119,6 +123,7 @@ function renderMapTiles() {
     }
   }
   renderMapPins();
+  renderMapRelays();
 }
 
 /**
@@ -141,6 +146,30 @@ function renderMapPins() {
     pin.style.top = y + "px";
     pin.title = d.label || d.text || "";
     pin.innerHTML = `<svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-${d.urgent ? "alert-triangle" : "map-pin"}"></use></svg>`;
+    layer.append(pin);
+  }
+}
+
+/**
+ * Draws known relays (`docs/beacon.md` "Fixed Relay e Registro dei relay") as a second, independent
+ * pin layer alongside renderMapPins() — same world-pixel positioning, `knownRelays` populated by
+ * app.js's renderRelays() on every refreshAll() cycle. A relay currently offline gets a dimmed pin
+ * (`.is-offline`) rather than being hidden outright — where it's installed is still useful to know
+ * even when it isn't reachable right now.
+ */
+function renderMapRelays() {
+  const layer = document.getElementById("map-relays-layer");
+  layer.textContent = "";
+  if (!mapState || typeof knownRelays === "undefined") return;
+  for (const r of knownRelays) {
+    if (typeof r.lat !== "number" || typeof r.lon !== "number") continue;
+    const { x, y } = lonLatToWorldPx(r.lon, r.lat, mapState.zoom);
+    const pin = document.createElement("div");
+    pin.className = "map-pin map-pin-relay" + (r.online ? "" : " is-offline");
+    pin.style.left = x + "px";
+    pin.style.top = y + "px";
+    pin.title = r.operator || r.relayId;
+    pin.innerHTML = `<svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-wifi"></use></svg>`;
     layer.append(pin);
   }
 }
@@ -204,6 +233,7 @@ function moveDrag(event) {
   const transform = `translate(${-topLeft.x + dx}px, ${-topLeft.y + dy}px)`;
   document.getElementById("map-tiles-layer").style.transform = transform;
   document.getElementById("map-pins-layer").style.transform = transform;
+  document.getElementById("map-relays-layer").style.transform = transform;
 }
 
 function endDrag(event) {

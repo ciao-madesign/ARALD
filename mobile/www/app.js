@@ -1,4 +1,4 @@
-// Nomad-Net mobile client (Fase 1, Wi-Fi/TCP — docs/next-steps.md Opzione H). Plain JS, no
+// Nomad-Net mobile client (Passo 1, Wi-Fi/TCP — docs/next-steps.md Opzione H). Plain JS, no
 // framework, same discipline as node/src/web-ui.ts's own page: every value from the network goes
 // through textContent (never innerHTML), because a peer's declared content name, service id, or
 // capability list is untrusted input this app renders, exactly like the desktop status page does.
@@ -400,6 +400,57 @@ async function shareLocationReport(lat, lon, accuracy) {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + networkPassword },
       body: JSON.stringify({ lat, lon, accuracy }),
+    },
+    CALL_TIMEOUT_MS,
+  );
+  let body;
+  try {
+    body = await res.json();
+  } catch {
+    const err = new Error("risposta non valida dal gateway (HTTP " + res.status + ")");
+    err.status = res.status;
+    throw err;
+  }
+  if (!res.ok) {
+    const err = new Error(body.error || "HTTP " + res.status);
+    err.status = res.status;
+    throw err;
+  }
+  return body;
+}
+
+/**
+ * GET /api/relays (node/src/web-ui.ts) — every registered physical relay this gateway knows about,
+ * static fields plus current online/last-seen state. Same graceful-degradation posture as
+ * fetchLocationRegistry() above (only offered on a node with `exposeRelayRegistry` on — 404 there
+ * means "not offered here", returned as null) and the same 401 handling.
+ */
+async function fetchRelayRegistry() {
+  const res = await fetchWithTimeout(apiUrl("/api/relays"), { headers: { Authorization: "Bearer " + networkPassword } }, READ_TIMEOUT_MS);
+  if (res.status === 404) return null;
+  if (res.status === 401) {
+    handlePasswordRejected();
+    throw new Error("password di rete non valida");
+  }
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return res.json();
+}
+
+/**
+ * POST /api/relays (node/src/web-ui.ts) — registers or updates a physical relay's static fields.
+ * Unlike shareLocationReport()/createDrop(), this is an install-time operator action gated on the
+ * same `exposeRelayRegistry` flag as the read side (see WebUiOptions.exposeRelayRegistry's own doc
+ * comment for why writing isn't split onto `allowServiceCalls` the way sharing a position is) — the
+ * form that calls this is only ever shown once fetchRelayRegistry() above has already proven this
+ * gateway offers the feature at all.
+ */
+async function submitRelayRegistration(fields) {
+  const res = await fetchWithTimeout(
+    apiUrl("/api/relays"),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + networkPassword },
+      body: JSON.stringify(fields),
     },
     CALL_TIMEOUT_MS,
   );
@@ -1256,6 +1307,112 @@ function renderLocationReports(reports) {
   }
   locationReportSeenIds = nextSeen;
 }
+
+// ---------- relay registry (docs/beacon.md "Fixed Relay e Registro dei relay") ----------
+
+let relaySeenIds = new Set();
+
+/**
+ * The full list from the latest GET /api/relays, kept independently of whether the offline map
+ * overlay (mapview.js) happens to be open — mapview.js's renderMapRelays() reads this global to draw
+ * relay pins without app.js needing to know anything about map/tile coordinate space. `null` when
+ * this gateway doesn't offer the feature (see renderRelays() below).
+ */
+let knownRelays = [];
+
+/**
+ * `relays` is `null` when GET /api/relays 404s on this gateway — this device isn't paired to a node
+ * with `exposeRelayRegistry` on (node/src/web-ui.ts), the ordinary case for most gateways. The whole
+ * panel stays hidden in that case, same graceful-degradation posture as renderLocationReports() above.
+ */
+function renderRelays(relays) {
+  const panel = document.getElementById("relays-panel");
+  knownRelays = relays || [];
+  renderMapRelays();
+  if (relays === null) {
+    panel.hidden = true;
+    relaySeenIds = new Set();
+    return;
+  }
+  panel.hidden = false;
+  if (isRenamePending()) return; // never yank an in-progress rename out from under the user — see isRenamePending()
+  const list = document.getElementById("relays");
+  document.getElementById("relays-count").textContent = relays.length > 0 ? String(relays.length) : "";
+  if (renderEmptyIfNeeded(list, relays, "Nessun relay registrato ancora.", "wifi")) {
+    relaySeenIds = new Set();
+    return;
+  }
+  const nextSeen = new Set();
+  for (const r of relays) {
+    nextSeen.add(r.relayId);
+    const tags = [
+      el("span", { className: "pill " + (r.online ? "good" : "off"), textContent: r.online ? "online" : "offline" }),
+      el("span", { className: "tag", textContent: r.type === "fixed" ? "Fisso" : "Mobile" }),
+    ];
+    if (r.radio && r.radio.ble) tags.push(el("span", { className: "tag", textContent: "BLE" }));
+    if (r.radio && r.radio.lora) tags.push(el("span", { className: "tag", textContent: "LoRa" }));
+    const li = el("li", null, [
+      el("div", { className: "row" }, [
+        el("span", { className: "row-title", textContent: r.operator || "NODE-" + r.relayId.slice(0, 8), title: r.relayId }),
+        el("span", { className: "muted", textContent: r.lastSeenAt ? timeAgo(r.lastSeenAt) : "mai visto online" }),
+      ]),
+      el("div", { className: "tags" }, tags),
+    ]);
+    if (!relaySeenIds.has(r.relayId)) li.classList.add("enter");
+    list.append(li);
+  }
+  relaySeenIds = nextSeen;
+}
+
+function setCreateRelayBusy(submit, busy) {
+  submit.disabled = busy;
+  submit.textContent = busy ? "Invio..." : "Registra relay";
+}
+
+document.getElementById("create-relay-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const idInput = document.getElementById("create-relay-id");
+  const typeInput = document.getElementById("create-relay-type");
+  const bleInput = document.getElementById("create-relay-ble");
+  const loraInput = document.getElementById("create-relay-lora");
+  const operatorInput = document.getElementById("create-relay-operator");
+  const status = document.getElementById("create-relay-status");
+  const relayId = idInput.value.trim();
+  if (!relayId) return;
+  const operator = operatorInput.value.trim();
+  const submit = event.target.querySelector("button[type=submit]");
+  setCreateRelayBusy(submit, true);
+  status.classList.remove("error");
+  status.textContent = "Individuazione della posizione...";
+  try {
+    const { lat, lon } = await getCurrentPosition();
+    status.textContent = "Registrazione in corso...";
+    await submitRelayRegistration({
+      relayId,
+      type: typeInput.value,
+      lat,
+      lon,
+      radio: { ble: bleInput.checked, lora: loraInput.checked },
+      operator: operator || undefined,
+    });
+    idInput.value = "";
+    operatorInput.value = "";
+    status.textContent = "Relay registrato.";
+    vibrate(10);
+    showToast("Relay registrato", "wifi");
+    refreshAll().catch(() => {});
+  } catch (err) {
+    if (err.status === 401) {
+      handlePasswordRejected();
+      return;
+    }
+    status.classList.add("error");
+    status.textContent = "Errore: " + err.message;
+    vibrate([12, 40, 12]);
+  } finally {
+    setCreateRelayBusy(submit, false);
+  }
+});
 
 // ---------- bacheca / drops (docs/next-steps.md — concept credited to BitChat's mesh-local
 // BoardManager, Unlicense/public domain; see node/src/drops.ts's own doc comment) ----------
@@ -2189,7 +2346,7 @@ let refreshCycleId = 0;
 async function refreshAll() {
   const cycleId = ++refreshCycleId;
   try {
-    const [status, peers, services, channels, drops, groups, locationReports, mapInfoResult] = await Promise.all([
+    const [status, peers, services, channels, drops, groups, locationReports, relays, mapInfoResult] = await Promise.all([
       fetchJson("/api/status"),
       fetchJson("/api/peers"),
       fetchJson("/api/services"),
@@ -2197,6 +2354,7 @@ async function refreshAll() {
       fetchJson("/api/drops"),
       fetchGroups(),
       fetchLocationRegistry(),
+      fetchRelayRegistry(),
       fetchMapInfo(),
     ]);
     if (cycleId !== refreshCycleId) return; // superseded by a newer refresh while this one was in flight
@@ -2207,6 +2365,7 @@ async function refreshAll() {
     renderDrops(drops);
     renderGroups(groups);
     renderLocationReports(locationReports);
+    renderRelays(relays);
     renderMapAvailability(mapInfoResult);
     await refreshContent();
     firstLoadDone = true;

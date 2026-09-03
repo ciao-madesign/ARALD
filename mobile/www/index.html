@@ -103,7 +103,7 @@
      il progetto non ha mai introdotto una dipendenza di terze parti in mobile/www/ (vedi CLAUDE.md).
      Stesso pattern a schermo intero di #scanner-overlay sopra, unico altro overlay del progetto. -->
 <section id="map-overlay" hidden>
-  <div id="map-viewport"><div id="map-tiles-layer"></div><div id="map-pins-layer"></div></div>
+  <div id="map-viewport"><div id="map-tiles-layer"></div><div id="map-pins-layer"></div><div id="map-relays-layer"></div></div>
   <div class="map-controls">
     <button type="button" id="map-zoom-in" aria-label="Aumenta zoom">+</button>
     <button type="button" id="map-zoom-out" aria-label="Riduci zoom">−</button>
@@ -276,6 +276,34 @@
           <p class="hint">Dove si trovano, per ultimo, gli altri che hanno scelto di condividere la loro posizione.</p>
         </summary>
         <ul id="location-registry"></ul>
+      </details>
+
+      <!-- Nascosto finché GET /api/relays non risponde (mai un 404) — solo un nodo con
+           WebUiOptions.exposeRelayRegistry attivo lo offre (docs/beacon.md "Fixed Relay e Registro
+           dei relay"), stesso degrado onesto già usato per #location-registry-panel sopra. -->
+      <details class="panel" id="relays-panel" hidden>
+        <summary>
+          <div class="summary-row">
+            <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-wifi"></use></svg> Relay <span class="count" id="relays-count"></span></h2>
+            <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+          </div>
+          <p class="hint">Dispositivi relay installati sul territorio — chi li ha installati registra qui posizione e stato.</p>
+        </summary>
+        <form id="create-relay-form">
+          <input id="create-relay-id" type="text" placeholder="ID del relay (dalla sua pagina di stato)" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+          <select id="create-relay-type">
+            <option value="fixed">Fisso (pannello solare)</option>
+            <option value="mobile">Mobile (trasportato)</option>
+          </select>
+          <div class="checkbox-row-group">
+            <label class="checkbox-row"><input type="checkbox" id="create-relay-ble"><span>Bluetooth</span></label>
+            <label class="checkbox-row"><input type="checkbox" id="create-relay-lora"><span>LoRa</span></label>
+          </div>
+          <input id="create-relay-operator" type="text" placeholder="Operatore (opzionale), es. Soccorso Alpino" autocomplete="off" maxlength="200">
+          <button type="submit">Registra relay</button>
+          <p id="create-relay-status" class="muted" role="status" aria-live="polite"></p>
+        </form>
+        <ul id="relays"></ul>
       </details>
     </div>
 
