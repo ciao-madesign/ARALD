@@ -21,6 +21,7 @@ L'utente non deve sapere quale dispositivo possiede il contenuto, quanti hop ser
 - [`docs/development.md`](docs/development.md) — come compilare, eseguire e testare
 - [`docs/deployment.md`](docs/deployment.md) — scenari di deployment target (rifugio, emergenza)
 - [`docs/beacon.md`](docs/beacon.md) — NOMAD-NET BEACON: espansione proposta, dispositivo fisico di richiesta di soccorso a bassissimo consumo, più NOMAD Mobile Relay e Fixed Relay/Relay Registry (trasporto opportunistico "data mule" e rete di relay fissi con registro/mappa) — documentazione di riferimento, nessun codice ancora
+- [`docs/emergency-rescue-network.md`](docs/emergency-rescue-network.md) — NOMAD-Net Emergency & Rescue Network: roadmap di validazione a fasi (prototipo, micro pilot, field pilot) e possibili partner di campo per l'ecosistema Beacon/Relay — documentazione di riferimento, nessun codice né hardware
 - [`docs/roadmap.md`](docs/roadmap.md) — stato delle milestone
 - [`docs/next-steps.md`](docs/next-steps.md) — piani d'azione concreti per le milestone candidate come prossimo passo
 - [`docs/audit-report.html`](docs/audit-report.html) — report di verifica del progetto (test, sicurezza, prossimi passi in linguaggio semplice), aggiornato a ogni nuovo controllo

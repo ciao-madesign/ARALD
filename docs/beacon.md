@@ -193,6 +193,12 @@ Nessuno di questi scenari richiede una decisione tecnica diversa da quelle già 
 
 L'unica conseguenza pratica per la documentazione di questo progetto: i "Pilot" già scritti in `docs/deployment.md` (rifugio, emergenza, eventi, scuole, spedizioni) restano gli scenari primari e meglio definiti per questo repository, mentre foreste/deserti/aree rurali/disastri/coste/infrastrutture temporanee sono scenari applicativi più ampi della stessa architettura, non ancora oggetto di un pilot dedicato — stesso trattamento già riservato a "Comunità locali" (§6.7 in `docs/deployment.md`: nessun pilot scritto finché non emerge una richiesta concreta, perché non aggiungerebbe alcun requisito software nuovo rispetto a quanto già coperto qui).
 
+---
+
+## Roadmap di validazione e field test
+
+Come arrivare, per gradi, a validare questi dispositivi **insieme come rete** — fino a un eventuale test sul campo con un ente reale — è documentato separatamente in [`docs/emergency-rescue-network.md`](./emergency-rescue-network.md), su richiesta esplicita dell'utente: quel documento riguarda la rete nel suo insieme (fasi di test, budget indicativo, possibili partner di campo), non i singoli dispositivi descritti qui.
+
 ## Prossimo passo (tutte le voci di questo documento)
 
 Nessun codice scritto per nessuna delle voci di questo documento (Beacon, Mobile Relay, Fixed Relay/Registro). Se e quando l'utente vorrà procedere, il primo passo concreto resta una fase di planning esplicita (analoga a quella già fatta per il tracciamento posizione, voce #44, e per le chat cifrate, voce #42) — necessaria soprattutto per il Beacon (formato messaggio, modello di trasporto broadcast-non-connesso), mentre per Mobile Relay e Fixed Relay/Registro il lavoro è già in gran parte definito dal codice esistente, come descritto nelle rispettive sezioni. In ogni caso, prima di scrivere qualunque riga di codice, seguendo lo stesso workflow a doppio check descritto in `CLAUDE.md`.
