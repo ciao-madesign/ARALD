@@ -62,8 +62,10 @@ export interface NomadNodeOptions {
   contentRequestTimeoutMs?: number;
   /** How long a content provider may stay silent before getContent() tries the next known candidate, instead of waiting out contentRequestTimeoutMs on one unresponsive provider. */
   contentProviderTimeoutMs?: number;
-  /** How long an undeliverable unicast packet is held before being dropped (spec §30, milestone 12). */
+  /** How long an undeliverable unicast packet is held before being dropped (spec §30, milestone 12). Does not apply to Priority.EMERGENCY packets — see storeAndForwardEmergencyTtlMs. */
   storeAndForwardTtlMs?: number;
+  /** How long an undeliverable Priority.EMERGENCY packet is held before being dropped — longer than storeAndForwardTtlMs by default (docs/beacon.md, "NOMAD Mobile Relay" §9). See PendingDeliveryQueue's own doc comment for why. */
+  storeAndForwardEmergencyTtlMs?: number;
   /** Max packets held in the store-and-forward queue at once (spec §57 resource limits). */
   maxPendingDeliveries?: number;
   /** Max entries held in the remote (metadata-only) content catalog at once (spec §57 resource limits). */
@@ -504,6 +506,7 @@ export class NomadNode extends EventEmitter {
     this.minTrustToRelay = options.minTrustToRelay;
     this.pendingDeliveries = new PendingDeliveryQueue({
       ttlMs: options.storeAndForwardTtlMs,
+      emergencyTtlMs: options.storeAndForwardEmergencyTtlMs,
       maxSize: options.maxPendingDeliveries,
     });
     this.trust = new TrustManager({ maxSize: options.maxTrustEntries });
@@ -1489,12 +1492,17 @@ export class NomadNode extends EventEmitter {
    */
   private async flushPendingDeliveries(): Promise<void> {
     await Promise.all(
-      this.pendingDeliveries.drain().map(async ({ packet, exceptPeerId }) => {
+      this.pendingDeliveries.drain().map(async (delivery) => {
+        const { packet, exceptPeerId } = delivery;
         if (exceptPeerId !== undefined) {
           const gate = this.relayGateFor(exceptPeerId);
           if (gate !== "ok") {
-            // Still worth retrying later if circumstances change — re-queue rather than drop.
-            this.pendingDeliveries.enqueue(packet, exceptPeerId);
+            // Still worth retrying later if circumstances change — re-queue rather than drop. Uses
+            // requeue() (carries delivery's own original expiresAt), not enqueue() (would compute a
+            // fresh one) — see PendingDeliveryQueue's own doc comment, point 2, for why a courier
+            // that connects/disconnects/reconnects often (its entire reason to exist) would otherwise
+            // never actually let a persistently-denied entry expire.
+            this.pendingDeliveries.requeue(delivery);
             this.emitRelayGateDenied(gate, exceptPeerId, packet.type);
             return;
           }

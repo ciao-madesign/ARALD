@@ -78,7 +78,7 @@ Candidata finale della proposta: **EB-Dual**, senza partire subito da quella —
 
 ## NOMAD Mobile Relay (Base/Passive) — dispositivo dedicato di trasporto opportunistico
 
-**Stato**: documentazione di riferimento/pianificazione — **nessun codice scritto**. Seconda specifica ricevuta dall'utente il 3 settembre 2026 (stesso giorno di BEACON), analizzata per compatibilità con l'architettura esistente prima di essere integrata qui.
+**Stato**: il profilo corriere stesso resta puramente una configurazione (nessun codice nuovo necessario, vedi sotto — non cambia). **I due affinamenti reali a `PendingDeliveryQueue` sono invece implementati** (`node/src/store-and-forward.ts`, pezzo 2 di 3 del piano "Relay Registry → profilo corriere Mobile/Fixed Relay → Beacon SOS" — vedi `docs/security.md` voce #55 per il dettaglio completo: eviction pesata su priorità, TTL differenziato per `Priority.EMERGENCY`, più due problemi reali di sicurezza trovati dalla revisione e corretti). Seconda specifica ricevuta dall'utente il 3 settembre 2026 (stesso giorno di BEACON), analizzata per compatibilità con l'architettura esistente prima di essere integrata qui.
 
 ### Cos'è
 
@@ -102,15 +102,15 @@ La specifica è **valida e ben allineata** all'architettura Nomad-Net — anzi, 
 | Identità crittografica, autenticazione pacchetti, anti-replay, revoca di un relay compromesso (§11) | `Identity` Ed25519 (`identity.ts`) + `TrustManager` (`trust.ts`) — stesso schema usato ovunque nel progetto; il relay non possiede mai le chiavi dell'autore originale di un contenuto/messaggio firmato, quindi non può falsificarne l'origine, esattamente come richiesto ("riceve → conserva → inoltra" senza poter modificare arbitrariamente un messaggio) |
 | Nessuna dipendenza da Internet/Wi-Fi/GPS/SIM/display (§3, §4) | Coerente con un `NomadNode` a cui non viene mai istanziato `WebUiServer` né alcun gateway — non c'è nulla nel codice esistente che *imponga* queste dipendenze, sono già tutte opzionali |
 
-### Differenze reali rispetto al codice esistente (non bloccanti, ma da non ignorare)
+### Differenze reali rispetto al codice esistente (due risolte, una ancora aperta per scelta)
 
-La compatibilità è alta ma non totale — tre scostamenti reali tra la proposta e il comportamento odierno, utili se mai si arrivasse a un'implementazione:
+La compatibilità era alta ma non totale — tre scostamenti reali tra la proposta e il comportamento di allora:
 
-1. **Eviction non pesata su priorità in `PendingDeliveryQueue`**: la coda usa `BoundedFifoMap` con eviction FIFO pura (il più vecchio esce per primo). La proposta (§10) si aspetta che, sotto pressione di memoria, i messaggi a priorità inferiore vengano scartati *prima* di quelli EMERGENCY — oggi non è così: un Mobile Relay con poca memoria potrebbe eliminare un messaggio di emergenza in coda da poco a favore di un messaggio ordinario più vecchio. Coerente con lo stesso tipo di gap già risolto altrove nel progetto per altre strutture dati (`RoutingTable`/`PeerDirectory`/`RemoteCatalog`, voci #3/#26) tramite eviction pesata — qui non ancora applicato.
-2. **TTL uniforme, non differenziato per priorità**: `PendingDeliveryQueue.ttlMs` è un singolo valore globale (default 5 minuti), mentre la proposta (§9) prevede esplicitamente un TTL più lungo per i messaggi di emergenza rispetto a quelli ordinari.
-3. **Nessun "annuncio inventario" per i pacchetti generici in coda**: il modello §7C ("annuncia i messaggi disponibili, trasferisce solo quelli non ancora ricevuti") esiste già per i contenuti pubblicati (`RemoteCatalog`, sync tra segmenti) ma non per i pacchetti generici in `PendingDeliveryQueue` — oggi un incontro tra due nodi ritrasmette per flooding (`decideForward`), con `SeenCache` che scarta i duplicati lato ricevente ma senza negoziare in anticipo *cosa* serve davvero all'altro nodo. Su un link BLE/LoRa a banda stretta e ad alta latenza, questo spreca tempo radio reale — un'ottimizzazione mai necessaria finché il transport è TCP locale.
+1. **Eviction non pesata su priorità in `PendingDeliveryQueue` — risolto.** La coda usava `BoundedFifoMap` con eviction FIFO pura (il più vecchio esce per primo); la proposta (§10) si aspetta che, sotto pressione di memoria, i messaggi a priorità inferiore vengano scartati *prima* di quelli EMERGENCY. Ora `PendingDeliveryQueue` pesa l'eviction su `packet.priority` (stesso principio dell'eviction pesata sulla fiducia già usata altrove — `RoutingTable`/`PeerDirectory`/`RemoteCatalog`, voci #3/#26 — ma qui basata su un campo intrinseco al pacchetto, non su uno stato esterno come la fiducia).
+2. **TTL uniforme, non differenziato per priorità — risolto.** `PendingDeliveryQueue` ora distingue `ttlMs` (tutto il resto) da `emergencyTtlMs` (più lungo, riservato a `Priority.EMERGENCY`), come richiesto dalla proposta (§9).
+3. **Nessun "annuncio inventario" per i pacchetti generici in coda — ancora aperto, per scelta.** Il modello §7C ("annuncia i messaggi disponibili, trasferisce solo quelli non ancora ricevuti") esiste già per i contenuti pubblicati (`RemoteCatalog`, sync tra segmenti) ma non per i pacchetti generici in `PendingDeliveryQueue`. Rimasto deliberatamente non implementato in questo pezzo: la proposta stessa lo marca "eventuale", ed è un'ottimizzazione che ha senso solo su un link BLE/LoRa a banda stretta — mai sopra il transport TCP locale su cui gira davvero questo prototipo.
 
-Nessuno di questi è un difetto di progetto: sono limiti che semplicemente non contavano finché non esisteva un caso d'uso (un relay fisico, a memoria/banda/energia vincolate) che li rende visibili. Stesso trattamento onesto già riservato ad altri limiti noti del progetto (`docs/security.md`, "Binding crittografico").
+Vedi `docs/security.md` voce #55 per il dettaglio completo dell'implementazione dei primi due punti, inclusi due problemi reali di sicurezza trovati dalla revisione (una priorità forgiata da un peer poteva rendere un pacchetto immune all'eviction; un pacchetto EMERGENCY ripetutamente ri-accodato durante un rigetto di relay-gate poteva non scadere mai) e come sono stati corretti.
 
 ### Cosa NON è costruibile in questo ambiente (hardware/firmware reale)
 
@@ -121,9 +121,9 @@ Stesso principio già applicato a BOX/PORTABLE e al Beacon: tutto ciò che segue
 - Formato fisico, involucro IP65/IP67, peso <50g, montaggio su drone/zaino/veicolo (§13) — industrial design, fuori scope.
 - Validazione reale di autonomia energetica (sleep/listen/transfer, §12) — misurabile solo su hardware reale.
 
-### Prossimo passo
+### Verificato end-to-end
 
-Nessun codice scritto per questa voce. Se l'utente vorrà procedere, il lavoro software puro più naturale sarebbe una configurazione/profilo dedicato di `NomadNode` (transport BLE/LoRa simulati soli, nessun servizio locale) più i tre affinamenti elencati sopra (eviction pesata su priorità e TTL differenziato per `PendingDeliveryQueue`, eventuale negoziazione "inventario" per pacchetti generici) — verificabile end-to-end con gli stessi pattern di test già usati per BLE/LoRa simulati, senza bisogno di alcuna decisione di design nuova paragonabile a quella richiesta dal formato messaggio del Beacon.
+`tests/integration/courier-profile.test.ts` (nuovo) costruisce un vero corriere — un `NomadNode` con solo `LoraSimulatedTransport` attivo e nessun servizio locale registrato, esattamente il "profilo" descritto sopra — e verifica: (1) un messaggio unicast attraversa due segmenti mesh che non si connettono mai direttamente, in transito solo tramite il corriere; (2) sotto un limite di coda ridotto, l'eviction rispetta l'ordine atteso e i sopravvissuti vengono comunque consegnati alla riconnessione. La logica di eviction/TTL pesata sulla priorità è verificata più a fondo a livello di unità in `tests/unit/store-and-forward.test.ts`.
 
 ---
 
@@ -217,4 +217,4 @@ Come arrivare, per gradi, a validare questi dispositivi **insieme come rete** �
 
 ## Prossimo passo (tutte le voci di questo documento)
 
-L'utente ha approvato il 3 settembre 2026 un piano a tre pezzi, in ordine: (1) Relay Registry, (2) profilo corriere Mobile/Fixed Relay, (3) Beacon SOS — un pezzo alla volta, con verifica di coerenza e commenti espliciti nel codice per ogni scelta di design. **Pezzo 1 (Relay Registry) è completo**, vedi la sezione dedicata sopra e `docs/security.md` voce #54. Restano da fare, nello stesso ordine concordato: il profilo corriere per Mobile/Fixed Relay (nessun nuovo protocollo previsto, solo i tre affinamenti già elencati sopra — eviction pesata su priorità/TTL differenziato in `PendingDeliveryQueue`, eventuale negoziazione "inventario") e il Beacon SOS vero e proprio (formato messaggio, modello di trasporto broadcast-non-connesso — i punti di design più aperti di tutto il documento). Ciascun pezzo resta soggetto allo stesso workflow a doppio check descritto in `CLAUDE.md`, incluso lo stop per un "ok" esplicito dell'utente prima di iniziare il pezzo successivo.
+L'utente ha approvato il 3 settembre 2026 un piano a tre pezzi, in ordine: (1) Relay Registry, (2) profilo corriere Mobile/Fixed Relay, (3) Beacon SOS — un pezzo alla volta, con verifica di coerenza e commenti espliciti nel codice per ogni scelta di design. **Pezzi 1 (Relay Registry) e 2 (profilo corriere Mobile/Fixed Relay) sono completi**, vedi le sezioni dedicate sopra e `docs/security.md` voci #54/#55. Resta da fare, nello stesso ordine concordato: il Beacon SOS vero e proprio (formato messaggio, modello di trasporto broadcast-non-connesso — i punti di design più aperti di tutto il documento). Ciascun pezzo resta soggetto allo stesso workflow a doppio check descritto in `CLAUDE.md`, incluso lo stop per un "ok" esplicito dell'utente prima di iniziare il pezzo successivo.
