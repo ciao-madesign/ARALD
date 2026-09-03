@@ -172,6 +172,27 @@ Il pezzo davvero nuovo è il **Relay Registry**, che invece non ha ancora un equ
 
 Nessun codice scritto per questa voce. Se l'utente vorrà procedere, il lavoro software puro sarebbe: un nuovo modulo di registro (schema a due categorie di campi, statico/dinamico, come descritto sopra), gli endpoint `POST`/`GET /api/relays` su `web-ui.ts` dietro autenticazione, e un secondo layer di pin su `mapview.js` — tre pezzi ben delimitati, nessuno dei quali richiede le decisioni di design più delicate ancora aperte per il Beacon (formato messaggio, trasporto broadcast-non-connesso).
 
+---
+
+## Ambito di applicazione: oltre il rifugio alpino
+
+**Stato**: chiarimento di inquadratura ricevuto dall'utente lo stesso giorno — nessuna novità tecnica, nessun codice, nessuna nuova decisione di design.
+
+Tutto quanto descritto sopra (Beacon, Mobile Relay, Fixed Relay, Relay Registry) non ha alcuna dipendenza dall'ambiente alpino, né nel codice esistente (i transport BLE/LoRa simulati e il modello store-and-forward non sanno e non devono sapere dove si trova il nodo che li esegue) né nella specifica stessa (i tre ruoli — genera, trasporta, riceve — sono già descritti come indifferenti al vettore che li ospita). Il rifugio alpino resta lo scenario di riferimento di questo progetto (§6.2 della specifica, pilot dedicato in `docs/deployment.md`), ma **la caratteristica che rende questa architettura applicabile non è il luogo, è l'assenza — temporanea o permanente — di connettività affidabile**, una proprietà che si ritrova in contesti molto diversi:
+
+| Scenario | Cosa cambia rispetto al rifugio | Cosa resta identico |
+|---|---|---|
+| **Foreste e grandi aree naturali** (escursionisti dispersi, incendi, incidenti outdoor) | Fixed Relay lungo sentieri e punti di passaggio invece che attorno a un edificio | Stessa catena Beacon → Relay → Emergency Node/centro soccorsi |
+| **Deserti e aree remote** (es. Sahara, outback australiano, Atacama) | Densità di relay molto più bassa, distanze molto maggiori tra un punto radio e l'altro; consegna non necessariamente immediata | Store-and-forward, TTL, priorità — nessuna di queste proprietà presuppone consegna rapida, sono già pensate per l'attesa |
+| **Aree rurali e comunità isolate** | Sorgenti diverse (beacon personali, operatori locali, veicoli, strutture di emergenza) invece di ospiti di un rifugio | Stessi ruoli Beacon/Relay/Fixed Relay, nessuna infrastruttura cellulare completa richiesta |
+| **Disastri naturali** (terremoto, alluvione, uragano, incendio) | Relay distribuiti *dopo* l'evento, spesso in modo rapido e provvisorio (persone, veicoli, droni) — proprio quando le infrastrutture convenzionali (antenne, elettricità, Internet) sono già fuori uso | La proprietà "non serve una connessione continua, basta che i nodi si incontrino", già enunciata per il Mobile Relay, è qui più rilevante che mai |
+| **Mare, coste e isole** | Un'imbarcazione come Mobile Relay, che raccoglie messaggi in navigazione e li consegna raggiungendo un porto o un altro nodo | Stesso modello "data mule" già documentato per il Mobile Relay generico |
+| **Aree di crisi o infrastrutture temporanee** (grandi eventi, campi base, cantieri remoti, spedizioni, protezione civile) | Relay portatili, rete creata rapidamente senza installazione permanente | Nessuna differenza dal Mobile Relay/Fixed Relay già descritti, solo un orizzonte temporale più breve |
+
+Nessuno di questi scenari richiede una decisione tecnica diversa da quelle già discusse nelle sezioni precedenti di questo documento — è un cambio di **inquadratura**, non di architettura: gli stessi tre ruoli (Beacon/Relay/Emergency Node) e lo stesso Relay Registry già proposto per il rifugio si applicano senza modifiche. Il modello dei Fixed Relay solari resta il pezzo che trasforma questa idea da "insieme di dispositivi mobili" a vera e propria **infrastruttura fisica distribuita** — nodi permanenti autonomi, registrabili e visualizzabili su mappa (sezione "Fixed Relay e Relay Registry" sopra) — indipendentemente da quale dei contesti sopra li ospita.
+
+L'unica conseguenza pratica per la documentazione di questo progetto: i "Pilot" già scritti in `docs/deployment.md` (rifugio, emergenza, eventi, scuole, spedizioni) restano gli scenari primari e meglio definiti per questo repository, mentre foreste/deserti/aree rurali/disastri/coste/infrastrutture temporanee sono scenari applicativi più ampi della stessa architettura, non ancora oggetto di un pilot dedicato — stesso trattamento già riservato a "Comunità locali" (§6.7 in `docs/deployment.md`: nessun pilot scritto finché non emerge una richiesta concreta, perché non aggiungerebbe alcun requisito software nuovo rispetto a quanto già coperto qui).
+
 ## Prossimo passo (tutte le voci di questo documento)
 
 Nessun codice scritto per nessuna delle voci di questo documento (Beacon, Mobile Relay, Fixed Relay/Registro). Se e quando l'utente vorrà procedere, il primo passo concreto resta una fase di planning esplicita (analoga a quella già fatta per il tracciamento posizione, voce #44, e per le chat cifrate, voce #42) — necessaria soprattutto per il Beacon (formato messaggio, modello di trasporto broadcast-non-connesso), mentre per Mobile Relay e Fixed Relay/Registro il lavoro è già in gran parte definito dal codice esistente, come descritto nelle rispettive sezioni. In ogni caso, prima di scrivere qualunque riga di codice, seguendo lo stesso workflow a doppio check descritto in `CLAUDE.md`.
