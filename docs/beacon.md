@@ -1,6 +1,6 @@
 # NOMAD-NET BEACON — ecosistema di richiesta di soccorso a bassissimo consumo
 
-**Stato**: documentazione di riferimento/pianificazione, v0.1 — **nessun codice scritto**. Proposta ricevuta dall'utente il 3 settembre 2026, analizzata e discussa prima di essere integrata qui. Stesso trattamento già riservato a **NOMAD-NET BOX e PORTABLE** (`docs/deployment.md`): un terzo ramo/espansione del progetto, non parte della specifica originale (`docs/SPECIFICATION.md`) né della roadmap (`docs/roadmap.md`), che descrive dispositivi fisici dedicati invece di feature del software di rete. Esteso lo stesso giorno con una seconda specifica ricevuta dall'utente per un componente distinto della stessa famiglia, il **NOMAD Mobile Relay** (vedi sezione dedicata sotto).
+**Stato**: documentazione di riferimento/pianificazione, v0.1 — **nessun codice scritto**. Proposta ricevuta dall'utente il 3 settembre 2026, analizzata e discussa prima di essere integrata qui. Stesso trattamento già riservato a **NOMAD-NET BOX e PORTABLE** (`docs/deployment.md`): un terzo ramo/espansione del progetto, non parte della specifica originale (`docs/SPECIFICATION.md`) né della roadmap (`docs/roadmap.md`), che descrive dispositivi fisici dedicati invece di feature del software di rete. Esteso lo stesso giorno con due specifiche aggiuntive ricevute dall'utente per componenti distinti della stessa famiglia: il **NOMAD Mobile Relay** e, a seguire, **Fixed Relay + Relay Registry** (vedi sezioni dedicate sotto).
 
 ## Cos'è e cosa non è
 
@@ -125,6 +125,53 @@ Stesso principio già applicato a BOX/PORTABLE e al Beacon: tutto ciò che segue
 
 Nessun codice scritto per questa voce. Se l'utente vorrà procedere, il lavoro software puro più naturale sarebbe una configurazione/profilo dedicato di `NomadNode` (transport BLE/LoRa simulati soli, nessun servizio locale) più i tre affinamenti elencati sopra (eviction pesata su priorità e TTL differenziato per `PendingDeliveryQueue`, eventuale negoziazione "inventario" per pacchetti generici) — verificabile end-to-end con gli stessi pattern di test già usati per BLE/LoRa simulati, senza bisogno di alcuna decisione di design nuova paragonabile a quella richiesta dal formato messaggio del Beacon.
 
-## Prossimo passo (BEACON e Mobile Relay insieme)
+---
 
-Nessun codice scritto per nessuna delle due voci di questo documento. Se e quando l'utente vorrà procedere, il primo passo concreto resta una fase di planning esplicita (analoga a quella già fatta per il tracciamento posizione, voce #44, e per le chat cifrate, voce #42) — necessaria soprattutto per il Beacon (formato messaggio, modello di trasporto broadcast-non-connesso), mentre per il Mobile Relay il lavoro è già in gran parte definito dal codice esistente, come descritto sopra. In ogni caso, prima di scrivere qualunque riga di codice, seguendo lo stesso workflow a doppio check descritto in `CLAUDE.md`.
+## NOMAD-Net Emergency & Rescue Relay Network — Fixed Relay e Registro dei relay
+
+**Stato**: documentazione di riferimento/pianificazione — **nessun codice scritto**. Terza specifica ricevuta dall'utente lo stesso giorno (3 settembre 2026), a seguito di una discussione esplicita in cui l'utente ha **rifiutato** una precedente proposta di rebranding (una famiglia hardware unificata "NOMAD Radio Device"): Beacon, Mobile Relay e Fixed Relay restano tre nomi distinti in questo documento, non varianti di un unico prodotto. Resta aperta e non decisa, separatamente da questa sezione, l'idea di "SOS Proximity Detection" (misura RSSI lato relay per una stima di prossimità) discussa nella stessa conversazione ma non ancora integrata in documentazione.
+
+### Cos'è
+
+La specifica introduce una distinzione di **deployment** all'interno del ruolo "Relay" già documentato sopra:
+
+- **Fixed Relay** — installato permanentemente in un punto strategico (sentieri, passi, vie ferrate, rifugi, punti di emergenza), alimentato a pannello solare + batteria dove manca energia elettrica, operativo a lungo termine senza intervento umano.
+- **Mobile Relay** — quanto già documentato sopra (persona/drone/veicolo/animale/mezzo di soccorso).
+
+A completare il quadro, un **Relay Registry**: un registro (centralizzato o distribuito) dei Fixed Relay dispiegati, ciascuno con un `Relay ID` univoco e metadati di deployment (posizione geografica, tipo, stato operativo, capacità radio, data di installazione, operatore/organizzazione, ultimo stato/sincronizzazione noti), esposto tramite un portale/mappa NOMAD a utenti autorizzati. La specifica nota un beneficio operativo concreto: sapere *quale* relay ha ricevuto un SOS e *dove* si trova quel relay è già di per sé un'informazione utile per stimare origine e percorso del segnale, prima ancora di qualunque stima di prossimità più sofisticata.
+
+Principio dichiarato esplicitamente nella proposta, coerente con come questo progetto tratta già Nomad-Net rispetto alle infrastrutture di emergenza convenzionali: **non sostituisce** le comunicazioni di emergenza tradizionali, fornisce un **layer di comunicazione secondario e resiliente** dove quelle convenzionali non arrivano o non sono affidabili.
+
+### Compatibilità: Fixed Relay non è un dispositivo nuovo, è un deployment del Mobile Relay
+
+Verificato contro la sezione "NOMAD Mobile Relay" sopra: **Fixed Relay e Mobile Relay sono lo stesso dispositivo dal punto di vista software** — stesso comportamento `NomadNode`/`decideForward()`/`PendingDeliveryQueue`/`SeenCache`/`Identity`/`TrustManager`, stessi transport BLE/LoRa simulati. L'unica differenza reale è l'alimentazione (pannello solare + batteria contro batteria portatile) e il fatto di restare fermo invece di muoversi — nessuna delle due cose cambia una sola riga di logica di rete. Questo conferma, da un angolo diverso, la stessa conclusione già scritta sopra per il Mobile Relay: **non serve alcun nuovo protocollo** per il ruolo di relay in sé, a prescindere da dove/come viene installato.
+
+Il pezzo davvero nuovo è il **Relay Registry**, che invece non ha ancora un equivalente nel codice — la proposta di design (non ancora implementata):
+
+| Aspetto | Progettazione proposta |
+|---|---|
+| Metadati statici (posizione, tipo Fixed/Mobile, capacità radio, data installazione, operatore) | Inseriti **una tantum dall'operatore** che installa il relay, tramite un nuovo endpoint autenticato sull'Emergency Node (es. `POST /api/relays`) — non auto-annunciati via radio: sono dati che l'installatore conosce già al momento del deployment, farli dedurre al dispositivo aggiungerebbe complessità senza motivo |
+| Stato dinamico (operativo/ultimo contatto) | Derivato **automaticamente** dalla connettività mesh reale del relay (visto come peer, ultima consegna riuscita via store-and-forward) — nessun nuovo tipo di pacchetto, pura osservabilità di uno stato che il nodo ha già |
+| Esposizione | Nuovo endpoint di lettura (es. `GET /api/relays`), **autenticato** come `GET /api/location-registry` (voce #44) — la specifica dice esplicitamente "utenti autorizzati", diverso dal trattamento pubblico di `GET /api/drops` |
+| Visualizzazione | Nuovo layer di pin su `mapview.js`, accanto a quello già esistente per i drop della Bacheca (`#map-pins-layer`, voce #47) — stesso meccanismo di rendering, fonte dati diversa (registro relay invece di drop) |
+| Correlazione con un SOS | L'Emergency Node, mostrando un'emergenza ricevuta, può arricchirla con la posizione nota del Fixed Relay che l'ha inoltrata (join tra l'evento e il registro per `Relay ID`) — nessuna nuova logica di rete, solo una vista lato Emergency Node che combina due fonti dati già previste |
+
+### Differenze/lavoro reale rispetto al codice esistente
+
+1. **Il Relay Registry non ha alcun precedente diretto**: `location-registry.ts` è il parente più vicino (registro con scadenza opzionale, opt-in, endpoint autenticato) ma è "solo l'ultima posizione nota" per un singolo campo lat/lon; qui servono più campi eterogenei (alcuni immutabili come la data di installazione, altri che cambiano nel tempo come lo stato) e una via di scrittura pensata per un operatore umano, non per un report firmato via radio — un modulo nuovo, non un riuso diretto di `LocationRegistry`.
+2. **La correlazione "quale relay ha ricevuto questo SOS" non esiste ancora nemmeno per il Beacon**: presuppone che il pacchetto di emergenza porti traccia di quale relay lo ha inoltrato per primo/ricevuto — un dettaglio da definire insieme al formato messaggio del Beacon (già segnalato come "cosa manca" più sopra), non specifico di questa sezione ma che questa sezione rende più concreto.
+3. **Nessuna decisione ancora presa su dove vive il registro**: un nodo dedicato (come il registro posizioni, opt-in via un flag CLI dedicato) o l'Emergency Node stesso — la specifica non lo impone, è una scelta di deployment da fare in fase di design.
+
+### Cosa NON è costruibile in questo ambiente (hardware/operativo reale)
+
+- Pannello solare, gestione batteria/ricarica, involucro outdoor per un Fixed Relay reale (hardware, stesso trattamento già riservato a Beacon/Mobile Relay).
+- La scelta reale dei punti di installazione lungo sentieri/vie ferrate/rifugi — decisione operativa sul campo, non software.
+- Qualunque validazione di copertura radio reale (BLE Long Range/LoRa su un percorso montano) — misurabile solo con hardware e un dispiegamento reale.
+
+### Prossimo passo
+
+Nessun codice scritto per questa voce. Se l'utente vorrà procedere, il lavoro software puro sarebbe: un nuovo modulo di registro (schema a due categorie di campi, statico/dinamico, come descritto sopra), gli endpoint `POST`/`GET /api/relays` su `web-ui.ts` dietro autenticazione, e un secondo layer di pin su `mapview.js` — tre pezzi ben delimitati, nessuno dei quali richiede le decisioni di design più delicate ancora aperte per il Beacon (formato messaggio, trasporto broadcast-non-connesso).
+
+## Prossimo passo (tutte le voci di questo documento)
+
+Nessun codice scritto per nessuna delle voci di questo documento (Beacon, Mobile Relay, Fixed Relay/Registro). Se e quando l'utente vorrà procedere, il primo passo concreto resta una fase di planning esplicita (analoga a quella già fatta per il tracciamento posizione, voce #44, e per le chat cifrate, voce #42) — necessaria soprattutto per il Beacon (formato messaggio, modello di trasporto broadcast-non-connesso), mentre per Mobile Relay e Fixed Relay/Registro il lavoro è già in gran parte definito dal codice esistente, come descritto nelle rispettive sezioni. In ogni caso, prima di scrivere qualunque riga di codice, seguendo lo stesso workflow a doppio check descritto in `CLAUDE.md`.
