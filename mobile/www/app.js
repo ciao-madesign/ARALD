@@ -471,6 +471,28 @@ async function submitRelayRegistration(fields) {
 }
 
 /**
+ * GET /api/emergency-beacons (node/src/web-ui.ts) — every locally-known SOS sighting, the Emergency
+ * Node view (docs/beacon.md). Same graceful-degradation posture as fetchRelayRegistry() above (only
+ * offered on a node with `exposeEmergencyBeacons` on — 404 there means "not offered here", returned
+ * as null) and the same 401 handling. No corresponding submit*() function — unlike the relay
+ * registry, there is nothing to write here: a SOS only ever arrives from the mesh itself.
+ */
+async function fetchEmergencyBeacons() {
+  const res = await fetchWithTimeout(
+    apiUrl("/api/emergency-beacons"),
+    { headers: { Authorization: "Bearer " + networkPassword } },
+    READ_TIMEOUT_MS,
+  );
+  if (res.status === 404) return null;
+  if (res.status === 401) {
+    handlePasswordRejected();
+    throw new Error("password di rete non valida");
+  }
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return res.json();
+}
+
+/**
  * Reads this device's current position — the Capacitor native plugin when running inside the native
  * app shell (`window.Capacitor.Plugins.Geolocation`, added to mobile/package.json specifically for
  * this: unlike QR scanning, there is no reasonable way to read hardware GPS without either it or the
@@ -1414,6 +1436,71 @@ document.getElementById("create-relay-form").addEventListener("submit", async (e
   }
 });
 
+// ---------- emergency beacons (docs/beacon.md — the Emergency Node view) ----------
+
+/**
+ * The full list from the latest GET /api/emergency-beacons, kept independently of whether the
+ * offline map overlay (mapview.js) happens to be open — mapview.js's renderMapBeacons() reads this
+ * global to draw beacon pins without app.js needing to know anything about map/tile coordinate
+ * space. `null` when this gateway doesn't offer the feature (see renderEmergencyBeacons() below).
+ */
+let knownBeacons = [];
+let beaconSeenIds = new Set();
+
+/**
+ * `beacons` is `null` when GET /api/emergency-beacons 404s on this gateway — this device isn't
+ * paired to a node with `exposeEmergencyBeacons` on (node/src/web-ui.ts), the ordinary case for most
+ * gateways. The whole panel stays hidden in that case, same graceful-degradation posture as
+ * renderRelays() above. "Rispondi" opens the same shared #chat-panel used for ordinary 1:1 chat
+ * (openChatPanel(), already wired for peers) addressed to the beacon's own deviceId — the beacon's
+ * encryption key travels inline with its announce (node/src/node.ts, ContentAnnouncePayload.senderAnnouncement),
+ * so this works even though the phone paired to this gateway never connected to the beacon itself.
+ */
+function renderEmergencyBeacons(beacons) {
+  const panel = document.getElementById("emergency-beacons-panel");
+  knownBeacons = beacons || [];
+  renderMapBeacons();
+  if (beacons === null) {
+    panel.hidden = true;
+    beaconSeenIds = new Set();
+    return;
+  }
+  panel.hidden = false;
+  if (isRenamePending()) return; // never yank an in-progress rename out from under the user — see isRenamePending()
+  const list = document.getElementById("emergency-beacons");
+  document.getElementById("emergency-beacons-count").textContent = beacons.length > 0 ? String(beacons.length) : "";
+  if (renderEmptyIfNeeded(list, beacons, "Nessun SOS ricevuto.", "alert-circle")) {
+    beaconSeenIds = new Set();
+    return;
+  }
+  const sorted = [...beacons].sort((a, b) => b.observedAt - a.observedAt);
+  const nextSeen = new Set();
+  for (const b of sorted) {
+    nextSeen.add(b.beaconContentId);
+    const tags = [];
+    if (myLastKnownPosition && typeof b.lat === "number" && typeof b.lon === "number") {
+      const distance = haversineDistanceMeters(myLastKnownPosition.lat, myLastKnownPosition.lon, b.lat, b.lon);
+      tags.push(el("span", { className: "tag", textContent: distance < 1000 ? Math.round(distance) + " m" : (distance / 1000).toFixed(1) + " km" }));
+    }
+    if (b.receivedFrom) tags.push(el("span", { className: "tag", textContent: "via " + getContactName(b.receivedFrom, "NODE-" + b.receivedFrom.slice(0, 8)) }));
+    const li = el("li", null, [
+      el("div", { className: "row" }, [
+        el("span", { className: "row-title", textContent: getContactName(b.deviceId, "NODE-" + b.deviceId.slice(0, 8)) }),
+        el("span", { className: "muted", textContent: timeAgo(b.observedAt) }),
+      ]),
+    ]);
+    li.classList.add("is-urgent");
+    if (b.message) li.append(el("div", { textContent: b.message }));
+    if (tags.length > 0) li.append(el("div", { className: "tags" }, tags));
+    const replyButton = el("button", { className: "call-button", textContent: "Rispondi" });
+    replyButton.addEventListener("click", () => openChatPanel(b.deviceId, getContactName(b.deviceId, "NODE-" + b.deviceId.slice(0, 8))));
+    li.append(replyButton);
+    if (!beaconSeenIds.has(b.beaconContentId)) li.classList.add("enter");
+    list.append(li);
+  }
+  beaconSeenIds = nextSeen;
+}
+
 // ---------- bacheca / drops (docs/next-steps.md — concept credited to BitChat's mesh-local
 // BoardManager, Unlicense/public domain; see node/src/drops.ts's own doc comment) ----------
 
@@ -2346,7 +2433,7 @@ let refreshCycleId = 0;
 async function refreshAll() {
   const cycleId = ++refreshCycleId;
   try {
-    const [status, peers, services, channels, drops, groups, locationReports, relays, mapInfoResult] = await Promise.all([
+    const [status, peers, services, channels, drops, groups, locationReports, relays, emergencyBeacons, mapInfoResult] = await Promise.all([
       fetchJson("/api/status"),
       fetchJson("/api/peers"),
       fetchJson("/api/services"),
@@ -2355,6 +2442,7 @@ async function refreshAll() {
       fetchGroups(),
       fetchLocationRegistry(),
       fetchRelayRegistry(),
+      fetchEmergencyBeacons(),
       fetchMapInfo(),
     ]);
     if (cycleId !== refreshCycleId) return; // superseded by a newer refresh while this one was in flight
@@ -2366,6 +2454,7 @@ async function refreshAll() {
     renderGroups(groups);
     renderLocationReports(locationReports);
     renderRelays(relays);
+    renderEmergencyBeacons(emergencyBeacons);
     renderMapAvailability(mapInfoResult);
     await refreshContent();
     firstLoadDone = true;

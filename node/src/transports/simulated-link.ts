@@ -52,6 +52,38 @@ const MAX_CONCURRENT_REASSEMBLIES = 32;
 /** Bounds memory: a fragment claiming more total pieces than this is rejected outright, before anything is stored — generous headroom over what any legitimate packet would ever produce at any MTU a radio module here configures. */
 const MAX_FRAGMENTS_PER_MESSAGE = 8192;
 
+/**
+ * Anti-flood for received broadcasts (`receiveBroadcast()`) — deliberately
+ * a single counter shared across *every* sender heard on this window, never
+ * keyed per-sender the way `RateLimiter`/`node.ts`'s own per-peer budgets
+ * are. This caps how *fast* unsolicited broadcast traffic reaches
+ * `NomadNode.handlePacket()` at all — a real, physical-layer-shaped
+ * constraint (no receiver can process unlimited unsolicited radio traffic
+ * per second regardless of who's transmitting) — but it does **not**, by
+ * itself, cap how many *distinct* `fromPeerId`s eventually reach
+ * `handlePacket()`'s own `this.rateLimiter.allow(fromPeerId)` over time:
+ * every packet that stays within this window's budget still gets through,
+ * each with whatever `packet.source` its sender claimed. A broadcast has no
+ * connection, so there is no `peer:disconnected` event to ever call
+ * `RateLimiter.reset()` for one of those — a sender that mints a fresh
+ * throwaway identity per packet (exactly the "Card usa-e-getta" scenario
+ * `docs/beacon.md` describes) would, over a long enough run, still add one
+ * permanent entry per packet to `RateLimiter.windows`
+ * (node/src/rate-limit.ts), just at a rate capped by this window instead of
+ * unbounded — found by review to be a real, if slowed, unbounded-growth
+ * path, not actually closed by this constant alone. The real fix is that
+ * `RateLimiter.windows` is itself now bounded (`rate-limit.ts`'s own doc
+ * comment) — this window is a genuine, complementary defense (bounding how
+ * much processing effort *this* transport spends per second regardless of
+ * identity churn) but should not be read as making `RateLimiter` itself
+ * safe to leave unbounded, which it no longer is. Same "per-identity limit
+ * alone is not enough against free identity minting" reasoning already
+ * used for `InternetGateway`'s two-level per-caller+global rate limiting
+ * (`docs/security.md` voce #45).
+ */
+const MAX_BROADCAST_PACKETS_PER_WINDOW = 20;
+const BROADCAST_WINDOW_MS = 1000;
+
 interface Fragment {
   connectionId: string;
   msgId: string;
@@ -135,6 +167,17 @@ class FragmentReassembler {
  */
 export class SimulatedMedium {
   private readonly devices = new Map<string, SimulatedLinkTransport>();
+  /**
+   * Devices that only want to *hear* a broadcast (`BeaconBroadcastTransport`
+   * and every `SimulatedLinkTransport`, which listens for broadcasts in
+   * addition to its normal connected-link traffic — see its own `start()`).
+   * Deliberately a separate registry from `devices` above: `devices` is
+   * "connectable" (answerable by `find()`/`connect()`), broadcast listeners
+   * are not — a pure Beacon Mode device (`BeaconBroadcastTransport`) never
+   * registers here, matching real advertising-only hardware, which doesn't
+   * accept incoming connections in that mode.
+   */
+  private readonly broadcastListeners = new Map<string, (packet: Packet, fromDeviceId: string) => void>();
 
   register(deviceId: string, transport: SimulatedLinkTransport): void {
     if (this.devices.has(deviceId)) {
@@ -149,6 +192,34 @@ export class SimulatedMedium {
 
   find(deviceId: string): SimulatedLinkTransport | undefined {
     return this.devices.get(deviceId);
+  }
+
+  registerBroadcastListener(deviceId: string, listener: (packet: Packet, fromDeviceId: string) => void): void {
+    this.broadcastListeners.set(deviceId, listener);
+  }
+
+  unregisterBroadcastListener(deviceId: string): void {
+    this.broadcastListeners.delete(deviceId);
+  }
+
+  /**
+   * Delivers `packet` to every other registered broadcast listener on this
+   * medium — no connection, no handshake, no acknowledgement channel, the
+   * simulated stand-in for real BLE/LoRa advertising (`BeaconBroadcastTransport`'s
+   * own doc comment explains why this can't just reuse `SimulatedLinkTransport`'s
+   * connection machinery). Each listener gets its own independently
+   * `decodePacket(encodePacket(...))`-round-tripped copy, never a shared
+   * mutable object reference — the same "arrived as bytes, not a live
+   * object" honesty `receiveFragment()` already has for connected traffic,
+   * and it means one listener can never accidentally mutate what another
+   * one sees.
+   */
+  broadcast(fromDeviceId: string, packet: Packet): void {
+    const encoded = encodePacket(packet);
+    for (const [deviceId, listener] of this.broadcastListeners) {
+      if (deviceId === fromDeviceId) continue;
+      listener(decodePacket(encoded), fromDeviceId);
+    }
   }
 }
 
@@ -239,6 +310,9 @@ export class SimulatedLinkTransport implements Transport {
   private readonly connectedHandlers: PeerConnectedHandler[] = [];
   private readonly disconnectedHandlers: PeerDisconnectedHandler[] = [];
   private started = false;
+  /** Sliding-window state for `MAX_BROADCAST_PACKETS_PER_WINDOW` — see that constant's own doc comment for why this is a single counter, not keyed per sender. */
+  private broadcastWindowStart = 0;
+  private broadcastWindowCount = 0;
 
   constructor(config: SimulatedLinkTransportConfig) {
     this.id = config.id;
@@ -253,13 +327,50 @@ export class SimulatedLinkTransport implements Transport {
 
   async start(): Promise<void> {
     this.medium.register(this.deviceId, this);
+    // Every connectable device also, unconditionally, listens for broadcasts on the same medium —
+    // a real BLE/LoRa radio capable of pairing can also hear an unconnected advertisement, no
+    // separate opt-in needed. A pure Beacon Mode device (BeaconBroadcastTransport) is the mirror
+    // image: it only ever calls medium.broadcast(), never register()s here or listens for one.
+    this.medium.registerBroadcastListener(this.deviceId, (packet, fromDeviceId) => this.receiveBroadcast(packet, fromDeviceId));
     this.started = true;
   }
 
   async stop(): Promise<void> {
     for (const entry of [...this.connectionsById.values()]) this.closeConnection(entry, true);
     this.medium.unregister(this.deviceId);
+    this.medium.unregisterBroadcastListener(this.deviceId);
     this.started = false;
+  }
+
+  /**
+   * Delivers a broadcast (`SimulatedMedium.broadcast()`) to this transport's
+   * ordinary `packetHandlers` — from `NomadNode.handlePacket()`'s point of
+   * view, indistinguishable from a packet that arrived over an established
+   * connection, *except* `fromPeerId` here was never introduced via
+   * `onPeerConnected` (no handshake ever happened). That's safe: `handlePacket()`
+   * only uses `fromPeerId` for local bookkeeping (rate-limit window,
+   * `peers.touch()`, relay-gate/`exceptPeerId`) that already degrades
+   * gracefully for an id it has never seen connect — none of it requires
+   * `fromPeerId` to be a known peer. `fromPeerId` is `packet.source` (the
+   * signed, canonical origin), never `fromDeviceId` (just a radio-layer
+   * address, meaningless once a beacon's broadcast is itself relayed by
+   * something else in a future extension).
+   *
+   * Rate-limited *before* any of that (see `MAX_BROADCAST_PACKETS_PER_WINDOW`'s
+   * doc comment) — an over-budget broadcast is silently dropped here, the
+   * same "drop without touching anything downstream" posture
+   * `NomadNode.handlePacket()`'s own `rateLimiter.allow()` already has for
+   * connected traffic.
+   */
+  private receiveBroadcast(packet: Packet, _fromDeviceId: string): void {
+    const now = Date.now();
+    if (now - this.broadcastWindowStart >= BROADCAST_WINDOW_MS) {
+      this.broadcastWindowStart = now;
+      this.broadcastWindowCount = 0;
+    }
+    this.broadcastWindowCount++;
+    if (this.broadcastWindowCount > MAX_BROADCAST_PACKETS_PER_WINDOW) return;
+    for (const handler of this.packetHandlers) handler(packet, packet.source);
   }
 
   private pendingConnectionCount(): number {

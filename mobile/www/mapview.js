@@ -85,13 +85,16 @@ function renderMapTiles() {
   const layer = document.getElementById("map-tiles-layer");
   const pinsLayer = document.getElementById("map-pins-layer");
   const relaysLayer = document.getElementById("map-relays-layer");
+  const beaconsLayer = document.getElementById("map-beacons-layer");
   layer.textContent = "";
   if (!mapState) {
     layer.style.transform = "";
     pinsLayer.style.transform = "";
     relaysLayer.style.transform = "";
+    beaconsLayer.style.transform = "";
     renderMapPins();
     renderMapRelays();
+    renderMapBeacons();
     return;
   }
 
@@ -103,6 +106,7 @@ function renderMapTiles() {
   layer.style.transform = `translate(${-topLeft.x}px, ${-topLeft.y}px)`;
   pinsLayer.style.transform = layer.style.transform;
   relaysLayer.style.transform = layer.style.transform;
+  beaconsLayer.style.transform = layer.style.transform;
 
   const firstTileX = Math.floor(topLeft.x / TILE_SIZE);
   const firstTileY = Math.floor(topLeft.y / TILE_SIZE);
@@ -124,6 +128,7 @@ function renderMapTiles() {
   }
   renderMapPins();
   renderMapRelays();
+  renderMapBeacons();
 }
 
 /**
@@ -170,6 +175,32 @@ function renderMapRelays() {
     pin.style.top = y + "px";
     pin.title = r.operator || r.relayId;
     pin.innerHTML = `<svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-wifi"></use></svg>`;
+    layer.append(pin);
+  }
+}
+
+/**
+ * Draws known emergency beacon sightings (`docs/beacon.md`, the Emergency Node view) as a third,
+ * independent pin layer — same world-pixel positioning as renderMapPins()/renderMapRelays().
+ * `knownBeacons` is populated by app.js's renderEmergencyBeacons() on every refreshAll() cycle, and
+ * stays empty (never populated at all) on a gateway without `exposeEmergencyBeacons` on — same
+ * graceful-degradation posture already used for `knownRelays`. Not every sighting has a position
+ * (`docs/beacon.md`: a pure Beacon Mode device has no GPS of its own) — those without lat/lon simply
+ * don't get a pin, same as an un-positioned drop.
+ */
+function renderMapBeacons() {
+  const layer = document.getElementById("map-beacons-layer");
+  layer.textContent = "";
+  if (!mapState || typeof knownBeacons === "undefined") return;
+  for (const b of knownBeacons) {
+    if (typeof b.lat !== "number" || typeof b.lon !== "number") continue;
+    const { x, y } = lonLatToWorldPx(b.lon, b.lat, mapState.zoom);
+    const pin = document.createElement("div");
+    pin.className = "map-pin map-pin-beacon";
+    pin.style.left = x + "px";
+    pin.style.top = y + "px";
+    pin.title = b.message || "SOS";
+    pin.innerHTML = `<svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-alert-circle"></use></svg>`;
     layer.append(pin);
   }
 }
@@ -234,6 +265,7 @@ function moveDrag(event) {
   document.getElementById("map-tiles-layer").style.transform = transform;
   document.getElementById("map-pins-layer").style.transform = transform;
   document.getElementById("map-relays-layer").style.transform = transform;
+  document.getElementById("map-beacons-layer").style.transform = transform;
 }
 
 function endDrag(event) {

@@ -50,6 +50,15 @@ import {
 import { LocationRegistry, extractLocationReport, type LocationReportPayload } from "./location-registry.js";
 import { Drops, DROP_CONTENT_NAME, MAX_DROP_LABEL_LENGTH, extractDropPayload, type Drop, type DropPayload } from "./drops.js";
 import { RelayRegistry, type RelayEntry, type RelayStaticFields } from "./relay-registry.js";
+import {
+  EmergencyBeacons,
+  EMERGENCY_BEACON_CONTENT_NAME,
+  MAX_BEACON_MESSAGE_LENGTH,
+  extractEmergencyBeaconPayload,
+  type EmergencyBeaconPayload,
+  type EmergencyBeaconSighting,
+} from "./emergency-beacon.js";
+import type { BeaconBroadcastTransport } from "./transports/beacon-broadcast.js";
 import { RoutingTable } from "./routing-table.js";
 import { ServiceDirectory } from "./service-directory.js";
 import { serviceSigningPayload, verifyServiceAnnouncement, type ServiceAnnouncement, type ServiceHandler } from "./service.js";
@@ -128,6 +137,8 @@ export interface NomadNodeOptions {
   maxDrops?: number;
   /** Max distinct relays tracked in `relayRegistry` at once (spec §57 resource limits). */
   maxRelays?: number;
+  /** Max distinct SOS sightings tracked in `emergencyBeacons` at once (spec §57 resource limits). */
+  maxEmergencyBeacons?: number;
 }
 
 interface ContentWaiter {
@@ -161,6 +172,9 @@ const MAX_CONCURRENT_CHANNEL_FETCHES = 16;
 /** Same purpose and reasoning as `MAX_CONCURRENT_CHANNEL_FETCHES` immediately above, for `considerDrop()`'s reactive fetches — a separate, independent budget rather than sharing the channel one, so a burst of one kind can never starve the other. */
 const MAX_CONCURRENT_DROP_FETCHES = 16;
 
+/** Same purpose and reasoning as `MAX_CONCURRENT_DROP_FETCHES` immediately above, for `considerEmergencyBeacon()`'s reactive fetches — its own independent budget. */
+const MAX_CONCURRENT_BEACON_FETCHES = 16;
+
 /**
  * Bounds how many urgent (`Priority.EMERGENCY`) drops a single node can
  * originate within `URGENT_DROP_RATE_LIMIT_WINDOW_MS` — found necessary
@@ -184,6 +198,32 @@ const URGENT_DROP_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 /** Default/maximum lifetime for a drop (`NomadNode.publishDrop()`) — a drop is a notice tied to a moment, never a permanent fixture like a channel, so unlike `publishContent()` in general it always carries a `ttlMs`, capped so a caller can shorten it but never make it outlive this. */
 const DEFAULT_DROP_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_DROP_TTL_MS = 72 * 60 * 60 * 1000;
+
+/**
+ * Same reasoning as `MAX_URGENT_DROPS_PER_WINDOW` immediately above — this
+ * is the per-caller half of `sendEmergencyBeacon()`'s two-level anti-flood
+ * (`docs/beacon.md` #4, "Card usa-e-getta"); the other half is the *global*
+ * (not per-sender) budget on the *receiving* side
+ * (`SimulatedLinkTransport.receiveBroadcast()`, `transports/simulated-link.ts`)
+ * — see that constant's own doc comment for why a per-identity limit alone
+ * can't defend against a throwaway-identity flood. This one instead
+ * protects against a misbehaving local caller of `sendEmergencyBeacon()`
+ * itself (there is no HTTP write endpoint for this — a SOS only ever
+ * arrives from the mesh, never from `web-ui.ts` — so "caller" here means
+ * whatever code on *this* process invokes the method, e.g. a buggy retry
+ * loop). A repeated broadcast of the *same* already-signed SOS
+ * (`broadcastRepeatCount`) is one logical event, not counted per repeat.
+ */
+const MAX_EMERGENCY_BEACON_PER_WINDOW = 3;
+const EMERGENCY_BEACON_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
+
+/** Default/maximum lifetime for an emergency beacon's underlying content (`NomadNode.sendEmergencyBeacon()`) — long enough that a delay-tolerant relay/sync can still deliver it well after the fact, same reasoning `PendingDeliveryQueue.emergencyTtlMs` (`store-and-forward.ts`, voce #55) already uses for EMERGENCY-priority traffic. */
+const DEFAULT_BEACON_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_BEACON_TTL_MS = 72 * 60 * 60 * 1000;
+
+/** Defaults for `sendEmergencyBeacon()`'s broadcast repetition (see its own doc comment for why this is "repeat the same signed packet on a timer", not a real ACK-based retry). */
+const DEFAULT_BEACON_BROADCAST_REPEAT_COUNT = 5;
+const DEFAULT_BEACON_BROADCAST_REPEAT_INTERVAL_MS = 2000;
 
 /**
  * Outranks any trust level `TrustManager` can actually assign (spec §54's
@@ -278,6 +318,42 @@ interface ContentCompletePayload {
  */
 interface ContentAnnouncePayload {
   metadata: ContentMetadata;
+  /**
+   * Base64-encoded content bytes, inline — optional, `undefined` for every
+   * announce except `sendEmergencyBeacon()`'s (`emergency-beacon.ts`,
+   * `docs/beacon.md`). Ordinary announced content (drops, channel messages)
+   * is pulled on demand from whoever published it (`getContent()`'s
+   * CONTENT_QUERY/CONTENT_REQUEST round trip) — that works because the
+   * publisher stays reachable. A pure Beacon Mode originator does not: it
+   * only ever advertises over `BeaconBroadcastTransport`, never accepts an
+   * incoming connection, so nothing could ever pull from it after the fact.
+   * Carrying the (small — a SOS payload is at most a few hundred bytes)
+   * bytes inline lets every hop that hears the announce — broadcast or
+   * ordinary connected flood, `handleContentAnnounce()` doesn't
+   * distinguish — verify and cache them immediately, no follow-up fetch
+   * ever needed. A relay that did cache them this way then transparently
+   * becomes a fetchable provider for anyone else who only learns of this
+   * content later (e.g. via catalog sync, metadata-only) — `getContent()`
+   * already discovers *any* holder of the bytes, not just the original
+   * publisher, so this doesn't require anything new there.
+   */
+  data?: string;
+  /**
+   * The publisher's self-signed `IdentityAnnouncement` (encryption.ts, spec
+   * §52) — optional, `undefined` for every announce except
+   * `sendEmergencyBeacon()`'s, for the same underlying reason `data` above
+   * is. Normally a node's encryption key propagates to others only via
+   * `IDENTITY_REQUEST`/`IDENTITY_RESPONSE`, kicked off on `peer:connected`
+   * (`startIdentitySync()`) — a pure Beacon Mode device never connects to
+   * anyone, so without this, nobody who only heard its broadcast could ever
+   * learn its encryption key, and an Emergency Node operator's reply
+   * (`sendPrivateMessage()`, which requires the recipient's key to already
+   * be known) would fail. Carrying it inline lets every hop that accepts
+   * this announce also accept the identity claim
+   * (`acceptIdentityAnnouncement()`), the same self-contained-single-packet
+   * shape already used for `data`.
+   */
+  senderAnnouncement?: IdentityAnnouncement;
 }
 
 interface SyncRequestPayload {
@@ -452,6 +528,17 @@ export class NomadNode extends EventEmitter {
    * eviction, unlike `locationRegistry`/`drops`.
    */
   readonly relayRegistry: RelayRegistry;
+  /**
+   * Local sightings of emergency SOS beacons (`docs/beacon.md`, "Cosa manca
+   * davvero" #1/#3 — the Emergency Node registry) this node has learned
+   * about, via `sendEmergencyBeacon()` (this node originating one) or
+   * `considerEmergencyBeacon()` (a `CONTENT_ANNOUNCE`/sync entry naming
+   * `EMERGENCY_BEACON_CONTENT_NAME`). Same opt-in HTTP exposure model as
+   * `locationRegistry`/`relayRegistry` (`WebUiOptions.exposeEmergencyBeacons`)
+   * — see `emergency-beacon.ts`'s own doc comment for why it needs neither
+   * lazy expiry nor trust-weighted eviction, unlike `drops`/`locationRegistry`.
+   */
+  readonly emergencyBeacons: EmergencyBeacons;
 
   private readonly defaultTtl: number;
   private readonly contentRequestTimeoutMs: number;
@@ -492,8 +579,23 @@ export class NomadNode extends EventEmitter {
   private readonly pendingChannelFetches = new Set<string>();
   /** Same purpose as `pendingChannelFetches`, for `considerDrop()` — bounds concurrency to `MAX_CONCURRENT_DROP_FETCHES`. */
   private readonly pendingDropFetches = new Set<string>();
+  /** Same purpose as `pendingDropFetches`, for `considerEmergencyBeacon()` — bounds concurrency to `MAX_CONCURRENT_BEACON_FETCHES`. */
+  private readonly pendingBeaconFetches = new Set<string>();
   /** Sliding-window state for `MAX_URGENT_DROPS_PER_WINDOW` (see its own doc comment) — `publishDrop({ urgent: true })` checks and updates this before publishing. */
   private urgentDropWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
+  /** Sliding-window state for `MAX_EMERGENCY_BEACON_PER_WINDOW` (see its own doc comment) — `sendEmergencyBeacon()` checks and updates this before publishing. */
+  private emergencyBeaconWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
+  /**
+   * Optional advertising-only transport for Beacon Mode (`transports/beacon-broadcast.ts`)
+   * — deliberately **not** part of `transports`/`peerTransport` above:
+   * `BeaconBroadcastTransport` isn't a `Transport` (no connect/peer
+   * semantics), so it must never be reachable through `floodExcept()`'s
+   * peer iteration. Wired via `setBroadcastTransport()`, consulted only by
+   * `sendEmergencyBeacon()`.
+   */
+  private broadcastTransport: BeaconBroadcastTransport | undefined;
+  /** Timers scheduled by `sendEmergencyBeacon()`'s broadcast repeats — tracked so `stop()` can cancel them, same discipline already applied to `pendingServiceCalls`'/`pendingLocalServiceCalls`' own timeouts (found necessary there by review). Without this, a repeat could still fire `broadcastTransport.advertise()` after the node (and its transports) have already stopped. */
+  private readonly pendingBeaconRepeats = new Set<NodeJS.Timeout>();
   private started = false;
 
   constructor(options: NomadNodeOptions = {}) {
@@ -575,6 +677,7 @@ export class NomadNode extends EventEmitter {
       trustRank: (author) => trustRank(this.trust.get(author)),
     });
     this.relayRegistry = new RelayRegistry({ maxRelays: options.maxRelays });
+    this.emergencyBeacons = new EmergencyBeacons({ maxBeacons: options.maxEmergencyBeacons });
   }
 
   get nodeId(): string {
@@ -662,6 +765,11 @@ export class NomadNode extends EventEmitter {
       pending.reject(new Error("node stopped while the service call was still in flight"));
     }
     this.pendingLocalServiceCalls.clear();
+    // Same reasoning as the two loops just above — a scheduled broadcast repeat firing after this
+    // node's transports have already stopped would call into a BeaconBroadcastTransport whose medium
+    // registration may itself be gone, for no benefit (nobody still cares about this run's advertising).
+    for (const timer of this.pendingBeaconRepeats) clearTimeout(timer);
+    this.pendingBeaconRepeats.clear();
   }
 
   async connect(address: PeerAddress, transportId?: string): Promise<string> {
@@ -712,14 +820,34 @@ export class NomadNode extends EventEmitter {
       throw new Error("internal error: freshly signed content failed its own verification (bad signature, or ttlMs too small to survive publishing)");
     }
     if (options.announce) {
-      const packet = this.originate<ContentAnnouncePayload>(
-        MessageType.CONTENT_ANNOUNCE,
-        { metadata },
-        { priority: options.priority ?? Priority.CONTENT },
-      );
-      void this.floodExcept(packet);
+      void this.floodExcept(this.buildContentAnnouncePacket(metadata, options.priority ?? Priority.CONTENT));
     }
     return metadata;
+  }
+
+  /**
+   * Builds (but does not send) a `CONTENT_ANNOUNCE` packet for `metadata` —
+   * extracted out of `publishContent()`'s own `options.announce` branch so
+   * `sendEmergencyBeacon()` can reuse the *exact same packet object* (same
+   * `packet.id`) for both the ordinary connected-peer flood (`floodExcept()`)
+   * and every broadcast repeat (`broadcastTransport.advertise()`) — without
+   * this, each would get its own randomly-generated `packet.id`, and a
+   * receiver hearing both (e.g. a Beacon+Relay Mode node that is both
+   * connected to the mesh and still advertising) would wrongly treat the
+   * second one `SeenCache` sees as a brand new SOS instead of a repeat of
+   * the same one.
+   */
+  private buildContentAnnouncePacket(
+    metadata: ContentMetadata,
+    priority: Priority,
+    data?: Buffer,
+    senderAnnouncement?: IdentityAnnouncement,
+  ): Packet<ContentAnnouncePayload> {
+    return this.originate<ContentAnnouncePayload>(
+      MessageType.CONTENT_ANNOUNCE,
+      { metadata, data: data?.toString("base64"), senderAnnouncement },
+      { priority },
+    );
   }
 
   /**
@@ -960,6 +1088,119 @@ export class NomadNode extends EventEmitter {
     const record: Drop = { ...payload, dropId: metadata.contentId, author: this.nodeId, expiresAt: metadata.expiresAt };
     this.drops.record(record);
     return record;
+  }
+
+  /**
+   * Wires an advertising-only Beacon Mode transport (`transports/beacon-broadcast.ts`)
+   * into this node — deliberately separate from `addTransport()` (see
+   * `broadcastTransport`'s own field doc comment for why). A Beacon+Relay
+   * Mode device calls both `addTransport()` (mesh participation) and this
+   * on the same `NomadNode` — nothing here prevents that, confirming
+   * `docs/beacon.md`'s own claim that the two roles don't conflict
+   * architecturally.
+   */
+  setBroadcastTransport(transport: BeaconBroadcastTransport): void {
+    this.broadcastTransport = transport;
+  }
+
+  /**
+   * Publishes and floods an emergency SOS (`docs/beacon.md`, "NOMAD Card"
+   * Beacon Mode / "Cosa manca davvero" #1) — always at `Priority.EMERGENCY`,
+   * unlike `publishDrop()` there is no "non-urgent" variant. Callable by
+   * *any* `NomadNode`, not only a dedicated Beacon device — coherent with
+   * the "NOMAD-Net Network Effect" principle (`docs/emergency-rescue-network.md`):
+   * a phone or any other originator can raise a SOS the same way.
+   *
+   * Two independent delivery paths, both carrying the *same* signed packet
+   * (see `buildContentAnnouncePacket()`'s own doc comment for why that
+   * matters):
+   * 1. The ordinary `CONTENT_ANNOUNCE` flood to already-connected peers
+   *    (works for every caller, exactly like any other announced content).
+   * 2. If `setBroadcastTransport()` was called, additionally *advertises*
+   *    the same packet over that transport, repeated `broadcastRepeatCount`
+   *    times (default `DEFAULT_BEACON_BROADCAST_REPEAT_COUNT`) at
+   *    `broadcastRepeatIntervalMs` apart (default
+   *    `DEFAULT_BEACON_BROADCAST_REPEAT_INTERVAL_MS`) — "repeat the same
+   *    transmission on a timer", **not** a real ACK-based retry: a
+   *    connectionless broadcast has no reply channel to wait on (same
+   *    honestly-declared limitation already accepted for `lora.ts`'s
+   *    unmodeled duty-cycle). Each repeat is scheduled via a tracked
+   *    `setTimeout` so `stop()` can cancel any still pending.
+   *
+   * Validates every field, and consumes the per-caller anti-flood budget
+   * (`MAX_EMERGENCY_BEACON_PER_WINDOW`), **before** publishing anything —
+   * same ordering fix `publishDrop()`'s own review already found necessary
+   * once, applied here from the start instead of waiting to be found again.
+   */
+  sendEmergencyBeacon(
+    beacon: {
+      message?: string;
+      lat?: number;
+      lon?: number;
+      ttlMs?: number;
+      broadcastRepeatCount?: number;
+      broadcastRepeatIntervalMs?: number;
+    } = {},
+  ): EmergencyBeaconSighting {
+    if (beacon.message !== undefined && (beacon.message.length === 0 || beacon.message.length > MAX_BEACON_MESSAGE_LENGTH)) {
+      throw new Error(`emergency beacon message must be 1-${MAX_BEACON_MESSAGE_LENGTH} characters`);
+    }
+    if (beacon.lat !== undefined && (!Number.isFinite(beacon.lat) || beacon.lat < -90 || beacon.lat > 90)) {
+      throw new Error("sendEmergencyBeacon: 'lat' must be a finite number in [-90, 90]");
+    }
+    if (beacon.lon !== undefined && (!Number.isFinite(beacon.lon) || beacon.lon < -180 || beacon.lon > 180)) {
+      throw new Error("sendEmergencyBeacon: 'lon' must be a finite number in [-180, 180]");
+    }
+    if (beacon.ttlMs !== undefined && (!Number.isFinite(beacon.ttlMs) || beacon.ttlMs <= 0)) {
+      throw new Error("sendEmergencyBeacon: 'ttlMs' must be a finite positive number");
+    }
+    const now = Date.now();
+    if (now - this.emergencyBeaconWindow.windowStart >= EMERGENCY_BEACON_RATE_LIMIT_WINDOW_MS) {
+      this.emergencyBeaconWindow = { windowStart: now, count: 0 };
+    }
+    if (this.emergencyBeaconWindow.count >= MAX_EMERGENCY_BEACON_PER_WINDOW) {
+      throw new Error("sendEmergencyBeacon: too many emergency beacons, try again later");
+    }
+    this.emergencyBeaconWindow.count++;
+
+    const ttlMs = Math.min(beacon.ttlMs ?? DEFAULT_BEACON_TTL_MS, MAX_BEACON_TTL_MS);
+    const timestamp = Date.now();
+    const payload: EmergencyBeaconPayload = { message: beacon.message, lat: beacon.lat, lon: beacon.lon, timestamp };
+    const data = Buffer.from(JSON.stringify(payload), "utf8");
+    const metadata = this.publishContent(EMERGENCY_BEACON_CONTENT_NAME, "application/json", data, { ttlMs });
+
+    // Inline data + sender identity announcement (see ContentAnnouncePayload's own doc comments on
+    // both fields) — required here, not optional: a pure Beacon Mode device that only broadcasts is
+    // never reachable for a follow-up pull fetch, nor for the identity-sync exchange that would
+    // otherwise let anyone reply to it.
+    const announcePacket = this.buildContentAnnouncePacket(metadata, Priority.EMERGENCY, data, this.ownAnnouncement);
+    void this.floodExcept(announcePacket);
+
+    if (this.broadcastTransport) {
+      const transport = this.broadcastTransport;
+      const repeatCount = Math.max(1, beacon.broadcastRepeatCount ?? DEFAULT_BEACON_BROADCAST_REPEAT_COUNT);
+      const repeatIntervalMs = beacon.broadcastRepeatIntervalMs ?? DEFAULT_BEACON_BROADCAST_REPEAT_INTERVAL_MS;
+      transport.advertise(announcePacket);
+      for (let i = 1; i < repeatCount; i++) {
+        const timer = setTimeout(() => {
+          this.pendingBeaconRepeats.delete(timer);
+          transport.advertise(announcePacket);
+        }, i * repeatIntervalMs);
+        this.pendingBeaconRepeats.add(timer);
+      }
+    }
+
+    const sighting: EmergencyBeaconSighting = {
+      beaconContentId: metadata.contentId,
+      deviceId: this.nodeId,
+      message: beacon.message,
+      lat: beacon.lat,
+      lon: beacon.lon,
+      timestamp,
+      observedAt: Date.now(),
+    };
+    this.emergencyBeacons.record(sighting);
+    return sighting;
   }
 
   /**
@@ -1719,7 +1960,7 @@ export class NomadNode extends EventEmitter {
         break;
 
       case MessageType.CONTENT_ANNOUNCE:
-        this.handleContentAnnounce(packet as Packet<ContentAnnouncePayload>);
+        this.handleContentAnnounce(packet as Packet<ContentAnnouncePayload>, fromPeerId);
         break;
 
       case MessageType.SYNC_REQUEST:
@@ -1727,7 +1968,7 @@ export class NomadNode extends EventEmitter {
         break;
 
       case MessageType.SYNC_RESPONSE:
-        this.handleSyncResponse(packet as Packet<SyncResponsePayload>);
+        this.handleSyncResponse(packet as Packet<SyncResponsePayload>, fromPeerId);
         break;
 
       case MessageType.IDENTITY_REQUEST:
@@ -2037,12 +2278,31 @@ export class NomadNode extends EventEmitter {
    * bytes still have to be fetched through the normal CONTENT_QUERY ->
    * CONTENT_COMPLETE cycle if/when wanted.
    */
-  private handleContentAnnounce(packet: Packet<ContentAnnouncePayload>): void {
+  private handleContentAnnounce(packet: Packet<ContentAnnouncePayload>, fromPeerId: string): void {
     const accepted = this.acceptCatalogEntry(packet.payload?.metadata);
     if (accepted) {
       this.emit("content:announced", accepted);
+      // Inline bytes (see ContentAnnouncePayload.data's own doc comment) — a no-op for every announce
+      // except sendEmergencyBeacon()'s. putVerified() re-checks the hash and signature itself (same
+      // trust boundary as every other bytes-plus-metadata path in this file), so a forged/garbage
+      // `data` field here just silently fails to store rather than corrupting anything.
+      if (typeof packet.payload?.data === "string") {
+        try {
+          this.contentStore.putVerified(accepted, Buffer.from(packet.payload.data, "base64"));
+        } catch {
+          // Malformed base64 — never trust it, same defensive posture as every other payload field.
+        }
+      }
+      // Same reasoning as the inline `data` handling above, for the sender's encryption key — only
+      // ever meaningful when it's genuinely a claim about the content's own publisher (a forged
+      // announcement of *someone else's* key riding along would otherwise let a malicious relay
+      // plant a fake identity announcement for an unrelated node id it doesn't control).
+      if (packet.payload?.senderAnnouncement?.nodeId === accepted.publisherId) {
+        this.acceptIdentityAnnouncement(packet.payload.senderAnnouncement);
+      }
       this.considerChannelMessage(accepted);
       this.considerDrop(accepted);
+      this.considerEmergencyBeacon(accepted, fromPeerId);
     }
   }
 
@@ -2055,7 +2315,7 @@ export class NomadNode extends EventEmitter {
    * malicious node could inject fabricated "this content exists, signed by
    * <victim>" claims that propagate transitively across catalog syncs.
    */
-  private handleSyncResponse(packet: Packet<SyncResponsePayload>): void {
+  private handleSyncResponse(packet: Packet<SyncResponsePayload>, fromPeerId: string): void {
     const entries = Array.isArray(packet.payload?.entries) ? packet.payload.entries : [];
     const accepted: ContentMetadata[] = [];
     for (const metadata of entries) {
@@ -2064,6 +2324,7 @@ export class NomadNode extends EventEmitter {
         accepted.push(result);
         this.considerChannelMessage(result);
         this.considerDrop(result);
+        this.considerEmergencyBeacon(result, fromPeerId);
       }
     }
     if (accepted.length > 0) this.emit("catalog-sync", accepted);
@@ -2141,6 +2402,52 @@ export class NomadNode extends EventEmitter {
       .finally(() => this.pendingDropFetches.delete(contentId));
   }
 
+  /**
+   * Same shape and reasoning as `considerDrop()` immediately above, for
+   * emergency beacons (`emergency-beacon.ts`) — fires when a newly-learned
+   * piece of content's name matches `EMERGENCY_BEACON_CONTENT_NAME` exactly.
+   * Bounded to `MAX_CONCURRENT_BEACON_FETCHES` in flight (independent
+   * budget from `considerChannelMessage()`/`considerDrop()`'s own, same
+   * "one burst of one kind can't starve another" reasoning).
+   *
+   * `fromPeerId` becomes `EmergencyBeaconSighting.receivedFrom` — but only
+   * when it's genuinely a *relay* hop, not the beacon's own identity: a
+   * broadcast received directly from a pure Beacon Mode transmitter
+   * (`SimulatedLinkTransport.receiveBroadcast()`) sets `fromPeerId` to
+   * `packet.source`, i.e. the beacon itself — recording that as "received
+   * from" would be circular and useless (see `EmergencyBeaconSighting`'s
+   * own doc comment on why this is deliberately a single hop, not a full
+   * path).
+   */
+  private considerEmergencyBeacon(metadata: ContentMetadata, fromPeerId: string): void {
+    if (metadata.name !== EMERGENCY_BEACON_CONTENT_NAME) return;
+    const publisherId = metadata.publisherId;
+    if (!publisherId) return;
+    const { contentId } = metadata;
+    if (this.pendingBeaconFetches.has(contentId) || this.pendingBeaconFetches.size >= MAX_CONCURRENT_BEACON_FETCHES) return;
+    this.pendingBeaconFetches.add(contentId);
+    this.getContent(contentId, { timeoutMs: this.contentRequestTimeoutMs })
+      .then((data) => {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(data.toString("utf8"));
+        } catch {
+          return; // malformed — never trust content shape just because the signature verified
+        }
+        const payload = extractEmergencyBeaconPayload(parsed);
+        if (!payload) return;
+        this.emergencyBeacons.record({
+          ...payload,
+          beaconContentId: contentId,
+          deviceId: publisherId,
+          observedAt: Date.now(),
+          receivedFrom: fromPeerId !== publisherId ? fromPeerId : undefined,
+        });
+      })
+      .catch(() => {})
+      .finally(() => this.pendingBeaconFetches.delete(contentId));
+  }
+
   /** Replies with directory entries the requester doesn't already know about (spec §52) — mirrors handleSyncRequest for content. */
   private handleIdentityRequest(packet: Packet<IdentityRequestPayload>, fromPeerId: string): void {
     const known = new Set(Array.isArray(packet.payload?.knownNodeIds) ? packet.payload.knownNodeIds : []);
@@ -2167,14 +2474,29 @@ export class NomadNode extends EventEmitter {
     const announcements = Array.isArray(packet.payload?.announcements) ? packet.payload.announcements : [];
     const accepted: string[] = [];
     for (const announcement of announcements) {
-      if (!announcement || announcement.nodeId === this.nodeId) continue; // malformed, or a claim about ourselves — never record either
-      if (!verifyIdentityAnnouncement(announcement)) continue; // unsigned or forged claim — never trust it
-      if (this.peerDirectory.record(announcement)) {
-        this.trust.markVerified(announcement.nodeId);
-        accepted.push(announcement.nodeId);
-      }
+      if (this.acceptIdentityAnnouncement(announcement)) accepted.push(announcement.nodeId);
     }
     if (accepted.length > 0) this.emit("identity:synced", accepted);
+  }
+
+  /**
+   * Shared trust-boundary check for one self-signed `IdentityAnnouncement`
+   * (spec §52/§55) — extracted out of `handleIdentityResponse()`'s own loop
+   * body so `handleContentAnnounce()` can reuse it for
+   * `ContentAnnouncePayload.senderAnnouncement` (see that field's own doc
+   * comment): both are "here is node X's encryption key, self-signed by X"
+   * claims arriving by two different paths, so both funnel through this one
+   * check rather than keeping two near-identical copies that could silently
+   * drift apart — same reasoning `acceptCatalogEntry()` already applies to
+   * content metadata. Returns whether it was newly accepted (a duplicate
+   * claim already on file is not "new", but not an error either).
+   */
+  private acceptIdentityAnnouncement(announcement: IdentityAnnouncement | undefined | null): boolean {
+    if (!announcement || announcement.nodeId === this.nodeId) return false; // malformed, or a claim about ourselves — never record either
+    if (!verifyIdentityAnnouncement(announcement)) return false; // unsigned or forged claim — never trust it
+    if (!this.peerDirectory.record(announcement)) return false;
+    this.trust.markVerified(announcement.nodeId);
+    return true;
   }
 
   /**

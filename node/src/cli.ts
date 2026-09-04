@@ -76,12 +76,16 @@ async function main(): Promise<void> {
     // own doc comment for why writing isn't split off onto allowServiceCalls the way
     // --expose-location-registry's own write side (POST /api/location-report) is.
     const exposeRelayRegistry = args["expose-relay-registry"] === "true";
+    // Opt-in, same shape as --expose-relay-registry — gates GET /api/emergency-beacons
+    // (docs/beacon.md, the Emergency Node view), see WebUiOptions.exposeEmergencyBeacons's own doc
+    // comment for why there is no write side to gate: a SOS only ever arrives from the mesh.
+    const exposeEmergencyBeacons = args["expose-emergency-beacons"] === "true";
     // A dedicated location-registry node (docs/next-steps.md Opzione J) needs the same
     // networkName/networkPassword pairing mechanism as any other mobile-facing node — just handed
     // out separately to trusted operators only, never to guests, which is exactly what makes it a
     // *different* node's password rather than a new access-control mechanism of its own. Same
-    // reasoning extends to a relay-registry node.
-    const needsNetworkPassword = allowServiceCalls || exposeLocationRegistry || exposeRelayRegistry;
+    // reasoning extends to a relay-registry/Emergency Node.
+    const needsNetworkPassword = allowServiceCalls || exposeLocationRegistry || exposeRelayRegistry || exposeEmergencyBeacons;
     // Generated fresh every run, printed/shown once, never persisted — the mobile client (Opzione H,
     // docs/next-steps.md) is expected to be paired by re-entering this each time the node restarts,
     // the same "out of band, by the operator" trust model as a Wi-Fi router's own password.
@@ -111,6 +115,7 @@ async function main(): Promise<void> {
       allowServiceCalls,
       exposeLocationRegistry,
       exposeRelayRegistry,
+      exposeEmergencyBeacons,
       networkName,
       networkPassword,
       publicHost: args["public-host"],
@@ -137,6 +142,9 @@ async function main(): Promise<void> {
     }
     if (exposeRelayRegistry) {
       console.log(`Relay registry exposed: GET/POST /api/relays (stessa password di rete)`);
+    }
+    if (exposeEmergencyBeacons) {
+      console.log(`Emergency beacon sightings exposed: GET /api/emergency-beacons (stessa password di rete)`);
     }
     if (mapTiles) {
       console.log(`Map tiles exposed: GET /api/map-info, GET /api/map-tiles/:z/:x/:y (non autenticati — non dati sensibili)`);

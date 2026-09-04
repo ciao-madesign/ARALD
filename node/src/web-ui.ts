@@ -129,6 +129,25 @@ export interface WebUiOptions {
    */
   exposeRelayRegistry?: boolean;
   /**
+   * Enables `GET /api/emergency-beacons` — this node's own local sightings
+   * of SOS beacons (`node.emergencyBeacons`, `docs/beacon.md` "Cosa manca
+   * davvero" #3, the Emergency Node view). Off by default and
+   * **independent of `allowServiceCalls`**, same reasoning and same shape
+   * as `exposeLocationRegistry`/`exposeRelayRegistry`: an Emergency Node is
+   * an operator role, gated by that node's own network password, not
+   * exposed to the general guest-facing gateway by default. When true,
+   * `networkPassword` is required (the constructor throws otherwise).
+   * **Read-only** — unlike `exposeRelayRegistry`, there is no
+   * `POST /api/emergency-beacons`: a SOS only ever arrives from the mesh
+   * itself (`NomadNode.sendEmergencyBeacon()`/`considerEmergencyBeacon()`),
+   * never from an HTTP client, so there is nothing to write here. An
+   * operator's reply reuses the ordinary 1:1 messaging endpoints
+   * (`POST /api/messages`, voce #36) addressed to the sighting's own
+   * `deviceId` — no dedicated endpoint needed, the beacon is already
+   * reachable like any other peer via store-and-forward.
+   */
+  exposeEmergencyBeacons?: boolean;
+  /**
    * Enables `GET /api/map-info` and `GET /api/map-tiles/:z/:x/:y` — offline
    * topographic map tiles read from a local MBTiles file (`map-tiles.ts`),
    * `docs/next-steps.md`. Pass an already-opened `MbtilesReader` (opening
@@ -713,6 +732,7 @@ export class WebUiServer {
   private readonly allowServiceCalls: boolean;
   private readonly exposeLocationRegistry: boolean;
   private readonly exposeRelayRegistry: boolean;
+  private readonly exposeEmergencyBeacons: boolean;
   private readonly networkName: string | undefined;
   private readonly networkPassword: string | undefined;
   private readonly publicHost: string | undefined;
@@ -739,6 +759,10 @@ export class WebUiServer {
     this.exposeRelayRegistry = options.exposeRelayRegistry ?? false;
     if (this.exposeRelayRegistry && !options.networkPassword) {
       throw new Error("WebUiServer: exposeRelayRegistry requires a networkPassword");
+    }
+    this.exposeEmergencyBeacons = options.exposeEmergencyBeacons ?? false;
+    if (this.exposeEmergencyBeacons && !options.networkPassword) {
+      throw new Error("WebUiServer: exposeEmergencyBeacons requires a networkPassword");
     }
     this.mapTiles = options.mapTiles;
     const boundHost = options.host ?? "127.0.0.1";
@@ -933,6 +957,11 @@ export class WebUiServer {
 
     if (url.pathname === "/api/relays") {
       this.handleGetRelayRegistry(req, res);
+      return;
+    }
+
+    if (url.pathname === "/api/emergency-beacons") {
+      this.handleGetEmergencyBeacons(req, res);
       return;
     }
 
@@ -1561,6 +1590,27 @@ export class WebUiServer {
       return;
     }
     sendJson(res, 200, this.node.relayRegistry.list());
+  }
+
+  /**
+   * `GET /api/emergency-beacons` — every locally-known SOS sighting
+   * (`node.emergencyBeacons.list()`, `docs/beacon.md` "Cosa manca davvero"
+   * #3, the Emergency Node view). Same 404-then-401 gating posture as
+   * `handleGetLocationRegistry()`/`handleGetRelayRegistry()`, on
+   * `exposeEmergencyBeacons` instead — see that option's own doc comment
+   * for why there is no write counterpart here.
+   */
+  private handleGetEmergencyBeacons(req: IncomingMessage, res: ServerResponse): void {
+    if (!this.exposeEmergencyBeacons || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+    sendJson(res, 200, this.node.emergencyBeacons.list());
   }
 
   /**

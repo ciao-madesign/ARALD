@@ -103,7 +103,7 @@
      il progetto non ha mai introdotto una dipendenza di terze parti in mobile/www/ (vedi CLAUDE.md).
      Stesso pattern a schermo intero di #scanner-overlay sopra, unico altro overlay del progetto. -->
 <section id="map-overlay" hidden>
-  <div id="map-viewport"><div id="map-tiles-layer"></div><div id="map-pins-layer"></div><div id="map-relays-layer"></div></div>
+  <div id="map-viewport"><div id="map-tiles-layer"></div><div id="map-pins-layer"></div><div id="map-relays-layer"></div><div id="map-beacons-layer"></div></div>
   <div class="map-controls">
     <button type="button" id="map-zoom-in" aria-label="Aumenta zoom">+</button>
     <button type="button" id="map-zoom-out" aria-label="Riduci zoom">−</button>
@@ -304,6 +304,21 @@
           <p id="create-relay-status" class="muted" role="status" aria-live="polite"></p>
         </form>
         <ul id="relays"></ul>
+      </details>
+
+      <!-- Nascosto finché GET /api/emergency-beacons non risponde (mai un 404) — solo un nodo con
+           WebUiOptions.exposeEmergencyBeacons attivo lo offre (docs/beacon.md, la vista Emergency
+           Node), stesso degrado onesto già usato per #relays-panel sopra. Nessun form: un SOS arriva
+           solo dalla mesh, mai digitato qui — vedi node/src/web-ui.ts. -->
+      <details class="panel" id="emergency-beacons-panel" hidden>
+        <summary>
+          <div class="summary-row">
+            <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-alert-circle"></use></svg> SOS ricevuti <span class="count" id="emergency-beacons-count"></span></h2>
+            <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+          </div>
+          <p class="hint">Richieste di soccorso ricevute dalla mesh — anche da un dispositivo mai connesso direttamente a questo nodo.</p>
+        </summary>
+        <ul id="emergency-beacons"></ul>
       </details>
     </div>
 
