@@ -403,7 +403,7 @@ const PAGE_HTML = `<!doctype html>
 <html lang="it">
 <head>
 <meta charset="utf-8">
-<title>NOMAD-NET</title>
+<title>ARALD</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   :root {
@@ -471,7 +471,7 @@ const PAGE_HTML = `<!doctype html>
 <body>
 <header>
   <div>
-    <h1>NOMAD-NET</h1>
+    <h1>ARALD</h1>
     <div id="node-label" class="mono"></div>
   </div>
   <span id="connected-pill" class="pill off"><span class="dot"></span><span>...</span></span>
@@ -494,7 +494,7 @@ const PAGE_HTML = `<!doctype html>
       </div>
     </div>
   </div>
-  <p>Apri l'app Nomad-Net sul telefono, sulla stessa rete Wi-Fi, e inquadra il QR — oppure inserisci questi dati a mano.</p>
+  <p>Apri l'app ARALD sul telefono, sulla stessa rete Wi-Fi, e inquadra il QR — oppure inserisci questi dati a mano.</p>
 </section>
 
 <div class="panels">
@@ -566,7 +566,7 @@ function renderStats(s) {
     ["Contenuto in cache", s.cachedContentPercent + "%"],
     ["Relay", s.relaying ? "attivo" : "fermo"],
     ["Internet", s.internet === "ONLINE" ? "online" : "offline"],
-    ["Rete Nomad-Net", s.localNetwork === "ONLINE" ? "online" : "offline"],
+    ["Rete ARALD", s.localNetwork === "ONLINE" ? "online" : "offline"],
   ];
   for (var i = 0; i < entries.length; i++) {
     stats.append(el("div", { className: "stat" }, [

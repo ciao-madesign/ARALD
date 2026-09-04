@@ -47,7 +47,7 @@ describe("WebUiServer (spec §59)", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toMatch(/text\/html/);
     const body = await res.text();
-    expect(body).toContain("NOMAD-NET");
+    expect(body).toContain("ARALD");
   });
 
   it("/api/status reports connected, internet (defaults to OFFLINE), peers, services and cachedContentPercent", async () => {

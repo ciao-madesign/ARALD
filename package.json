@@ -1,8 +1,8 @@
 {
-  "name": "nomad-net",
+  "name": "arald",
   "private": true,
   "version": "0.1.0",
-  "description": "Nomad-Net: rete distribuita, content-centric e delay-tolerant senza infrastruttura Internet.",
+  "description": "ARALD: a distributed, content-centric, delay-tolerant network that needs no Internet infrastructure.",
   "workspaces": [
     "node"
   ],

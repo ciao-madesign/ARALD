@@ -1,4 +1,4 @@
-# NOMAD-Net — Protocollo di test e validazione tecnica
+# ARALD — Protocollo di test e validazione tecnica
 
 **Stato**: documento di riferimento/pianificazione — nessun codice scritto per questo documento in sé (a parte la voce #58, `docs/security.md`, un prerequisito tecnico costruito appositamente, vedi sotto). Proposta ricevuta dall'utente il 4 settembre 2026, valutata insieme prima di scrivere qualunque cosa: quattro punti di disallineamento tra la proposta e il codice reale sono stati identificati e decisi con l'utente (vedi "Note metodologiche" sotto) prima di trascrivere il documento.
 
@@ -6,7 +6,7 @@
 
 Due documenti complementari, assi diversi — da non confondere:
 
-- **`docs/emergency-rescue-network.md`** — fasi di validazione **budget/partner** (Fase 0 prototipazione → Micro Pilot ~700-800€/11 dispositivi → Field Pilot ~2.500€/38 dispositivi con un ente partner), enti partner possibili, principio "NOMAD-Net Network Effect", conformità normativa UE.
+- **`docs/emergency-rescue-network.md`** — fasi di validazione **budget/partner** (Fase 0 prototipazione → Micro Pilot ~700-800€/11 dispositivi → Field Pilot ~2.500€/38 dispositivi con un ente partner), enti partner possibili, principio "ARALD Network Effect", conformità normativa UE.
 - **Questo documento** — la **scala tecnica** di validazione: cosa deve funzionare, con quale configurazione minima di dispositivi, con quali test puntuali (T-number) e quali criteri di superamento, indipendentemente dal budget o da un ente partner. Le fasi qui sotto sono più granulari di "Fase 0/Micro Pilot/Field Pilot" e ne costituiscono, in un certo senso, il "come" tecnico — la Fase 8 di questo documento (Field Test) è dimensionalmente vicina al Field Pilot dell'altro documento (19-24 nodi contro 38 dispositivi), ma i due non sono la stessa cosa e non vanno fusi.
 
 ## Note metodologiche — quattro punti chiariti con l'utente prima di scrivere questo documento
@@ -17,7 +17,7 @@ La proposta originale dell'utente (riportata più sotto, adattata) usava una ter
 
 La proposta assumeva una catena di priorità a sé (`SOS > EMERGENCY > HAZARD > INFO > SERVICE`), con "SOS" come livello sopra "EMERGENCY". Nel codice non esiste un tipo-messaggio separato dalla priorità — i quattro tipi corrispondono a meccanismi già costruiti, con la propria mappatura reale su `Priority` (`node/src/packet.ts`, spec §50):
 
-| Tipo (proposta) | Meccanismo Nomad-Net | `Priority` effettiva | Voce |
+| Tipo (proposta) | Meccanismo ARALD | `Priority` effettiva | Voce |
 |---|---|---|---|
 | **SOS** (personale, "sono in pericolo") | `NomadNode.sendEmergencyBeacon()` | `EMERGENCY` (0) | #56 |
 | **HAZARD** (pericolo d'area, es. "crepaccio sul sentiero") | `NomadNode.publishDrop({ kind: "hazard" })` | `MESSAGING` (2) | #57 |
@@ -37,13 +37,13 @@ Questa voce si sovrapponeva parzialmente a un pezzo pianificato (non ancora iniz
 
 ### 3. RSSI/SNR
 
-**Limite noto, confermato**: i transport BLE/LoRa simulati (`transports/simulated-link.ts`) modellano solo latenza/MTU, mai la potenza del segnale. Ogni test o metrica che richiede RSSI/SNR reali (Fase 2, "NOMAD Test Record") è eseguibile **solo con hardware radio fisico**, non in questo ambiente — stesso trattamento già riservato al duty-cycle LoRa non modellato e ad altri limiti noti del progetto.
+**Limite noto, confermato**: i transport BLE/LoRa simulati (`transports/simulated-link.ts`) modellano solo latenza/MTU, mai la potenza del segnale. Ogni test o metrica che richiede RSSI/SNR reali (Fase 2, "ARALD Test Record") è eseguibile **solo con hardware radio fisico**, non in questo ambiente — stesso trattamento già riservato al duty-cycle LoRa non modellato e ad altri limiti noti del progetto.
 
 ### 4. Multi-processo su radio simulata
 
 **Limite noto, confermato**: `BleMedium`/`LoraMedium` (`transports/ble.ts`/`lora.ts`) sono singleton di modulo (`DEFAULT_MEDIUM`) — un registro condiviso *in-process*, non un canale che attraversa processi separati. Due processi `node` lanciati da terminali diversi con transport BLE/LoRa **non si vedono tra loro**: nessun socket, nessun IPC li collega. `cli.ts` non cablaggia mai BLE/LoRa/broadcast, solo TCP (`node.addTransport(new TcpTransport(...))`, l'unica riga di transport in tutto il file).
 
-Conseguenza pratica: le fasi di questo documento che usano radio simulata (Fase 2 in su) sono eseguibili **solo** come test automatici (`tests/integration/`, `npx vitest run`) o come harness ad-hoc in un solo processo Node (stesso pattern usato per la verifica end-to-end della voce #56 — uno script che crea più `NomadNode` nello stesso script, mai come processi/terminali separati lanciati a mano). Le fasi con solo TCP (Fase 0-1) restano invece eseguibili anche come processi/terminali separati, come per ogni altro nodo Nomad-Net. Costruire un vero canale cross-processo per la radio simulata (un bridge TCP/IPC dietro le quinte) resterebbe una scelta possibile in futuro, ma è stata esplicitamente **non costruita ora** — l'utente ha scelto di limitarsi a dichiarare il limite nel documento.
+Conseguenza pratica: le fasi di questo documento che usano radio simulata (Fase 2 in su) sono eseguibili **solo** come test automatici (`tests/integration/`, `npx vitest run`) o come harness ad-hoc in un solo processo Node (stesso pattern usato per la verifica end-to-end della voce #56 — uno script che crea più `NomadNode` nello stesso script, mai come processi/terminali separati lanciati a mano). Le fasi con solo TCP (Fase 0-1) restano invece eseguibili anche come processi/terminali separati, come per ogni altro nodo ARALD. Costruire un vero canale cross-processo per la radio simulata (un bridge TCP/IPC dietro le quinte) resterebbe una scelta possibile in futuro, ma è stata esplicitamente **non costruita ora** — l'utente ha scelto di limitarsi a dichiarare il limite nel documento.
 
 ---
 
@@ -61,13 +61,13 @@ Conseguenza pratica: le fasi di questo documento che usano radio simulata (Fase 
 | 7 | 2 | 2 | 6 | 3 | Pre-field test |
 | 8 | 2 | 2 | 6 | 10–15 | **Field test** |
 
-La configurazione "1 Box + 2 Portable + 3 Card + 3 smartphone" (Fase 4-6) è una milestone intermedia. **Box**/**Portable**/**Card** = `docs/deployment.md`/`docs/beacon.md` (NOMAD-NET BOX/PORTABLE, NOMAD Card); Smartphone = l'app mobile (`mobile/www/`) verso un gateway.
+La configurazione "1 Box + 2 Portable + 3 Card + 3 smartphone" (Fase 4-6) è una milestone intermedia. **Box**/**Portable**/**Card** = `docs/deployment.md`/`docs/beacon.md` (ARALD Box/PORTABLE, ARALD Card); Smartphone = l'app mobile (`mobile/www/`) verso un gateway.
 
 ---
 
 ## Fase 0 — Infrastructure Bring-Up
 
-**Configurazione**: 1 NOMAD Box, nessun nodo radio.
+**Configurazione**: 1 ARALD Box, nessun nodo radio.
 
 **Obiettivo**: verificare che l'infrastruttura software di base funzioni prima di introdurre la radio.
 
@@ -80,9 +80,9 @@ La configurazione "1 Box + 2 Portable + 3 Card + 3 smartphone" (Fase 4-6) è una
 
 ---
 
-## Fase 1 — Smartphone ↔ NOMAD Box
+## Fase 1 — Smartphone ↔ ARALD Box
 
-**Configurazione**: Smartphone — Wi-Fi/IP → NOMAD Box.
+**Configurazione**: Smartphone — Wi-Fi/IP → ARALD Box.
 
 **Obiettivo**: validare la prima versione dell'applicazione e del modello dati.
 
@@ -90,7 +90,7 @@ La configurazione "1 Box + 2 Portable + 3 Card + 3 smartphone" (Fase 4-6) è una
 - **T1.2 — Metadata**: verificare Packet ID univoco, timestamp, posizione quando disponibile, tipo, priorità, TTL, autore pseudonimo (nodeId, mai un nickname trasmesso — vedi `docs/security.md`, la rubrica locale di nickname della voce #48 resta solo-client).
 - **T1.3 — Delivery**: App → Box, il Box riceve e conserva il contenuto.
 - **T1.4 — Retrieval**: Box → App, il telefono recupera il contenuto.
-- **T1.5 — Offline**: creare un messaggio senza Internet — resta `PENDING` (localmente, lato app) e si sincronizza al ritorno della connessione (Wi-Fi locale verso il Box, non Internet — Nomad-Net stesso non richiede mai Internet).
+- **T1.5 — Offline**: creare un messaggio senza Internet — resta `PENDING` (localmente, lato app) e si sincronizza al ritorno della connessione (Wi-Fi locale verso il Box, non Internet — ARALD stesso non richiede mai Internet).
 
 **Pass criteria**: il modello content-centric funziona indipendentemente dal mezzo di trasporto.
 
@@ -120,7 +120,7 @@ La configurazione "1 Box + 2 Portable + 3 Card + 3 smartphone" (Fase 4-6) è una
 
 **Configurazione**: Card — Portable — Box, smartphone associato alla Card.
 
-**Obiettivo**: dimostrare che Nomad-Net non richiede una connessione end-to-end continua (`PendingDeliveryQueue`, `store-and-forward.ts`).
+**Obiettivo**: dimostrare che ARALD non richiede una connessione end-to-end continua (`PendingDeliveryQueue`, `store-and-forward.ts`).
 
 - **T3.1 — Delayed delivery**: Card crea SOS → Portable non raggiungibile → Card conserva il pacchetto → Portable entra nel range → Card trasferisce → Portable conserva → Portable incontra Box → Box riceve. Sequenza: `t0 SOS → STORE → STORE → DELIVER`.
 - **T3.2 — Nodo spento**: ripetere con Portable spento durante la creazione del messaggio; accenderlo successivamente — il messaggio deve essere trasferito.
@@ -140,7 +140,7 @@ La configurazione "1 Box + 2 Portable + 3 Card + 3 smartphone" (Fase 4-6) è una
 - **T4.1 — 2 hop**: Card → Portable → Box.
 - **T4.2 — 3 hop**: Card → Node → Node → Box.
 - **T4.3 — Network partition**: separare fisicamente una parte della rete, creare un messaggio in una partizione, ricongiungere le due parti — il messaggio deve propagarsi (partition sync, `catalog.ts`/`RemoteCatalog`).
-- **T4.4 — Intermittent connectivity**: sequenza `CONNECTED → DISCONNECTED → CONNECTED → DISCONNECTED → CONNECTED` — verificare che Nomad-Net sfrutti le opportunità di contatto.
+- **T4.4 — Intermittent connectivity**: sequenza `CONNECTED → DISCONNECTED → CONNECTED → DISCONNECTED → CONNECTED` — verificare che ARALD sfrutti le opportunità di contatto.
 
 **Pass criteria**: la rete dimostra capacità DTN/store-and-forward multi-hop.
 
@@ -150,7 +150,7 @@ La configurazione "1 Box + 2 Portable + 3 Card + 3 smartphone" (Fase 4-6) è una
 
 **Configurazione**: 3 Card + 3 smartphone + 2 Portable + 1 Box.
 
-**Obiettivo**: dimostrare che smartphone esistenti possono aumentare la densità della rete (principio "NOMAD-Net Network Effect", `docs/emergency-rescue-network.md`).
+**Obiettivo**: dimostrare che smartphone esistenti possono aumentare la densità della rete (principio "ARALD Network Effect", `docs/emergency-rescue-network.md`).
 
 - **T5.1 — Smartphone relay**: uno smartphone riceve un pacchetto NOMAD e lo conserva.
 - **T5.2 — Forward**: lo smartphone lo inoltra a un altro nodo.
@@ -189,7 +189,7 @@ La configurazione "1 Box + 2 Portable + 3 Card + 3 smartphone" (Fase 4-6) è una
 
 ## Fase 8 — Primo vero Field Test
 
-**Configurazione finale**: 6 Card, 10-15 smartphone, 2 Portable, 2 Box — 19-24 nodi potenziali. Configurazione da usare per dichiarare formalmente **"NOMAD-Net Field Test v1"**.
+**Configurazione finale**: 6 Card, 10-15 smartphone, 2 Portable, 2 Box — 19-24 nodi potenziali. Configurazione da usare per dichiarare formalmente **"ARALD Field Test v1"**.
 
 ### Scenario A — SOS da area isolata
 
@@ -217,7 +217,7 @@ Card → Smartphone A (GPS OFF) → Smartphone B (GPS ON) → Box — verificare
 
 ---
 
-## Metriche da raccogliere in tutte le fasi — NOMAD Test Record
+## Metriche da raccogliere in tutte le fasi — ARALD Test Record
 
 Per ciascun evento: Test ID, Date/time, Node ID, Node type, Firmware version, Hardware revision, Packet ID, Packet type, Priority, Source, Destination, Hop count, RSSI*, SNR*, Timestamp RX, Timestamp TX, Battery level, GPS available, GPS coordinates*, Observation ID, Result, Failure reason.
 
@@ -246,11 +246,11 @@ Fase 0 Infrastructure → Fase 1 Content/App → Fase 2 Radio → Fase 3 Store &
 → Fase 4 Multi-hop → Fase 5 Smartphone Relay → Fase 6 Resilience → Fase 7 Pre-field → Fase 8 FIELD TEST
 ```
 
-Ogni fase produce evidenza documentata (`NOMAD Test Record`), non solo "un prototipo che funziona" — coerente con l'approccio già seguito nel resto della documentazione di questo progetto (workflow a doppio check, voci numerate in `docs/security.md`).
+Ogni fase produce evidenza documentata (`ARALD Test Record`), non solo "un prototipo che funziona" — coerente con l'approccio già seguito nel resto della documentazione di questo progetto (workflow a doppio check, voci numerate in `docs/security.md`).
 
 ## Cosa NON è nello scope di questo documento
 
-- Il bring-up fisico di qualunque prototipo — lavoro privato dell'utente, stessa decisione già presa per NOMAD-NET BOX (`CLAUDE.md`) ed estesa a Beacon/Card (`docs/emergency-rescue-network.md`).
+- Il bring-up fisico di qualunque prototipo — lavoro privato dell'utente, stessa decisione già presa per ARALD Box (`CLAUDE.md`) ed estesa a Beacon/Card (`docs/emergency-rescue-network.md`).
 - Budget, enti partner, strategia di presentazione — `docs/emergency-rescue-network.md`.
 - RSSI/SNR reali, comportamento firmware su hardware fisico — bloccati su hardware non disponibile in questo ambiente.
 

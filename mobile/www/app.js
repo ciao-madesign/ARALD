@@ -1,4 +1,4 @@
-// Nomad-Net mobile client (Passo 1, Wi-Fi/TCP — docs/next-steps.md Opzione H). Plain JS, no
+// ARALD mobile client (Passo 1, Wi-Fi/TCP — docs/next-steps.md Opzione H). Plain JS, no
 // framework, same discipline as node/src/web-ui.ts's own page: every value from the network goes
 // through textContent (never innerHTML), because a peer's declared content name, service id, or
 // capability list is untrusted input this app renders, exactly like the desktop status page does.

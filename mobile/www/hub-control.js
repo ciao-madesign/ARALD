@@ -1,8 +1,8 @@
-// NOMAD Hub Control UI — talks to nomad-hub/'s Management API (Docker/host administration for
+// ARALD Hub Control UI — talks to nomad-hub/'s Management API (Docker/host administration for
 // whatever machine runs Project NOMAD), never to node/src/web-ui.ts's mesh-facing WebUiServer that
 // index.html/app.js use. Deliberately its own small file: no shared state, no shared localStorage
 // keys, no imports from app.js — see hub-control.html's own top comment for the full boundary
-// reasoning (docs/deployment.md, "Il NOMAD Hub come sistema portatile").
+// reasoning (docs/deployment.md, "L'ARALD Hub come sistema portatile").
 
 const STORAGE_KEY_URL = "nomadhub.apiUrl";
 const STORAGE_KEY_PASSWORD = "nomadhub.managementPassword";

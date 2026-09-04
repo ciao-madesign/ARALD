@@ -2,7 +2,7 @@
 <html lang="it">
 <head>
 <meta charset="utf-8">
-<title>NOMAD Hub · Pannello di controllo</title>
+<title>ARALD Hub · Pannello di controllo</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#c9a227">
 <link rel="stylesheet" href="styles.css">
@@ -10,13 +10,13 @@
 <body>
 
 <!--
-  Pagina statica separata da index.html/app.js, di proposito: questa parla con la NOMAD Management
+  Pagina statica separata da index.html/app.js, di proposito: questa parla con la ARALD Hub Management
   API (amministra Docker/l'host su cui gira Project NOMAD), non con il WebUiServer della mesh — due
-  sistemi distinti (docs/deployment.md, "Il NOMAD Hub come sistema portatile") con due superfici di
+  sistemi distinti (docs/deployment.md, "L'ARALD Hub come sistema portatile") con due superfici di
   rischio molto diverse. Non è mai linkata da index.html: un ospite pairato alla mesh non deve
   arrivarci per caso, e la sua stessa esistenza è pensata per l'operatore, non per un visitatore.
   Riusa styles.css (già generico, nessun riferimento alla mesh) più un piccolo blocco di stile
-  proprio in fondo a quel file, sotto un commento "NOMAD Hub". Nessuna dipendenza da app.js: le due
+  proprio in fondo a quel file, sotto un commento "ARALD Hub". Nessuna dipendenza da app.js: le due
   pagine non condividono stato (localStorage con chiavi diverse: nomadhub.* qui, nomadnet.* là).
 -->
 
@@ -35,8 +35,8 @@
 <section id="hub-setup-screen">
   <div class="setup-card">
     <div class="setup-mark"><svg viewBox="0 0 24 24" class="icon icon-lg" aria-hidden="true"><use href="#hub-icon-wrench"></use></svg></div>
-    <h1>NOMAD HUB</h1>
-    <p class="lede">Pannello di controllo per chi amministra questo NOMAD Hub — non la rete Nomad-Net stessa.</p>
+    <h1>ARALD HUB</h1>
+    <p class="lede">Pannello di controllo per chi amministra questo ARALD Hub — non la rete ARALD stessa.</p>
     <form id="hub-setup-form">
       <label for="hub-address-input">Indirizzo della Management API</label>
       <input id="hub-address-input" type="text" placeholder="192.168.1.5:8420" autocomplete="off" autocapitalize="off" spellcheck="false" required>
@@ -61,7 +61,7 @@
 
 <section id="hub-dashboard-screen" hidden>
   <header id="hub-header">
-    <h1>NOMAD HUB</h1>
+    <h1>ARALD HUB</h1>
     <button type="button" id="hub-change-gateway" class="icon-button" aria-label="Cambia Management API">
       <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#hub-icon-back"></use></svg>
     </button>

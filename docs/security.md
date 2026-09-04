@@ -2,6 +2,8 @@
 
 Riferimento completo: [`SPECIFICATION.md`](./SPECIFICATION.md) §52-58. Vedi anche [`reuse-vs-new.md`](./reuse-vs-new.md) per cosa è concettualmente ispirato a BitChat e cosa va progettato da zero.
 
+**Nota sul naming**: il progetto si chiama **ARALD** dal 4 settembre 2026 (rinominato da "Nomad-Net", vedi `docs/reuse-vs-new.md` per la due-diligence che ha motivato il cambio). Questo file resta però un registro storico numerato di voci scritte via via nel tempo — le voci scritte prima del rename usano ancora "Nomad-Net"/"NOMAD" nel testo, deliberatamente non riscritte per preservare l'accuratezza storica di cosa fu effettivamente scritto/detto in quel momento. Non è un residuo dimenticato: è la stessa scelta già usata altrove in questo file per la terminologia superata (es. "NOMAD Mobile Relay" prima della NOMAD Card, ora ARALD Card).
+
 ## Stato attuale (Milestone 1-13, 15, 16, 20)
 
 Implementato:

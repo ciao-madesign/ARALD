@@ -69,7 +69,7 @@ async function main(): Promise<void> {
   const server = new ManagementServer(docker, { port, host, managementPassword, containerNamePrefix, capabilityStoragePath });
   await server.start();
 
-  console.log("NOMAD Hub Management API");
+  console.log("ARALD Hub Management API");
   const boundHost = host ?? "127.0.0.1";
   console.log(`Ascolto su: http://${boundHost}:${server.port}`);
   if (!host) {

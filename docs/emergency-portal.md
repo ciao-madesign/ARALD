@@ -2,9 +2,11 @@
 
 **Stato**: documentazione di riferimento/pianificazione, come `docs/beacon.md` ed `docs/emergency-rescue-network.md`. **Nessun codice scritto per questa voce.** Nessuna decisione di implementazione presa — vedi "Prossimo passo" in fondo.
 
-## Nota terminologica: "ARALD" vs "Nomad-Net"/"NOMAD"
+## Nota terminologica: "ARALD" — risolta
 
-La proposta che segue, ricevuta dall'utente il 4 settembre 2026, usa sistematicamente il nome **ARALD** (ARALD-Net, ARALD Box, ARALD Backend, Emergency Portal). Questo documento adotta la stessa terminologia **solo per i componenti nuovi che descrive** (il portale web e il suo backend), perché è così che sono stati proposti. Va segnalato esplicitamente, non silenziato: **il resto di questo repository — codice, `CLAUDE.md`, tutti gli altri documenti in `docs/` — usa ancora "Nomad-Net"/"NOMAD-NET BOX/PORTABLE"/"NOMAD Card"** per gli stessi concetti (rete mesh, deployment target, dispositivo radio). Non è stata presa alcuna decisione di rinominare il progetto: questo documento non forza una scelta, si limita a usare il nome con cui la proposta è arrivata e a far notare la duplicazione, così chi riprende il lavoro non la scopre per caso. Una rinomina complessiva (repository, codice, tutta la documentazione) sarebbe comunque un lavoro proprio, distinto da qualunque pezzo tecnico descritto qui, e richiederebbe una decisione esplicita dell'utente prima di essere intrapresa.
+La proposta che segue, ricevuta dall'utente il 4 settembre 2026, usava sistematicamente il nome **ARALD** (ARALD-Net, ARALD Box, ARALD Backend, Emergency Portal) per i componenti nuovi che descrive. Al momento in cui questa nota fu scritta la prima volta, il resto del repository usava ancora "Nomad-Net"/"NOMAD-NET BOX/PORTABLE"/"NOMAD Card" per gli stessi concetti — segnalato esplicitamente come una duplicazione di terminologia non ancora risolta, non una scelta.
+
+**Risolto lo stesso giorno**, in una sessione parallela: l'intero progetto è stato rinominato in **ARALD** (due-diligence completa in `docs/due-diligence-naming-2026-09-04.md`) — per pura coincidenza, il nome con cui questa proposta era già arrivata è diventato il nome ufficiale del progetto. Nessuna incoerenza residua: "ARALD Box"/"ARALD Card" qui sotto sono ormai gli stessi nomi usati ovunque nel resto della documentazione, non più una terminologia locale a questo solo documento.
 
 ## La proposta, in sintesi
 
@@ -24,9 +26,9 @@ La proposta è stata confrontata con quanto già implementato in questo reposito
 
 Molto di ciò che il portale vorrebbe mostrare **ha già un meccanismo mesh-side corrispondente**, spesso con un gap esplicitamente segnalato in documentazione precedente come "manca solo l'esposizione verso un portale esterno":
 
-| Funzione richiesta dal portale | Meccanismo Nomad-Net già esistente |
+| Funzione richiesta dal portale | Meccanismo ARALD già esistente |
 |---|---|
-| Mappa dei Fixed Relay, stato online/offline, ultimo contatto | `node/src/relay-registry.ts` (`RelayRegistry`, voce #54) — metadati inseriti dall'operatore, stato derivato da `peer:connected`/`peer:disconnected`; già esposto su `mapview.js` come layer di pin **locale al nodo**. `docs/beacon.md` segnalava già esplicitamente questo gap: *"un registro... esposto tramite un portale/mappa NOMAD a utenti autorizzati"* — quel "portale" è esattamente ciò che questa proposta descrive, non ancora costruito. |
+| Mappa dei Fixed Relay, stato online/offline, ultimo contatto | `node/src/relay-registry.ts` (`RelayRegistry`, voce #54) — metadati inseriti dall'operatore, stato derivato da `peer:connected`/`peer:disconnected`; già esposto su `mapview.js` come layer di pin **locale al nodo**. `docs/beacon.md` segnalava già esplicitamente questo gap: *"un registro... esposto tramite un portale/mappa ARALD a utenti autorizzati"* — quel "portale" è esattamente ciò che questa proposta descrive, non ancora costruito. |
 | SOS ricevuti | `node/src/emergency-beacon.ts` (`EmergencyBeacons`, voce #56) — registro locale delle sighting, con `receivedFrom`/`observedAt` (voce #58) per sapere *quale* relay ha ricevuto un SOS e quando; oggi consultabile solo via `GET /api/emergency-beacons` su un singolo nodo (Emergency Node), non aggregato su più nodi/organizzazioni. |
 | HAZARD/avvisi | `node/src/drops.ts` (`DropKind = "hazard"`, voce #57) — stesso schema, stesso limite: visibile solo nodo per nodo via `GET /api/drops`. |
 | Messaggi diretti a un relay/nodo specifico ("Send → Destination → RIFUGIO-VALLE-01") | `packet.destination` + `PendingDeliveryQueue` (consegna DIRECTED, esisteva già) + `node/src/node-appends.ts` (`NodeAppends`, voce #59, "Node Append" — deposito locale sul nodo target con gate di fiducia `minTrustForNodeAppend`). Il meccanismo di trasporto/consegna è quindi già pronto; manca solo un client (il backend/portale) che lo invochi da Internet invece che da un altro nodo della mesh. |
@@ -35,7 +37,7 @@ Molto di ciò che il portale vorrebbe mostrare **ha già un meccanismo mesh-side
 
 **Il pezzo che manca davvero, e che non ha alcun precedente diretto nel codice**: tutto ciò che serve a portare questi dati **da più nodi mesh distinti** verso un unico posto raggiungibile da Internet — cioè l'intero "ARALD Backend" della proposta (database multi-tenant, autenticazione, API aggregata, audit log) e la funzione di bridge dell'"ARALD Box" (sincronizzare gli endpoint locali sopra verso il backend quando la connettività è disponibile). Ogni endpoint `web-ui.ts` elencato in tabella è oggi **locale a un singolo nodo**, mai pensato per essere aggregato su più organizzazioni/rifugi — un vincolo di design esplicito finora (`WebUiServer` è "interfaccia web locale di stato/ricerca", spec §59, non un servizio multi-tenant).
 
-## Da non confondere con `nomad-hub/` (NOMAD Hub Management API)
+## Da non confondere con `nomad-hub/` (ARALD Hub Management API)
 
 Questo repository ha già un "backend web" con superficialmente lo stesso ruolo di "amministrare qualcosa da un browser": `nomad-hub/` (voce #52). **Sono due sistemi completamente diversi, per scelta di design già fatta**:
 
@@ -60,4 +62,4 @@ Il principio "Internet è un'opportunità di sincronizzazione, non una dipendenz
 
 ## Prossimo passo
 
-Nessuna decisione di implementazione è stata presa in questa sessione. Se si deciderà di procedere, coerentemente con il workflow a doppio check di questo progetto (vedi `CLAUDE.md`), andrebbe pianificato esplicitamente con l'utente **un pezzo alla volta**, non l'intero portale in un colpo solo — la proposta stessa suggerisce un MVP incrementale (login + dashboard read-only su un solo endpoint aggregato, prima di autenticazione multi-ruolo/audit log/scrittura verso la mesh). Il pezzo più isolato e verificabile in questo ambiente sarebbe probabilmente un piccolo script di sincronizzazione che legge gli endpoint locali già esistenti (`RelayRegistry`/`EmergencyBeacons`/`Drops`/`NodeAppends`) e li scrive in un formato aggregabile — ma resta un'ipotesi, non un impegno, in attesa di conferma esplicita dell'utente sull'ambito e sulla terminologia (ARALD vs Nomad-Net) prima di scrivere qualunque codice.
+Nessuna decisione di implementazione è stata presa in questa sessione. Se si deciderà di procedere, coerentemente con il workflow a doppio check di questo progetto (vedi `CLAUDE.md`), andrebbe pianificato esplicitamente con l'utente **un pezzo alla volta**, non l'intero portale in un colpo solo — la proposta stessa suggerisce un MVP incrementale (login + dashboard read-only su un solo endpoint aggregato, prima di autenticazione multi-ruolo/audit log/scrittura verso la mesh). Il pezzo più isolato e verificabile in questo ambiente sarebbe probabilmente un piccolo script di sincronizzazione che legge gli endpoint locali già esistenti (`RelayRegistry`/`EmergencyBeacons`/`Drops`/`NodeAppends`) e li scrive in un formato aggregabile — ma resta un'ipotesi, non un impegno, in attesa di conferma esplicita dell'utente sull'ambito prima di scrivere qualunque codice.

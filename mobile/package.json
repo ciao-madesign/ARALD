@@ -1,8 +1,8 @@
 {
-  "name": "nomad-net-mobile",
+  "name": "arald-mobile",
   "private": true,
   "version": "0.1.0",
-  "description": "Client mobile leggero per Nomad-Net verso un gateway esistente (Passo 1, Wi-Fi/TCP) — docs/next-steps.md Opzione H, roadmap Milestone 9. Non nel workspace npm della radice, stesso precedente di gateway/nomad/ e tools/simulator/.",
+  "description": "Lightweight mobile client for ARALD talking to an existing gateway (Step 1, Wi-Fi/TCP) — docs/next-steps.md Option H, roadmap Milestone 9. Not part of the root npm workspace, same precedent as gateway/nomad/ and tools/simulator/.",
   "scripts": {
     "sync": "cap sync",
     "android": "cap run android",

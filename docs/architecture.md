@@ -17,9 +17,9 @@ Il Network Fabric (questo repository) non dipende da un transport specifico: ogn
 
 | Livello | Domanda a cui risponde | Repository |
 |---|---|---|
-| Nomad-Net | "Come raggiungo una risorsa?" | questo repository |
+| ARALD | "Come raggiungo una risorsa?" | questo repository |
 | Project NOMAD | "Quali risorse e servizi posso offrire?" | https://github.com/Crosstalk-Solutions/project-nomad (esterno, non forkato) |
-| Gateway | "Come collego Nomad-Net a una rete esterna?" | `gateway/` in questo repository |
+| Gateway | "Come collego ARALD a una rete esterna?" | `gateway/` in questo repository |
 
 ## Nodo logico (§7)
 
@@ -47,4 +47,4 @@ Lo stato corrente del codice copre le Milestone 1-7 della specifica (§62-66: id
 
 ## Gateway (§8, §37-40)
 
-Un gateway non è un hardware specifico: è qualunque nodo che ha accesso sia a Nomad-Net sia a un'altra rete (tipicamente Internet, o l'API locale di Project NOMAD). Nel primo prototipo il gateway è semplicemente il computer di sviluppo; in produzione può essere un mini-PC o un Raspberry Pi sempre acceso. Non è previsto che il primo modello di deployment usi uno smartphone come gateway infrastrutturale (§39).
+Un gateway non è un hardware specifico: è qualunque nodo che ha accesso sia a ARALD sia a un'altra rete (tipicamente Internet, o l'API locale di Project NOMAD). Nel primo prototipo il gateway è semplicemente il computer di sviluppo; in produzione può essere un mini-PC o un Raspberry Pi sempre acceso. Non è previsto che il primo modello di deployment usi uno smartphone come gateway infrastrutturale (§39).

@@ -225,7 +225,7 @@ async function main(): Promise<void> {
     console.log(`service://internet-fetch not registered — no --internet-fetch given`);
   }
 
-  console.log("Nomad-Net NOMAD Gateway");
+  console.log("ARALD Gateway (Project NOMAD)");
   console.log(`Node ID: ${node.nodeId}`);
   console.log(`Listening on port: ${port}`);
   console.log(`Published ${published.length} article(s) from NOMAD:`);

@@ -873,8 +873,8 @@ li.skel-row { display: flex; flex-direction: column; }
   .setup-card { max-width: 30em; }
 }
 
-/* ---------- NOMAD Hub (hub-control.html/js) ---------- */
-/* A separate page from index.html/app.js (docs/deployment.md, "Il NOMAD Hub come sistema
+/* ---------- ARALD Hub (hub-control.html/js) ---------- */
+/* A separate page from index.html/app.js (docs/deployment.md, "L'ARALD Hub come sistema
    portatile") — reuses every shared rule above (:root tokens, .setup-card, .hint, .error, .toast,
    .pill, .tag, .link-button, .icon-button, the bare `header` layout rule) as-is; only the
    #hub-*-scoped rules genuinely specific to this page live here. */

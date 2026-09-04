@@ -1,6 +1,6 @@
 {
-  "appId": "net.nomadnet.mobile",
-  "appName": "Nomad-Net",
+  "appId": "io.arald.mobile",
+  "appName": "ARALD",
   "webDir": "www",
   "server": {
     "androidScheme": "https"

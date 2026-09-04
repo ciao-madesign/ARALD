@@ -1,13 +1,13 @@
 {
-  "name": "@nomad-net/node",
+  "name": "@arald/node",
   "private": true,
   "version": "0.1.0",
-  "description": "nomad-node: il runtime di rete di Nomad-Net (identity, routing, content, transport).",
+  "description": "ARALD node runtime: identity, routing, content, transport.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "nomad-node": "dist/cli.js"
+    "arald-node": "dist/cli.js"
   },
   "scripts": {
     "dev": "tsx src/cli.ts",

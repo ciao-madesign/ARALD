@@ -1,4 +1,4 @@
-# NOMAD-NET — Specifica progettuale completa
+# ARALD — Specifica progettuale completa
 
 **Rete intermittente distribuita per emergenze, rifugi alpini e ambienti senza connettività**
 
@@ -12,7 +12,7 @@
 
 ## 1. Visione del progetto
 
-Nomad-Net è un sistema di rete distribuito progettato per permettere a dispositivi digitali di comunicare, scambiare contenuti e utilizzare servizi anche quando Internet non è disponibile.
+ARALD è un sistema di rete distribuito progettato per permettere a dispositivi digitali di comunicare, scambiare contenuti e utilizzare servizi anche quando Internet non è disponibile.
 
 L'obiettivo non è creare una nuova Internet basata semplicemente su TCP/IP, ma costruire un livello di rete locale e intermittente capace di:
 
@@ -32,7 +32,7 @@ Il sistema deve essere particolarmente adatto a: emergenze, terremoti, alluvioni
 
 Definizione sintetica:
 
-> "NOMAD-NET è una rete distribuita, content-centric e delay-tolerant che permette a dispositivi mobili e nodi edge di condividere contenuti, servizi e comunicazioni senza infrastruttura Internet, utilizzando una combinazione di mesh locali, store-and-forward, caching opportunistico, replica distribuita e gateway intermittenti verso Internet."
+> "ARALD è una rete distribuita, content-centric e delay-tolerant che permette a dispositivi mobili e nodi edge di condividere contenuti, servizi e comunicazioni senza infrastruttura Internet, utilizzando una combinazione di mesh locali, store-and-forward, caching opportunistico, replica distribuita e gateway intermittenti verso Internet."
 
 ---
 
@@ -44,7 +44,7 @@ La rete Internet tradizionale ragiona così:
 IP -> HOST -> RESOURCE
 ```
 
-Nomad-Net ragiona così:
+ARALD ragiona così:
 
 ```
 CONTENT ID -> NETWORK -> AVAILABLE PROVIDER -> BEST PATH
@@ -67,7 +67,7 @@ La rete determina autonomamente dove e come ottenere la risorsa.
 
 ## 3. Principio architetturale fondamentale
 
-Nomad-Net è costruito come una serie di livelli indipendenti:
+ARALD è costruito come una serie di livelli indipendenti:
 
 ```
 APPLICATION LAYER
@@ -103,10 +103,10 @@ Project N.O.M.A.D. ("Node for Offline Media, Archives, and Data") è una delle p
 
 Project NOMAD è pensato per sistemi Debian-based, gestibile via Docker, accessibile via browser (non richiede ambiente desktop). Stack: Docker, Node.js, TypeScript, AdonisJS, React, Vite, Inertia.js, MySQL, Redis, Ollama, Qdrant.
 
-Nomad-Net tratta NOMAD come un insieme di servizi locali già disponibili, non da riscrivere. Non deve essere necessariamente modificato nella prima fase; va considerato come "service provider" locale:
+ARALD tratta NOMAD come un insieme di servizi locali già disponibili, non da riscrivere. Non deve essere necessariamente modificato nella prima fase; va considerato come "service provider" locale:
 
 ```
-Nomad-Net
+ARALD
     |
     | request
     v
@@ -120,7 +120,7 @@ NOMAD Gateway
     +-- altri servizi
 ```
 
-Nomad-Net fornisce un livello di rete che permette di raggiungere questi servizi anche da dispositivi non direttamente collegati al computer NOMAD.
+ARALD fornisce un livello di rete che permette di raggiungere questi servizi anche da dispositivi non direttamente collegati al computer NOMAD.
 
 ---
 
@@ -133,17 +133,17 @@ BitChat è un'app decentralizzata di messaggistica peer-to-peer via BLE mesh. La
 
 Il whitepaper 2.0 descrive un'architettura già orientata ad ambienti low bandwidth, lossy, partitioned, con membership variabile, e un'architettura dual transport (Bluetooth mesh locale + Nostr per Internet). Licenza: public domain.
 
-Nomad-Net **non** è una fork di BitChat. Modello previsto:
+ARALD **non** è una fork di BitChat. Modello previsto:
 
 ```
 BitChat transport/network concepts
                 +
 Project NOMAD services/content
                 +
-NUOVO NOMAD-NET NETWORK FABRIC
+NUOVO ARALD NETWORK FABRIC
 ```
 
-BitChat è orientato principalmente a messaggi. Nomad-Net generalizza il concetto di messaggio in quello di risorsa: messaggio, file, documento, immagine, mappa, database, pagina, servizio, richiesta AI, risposta AI, applicazione, dataset.
+BitChat è orientato principalmente a messaggi. ARALD generalizza il concetto di messaggio in quello di risorsa: messaggio, file, documento, immagine, mappa, database, pagina, servizio, richiesta AI, risposta AI, applicazione, dataset.
 
 ---
 
@@ -209,14 +209,14 @@ Non tutti i dispositivi devono avere tutte le funzioni: un telefono può essere 
 
 ## 8. Cosa è fisicamente un gateway
 
-Il gateway non è un hardware specifico: è un dispositivo che possiede contemporaneamente (1) accesso a Nomad-Net e (2) accesso a un'altra rete, normalmente Internet.
+Il gateway non è un hardware specifico: è un dispositivo che possiede contemporaneamente (1) accesso a ARALD e (2) accesso a un'altra rete, normalmente Internet.
 
 ```
 INTERNET
    |
 COMPUTER
    |
-NOMAD-NET
+ARALD
    |
 smartphone
 ```
@@ -240,7 +240,7 @@ Mac -> software node -> smartphone -> routing -> content -> NOMAD -> gateway -> 
 Repository iniziale:
 
 ```
-nomad-net/
+arald/
 README.md
 LICENSE
 docs/
@@ -314,7 +314,7 @@ npm run dev
 Output:
 
 ```
-Nomad-Net Node
+ARALD Node
 Node ID: 7f3a...
 Status: ONLINE
 ```
@@ -400,7 +400,7 @@ I coefficienti saranno determinati sperimentalmente.
 
 ## 23. Content-centric network
 
-Passaggio fondamentale da BitChat a Nomad-Net: non `SEND FILE TO NODE C` ma `GET content://wikipedia/italia`. La rete risponde `CE L'HO`, `CONOSCO UN PROVIDER` o `NON DISPONIBILE`. Il contenuto può essere sul server originario, su un nodo intermedio, su un telefono, in cache, su un altro segmento di rete.
+Passaggio fondamentale da BitChat a ARALD: non `SEND FILE TO NODE C` ma `GET content://wikipedia/italia`. La rete risponde `CE L'HO`, `CONOSCO UN PROVIDER` o `NON DISPONIBILE`. Il contenuto può essere sul server originario, su un nodo intermedio, su un telefono, in cache, su un altro segmento di rete.
 
 ## 24. Content ID
 
@@ -433,7 +433,7 @@ Contenuti richiesti spesso (high demand) possono essere replicati automaticament
 
 ## 30. Store-and-forward
 
-Se il destinatario non è raggiungibile, un nodo intermedio conserva il dato e lo inoltra quando possibile: il dato non va perso solo perché la connessione non esiste nel momento della richiesta. BitChat utilizza già concetti di persistent sender outbox, opportunistic couriers, spray-and-wait, copy budget, sincronizzazione gossip: riferimento diretto per Nomad-Net.
+Se il destinatario non è raggiungibile, un nodo intermedio conserva il dato e lo inoltra quando possibile: il dato non va perso solo perché la connessione non esiste nel momento della richiesta. BitChat utilizza già concetti di persistent sender outbox, opportunistic couriers, spray-and-wait, copy budget, sincronizzazione gossip: riferimento diretto per ARALD.
 
 ## 31. Delay-tolerant networking
 
@@ -461,7 +461,7 @@ Un nodo potente pubblicizza un servizio LLM locale; un telefono poco potente inv
 
 ## 37. Integrazione con Project NOMAD
 
-Project NOMAD può diventare il principale service provider di Nomad-Net. Nomad-Net non deve inizialmente conoscere i dettagli interni di Kiwix, Ollama o Qdrant: conosce solo un'API astratta (`GET content://wiki/italia`, `CALL service://ai`); il gateway traduce la richiesta nell'API locale del servizio.
+Project NOMAD può diventare il principale service provider di ARALD. ARALD non deve inizialmente conoscere i dettagli interni di Kiwix, Ollama o Qdrant: conosce solo un'API astratta (`GET content://wiki/italia`, `CALL service://ai`); il gateway traduce la richiesta nell'API locale del servizio.
 
 ## 38. Gateway Internet
 
@@ -635,7 +635,7 @@ Il client deve poter scegliere: `Relay OFF`, `Relay when charging`, `Relay while
 ## 59. Web interface
 
 ```
-NOMAD-NET
+ARALD
 Connected
 Internet: OFFLINE
 Local network: ONLINE
@@ -652,7 +652,7 @@ L'utente non deve essere costretto a capire il routing.
 
 ## 60. Esperienza "Internet offline"
 
-Non solo `"No Internet connection"`, ma `Internet: OFFLINE / Nomad-Net: ONLINE` con accesso continuo a ricerca, mappe, documenti, AI, chat, servizi, contenuti locali.
+Non solo `"No Internet connection"`, ma `Internet: OFFLINE / ARALD: ONLINE` con accesso continuo a ricerca, mappe, documenti, AI, chat, servizi, contenuti locali.
 
 ---
 
@@ -670,7 +670,7 @@ Il primo MVP **non** deve avere: LoRa, routing sofisticato, AI distribuita, sinc
 6. **BLE**: nuovo transport (`node/src/transports/ble.ts`) dietro la stessa interfaccia `Transport`, routing invariato.
 7. **Smartphone**: prima app mobile con node identity, peer discovery, connection, search, content request, cache, relay di base.
 8. **NOMAD node**: installazione di Project NOMAD su Linux/Debian via Docker.
-9. **Gateway** (`gateway/nomad/`): traduce richieste Nomad-Net in richieste API NOMAD (es. `GET content://wiki/italia` → Kiwix, `CALL service://ai` → servizio AI).
+9. **Gateway** (`gateway/nomad/`): traduce richieste ARALD in richieste API NOMAD (es. `GET content://wiki/italia` → Kiwix, `CALL service://ai` → servizio AI).
 10. **Test offline completo**: Internet OFF, NOMAD + Node + BLE mesh, A cerca un contenuto presente su NOMAD e lo ottiene attraverso la mesh — primo MVP completo.
 
 ## 72–74. Fasi successive
@@ -694,7 +694,7 @@ Il primo MVP **non** deve avere: LoRa, routing sofisticato, AI distribuita, sinc
                  | NOMAD SERVER |
                  +--------------+
                         |
-                     Nomad-Net
+                     ARALD
                         |
       +-----------------+----------------+
       |                 |                |
@@ -759,7 +759,7 @@ La rete non deve dipendere dalla presenza di migliaia di smartphone. Per ambient
 ## 87. Struttura della repository finale
 
 ```
-nomad-net/
+arald/
 |
 +-- protocol/
 |   +-- packet/
@@ -831,7 +831,7 @@ software network -> multi-hop -> content -> cache -> BLE -> smartphone -> NOMAD 
 
 ## 90–95. Obiettivi tecnici incrementali
 
-1. **Primo obiettivo**: tre nodi Nomad-Net (`A -> B -> C`) che comunicano senza Internet; C possiede `hello.txt`, A lo richiede via `content://example/hello`, B inoltra, C risponde, A riceve.
+1. **Primo obiettivo**: tre nodi ARALD (`A -> B -> C`) che comunicano senza Internet; C possiede `hello.txt`, A lo richiede via `content://example/hello`, B inoltra, C risponde, A riceve.
 2. **Secondo obiettivo**: A conserva il contenuto in cache; D lo richiede e A risponde direttamente (content discovery + routing + caching + replica dimostrati).
 3. **Terzo obiettivo**: C viene spento; B (che aveva il contenuto in cache) risponde a D (resilienza, replica, indipendenza dal provider originale).
 4. **Quarto obiettivo**: due reti separate (`A-B-C` / `D-E-F`) si incontrano (`C ↔ D`) e sincronizzano i contenuti (partition tolerance, opportunistic sync).
@@ -854,17 +854,17 @@ Docker (Project NOMAD, servizi, gateway, ambienti di test) · Node.js/TypeScript
 
 ## 98–99. Decisione architetturale e ruoli
 
-Nomad-Net **non** deve diventare un fork gigante di Project NOMAD, né di BitChat:
+ARALD **non** deve diventare un fork gigante di Project NOMAD, né di BitChat:
 
 ```
-BitChat -- networking ideas --> Nomad-Net -- [content, services, cache, DTN, gateway] --> Project NOMAD
+BitChat -- networking ideas --> ARALD -- [content, services, cache, DTN, gateway] --> Project NOMAD
 ```
 
-Nomad-Net è il livello di rete/interconnessione. Project NOMAD resta il livello dei servizi e dei contenuti. Definizione dei tre ruoli:
+ARALD è il livello di rete/interconnessione. Project NOMAD resta il livello dei servizi e dei contenuti. Definizione dei tre ruoli:
 
-- **Nomad-Net**: "Come raggiungo una risorsa?"
+- **ARALD**: "Come raggiungo una risorsa?"
 - **Project NOMAD**: "Quali risorse e servizi posso offrire?"
-- **Gateway**: "Come collego Nomad-Net a una rete esterna?"
+- **Gateway**: "Come collego ARALD a una rete esterna?"
 
 Questa separazione va mantenuta durante tutto lo sviluppo.
 
@@ -917,11 +917,11 @@ PACKET -> NODE -> ROUTING -> CONTENT -> CACHE -> BLE/WIFI -> NOMAD -> DTN -> GAT
 ```
 
 ```
-Internet intermittente + NOMAD + BLE/Wi-Fi mesh + smartphone + store-and-forward + content-centric routing = NOMAD-NET
+Internet intermittente + NOMAD + BLE/Wi-Fi mesh + smartphone + store-and-forward + content-centric routing = ARALD
 ```
 
 ---
 
 ### Nota tecnica sul riuso
 
-Questa specifica distingue volontariamente tra concetti già implementati da BitChat/Project NOMAD e componenti che Nomad-Net deve sviluppare ex novo. In particolare, **content-centric routing, catalogo distribuito dei contenuti, cache/replica generalizzate, service discovery, integrazione NOMAD e sincronizzazione DTN dei contenuti non vanno considerati automaticamente "già risolti"** solo perché BitChat o Project NOMAD forniscono componenti affini. Il dettaglio è in [`docs/reuse-vs-new.md`](./reuse-vs-new.md).
+Questa specifica distingue volontariamente tra concetti già implementati da BitChat/Project NOMAD e componenti che ARALD deve sviluppare ex novo. In particolare, **content-centric routing, catalogo distribuito dei contenuti, cache/replica generalizzate, service discovery, integrazione NOMAD e sincronizzazione DTN dei contenuti non vanno considerati automaticamente "già risolti"** solo perché BitChat o Project NOMAD forniscono componenti affini. Il dettaglio è in [`docs/reuse-vs-new.md`](./reuse-vs-new.md).

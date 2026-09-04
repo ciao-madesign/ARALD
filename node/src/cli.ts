@@ -29,7 +29,7 @@ async function main(): Promise<void> {
   node.addTransport(new TcpTransport(node.nodeId, port));
   await node.start();
 
-  console.log("Nomad-Net Node");
+  console.log("ARALD Node");
   console.log(`Display name: ${displayName}`);
   console.log(`Node ID: ${node.nodeId}`);
   console.log(`Listening on port: ${port}`);

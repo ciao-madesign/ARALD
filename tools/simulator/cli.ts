@@ -27,7 +27,7 @@ async function main(): Promise<void> {
   const defaultTtl = args.ttl ? Number(args.ttl) : undefined;
   const maxPacketsPerWindow = args["rate-limit"] ? Number(args["rate-limit"]) : undefined;
 
-  console.log(`Nomad-Net simulator: ${nodeCount} nodes, topology=${topology}`);
+  console.log(`ARALD simulator: ${nodeCount} nodes, topology=${topology}`);
   const result = await runSimulation({
     nodeCount,
     topology,

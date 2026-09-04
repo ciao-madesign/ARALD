@@ -1,14 +1,16 @@
-# Nomad-Net — contesto per Claude Code
+# ARALD — contesto per Claude Code
 
 Questo file viene letto automaticamente a ogni nuova sessione in questo repository. Obiettivo: far ripartire un nuovo sviluppatore (umano o Claude) senza dover rileggere l'intera cronologia della chat.
 
+**Nota sul naming**: il progetto si chiama **ARALD** dal 4 settembre 2026 — rinominato da "Nomad-Net" a valle di una due-diligence tecnica/legale (conflitto di nome reale con NomadNet/Mark Qvist, GPL-3.0, e ambiguità col Project NOMAD esterno a cui il gateway si collega; dettaglio completo in `docs/reuse-vs-new.md`). La narrativa storica sotto (scritta via via nel tempo, giorno per giorno) **non è stata riscritta** — usa ancora "Nomad-Net"/"NOMAD-Net" dove quello era il nome del progetto nel momento in cui il testo fu scritto, per preservare l'accuratezza storica di chi ha detto/deciso cosa e quando. Lavorando sul codice, usa sempre **ARALD** in ogni contenuto nuovo (documentazione, UI, messaggi, commenti forward-looking); la classe interna `NomadNode` e la directory `gateway/nomad/` restano invariate deliberatamente — la prima è un identificatore di codice mai visibile all'esterno, la seconda si riferisce correttamente al Project NOMAD esterno (Crosstalk Solutions), non al nome del nostro progetto.
+
 ## Cos'è questo progetto
 
-Nomad-Net è un prototipo software di rete distribuita, **content-centric** e **delay-tolerant**: dispositivi condividono contenuti, servizi e messaggi senza infrastruttura Internet, tramite mesh locali, store-and-forward, caching opportunistico e sincronizzazione automatica al ritorno della connettività. Ispirato concettualmente a BitChat (mesh BLE) e pensato per integrarsi con Project NOMAD come "service provider" locale (Kiwix, Ollama, ecc.), ma senza dipendere da nessuno dei due.
+ARALD è un prototipo software di rete distribuita, **content-centric** e **delay-tolerant**: dispositivi condividono contenuti, servizi e messaggi senza infrastruttura Internet, tramite mesh locali, store-and-forward, caching opportunistico e sincronizzazione automatica al ritorno della connettività. Ispirato concettualmente a BitChat (mesh BLE) e pensato per integrarsi con Project NOMAD come "service provider" locale (Kiwix, Ollama, ecc.), ma senza dipendere da nessuno dei due.
 
 **Specifica completa e single source of truth**: [`docs/SPECIFICATION.md`](docs/SPECIFICATION.md) (in italiano, numerata per paragrafi §N — tutti i riferimenti nel codice e nei commenti usano questa numerazione). Se qualcosa nel codice sembra contraddire questo file, la specifica vince; se manca un dettaglio, cercalo lì prima di indovinare.
 
-**Repository GitHub**: `ciao-madesign/nomad-net`. **Branch di lavoro**: `claude/nomad-net-project-spec-lcnbqt`.
+**Repository GitHub**: `ciao-madesign/ARALD` (rinominato da `ciao-madesign/nomad-net` il 4 settembre 2026, contestualmente al rename del progetto). **Branch di lavoro**: `claude/nomad-net-project-spec-lcnbqt` (nome del branch invariato deliberatamente — un identificatore Git interno, mai visibile all'esterno, rinominarlo comporterebbe solo rischio senza alcun beneficio di branding).
 
 ## Regola permanente: push su main
 

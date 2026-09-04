@@ -41,7 +41,7 @@ npm run dev -w node -- --id B --port 9002 --connect 127.0.0.1:9001
 Output atteso (§13):
 
 ```
-Nomad-Net Node
+ARALD Node
 Node ID: 7f3a...
 Status: ONLINE
 ```
