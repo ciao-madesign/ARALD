@@ -17,6 +17,24 @@ export const DROP_CONTENT_NAME = "drop";
 export const MAX_DROP_LABEL_LENGTH = 100;
 
 /**
+ * Severity/routing tier for a drop (proposta esterna "HAZARD/INFO", analizzata
+ * e approvata dall'utente il 4 settembre 2026 — vedi `docs/beacon.md`).
+ * Sostituisce il precedente `urgent: boolean` a due livelli con una
+ * tassonomia a tre: un vero SOS personale resta fuori da questo modulo
+ * (`emergency-beacon.ts`, pipeline dedicata, voce #56) — `"emergency"` qui è
+ * un'allerta d'area ad alta priorità (es. valanga), non un soccorso
+ * individuale. `"hazard"` è il caso nuovo introdotto da questa voce (es. un
+ * crepaccio sul sentiero): più visibile di un `"info"` ordinario ma senza
+ * saltare la coda quanto `"emergency"`. Il mapping verso `Priority`
+ * (`node.ts`'s `dropKindPriority()`) e la propagazione (flood mesh-wide via
+ * `CONTENT_ANNOUNCE`, invariata per tutti e tre i livelli) restano
+ * responsabilità di `NomadNode`, non di questo modulo.
+ */
+export type DropKind = "info" | "hazard" | "emergency";
+
+const DROP_KINDS: readonly DropKind[] = ["info", "hazard", "emergency"];
+
+/**
  * The signed `content://` payload a drop carries — mirrors
  * `ChannelMessagePayload` (`public-channels.ts`): `timestamp` lives here,
  * inside the bytes a publisher's signature actually covers
@@ -32,7 +50,7 @@ export interface DropPayload {
   lat: number;
   lon: number;
   label?: string;
-  urgent: boolean;
+  kind: DropKind;
   timestamp: number;
 }
 
@@ -55,9 +73,9 @@ export function extractDropPayload(payload: unknown): DropPayload | undefined {
     if (typeof p.label !== "string" || p.label.length === 0 || p.label.length > MAX_DROP_LABEL_LENGTH) return undefined;
     label = p.label;
   }
-  if (typeof p.urgent !== "boolean") return undefined;
+  if (typeof p.kind !== "string" || !DROP_KINDS.includes(p.kind as DropKind)) return undefined;
   if (typeof p.timestamp !== "number" || !Number.isFinite(p.timestamp)) return undefined;
-  return { text: p.text, lat: p.lat, lon: p.lon, label, urgent: p.urgent, timestamp: p.timestamp };
+  return { text: p.text, lat: p.lat, lon: p.lon, label, kind: p.kind as DropKind, timestamp: p.timestamp };
 }
 
 /**

@@ -340,13 +340,13 @@ async function createGroup(name, members) {
  * see node/src/drops.ts's own doc comment). `lat`/`lon` are always the caller's own current position
  * (see createDropFromHere()'s doc comment below), never typed in by hand.
  */
-async function createDrop({ text, lat, lon, label, urgent }) {
+async function createDrop({ text, lat, lon, label, kind }) {
   const res = await fetchWithTimeout(
     apiUrl("/api/drops"),
     {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + networkPassword },
-      body: JSON.stringify({ text, lat, lon, label, urgent }),
+      body: JSON.stringify({ text, lat, lon, label, kind }),
     },
     CALL_TIMEOUT_MS,
   );
@@ -1513,11 +1513,18 @@ let dropSeenIds = new Set();
  */
 let knownDrops = [];
 
+/** Severity ranking for a drop's `kind` — higher sorts first in `renderDrops()`. Mirrors `node/src/node.ts`'s `dropKindPriority()` ordering (emergency > hazard > info), kept independent since this file has no access to `Priority`. */
+function dropKindRank(kind) {
+  if (kind === "emergency") return 2;
+  if (kind === "hazard") return 1;
+  return 0;
+}
+
 /**
  * `drops` is always an array (GET /api/drops is unauthenticated and offered on every gateway,
  * unlike the location registry) — the panel itself is always visible, never capability-gated.
- * Urgent drops are sorted first (Array.prototype.sort is stable, so within each group the
- * server's own newest-first order, node/src/drops.ts's Drops.list(), is preserved).
+ * Drops are sorted by severity, most severe first (Array.prototype.sort is stable, so within each
+ * group the server's own newest-first order, node/src/drops.ts's Drops.list(), is preserved).
  */
 function renderDrops(drops) {
   knownDrops = drops;
@@ -1528,12 +1535,13 @@ function renderDrops(drops) {
     dropSeenIds = new Set();
     return;
   }
-  const sorted = [...drops].sort((a, b) => (b.urgent ? 1 : 0) - (a.urgent ? 1 : 0));
+  const sorted = [...drops].sort((a, b) => dropKindRank(b.kind) - dropKindRank(a.kind));
   const nextSeen = new Set();
   for (const d of sorted) {
     nextSeen.add(d.dropId);
     const tags = [];
-    if (d.urgent) tags.push(el("span", { className: "tag urgent", textContent: "Urgente" }));
+    if (d.kind === "emergency") tags.push(el("span", { className: "tag urgent", textContent: "Emergenza" }));
+    else if (d.kind === "hazard") tags.push(el("span", { className: "tag hazard", textContent: "Pericolo" }));
     if (myLastKnownPosition) {
       const distance = haversineDistanceMeters(myLastKnownPosition.lat, myLastKnownPosition.lon, d.lat, d.lon);
       tags.push(el("span", { className: "tag", textContent: distance < 1000 ? Math.round(distance) + " m" : (distance / 1000).toFixed(1) + " km" }));
@@ -1546,7 +1554,8 @@ function renderDrops(drops) {
       el("div", { textContent: d.text }),
       el("div", { className: "tags" }, tags),
     ]);
-    if (d.urgent) li.classList.add("is-urgent");
+    if (d.kind === "emergency") li.classList.add("is-urgent");
+    else if (d.kind === "hazard") li.classList.add("is-hazard");
     if (!dropSeenIds.has(d.dropId)) li.classList.add("enter");
     list.append(li);
   }
@@ -1562,12 +1571,12 @@ document.getElementById("create-drop-form").addEventListener("submit", async (ev
   event.preventDefault();
   const labelInput = document.getElementById("create-drop-label");
   const textInput = document.getElementById("create-drop-text");
-  const urgentInput = document.getElementById("create-drop-urgent");
+  const kindInput = document.getElementById("create-drop-kind");
   const status = document.getElementById("create-drop-status");
   const text = textInput.value.trim();
   if (!text) return;
   const label = labelInput.value.trim();
-  const urgent = urgentInput.checked;
+  const kind = kindInput.value;
   const submit = event.target.querySelector("button[type=submit]");
   setCreateDropBusy(submit, true);
   status.classList.remove("error");
@@ -1575,12 +1584,14 @@ document.getElementById("create-drop-form").addEventListener("submit", async (ev
   try {
     const { lat, lon } = await getCurrentPosition();
     status.textContent = "Invio in corso...";
-    await createDrop({ text, lat, lon, label: label || undefined, urgent });
+    await createDrop({ text, lat, lon, label: label || undefined, kind });
     textInput.value = "";
     labelInput.value = "";
-    urgentInput.checked = false;
+    kindInput.value = "info";
     status.textContent = "Segnalazione pubblicata.";
-    vibrate(urgent ? [15, 40, 15] : 10);
+    // Three-tier tactile feedback (info < hazard < emergency), same "intensity mirrors severity"
+    // posture as the previous two-tier urgent/non-urgent scheme.
+    vibrate(kind === "emergency" ? [15, 40, 15] : kind === "hazard" ? [12, 30] : 10);
     showToast("Segnalazione pubblicata", "alert-triangle");
     // Same "fire and let the dashboard catch up" posture as createGroup()'s submit handler —
     // the panel would otherwise wait for the next periodic 5s refreshAll() tick.

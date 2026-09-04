@@ -48,7 +48,7 @@ import {
   type GroupMessagePacketPayload,
 } from "./groups.js";
 import { LocationRegistry, extractLocationReport, type LocationReportPayload } from "./location-registry.js";
-import { Drops, DROP_CONTENT_NAME, MAX_DROP_LABEL_LENGTH, extractDropPayload, type Drop, type DropPayload } from "./drops.js";
+import { Drops, DROP_CONTENT_NAME, MAX_DROP_LABEL_LENGTH, extractDropPayload, type Drop, type DropPayload, type DropKind } from "./drops.js";
 import { RelayRegistry, type RelayEntry, type RelayStaticFields } from "./relay-registry.js";
 import {
   EmergencyBeacons,
@@ -176,31 +176,58 @@ const MAX_CONCURRENT_DROP_FETCHES = 16;
 const MAX_CONCURRENT_BEACON_FETCHES = 16;
 
 /**
- * Bounds how many urgent (`Priority.EMERGENCY`) drops a single node can
- * originate within `URGENT_DROP_RATE_LIMIT_WINDOW_MS` — found necessary
- * during design, not by review: unlike `NewsGateway`'s
+ * Bounds how many elevated-priority drops (`kind: "hazard"` or `"emergency"`,
+ * `Priority.MESSAGING`/`Priority.EMERGENCY`) a single node can originate
+ * within `ELEVATED_DROP_RATE_LIMIT_WINDOW_MS` — found necessary during
+ * design, not by review: unlike `NewsGateway`'s
  * `MAX_EMERGENCY_ANNOUNCES_PER_SYNC` (which throttles a periodic sync loop
  * touching many items at once), a drop is created one at a time by an
  * explicit human/HTTP action (`POST /api/drops`, already gated behind the
  * network password) — the risk here is a misbehaving or compromised
- * *paired* client calling it in a tight loop, flooding the mesh at the
- * highest priority over and over. `rate-limit.ts` only gates packets this
- * node *receives*, never ones it originates itself, same gap #39 closed
- * for `NewsGateway`. Not partitioned per caller (unlike `InternetGateway`'s
- * per-IP limiter): every caller here is already authenticated by the
- * network password, so a single node-wide counter is enough — there's no
- * cheap-to-mint fake identity to rotate around it the way an unauthenticated
- * `fromNodeId`/source IP would allow elsewhere.
+ * *paired* client calling it in a tight loop, flooding the mesh at an
+ * above-default priority over and over. `rate-limit.ts` only gates packets
+ * this node *receives*, never ones it originates itself, same gap #39
+ * closed for `NewsGateway`. Not partitioned per caller (unlike
+ * `InternetGateway`'s per-IP limiter): every caller here is already
+ * authenticated by the network password, so a single node-wide counter is
+ * enough — there's no cheap-to-mint fake identity to rotate around it the
+ * way an unauthenticated `fromNodeId`/source IP would allow elsewhere.
+ *
+ * A single shared counter covers both `"hazard"` and `"emergency"` (rather
+ * than one budget each) — from a flood-risk standpoint the two are the same
+ * concern (a caller pushing this node's own priority above the mesh-wide
+ * default `Priority.CONTENT` repeatedly), and a caller could otherwise
+ * double its effective flood budget by alternating kinds.
  */
-const MAX_URGENT_DROPS_PER_WINDOW = 3;
-const URGENT_DROP_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
+const MAX_ELEVATED_DROPS_PER_WINDOW = 3;
+const ELEVATED_DROP_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
+
+/**
+ * Maps a drop's severity `kind` to the `Priority` it publishes/propagates
+ * at. `"hazard"` deliberately lands on `Priority.MESSAGING` rather than the
+ * numerically-adjacent `Priority.CONTROL` — `CONTROL` is reserved for
+ * protocol-internal traffic (PING/PONG/ACK/PEER_LIST/IDENTITY exchanges,
+ * verified by grep before choosing this mapping), never user content, and
+ * `MESSAGING` is already where other user-originated content
+ * (DATA/PRIVATE_MESSAGE/GROUP_MESSAGE) sits.
+ */
+function dropKindPriority(kind: DropKind): Priority {
+  switch (kind) {
+    case "emergency":
+      return Priority.EMERGENCY;
+    case "hazard":
+      return Priority.MESSAGING;
+    case "info":
+      return Priority.CONTENT;
+  }
+}
 
 /** Default/maximum lifetime for a drop (`NomadNode.publishDrop()`) — a drop is a notice tied to a moment, never a permanent fixture like a channel, so unlike `publishContent()` in general it always carries a `ttlMs`, capped so a caller can shorten it but never make it outlive this. */
 const DEFAULT_DROP_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_DROP_TTL_MS = 72 * 60 * 60 * 1000;
 
 /**
- * Same reasoning as `MAX_URGENT_DROPS_PER_WINDOW` immediately above — this
+ * Same reasoning as `MAX_ELEVATED_DROPS_PER_WINDOW` immediately above — this
  * is the per-caller half of `sendEmergencyBeacon()`'s two-level anti-flood
  * (`docs/beacon.md` #4, "Card usa-e-getta"); the other half is the *global*
  * (not per-sender) budget on the *receiving* side
@@ -581,8 +608,8 @@ export class NomadNode extends EventEmitter {
   private readonly pendingDropFetches = new Set<string>();
   /** Same purpose as `pendingDropFetches`, for `considerEmergencyBeacon()` — bounds concurrency to `MAX_CONCURRENT_BEACON_FETCHES`. */
   private readonly pendingBeaconFetches = new Set<string>();
-  /** Sliding-window state for `MAX_URGENT_DROPS_PER_WINDOW` (see its own doc comment) — `publishDrop({ urgent: true })` checks and updates this before publishing. */
-  private urgentDropWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
+  /** Sliding-window state for `MAX_ELEVATED_DROPS_PER_WINDOW` (see its own doc comment) — `publishDrop({ kind: "hazard" | "emergency" })` checks and updates this before publishing. */
+  private elevatedDropWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
   /** Sliding-window state for `MAX_EMERGENCY_BEACON_PER_WINDOW` (see its own doc comment) — `sendEmergencyBeacon()` checks and updates this before publishing. */
   private emergencyBeaconWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
   /**
@@ -1035,17 +1062,26 @@ export class NomadNode extends EventEmitter {
    * drop is a notice tied to a moment, never a permanent fixture like a
    * channel.
    *
-   * When `urgent` is true, publishes at `Priority.EMERGENCY` (spec's "P0",
-   * same mechanism as `service://emergency-news`, `docs/security.md` #39) so
-   * it reaches already-connected peers immediately via `CONTENT_ANNOUNCE`
-   * instead of waiting for a pull query — first checking/consuming
-   * `MAX_URGENT_DROPS_PER_WINDOW` (see its own doc comment for why this
-   * differs from #39's per-sync cap) and throwing if the budget is
+   * `kind` selects both the propagation priority and, indirectly, whether
+   * this call is subject to the elevated-drop rate limit (proposta esterna
+   * "HAZARD/INFO", analizzata e approvata dall'utente il 4 settembre 2026 —
+   * `docs/beacon.md`; sostituisce il precedente `urgent: boolean` a due
+   * livelli): `"emergency"` publishes at `Priority.EMERGENCY` (spec's "P0",
+   * same mechanism as `service://emergency-news`, `docs/security.md` #39),
+   * `"hazard"` at `Priority.MESSAGING` (visibile prima di un `"info"`
+   * ordinario ma senza saltare la coda quanto un vero SOS/allerta d'area —
+   * `Priority.CONTROL` è riservato al traffico di protocollo, mai
+   * riutilizzabile qui), `"info"` at the ordinary `Priority.CONTENT` — see
+   * `dropKindPriority()`. Both `"emergency"` and `"hazard"` publish at a
+   * priority high enough to reach already-connected peers immediately via
+   * `CONTENT_ANNOUNCE` instead of waiting for a pull query, so both share
+   * the same `MAX_ELEVATED_DROPS_PER_WINDOW` budget (see its own doc
+   * comment for why one shared counter, not two) and throw if it's
    * exhausted, same "fail loudly" posture as `sendPrivateMessage()`. A
-   * non-urgent drop publishes at the ordinary `Priority.CONTENT`, no
-   * special treatment beyond what any other announced content already gets.
+   * `"info"` drop gets no special treatment beyond what any other announced
+   * content already gets.
    */
-  publishDrop(drop: { text: string; lat: number; lon: number; label?: string; urgent: boolean; expiresInMs?: number }): Drop {
+  publishDrop(drop: { text: string; lat: number; lon: number; label?: string; kind: DropKind; expiresInMs?: number }): Drop {
     if (drop.text.length === 0 || drop.text.length > MAX_MESSAGE_TEXT_LENGTH) {
       throw new Error(`drop text must be 1-${MAX_MESSAGE_TEXT_LENGTH} characters`);
     }
@@ -1058,31 +1094,32 @@ export class NomadNode extends EventEmitter {
     if (drop.label !== undefined && (drop.label.length === 0 || drop.label.length > MAX_DROP_LABEL_LENGTH)) {
       throw new Error(`drop label must be 1-${MAX_DROP_LABEL_LENGTH} characters`);
     }
-    // Validated *before* the urgent rate limit below is consumed — found by review: a non-positive
-    // expiresInMs would otherwise make publishContent() below throw (its ttlMs would produce an
-    // already-expired expiresAt, rejected by ContentStore.putVerified()) only *after* the urgent
-    // counter was already incremented, letting a caller burn MAX_URGENT_DROPS_PER_WINDOW's whole
-    // budget on requests that were never going to publish anything — the exact "misbehaving or
-    // compromised paired client in a tight loop" scenario the rate limit exists to stop.
+    // Validated *before* the elevated-drop rate limit below is consumed — found by review: a
+    // non-positive expiresInMs would otherwise make publishContent() below throw (its ttlMs would
+    // produce an already-expired expiresAt, rejected by ContentStore.putVerified()) only *after*
+    // the elevated counter was already incremented, letting a caller burn
+    // MAX_ELEVATED_DROPS_PER_WINDOW's whole budget on requests that were never going to publish
+    // anything — the exact "misbehaving or compromised paired client in a tight loop" scenario the
+    // rate limit exists to stop.
     if (drop.expiresInMs !== undefined && (!Number.isFinite(drop.expiresInMs) || drop.expiresInMs <= 0)) {
       throw new Error("publishDrop: 'expiresInMs' must be a finite positive number");
     }
-    if (drop.urgent) {
+    if (drop.kind !== "info") {
       const now = Date.now();
-      if (now - this.urgentDropWindow.windowStart >= URGENT_DROP_RATE_LIMIT_WINDOW_MS) {
-        this.urgentDropWindow = { windowStart: now, count: 0 };
+      if (now - this.elevatedDropWindow.windowStart >= ELEVATED_DROP_RATE_LIMIT_WINDOW_MS) {
+        this.elevatedDropWindow = { windowStart: now, count: 0 };
       }
-      if (this.urgentDropWindow.count >= MAX_URGENT_DROPS_PER_WINDOW) {
-        throw new Error("publishDrop: too many urgent drops, try again later");
+      if (this.elevatedDropWindow.count >= MAX_ELEVATED_DROPS_PER_WINDOW) {
+        throw new Error("publishDrop: too many high-priority drops, try again later");
       }
-      this.urgentDropWindow.count++;
+      this.elevatedDropWindow.count++;
     }
     const ttlMs = Math.min(drop.expiresInMs ?? DEFAULT_DROP_TTL_MS, MAX_DROP_TTL_MS);
     const timestamp = Date.now();
-    const payload: DropPayload = { text: drop.text, lat: drop.lat, lon: drop.lon, label: drop.label, urgent: drop.urgent, timestamp };
+    const payload: DropPayload = { text: drop.text, lat: drop.lat, lon: drop.lon, label: drop.label, kind: drop.kind, timestamp };
     const metadata = this.publishContent(DROP_CONTENT_NAME, "application/json", Buffer.from(JSON.stringify(payload), "utf8"), {
       announce: true,
-      priority: drop.urgent ? Priority.EMERGENCY : Priority.CONTENT,
+      priority: dropKindPriority(drop.kind),
       ttlMs,
     });
     const record: Drop = { ...payload, dropId: metadata.contentId, author: this.nodeId, expiresAt: metadata.expiresAt };

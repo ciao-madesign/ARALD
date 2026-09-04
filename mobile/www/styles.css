@@ -350,6 +350,7 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
 }
 .map-pin svg { width: 26px; height: 26px; }
 .map-pin.is-urgent { color: var(--bad); }
+.map-pin.is-hazard { color: var(--warn); }
 /* Un relay offline resta visibile (dov'è installato conta comunque) ma attenuato — mai nascosto. */
 .map-pin.is-offline { opacity: 0.45; }
 /* Un SOS non ha mai una variante "non urgente" (a differenza dei drop) — sempre nello stesso rosso. */
@@ -722,6 +723,11 @@ li.skel-row { display: flex; flex-direction: column; }
 #create-drop-form button[type="submit"]:disabled { opacity: 0.6; }
 #drops .tag.urgent { background: var(--bad-soft); color: var(--bad); font-weight: 600; }
 #drops li.is-urgent { border-left: 3px solid var(--bad); padding-left: 0.6em; }
+/* HAZARD tier (proposta esterna "HAZARD/INFO", 4 settembre 2026) — mirror esatto delle regole
+   .tag.urgent/li.is-urgent sopra, riusando i token --warn/--warn-soft già esistenti nel foglio di
+   stile (nessuna nuova variabile CSS). */
+#drops .tag.hazard { background: var(--warn-soft); color: var(--warn); font-weight: 600; }
+#drops li.is-hazard { border-left: 3px solid var(--warn); padding-left: 0.6em; }
 
 /* ---------- registro relay (docs/beacon.md "Fixed Relay e Registro dei relay") ---------- */
 

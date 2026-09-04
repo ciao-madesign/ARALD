@@ -97,6 +97,14 @@ Famiglia hardware aggiornata:
 
 Il Card resta comunque necessario per chi non ha (o non vuole usare) uno smartphone compatibile — nessuna delle tre varianti sostituisce le altre, stesso principio "densità di rete" già in `docs/emergency-rescue-network.md`.
 
+### Tre proposte software, in implementazione a pezzi (dal 4 settembre 2026)
+
+Insieme a Cover/Clip, lo stesso giorno l'utente ha sottoposto tre proposte con implicazioni software reali: **Packet-vs-Observation** (deduplicazione del traffico distinta dalla raccolta di osservazioni radio RSSI/SNR/posizione — formalizza la "SOS Proximity Detection" lasciata aperta il 3 settembre), **HAZARD/INFO** (tassonomia di contenuto più granulare, dallo smartphone, per segnalazioni territoriali come "crepaccio sul sentiero" — distinte da un SOS personale), e **Directed Content Delivery + "Node Append"** (routing NETWORK/LOCAL/DIRECTED verso un Node ID specifico, con ridistribuzione locale da parte del nodo target — es. un operatore che deposita un avviso sul Fixed Relay di un rifugio). Confermato con l'utente un piano a tre pezzi, uno alla volta con "ok" esplicito tra un pezzo e l'altro:
+
+1. **HAZARD/INFO — fatto** (`docs/security.md` voce #57): la Bacheca (`node/src/drops.ts`) passa da `urgent: boolean` a due livelli a `DropKind = "info" | "hazard" | "emergency"` a tre, mappati su `Priority.CONTENT`/`Priority.MESSAGING`/`Priority.EMERGENCY`. Resta deliberatamente fuori scope in questo pezzo: NETWORK/LOCAL/DIRECTED e "Node Append" (pezzo 2), e qualunque cambiamento a TTL/raggio di propagazione (hazard/info restano flood mesh-wide come oggi).
+2. **Directed Content Delivery + Node Append** — non ancora pianificato. La parte DIRECTED esiste già in buona parte (`packet.destination`+`PendingDeliveryQueue`); il pezzo nuovo è "Node Append" (ridistribuzione locale da parte del nodo target).
+3. **Packet-vs-Observation/RSSI** — non ancora pianificato, il più delicato dei tre: due tensioni di design da risolvere prima del codice — `EmergencyBeaconPayload` (voce #56) oggi è firmato ma non cifrato, mentre la proposta vuole che un relay non debba mai leggere il payload; e i transport BLE/LoRa simulati non modellano RSSI/potenza del segnale, quindi qualunque validazione di questa proposta in questo ambiente resterebbe a livello di protocollo, non di comportamento radio reale.
+
 ---
 
 ## Fixed Relay e Relay Registry

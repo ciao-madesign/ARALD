@@ -215,10 +215,11 @@
         <form id="create-drop-form">
           <input id="create-drop-label" type="text" placeholder="Etichetta breve (opzionale), es. Frana sul sentiero" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="100">
           <textarea id="create-drop-text" placeholder="Descrivi la segnalazione..." rows="2" required></textarea>
-          <label class="checkbox-row">
-            <input type="checkbox" id="create-drop-urgent">
-            <span>Urgente (pericolo reale)</span>
-          </label>
+          <select id="create-drop-kind">
+            <option value="info" selected>Informazione (es. sentiero chiuso)</option>
+            <option value="hazard">Pericolo (es. crepaccio, frana)</option>
+            <option value="emergency">Emergenza (es. valanga in corso)</option>
+          </select>
           <button type="submit">Segnala qui</button>
           <p id="create-drop-status" class="muted" role="status" aria-live="polite"></p>
         </form>

@@ -20,8 +20,8 @@ export const EMERGENCY_BEACON_CONTENT_NAME = "emergency-beacon";
  * (`drops.ts`): `timestamp` lives here, inside the bytes the publisher's
  * signature actually covers (`contentSigningPayload()`, `content.ts`),
  * never in `ContentMetadata.createdAt`, which isn't part of what gets
- * signed. Unlike `DropPayload`, there is no `urgent` flag — a SOS has no
- * "non-urgent" variant, it is always published at `Priority.EMERGENCY`
+ * signed. Unlike `DropPayload`, there is no `kind` field — a SOS has no
+ * lower-severity variant, it is always published at `Priority.EMERGENCY`
  * (`NomadNode.sendEmergencyBeacon()`). There is also no `deviceId`/author
  * field: the originator's identity is already `ContentMetadata.publisherId`,
  * authenticated by the content signature — a redundant payload field would

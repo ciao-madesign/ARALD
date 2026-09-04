@@ -1297,12 +1297,15 @@ export class WebUiServer {
   }
 
   /**
-   * `POST /api/drops` — publishes a drop (body `{ text, lat, lon, label?, urgent?, expiresInMs? }`)
+   * `POST /api/drops` — publishes a drop (body `{ text, lat, lon, label?, kind?, expiresInMs? }`)
    * via `NomadNode.publishDrop()`. Same auth as `POST /api/channel-messages` — reading drops needs
    * no password (`GET /api/drops`, public mesh content), but *creating* one is still gated behind
-   * pairing like every other write this class exposes. `lat`/`lon`/`urgent`'s deeper validation
-   * happens inside `publishDrop()` itself — this only checks shallow types, same split already used
-   * by `handleShareLocation()`/`handleCreateGroup()`.
+   * pairing like every other write this class exposes. `lat`/`lon`'s deeper validation happens
+   * inside `publishDrop()` itself — this only checks shallow types, same split already used by
+   * `handleShareLocation()`/`handleCreateGroup()`. `kind` is validated against the exact three
+   * `DropKind` values here (rather than importing the type from `drops.ts`, which this file
+   * otherwise has no dependency on) because an invalid value must produce a 400 before ever
+   * reaching `publishDrop()`.
    */
   private async handleCreateDrop(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!this.allowServiceCalls || !this.networkPassword) {
@@ -1338,7 +1341,7 @@ export class WebUiServer {
       return;
     }
 
-    const body = parsed as { text?: unknown; lat?: unknown; lon?: unknown; label?: unknown; urgent?: unknown; expiresInMs?: unknown } | null;
+    const body = parsed as { text?: unknown; lat?: unknown; lon?: unknown; label?: unknown; kind?: unknown; expiresInMs?: unknown } | null;
     const text = body?.text;
     if (typeof text !== "string" || text.length === 0) {
       sendJson(res, 400, { error: "'text' must be a non-empty string" });
@@ -1353,9 +1356,9 @@ export class WebUiServer {
       sendJson(res, 400, { error: "'label' must be a string" });
       return;
     }
-    const urgent = body.urgent ?? false;
-    if (typeof urgent !== "boolean") {
-      sendJson(res, 400, { error: "'urgent' must be a boolean" });
+    const kind = body.kind ?? "info";
+    if (kind !== "info" && kind !== "hazard" && kind !== "emergency") {
+      sendJson(res, 400, { error: "'kind' must be one of 'info', 'hazard', 'emergency'" });
       return;
     }
     const expiresInMs = body.expiresInMs;
@@ -1365,15 +1368,16 @@ export class WebUiServer {
     }
 
     try {
-      const drop = this.node.publishDrop({ text, lat: body.lat, lon: body.lon, label, urgent, expiresInMs });
+      const drop = this.node.publishDrop({ text, lat: body.lat, lon: body.lon, label, kind, expiresInMs });
       sendJson(res, 200, { drop });
     } catch (err) {
       // publishDrop()'s own validation throws for both a rejected input (bad lat/lon/text/label —
-      // 400, same convention as handleSendChannelMessage()) and an exhausted urgent-drop rate limit
-      // (429) — distinguished by message content, same split already used elsewhere in this class
-      // (e.g. handleShareLocation()) for a single throwing call covering more than one failure mode.
+      // 400, same convention as handleSendChannelMessage()) and an exhausted elevated-drop rate
+      // limit (429) — distinguished by message content, same split already used elsewhere in this
+      // class (e.g. handleShareLocation()) for a single throwing call covering more than one
+      // failure mode.
       const message = (err as Error).message;
-      sendJson(res, message.includes("too many urgent drops") ? 429 : 400, { error: message });
+      sendJson(res, message.includes("too many high-priority drops") ? 429 : 400, { error: message });
     }
   }
 

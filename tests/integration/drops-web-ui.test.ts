@@ -42,7 +42,7 @@ describe("WebUiServer /api/drops", () => {
   it("GET /api/drops needs no auth at all, even when allowServiceCalls/networkPassword are set", async () => {
     const a = makeGateway("A");
     await Promise.all([a.node.start(), a.webUi.start()]);
-    a.node.publishDrop({ text: "Frana sul sentiero", lat: 45, lon: 7, urgent: false });
+    a.node.publishDrop({ text: "Frana sul sentiero", lat: 45, lon: 7, kind: "info" });
 
     const res = await fetch(`http://127.0.0.1:${a.webUi.port}/api/drops`);
     expect(res.status).toBe(200);
@@ -55,7 +55,7 @@ describe("WebUiServer /api/drops", () => {
         lat: 45,
         lon: 7,
         label: undefined,
-        urgent: false,
+        kind: "info",
         timestamp: expect.any(Number),
         expiresAt: expect.any(Number),
       },
@@ -74,7 +74,7 @@ describe("WebUiServer /api/drops", () => {
     nodes.push(node);
     webUis.push(webUi);
     await Promise.all([node.start(), webUi.start()]);
-    node.publishDrop({ text: "ciao", lat: 0, lon: 0, urgent: false });
+    node.publishDrop({ text: "ciao", lat: 0, lon: 0, kind: "info" });
 
     const res = await fetch(`http://127.0.0.1:${webUi.port}/api/drops`);
     expect(res.status).toBe(200);
@@ -117,6 +117,19 @@ describe("WebUiServer /api/drops", () => {
     expect(a.node.drops.list()).toEqual([]);
   });
 
+  it("POST /api/drops with no 'kind' defaults to 'info'", async () => {
+    const a = makeGateway("A");
+    await Promise.all([a.node.start(), a.webUi.start()]);
+
+    const res = await authedFetch(a.webUi, "/api/drops", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "ciao", lat: 0, lon: 0 }),
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).drop.kind).toBe("info");
+  });
+
   it("POST /api/drops with a correct password publishes the drop and returns it", async () => {
     const a = makeGateway("A");
     await Promise.all([a.node.start(), a.webUi.start()]);
@@ -124,7 +137,7 @@ describe("WebUiServer /api/drops", () => {
     const res = await authedFetch(a.webUi, "/api/drops", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: "Frana sul sentiero", lat: 45, lon: 7, label: "Pericolo", urgent: true }),
+      body: JSON.stringify({ text: "Frana sul sentiero", lat: 45, lon: 7, label: "Pericolo", kind: "emergency" }),
     });
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -135,14 +148,27 @@ describe("WebUiServer /api/drops", () => {
       lat: 45,
       lon: 7,
       label: "Pericolo",
-      urgent: true,
+      kind: "emergency",
       timestamp: expect.any(Number),
       expiresAt: expect.any(Number),
     });
     expect(a.node.drops.list()).toHaveLength(1);
   });
 
-  it("POST /api/drops rejects a missing/empty text, non-number lat/lon, non-string label, non-boolean urgent, or non-number expiresInMs with 400", async () => {
+  it("POST /api/drops publishes a 'hazard' drop the same way, distinct from 'emergency'", async () => {
+    const a = makeGateway("A");
+    await Promise.all([a.node.start(), a.webUi.start()]);
+
+    const res = await authedFetch(a.webUi, "/api/drops", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "crepaccio sul sentiero", lat: 45, lon: 7, kind: "hazard" }),
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).drop.kind).toBe("hazard");
+  });
+
+  it("POST /api/drops rejects a missing/empty text, non-number lat/lon, non-string label, invalid kind, or non-number expiresInMs with 400", async () => {
     const a = makeGateway("A");
     await Promise.all([a.node.start(), a.webUi.start()]);
 
@@ -160,15 +186,17 @@ describe("WebUiServer /api/drops", () => {
     expect(await post({ text: "ciao", lat: "0", lon: 0 })).toBe(400); // non-number lat
     expect(await post({ text: "ciao", lat: 0, lon: "0" })).toBe(400); // non-number lon
     expect(await post({ text: "ciao", lat: 0, lon: 0, label: 123 })).toBe(400); // non-string label
-    expect(await post({ text: "ciao", lat: 0, lon: 0, urgent: "yes" })).toBe(400); // non-boolean urgent
+    expect(await post({ text: "ciao", lat: 0, lon: 0, kind: "yes" })).toBe(400); // invalid kind
+    expect(await post({ text: "ciao", lat: 0, lon: 0, kind: true })).toBe(400); // non-string kind
+    expect(await post({ text: "ciao", lat: 0, lon: 0, kind: "urgent" })).toBe(400); // the old two-level name, no longer valid
     expect(await post({ text: "ciao", lat: 0, lon: 0, expiresInMs: "1000" })).toBe(400); // non-number expiresInMs
     // Deeper validation (lat/lon out of range, oversized text/label) is publishDrop()'s own job —
     // proven by publishDrop()'s own tests (tests/integration/drops.test.ts) — this only needs one
     // representative case to show it's actually wired through as a 400, not silently swallowed.
     expect(await post({ text: "ciao", lat: 91, lon: 0 })).toBe(400);
     // A non-positive expiresInMs is publishDrop()'s own job to reject (400, not a crash or a silent
-    // internal error) — tests/integration/drops.test.ts covers that it also doesn't burn the urgent
-    // rate-limit budget, which needs direct NomadNode access to prove.
+    // internal error) — tests/integration/drops.test.ts covers that it also doesn't burn the
+    // elevated-drop rate-limit budget, which needs direct NomadNode access to prove.
     expect(await post({ text: "ciao", lat: 0, lon: 0, expiresInMs: -1 })).toBe(400);
 
     expect(a.node.drops.list()).toEqual([]);
@@ -186,25 +214,25 @@ describe("WebUiServer /api/drops", () => {
     expect(res.status).toBe(400);
   });
 
-  it("POST /api/drops returns 429 (not 400) once the urgent-drop rate limit is exhausted, and stops publishing", async () => {
+  it("POST /api/drops returns 429 (not 400) once the elevated-drop rate limit is exhausted, and stops publishing", async () => {
     const a = makeGateway("A");
     await Promise.all([a.node.start(), a.webUi.start()]);
 
-    async function postUrgent(): Promise<Response> {
+    async function postElevated(): Promise<Response> {
       return authedFetch(a.webUi, "/api/drops", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: "urgente", lat: 0, lon: 0, urgent: true }),
+        body: JSON.stringify({ text: "urgente", lat: 0, lon: 0, kind: "emergency" }),
       });
     }
 
-    // MAX_URGENT_DROPS_PER_WINDOW (node.ts) is 3 — not exported, so hardcoded here, same convention
+    // MAX_ELEVATED_DROPS_PER_WINDOW (node.ts) is 3 — not exported, so hardcoded here, same convention
     // tests/integration/public-channels.test.ts's own burst test already uses for a sibling constant.
-    for (let i = 0; i < 3; i++) expect((await postUrgent()).status).toBe(200);
+    for (let i = 0; i < 3; i++) expect((await postElevated()).status).toBe(200);
 
-    const limited = await postUrgent();
+    const limited = await postElevated();
     expect(limited.status).toBe(429);
-    expect((await limited.json()).error).toMatch(/too many urgent drops/);
+    expect((await limited.json()).error).toMatch(/too many high-priority drops/);
     expect(a.node.drops.list()).toHaveLength(3);
   });
 });

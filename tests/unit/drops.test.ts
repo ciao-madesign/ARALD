@@ -3,7 +3,7 @@ import { Drops, extractDropPayload, MAX_DROP_LABEL_LENGTH, type Drop, type DropP
 import { MAX_MESSAGE_TEXT_LENGTH } from "../../node/src/message-history.js";
 
 function validPayload(overrides: Partial<DropPayload> = {}): DropPayload {
-  return { text: "Frana sul sentiero", lat: 45.0, lon: 7.0, urgent: false, timestamp: Date.now(), ...overrides };
+  return { text: "Frana sul sentiero", lat: 45.0, lon: 7.0, kind: "info", timestamp: Date.now(), ...overrides };
 }
 
 function drop(overrides: Partial<Drop> = {}): Drop {
@@ -49,10 +49,14 @@ describe("extractDropPayload", () => {
     expect(extractDropPayload(validPayload())).toBeDefined(); // no label field at all
   });
 
-  it("rejects a missing/non-boolean urgent flag", () => {
-    expect(extractDropPayload({ ...validPayload(), urgent: undefined })).toBeUndefined();
-    expect(extractDropPayload({ ...validPayload(), urgent: "true" })).toBeUndefined();
-    expect(extractDropPayload({ ...validPayload(), urgent: 1 })).toBeUndefined();
+  it("rejects a missing/invalid kind, but accepts each of the three valid values", () => {
+    expect(extractDropPayload({ ...validPayload(), kind: undefined })).toBeUndefined();
+    expect(extractDropPayload({ ...validPayload(), kind: true })).toBeUndefined();
+    expect(extractDropPayload({ ...validPayload(), kind: 1 })).toBeUndefined();
+    expect(extractDropPayload({ ...validPayload(), kind: "urgent" })).toBeUndefined(); // the old two-level name, no longer valid
+    expect(extractDropPayload({ ...validPayload(), kind: "info" })).toBeDefined();
+    expect(extractDropPayload({ ...validPayload(), kind: "hazard" })).toBeDefined();
+    expect(extractDropPayload({ ...validPayload(), kind: "emergency" })).toBeDefined();
   });
 
   it("rejects a missing/non-number/non-finite timestamp", () => {
