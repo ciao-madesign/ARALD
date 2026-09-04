@@ -202,7 +202,7 @@ Mappatura sulle fasi già documentate in `docs/emergency-rescue-network.md`:
 
 ## Roadmap di validazione e field test
 
-Come arrivare, per gradi, a validare questi dispositivi **insieme come rete** — fino a un eventuale test sul campo con un ente reale — è documentato separatamente in [`docs/emergency-rescue-network.md`](./emergency-rescue-network.md), su richiesta esplicita dell'utente: quel documento riguarda la rete nel suo insieme (fasi di test, effetto di rete/densità e livelli di partecipazione, budget indicativo, possibili partner di campo), non i singoli dispositivi descritti qui.
+Come arrivare, per gradi, a validare questi dispositivi **insieme come rete** — fino a un eventuale test sul campo con un ente reale — è documentato separatamente in [`docs/emergency-rescue-network.md`](./emergency-rescue-network.md), su richiesta esplicita dell'utente: quel documento riguarda la rete nel suo insieme (fasi di test, effetto di rete/densità e livelli di partecipazione, budget indicativo, possibili partner di campo), non i singoli dispositivi descritti qui. La **scala tecnica** di validazione (fasi 0-8, test puntuali T-number, KPI, criteri PASS/CONDITIONAL/FAIL) è invece in [`docs/test-protocol.md`](./test-protocol.md) — un terzo documento, asse complementare ai primi due, proposto dall'utente il 4 settembre 2026.
 
 ## Prossimo passo (tutte le voci di questo documento)
 
