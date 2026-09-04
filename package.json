@@ -13,7 +13,8 @@
     "simulate": "tsx tools/simulator/cli.ts",
     "gateway:demo": "tsx gateway/nomad/cli.ts",
     "hub": "tsx nomad-hub/cli.ts",
-    "portal:sync": "tsx arald-backend/sync.ts"
+    "portal:sync": "tsx arald-backend/sync.ts",
+    "portal:local": "tsx local-portal/cli.ts"
   },
   "dependencies": {
     "pg": "^8.13.1"
