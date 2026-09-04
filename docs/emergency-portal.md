@@ -20,6 +20,16 @@ Stack ipotizzato: Next.js/React su Vercel per il frontend, un provider di autent
 
 Principio esplicito della proposta, coerente con la filosofia DTN già seguita in questo progetto: **Internet è un'opportunità di sincronizzazione per il portale, non una dipendenza della rete**. Se il backend/portale non è raggiungibile, SOS, store-and-forward, directed delivery e propagazione locale nella mesh devono continuare a funzionare comunque.
 
+## Correzione dell'utente, 4 settembre 2026 — il portale deve vivere sul Box, il cloud è uno specchio
+
+Segnalato dall'utente dopo il primo pezzo realizzato (sotto): la formulazione sopra ("Emergency Portal" come frontend su Internet, "ARALD Backend" come suo database cloud) applica lo stesso errore che questo progetto ha sempre evitato per la mesh — far dipendere una funzione operativa da Internet. **Il portale usato sul posto (rifugio, punto di soccorso) deve girare sul ARALD Box stesso** (o su un PC con un ARALD Portable collegato, gli stessi due deployment target già documentati in `docs/deployment.md`), raggiungibile via LAN locale anche a Internet spento — esattamente come `mobile/` già oggi parla a un gateway sulla stessa rete locale, mai a un server su Internet. **Il portale su Internet (Vercel + Neon) diventa uno specchio in sola lettura**, utile per la gestione ordinaria da chi ha connettività (una centrale operativa, un altro rifugio, un ente) ma mai il punto da cui dipende l'operatività sul posto. Sincronizzazione sempre nella stessa direzione di marcia: **Box → specchio**, opportunistica, mai il contrario per la lettura.
+
+Questo **non invalida il primo pezzo già realizzato** (`arald-backend/`, sotto) — lo riposiziona correttamente: quello script è esattamente il meccanismo "Box legge il proprio nodo mesh → scrive sullo specchio quando c'è connettività", non un accessorio del backend cloud. Cambia però cosa manca:
+
+1. **Una dashboard locale sul Box/PC+Portable** — stessa vista (mappa, SOS, relay, messaggi) ma che legge direttamente `web-ui.ts` del nodo mesh via LAN, zero dipendenza da Neon/Internet. Oggi `web-ui.ts` espone già i dati grezzi (`/api/relays`, `/api/emergency-beacons`, `/api/drops`, `/api/node-appends`) ma nessuna vista aggregata pensata per un operatore non tecnico — è UI mancante, non un nuovo protocollo.
+2. **Sincronizzazione periodica, non one-shot** — lo script andrebbe fatto girare su un timer dal Box stesso quando ha connettività, non lanciato a mano.
+3. **Un problema più delicato, non ancora risolto**: se un operatore da remoto (via lo specchio) vuole *scrivere* qualcosa verso la mesh — es. un Node Append verso un relay specifico — quel comando deve tornare giù fino al Box, che quasi certamente **non ha un IP pubblico raggiungibile da Internet** (dietro NAT, come qualunque connessione da rifugio/zona remota). La direzione naturale è quindi il Box che interroga periodicamente lo specchio ("ci sono comandi in attesa per me?"), mai il cloud che si connette al Box. Nessuna decisione presa — segnalato qui come il pezzo architetturalmente più delicato della proposta corretta.
+
 ## Valutazione rispetto al codice esistente
 
 La proposta è stata confrontata con quanto già implementato in questo repository, non solo accettata a scatola chiusa. Il principio cardine ("il backend non deve essere necessario perché Card → Relay → Relay → Fixed Relay continui a funzionare") è **già vero architetturalmente oggi**: nessun meccanismo mesh esistente (routing, store-and-forward, `Priority.EMERGENCY`, `Drops`, `EmergencyBeacons`, `NodeAppends`, `RelayRegistry`) dipende da un servizio Internet raggiungibile — è tutta logica peer-to-peer sulla mesh stessa, verificata su TCP locale/transport simulati. Il portale descritto qui sarebbe quindi un **consumatore** di quello stato, mai un prerequisito per farlo funzionare — coerente con la proposta, non in tensione con essa.
@@ -50,11 +60,13 @@ Un eventuale "ARALD Box" (gateway Internet↔mesh) potrebbe in teoria eseguire e
 
 Nessuno di questi punti è deciso o pianificato in dettaglio — sono l'elenco di cosa mancherebbe, non un piano d'esecuzione:
 
-- **Protocollo di sincronizzazione ARALD Box → Backend**: quali endpoint locali (`/api/relays`, `/api/emergency-beacons`, `/api/drops`, `/api/node-appends`, `/api/status`) l'ARALD Box interroga, con quale periodicità, e come autentica se stesso verso il backend (un'identità di gateway distinta dalla password di rete della mesh).
+- **Dashboard locale sul Box/PC+Portable**, servita via LAN, zero dipendenza da Internet — il portale operativo vero, non lo specchio (vedi "Correzione dell'utente" sopra).
+- **Sincronizzazione periodica** Box → specchio (oggi `arald-backend/sync.ts` è one-shot, andrebbe fatto girare su un timer dal Box).
+- **Canale di comando dallo specchio verso il Box** per le scritture da remoto (es. un Node Append inviato da un operatore lontano dal sito) — quasi certamente a polling dal Box verso lo specchio, mai il contrario, dato che il Box tipicamente non ha un IP pubblico raggiungibile.
 - **Schema del database multi-tenant** (`users`/`organizations`/`nodes`/`messages`/`observations`/`events`/`audit_logs`) e la logica di autorizzazione a più ruoli (Super Admin/Admin ente/Operatore/Read-only) — nessun precedente nel codice, che oggi non ha alcun concetto di "organizzazione" o utente autenticato con ruolo (la password di rete di `web-ui.ts` è un segreto condiviso, non un'identità utente).
-- **Il frontend del portale stesso** (mappa aggregata, elenco SOS/HAZARD, invio di un messaggio diretto verso un nodo specifico da un form web).
+- **Il frontend dello specchio su Internet** (mappa aggregata, elenco SOS/HAZARD, sola lettura per la gestione ordinaria da remoto).
 - **Audit log** — nessuna struttura esistente lo copre; oggi il progetto logga solo lato processo (console), mai in modo persistente/consultabile.
-- Una decisione su **dove vive l'identità crittografica dell'operatore** che invia un Node Append dal portale: oggi `minTrustForNodeAppend` (default `VERIFIED`) presuppone un `Identity` Ed25519 nota alla mesh — un utente del portale autenticato via OIDC non ne ha automaticamente una.
+- Una decisione su **dove vive l'identità crittografica dell'operatore** che invia un Node Append dal portale (locale o remoto): oggi `minTrustForNodeAppend` (default `VERIFIED`) presuppone un `Identity` Ed25519 nota alla mesh — un utente del portale autenticato via OIDC non ne ha automaticamente una.
 
 ## Cosa NON è lavoro nuovo
 
@@ -81,4 +93,4 @@ Repository Neon dedicati **non ripuliti** deliberatamente: `RELAY-MANUAL-1`/`DRO
 
 ## Prossimo passo
 
-Con questo primo pezzo fatto, i pezzi successivi restano tutti da pianificare esplicitamente con l'utente uno alla volta, nessuno deciso qui: rendere lo script un piccolo servizio con polling invece di one-shot; iniziare lo schema multi-tenant (`users`/`organizations`/`audit_logs`); un frontend read-only minimo (mappa + elenco SOS) sopra i dati già sincronizzati; l'autenticazione degli operatori. Nessuno di questi ha una decisione presa — stesso trattamento di ogni altra proposta in questo file finora.
+Con questo primo pezzo fatto e la correzione Box-first sopra, il candidato più naturale come prossimo pezzo è la **dashboard locale sul Box/PC+Portable** (nessuna dipendenza da Internet, coerente con la filosofia DTN) — ma nessuna decisione è presa qui: va confermato esplicitamente con l'utente, un pezzo alla volta, stesso trattamento di ogni altra proposta in questo file finora. Altri pezzi possibili, tutti ugualmente non decisi: sincronizzazione periodica invece di one-shot; il canale di comando Box↔specchio per le scritture da remoto; lo schema multi-tenant (`users`/`organizations`/`audit_logs`); l'autenticazione degli operatori.
