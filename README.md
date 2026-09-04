@@ -25,7 +25,7 @@ The name comes from *araldo* — a herald, the messenger who carries word to the
 - [`docs/beacon.md`](docs/beacon.md) — the ARALD Card: a single radio device (credit-card form factor) that unifies Beacon and Emergency Relay roles into three firmware profiles (Beacon/Relay/Beacon+Relay Mode), plus Fixed Relay/Relay Registry and a note on EU regulatory compliance (RED, ETSI EN 300 328/300 220, CE) for a possible future commercial release — the **physical device** remains a proposal (no hardware built), but the **network logic** behind all three profiles is implemented and tested (`docs/security.md` entries #54-56: Relay Registry, courier profile, Beacon SOS)
 - [`docs/emergency-rescue-network.md`](docs/emergency-rescue-network.md) — ARALD Emergency & Rescue Network: a phased validation roadmap (prototype, micro pilot, field pilot), network-effect/density considerations and participation levels, and possible field partners for the Beacon/Relay ecosystem — reference documentation, no code or hardware
 - [`docs/test-protocol.md`](docs/test-protocol.md) — a technical test/validation protocol across phases 0-8 (Box/Portable/Card/Smartphone progression, numbered tests, KPIs, PASS/CONDITIONAL/FAIL criteria) — a complementary axis to `emergency-rescue-network.md` (technical scale here, budget/partners there), reference documentation
-- [`docs/emergency-portal.md`](docs/emergency-portal.md) — a proposed architecture for a web **Emergency Portal** (a three-tier Portal/Backend/Network split, multi-tenant per organization, the ARALD Box as the Internet↔mesh gateway) for field organizations/operators (mountain rescue, civil protection, shelter managers) — reference documentation, no code; evaluated against the mesh mechanisms that already exist (Relay Registry, Emergency Beacons, Drops, Node Append)
+- [`docs/emergency-portal.md`](docs/emergency-portal.md) — a proposed architecture for a web **Emergency Portal** (a three-tier Portal/Backend/Network split, multi-tenant per organization, the ARALD Box as the Internet↔mesh gateway) for field organizations/operators (mountain rescue, civil protection, shelter managers) — evaluated against the mesh mechanisms that already exist (Relay Registry, Emergency Beacons, Drops, Node Append); most of it is still a proposal, but a first real piece is built and verified against a live Postgres database on Neon — `arald-backend/`, a one-shot sync script (see the doc's "Primo pezzo realizzato" section)
 - [`docs/roadmap.md`](docs/roadmap.md) — milestone status
 - [`docs/next-steps.md`](docs/next-steps.md) — concrete action plans for candidate next-step milestones
 - [`docs/audit-report.html`](docs/audit-report.html) — a plain-language project verification report (tests, security, next steps), updated with every new pass
@@ -39,24 +39,6 @@ This project was previously developed under the working name "Nomad-Net". It has
 - **[NomadNet](https://github.com/markqvist/NomadNet)** (Mark Qvist, GPL-3.0), built on **[Reticulum](https://github.com/markqvist/Reticulum)** and **[LXMF](https://github.com/markqvist/LXMF)** (Mark Qvist, modified MIT) — an off-grid encrypted mesh communications platform. No code from any of these three projects is used here; see [`docs/reuse-vs-new.md`](docs/reuse-vs-new.md) for the full review.
 
 See [`docs/reuse-vs-new.md`](docs/reuse-vs-new.md) for the complete third-party review: what's reused (with attribution and license), what's mocked/interfaced against, and what's original to this project.
-
-## Documentation
-
-- [`docs/SPECIFICATION.md`](docs/SPECIFICATION.md) — full design specification (single source of truth)
-- [`docs/reuse-vs-new.md`](docs/reuse-vs-new.md) — what's reused from Project NOMAD / BitChat / other prior art, with license review, and what's built from scratch
-- [`docs/architecture.md`](docs/architecture.md) — layered architecture, component roles
-- [`docs/protocol.md`](docs/protocol.md) — packet format, message types, content IDs
-- [`docs/transport.md`](docs/transport.md) — transport abstraction, TCP/BLE/LoRa, iOS/Android constraints
-- [`docs/security.md`](docs/security.md) — identity, content integrity, what's still missing
-- [`docs/development.md`](docs/development.md) — how to build, run, and test
-- [`docs/deployment.md`](docs/deployment.md) — target deployment scenarios (mountain shelter, emergency)
-- [`docs/beacon.md`](docs/beacon.md) — the ARALD Card: a single radio device (credit-card form factor) that unifies Beacon and Emergency Relay roles into three firmware profiles (Beacon/Relay/Beacon+Relay Mode), plus Fixed Relay/Relay Registry and a note on EU regulatory compliance (RED, ETSI EN 300 328/300 220, CE) for a possible future commercial release — the **physical device** remains a proposal (no hardware built), but the **network logic** behind all three profiles is implemented and tested (`docs/security.md` entries #54-56: Relay Registry, courier profile, Beacon SOS)
-- [`docs/emergency-rescue-network.md`](docs/emergency-rescue-network.md) — ARALD Emergency & Rescue Network: a phased validation roadmap (prototype, micro pilot, field pilot), network-effect/density considerations and participation levels, and possible field partners for the Beacon/Relay ecosystem — reference documentation, no code or hardware
-- [`docs/test-protocol.md`](docs/test-protocol.md) — a technical test/validation protocol across phases 0-8 (Box/Portable/Card/Smartphone progression, numbered tests, KPIs, PASS/CONDITIONAL/FAIL criteria) — a complementary axis to `emergency-rescue-network.md` (technical scale here, budget/partners there), reference documentation
-- [`docs/roadmap.md`](docs/roadmap.md) — milestone status
-- [`docs/next-steps.md`](docs/next-steps.md) — concrete action plans for candidate next-step milestones
-- [`docs/audit-report.html`](docs/audit-report.html) — a plain-language project verification report (tests, security, next steps), updated with every new pass
-- [`docs/due-diligence-naming-2026-09-04.md`](docs/due-diligence-naming-2026-09-04.md) — the naming/licensing/trademark due-diligence report behind the "Nomad-Net" → "ARALD" rename (in Italian)
 
 ## Project status
 
