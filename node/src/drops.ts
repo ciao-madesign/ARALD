@@ -94,6 +94,24 @@ export interface Drop extends DropPayload {
   dropId: string;
   author: string;
   expiresAt?: number;
+  /**
+   * This node's own local "Observation" of the drop (`docs/test-protocol.md`'s
+   * vocabulary — the same concept `EmergencyBeaconSighting.receivedFrom`
+   * (`emergency-beacon.ts`) already carries for a SOS, generalized here
+   * since a HAZARD/INFO drop reaches this node the same way, via
+   * `CONTENT_ANNOUNCE`/catalog sync). Deliberately **not** a full multi-hop
+   * path — same limitation, same reason: recording every hop would require
+   * mutating the payload at each relay, incompatible with this codebase's
+   * "signed content is immutable" model. Only the single hop closest to
+   * *this* node: the `fromPeerId` that delivered it directly here.
+   * `undefined` when this node published the drop itself (nothing was
+   * "received"), or when the deliverer coincides with the drop's own author
+   * (a direct, non-relayed reception — see `NomadNode.considerDrop()`'s own
+   * doc comment).
+   */
+  receivedFrom?: string;
+  /** When this node itself first recorded the drop (`Date.now()`, local clock) — distinct from `timestamp` (`DropPayload`), which is the author's own claimed time. Same field as `EmergencyBeaconSighting.observedAt`. */
+  observedAt: number;
 }
 
 export interface DropsOptions {
@@ -133,7 +151,18 @@ export class Drops {
     });
   }
 
+  /**
+   * No-op (not an error) if `drop.dropId` is already known — a re-announce
+   * or a racing catalog-sync entry for the same drop never overwrites the
+   * original record (in particular, never loses the original
+   * `receivedFrom`/`observedAt` — same fix, same reasoning, already applied
+   * once to `EmergencyBeacons.record()`, emergency-beacon.ts, voce #56: a
+   * plain overwrite would let whichever duplicate delivery happens to
+   * arrive *last* silently steal credit for "who relayed this to me" from
+   * whichever arrived first).
+   */
   record(drop: Drop): void {
+    if (this.items.has(drop.dropId)) return;
     this.items.set(drop.dropId, drop);
   }
 

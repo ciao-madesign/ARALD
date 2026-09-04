@@ -7,7 +7,7 @@ function validPayload(overrides: Partial<DropPayload> = {}): DropPayload {
 }
 
 function drop(overrides: Partial<Drop> = {}): Drop {
-  return { dropId: "id-1", author: "node-a", ...validPayload(), ...overrides };
+  return { dropId: "id-1", author: "node-a", observedAt: Date.now(), ...validPayload(), ...overrides };
 }
 
 describe("extractDropPayload", () => {
@@ -97,6 +97,20 @@ describe("Drops", () => {
     drops.record(drop({ dropId: "same-id", text: "hello" }));
 
     expect(drops.list()).toHaveLength(1);
+  });
+
+  it("a second record() for an already-known dropId never overwrites — the first receivedFrom/observedAt wins (regression, docs/security.md — mirrors the identical fix already applied to EmergencyBeacons.record())", () => {
+    // Realistic case: the same drop is delivered twice via two different relay paths (e.g. once
+    // directly via CONTENT_ANNOUNCE, once again via a racing catalog sync from a different peer) —
+    // whichever delivery happens to be recorded *first* must keep credit for "who relayed this to me",
+    // not whichever arrives last.
+    const drops = new Drops();
+    drops.record(drop({ dropId: "same-id", receivedFrom: "relay-a", observedAt: 100 }));
+    drops.record(drop({ dropId: "same-id", receivedFrom: "relay-b", observedAt: 200 }));
+
+    const stored = drops.list()[0];
+    expect(stored.receivedFrom).toBe("relay-a");
+    expect(stored.observedAt).toBe(100);
   });
 
   it("treats an expired drop as absent from list(), and evicts it lazily rather than on a timer", () => {
