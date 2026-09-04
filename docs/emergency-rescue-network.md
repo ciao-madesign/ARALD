@@ -6,6 +6,8 @@ Tenuta in un documento **separato** da `docs/beacon.md`, su richiesta esplicita 
 
 **Nota terminologica**: le tabelle sotto elencano ancora "Emergency Beacon" e "Mobile Relay" come voci separate con quantità proprie — riflettono la proposta originale del piano di test, ricevuta prima che l'utente decidesse di unificare l'hardware nella NOMAD Card (`docs/beacon.md`). Le quantità restano valide come conteggio di **unità configurate in un profilo firmware o nell'altro** (Beacon Mode / Relay Mode), non più come due prodotti fisici distinti.
 
+**Da non confondere con [`docs/test-protocol.md`](./test-protocol.md)** (proposta distinta ricevuta il 4 settembre 2026): quel documento descrive la **scala tecnica** di validazione (fasi 0-8, test T-number, KPI, criteri PASS/CONDITIONAL/FAIL), indipendente da budget/partner — un asse complementare, non uno che sostituisce le fasi qui sotto.
+
 ## Perché un piano a fasi
 
 La proposta evita deliberatamente di costruire subito una rete completa, seguendo la stessa logica incrementale già usata in questo progetto per ogni altra espansione (BOX/PORTABLE, Beacon stesso: prototipo → validazione → scala): dimostrare prima che i singoli componenti funzionano, poi che funzionano insieme come sistema, solo infine proporre un test con un ente esterno. Metodologicamente solido — nessuna riserva tecnica su questa struttura.
