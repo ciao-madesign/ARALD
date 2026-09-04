@@ -55,6 +55,7 @@ import {
   EMERGENCY_BEACON_CONTENT_NAME,
   MAX_BEACON_MESSAGE_LENGTH,
   extractEmergencyBeaconPayload,
+  extractEmergencyBeaconEnvelope,
   type EmergencyBeaconPayload,
   type EmergencyBeaconSighting,
 } from "./emergency-beacon.js";
@@ -159,6 +160,23 @@ export interface NomadNodeOptions {
    * sense of the word.
    */
   minTrustForNodeAppend?: TrustLevel;
+  /**
+   * Pre-shared 32-byte AES-256-GCM key (`docs/beacon.md`, "Packet-vs-Observation/RSSI"
+   * pezzo 3, parte "cifratura del payload verso il relay") — when set,
+   * `sendEmergencyBeacon()` encrypts the beacon payload with it before
+   * publishing, and `considerEmergencyBeacon()` uses it to decrypt an
+   * incoming beacon's payload. The *same* key must be configured on every
+   * node meant to read SOS content (typically an Emergency Node), never on
+   * an ordinary relay in between — spec §54's "RIFUGIO-NET"/"SOCCORSO-NET"
+   * deployment model, provisioned out-of-band by whoever sets up the mesh,
+   * the only workable key-distribution model for a device (a pure Beacon
+   * Mode Card) that never connects to anyone and so has no peer to derive
+   * a key with. Omit (default) to keep the beacon payload in plaintext,
+   * exactly as before this option existed — this is an opt-in change to
+   * an existing, widely-tested default, never a silent behavior change.
+   * Throws in the constructor if set but not exactly 32 bytes.
+   */
+  emergencyBeaconKey?: Buffer;
 }
 
 interface ContentWaiter {
@@ -640,6 +658,7 @@ export class NomadNode extends EventEmitter {
   private readonly contentProviderTimeoutMs: number;
   private readonly minTrustToRelay?: TrustLevel;
   private readonly minTrustForNodeAppend: TrustLevel;
+  private readonly emergencyBeaconKey: Buffer | undefined;
   private readonly seenCache = new SeenCache();
   private readonly requesterAssembler: ChunkAssembler;
   private readonly relayAssembler: ChunkAssembler;
@@ -778,6 +797,10 @@ export class NomadNode extends EventEmitter {
     this.emergencyBeacons = new EmergencyBeacons({ maxBeacons: options.maxEmergencyBeacons });
     this.nodeAppends = new NodeAppends({ maxNodeAppends: options.maxNodeAppends });
     this.minTrustForNodeAppend = options.minTrustForNodeAppend ?? TrustLevel.VERIFIED;
+    if (options.emergencyBeaconKey !== undefined && options.emergencyBeaconKey.length !== 32) {
+      throw new Error("NomadNode: emergencyBeaconKey must be exactly 32 bytes (AES-256-GCM)");
+    }
+    this.emergencyBeaconKey = options.emergencyBeaconKey;
   }
 
   get nodeId(): string {
@@ -1407,7 +1430,13 @@ export class NomadNode extends EventEmitter {
     const ttlMs = Math.min(beacon.ttlMs ?? DEFAULT_BEACON_TTL_MS, MAX_BEACON_TTL_MS);
     const timestamp = Date.now();
     const payload: EmergencyBeaconPayload = { message: beacon.message, lat: beacon.lat, lon: beacon.lon, timestamp };
-    const data = Buffer.from(JSON.stringify(payload), "utf8");
+    // Encrypted (this.emergencyBeaconKey set) or plaintext (unset, the pre-existing default) wire
+    // bytes — see NomadNodeOptions.emergencyBeaconKey's own doc comment. Either way `publishContent()`
+    // below signs and stores exactly these bytes: a relay that never received the key can still
+    // verify/cache/forward the ciphertext, it just can't read it.
+    const data = this.emergencyBeaconKey
+      ? Buffer.from(JSON.stringify({ encrypted: true, ...encryptForPeer(this.emergencyBeaconKey, Buffer.from(JSON.stringify(payload), "utf8")) }), "utf8")
+      : Buffer.from(JSON.stringify(payload), "utf8");
     const metadata = this.publishContent(EMERGENCY_BEACON_CONTENT_NAME, "application/json", data, { ttlMs });
 
     // Inline data + sender identity announcement (see ContentAnnouncePayload's own doc comments on
@@ -2658,6 +2687,38 @@ export class NomadNode extends EventEmitter {
   }
 
   /**
+   * Decodes already-fetched, signature-verified beacon bytes into a plain
+   * `EmergencyBeaconPayload` — transparently handling both the legacy
+   * plaintext shape and the encrypted envelope
+   * (`NomadNodeOptions.emergencyBeaconKey`, `emergency-beacon.ts`'s own doc
+   * comment on `EmergencyBeaconEncryptedEnvelope`). `parsed` matching the
+   * encrypted-envelope shape is checked *first*: if this node has no key
+   * configured, or decryption fails (wrong/rotated key, corrupted bytes),
+   * this returns `undefined` exactly like any other malformed payload —
+   * the sighting is silently not recorded, but nothing about the packet's
+   * own routing/caching/forwarding ever depended on this succeeding
+   * (`decideForward()`/`ContentStore` work on raw bytes, never on this
+   * parse) — a relay without the key still fully participates in
+   * forwarding it, it just can't read it, exactly the "blind forwarding"
+   * property this key exists for. Anything not matching the encrypted
+   * shape falls through to `extractEmergencyBeaconPayload()` unchanged —
+   * the pre-existing, still-fully-supported plaintext path.
+   */
+  private decodeEmergencyBeaconPayload(parsed: unknown): EmergencyBeaconPayload | undefined {
+    const envelope = extractEmergencyBeaconEnvelope(parsed);
+    if (envelope) {
+      if (!this.emergencyBeaconKey) return undefined;
+      try {
+        const plaintext = decryptFromPeer(this.emergencyBeaconKey, envelope);
+        return extractEmergencyBeaconPayload(JSON.parse(plaintext.toString("utf8")));
+      } catch {
+        return undefined; // wrong/rotated key, corrupted ciphertext, or malformed JSON once decrypted
+      }
+    }
+    return extractEmergencyBeaconPayload(parsed);
+  }
+
+  /**
    * Same shape and reasoning as `considerDrop()` immediately above, for
    * emergency beacons (`emergency-beacon.ts`) — fires when a newly-learned
    * piece of content's name matches `EMERGENCY_BEACON_CONTENT_NAME` exactly.
@@ -2689,7 +2750,7 @@ export class NomadNode extends EventEmitter {
         } catch {
           return; // malformed — never trust content shape just because the signature verified
         }
-        const payload = extractEmergencyBeaconPayload(parsed);
+        const payload = this.decodeEmergencyBeaconPayload(parsed);
         if (!payload) return;
         this.emergencyBeacons.record({
           ...payload,

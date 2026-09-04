@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   EmergencyBeacons,
   extractEmergencyBeaconPayload,
+  extractEmergencyBeaconEnvelope,
   MAX_BEACON_MESSAGE_LENGTH,
   type EmergencyBeaconPayload,
   type EmergencyBeaconSighting,
@@ -61,6 +62,34 @@ describe("extractEmergencyBeaconPayload", () => {
     expect(extractEmergencyBeaconPayload("sos")).toBeUndefined();
     expect(extractEmergencyBeaconPayload(42)).toBeUndefined();
     expect(extractEmergencyBeaconPayload(["sos"])).toBeUndefined();
+  });
+});
+
+describe("extractEmergencyBeaconEnvelope", () => {
+  it("accepts a well-formed encrypted envelope", () => {
+    const envelope = { encrypted: true as const, nonce: "aa", ciphertext: "bb", authTag: "cc" };
+    expect(extractEmergencyBeaconEnvelope(envelope)).toEqual(envelope);
+  });
+
+  it("rejects a plaintext beacon payload — no 'encrypted' field at all, the legacy/default shape", () => {
+    expect(extractEmergencyBeaconEnvelope(validPayload())).toBeUndefined();
+  });
+
+  it("rejects 'encrypted: false' — this discriminator only ever recognizes the encrypted shape, never claims the plaintext one", () => {
+    expect(extractEmergencyBeaconEnvelope({ encrypted: false, nonce: "aa", ciphertext: "bb", authTag: "cc" })).toBeUndefined();
+  });
+
+  it("rejects a missing/non-string nonce/ciphertext/authTag", () => {
+    expect(extractEmergencyBeaconEnvelope({ encrypted: true, ciphertext: "bb", authTag: "cc" })).toBeUndefined();
+    expect(extractEmergencyBeaconEnvelope({ encrypted: true, nonce: 123, ciphertext: "bb", authTag: "cc" })).toBeUndefined();
+    expect(extractEmergencyBeaconEnvelope({ encrypted: true, nonce: "aa", ciphertext: "bb", authTag: undefined })).toBeUndefined();
+  });
+
+  it("rejects a payload that isn't even an object, without throwing", () => {
+    expect(extractEmergencyBeaconEnvelope(undefined)).toBeUndefined();
+    expect(extractEmergencyBeaconEnvelope(null)).toBeUndefined();
+    expect(extractEmergencyBeaconEnvelope("sos")).toBeUndefined();
+    expect(extractEmergencyBeaconEnvelope(42)).toBeUndefined();
   });
 });
 

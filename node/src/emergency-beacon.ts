@@ -1,4 +1,5 @@
 import { BoundedFifoMap } from "./bounded-map.js";
+import type { EncryptedPayload } from "./encryption.js";
 
 /** A short, free-text status message accompanying a SOS (e.g. "gamba rotta, non posso camminare") — distinct from `Drop`'s `text`, which is a public notice, not an emergency signal; optional, same bound as any other short free-text field in this codebase. */
 export const MAX_BEACON_MESSAGE_LENGTH = 200;
@@ -70,6 +71,58 @@ export function extractEmergencyBeaconPayload(payload: unknown): EmergencyBeacon
   }
   if (typeof p.timestamp !== "number" || !Number.isFinite(p.timestamp)) return undefined;
   return { message, lat, lon, timestamp: p.timestamp };
+}
+
+/**
+ * The wire shape a beacon's `content://` bytes carry when
+ * `NomadNodeOptions.emergencyBeaconKey` is configured (`docs/beacon.md`,
+ * "Directed Content Delivery + Node Append" pezzo 3, parte "cifratura del
+ * payload verso il relay") — a pre-shared AES-256-GCM key, known to every
+ * legitimate Beacon *and* every legitimate Emergency Node in a given
+ * deployment (spec §54's "RIFUGIO-NET"/"SOCCORSO-NET" trust model), never
+ * to an ordinary relay in between. `EncryptedPayload` (`encryption.ts`) is
+ * reused as-is — the exact same AES-256-GCM envelope shape
+ * `PRIVATE_MESSAGE`/`GROUP_MESSAGE` already use, just keyed by a
+ * pre-shared secret instead of an ECDH-derived or group key, since a pure
+ * Beacon Mode device never connects to anyone and so has no peer to derive
+ * a per-recipient key with — a single shared secret, provisioned
+ * out-of-band, is the only workable key-distribution model for a device
+ * that only ever broadcasts blind.
+ *
+ * A relay that never received this key can still verify the outer content
+ * signature, cache, and forward the ciphertext bytes untouched — nothing
+ * about routing/store-and-forward ever depended on being able to read
+ * `EmergencyBeaconPayload`'s fields (`packet.priority`/`ttl`/`destination`
+ * already carry everything a relay needs) — it just can't produce a local
+ * `EmergencyBeaconSighting` with readable `message`/`lat`/`lon`, matching
+ * the "blind forwarding" principle (RF-OBS-12 in the originating proposal).
+ *
+ * Backward compatible by construction: legacy/unencrypted beacon bytes
+ * (no `encrypted` field at all, `EmergencyBeaconPayload`'s own shape)
+ * never match this discriminator, so `extractEmergencyBeaconEnvelope()`
+ * simply returns `undefined` for them — the caller falls back to
+ * `extractEmergencyBeaconPayload()` on the raw bytes exactly as before
+ * this feature existed.
+ */
+export interface EmergencyBeaconEncryptedEnvelope extends EncryptedPayload {
+  encrypted: true;
+}
+
+/**
+ * Validates and extracts the encrypted-wire-shape discriminator from
+ * already-fetched, signature-verified `content://` bytes — same defensive
+ * posture as `extractEmergencyBeaconPayload()`: never trusted just because
+ * it parsed. Returns `undefined` for anything not shaped exactly like an
+ * encrypted envelope, including ordinary (legacy, unencrypted) beacon
+ * bytes — the caller distinguishes "not encrypted" from "malformed
+ * encrypted envelope" by then falling back to `extractEmergencyBeaconPayload()`.
+ */
+export function extractEmergencyBeaconEnvelope(payload: unknown): EmergencyBeaconEncryptedEnvelope | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+  const p = payload as Record<string, unknown>;
+  if (p.encrypted !== true) return undefined;
+  if (typeof p.nonce !== "string" || typeof p.ciphertext !== "string" || typeof p.authTag !== "string") return undefined;
+  return { encrypted: true, nonce: p.nonce, ciphertext: p.ciphertext, authTag: p.authTag };
 }
 
 /**
