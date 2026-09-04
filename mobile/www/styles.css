@@ -721,13 +721,18 @@ li.skel-row { display: flex; flex-direction: column; }
 }
 #create-drop-form button[type="submit"]:active { transform: scale(0.97); }
 #create-drop-form button[type="submit"]:disabled { opacity: 0.6; }
-#drops .tag.urgent { background: var(--bad-soft); color: var(--bad); font-weight: 600; }
-#drops li.is-urgent { border-left: 3px solid var(--bad); padding-left: 0.6em; }
+/* #node-appends (Bacheca del nodo, docs/beacon.md "Directed Content Delivery + Node Append")
+   shares this severity styling with #drops — renderNodeAppends() (app.js) applies the exact same
+   tag/li classes as renderDrops(), so both selectors must stay in sync (found by review: the first
+   version of this rule only covered #drops, leaving hazard/emergency node appends with no visual
+   distinction at all). */
+#drops .tag.urgent, #node-appends .tag.urgent { background: var(--bad-soft); color: var(--bad); font-weight: 600; }
+#drops li.is-urgent, #node-appends li.is-urgent { border-left: 3px solid var(--bad); padding-left: 0.6em; }
 /* HAZARD tier (proposta esterna "HAZARD/INFO", 4 settembre 2026) — mirror esatto delle regole
    .tag.urgent/li.is-urgent sopra, riusando i token --warn/--warn-soft già esistenti nel foglio di
    stile (nessuna nuova variabile CSS). */
-#drops .tag.hazard { background: var(--warn-soft); color: var(--warn); font-weight: 600; }
-#drops li.is-hazard { border-left: 3px solid var(--warn); padding-left: 0.6em; }
+#drops .tag.hazard, #node-appends .tag.hazard { background: var(--warn-soft); color: var(--warn); font-weight: 600; }
+#drops li.is-hazard, #node-appends li.is-hazard { border-left: 3px solid var(--warn); padding-left: 0.6em; }
 
 /* ---------- registro relay (docs/beacon.md "Fixed Relay e Registro dei relay") ---------- */
 

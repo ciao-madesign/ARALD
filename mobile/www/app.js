@@ -367,6 +367,39 @@ async function createDrop({ text, lat, lon, label, kind }) {
 }
 
 /**
+ * POST /api/node-append (node/src/web-ui.ts) — deposits content on a specific node (`targetNodeId`,
+ * typically a relay picked from the Relay panel's own list), via `NomadNode.appendToNode()`
+ * (`docs/beacon.md`, "Directed Content Delivery + Node Append"). Unlike `createDrop()`, there is no
+ * position involved and no local record kept here of what was sent — a successful call only means
+ * "sent", not "accepted" (see `appendToNode()`'s own doc comment for why acceptance is a separate,
+ * receiver-side decision this gateway has no visibility into).
+ */
+async function createNodeAppend({ targetNodeId, text, label, kind }) {
+  const res = await fetchWithTimeout(
+    apiUrl("/api/node-append"),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + networkPassword },
+      body: JSON.stringify({ targetNodeId, text, label, kind }),
+    },
+    CALL_TIMEOUT_MS,
+  );
+  let body;
+  try {
+    body = await res.json();
+  } catch {
+    const err = new Error("risposta non valida dal gateway (HTTP " + res.status + ")");
+    err.status = res.status;
+    throw err;
+  }
+  if (!res.ok) {
+    const err = new Error(body.error || "HTTP " + res.status);
+    err.status = res.status;
+    throw err;
+  }
+}
+
+/**
  * GET /api/location-registry (node/src/web-ui.ts) — every currently-shared position this gateway
  * knows about. Only ever populated on a *dedicated* location-registry node with `exposeLocationRegistry`
  * turned on (docs/next-steps.md Opzione J) — an ordinary gateway 404s here, which this treats as "not
@@ -1347,6 +1380,26 @@ let knownRelays = [];
  * with `exposeRelayRegistry` on (node/src/web-ui.ts), the ordinary case for most gateways. The whole
  * panel stays hidden in that case, same graceful-degradation posture as renderLocationReports() above.
  */
+/**
+ * Repopulates the "Invia a un nodo" form's target `<select>` from the current relay list —
+ * `docs/beacon.md`, "Directed Content Delivery + Node Append": an operator picks a *known* relay as
+ * the target rather than typing a raw node id by hand. Preserves the currently-selected value across
+ * a background refresh (`refreshAll()` runs every few seconds) if that relay is still in the list —
+ * rebuilding the option list unconditionally would otherwise reset an in-progress selection out from
+ * under the user, the same class of bug `isRenamePending()` guards against for renames elsewhere.
+ */
+function renderNodeAppendTargets(relays) {
+  const select = document.getElementById("send-node-append-target");
+  const previousValue = select.value;
+  const placeholder = select.options[0];
+  select.textContent = "";
+  select.append(placeholder);
+  for (const r of relays) {
+    select.append(el("option", { value: r.relayId, textContent: r.operator || "NODE-" + r.relayId.slice(0, 8) }));
+  }
+  if ([...select.options].some((o) => o.value === previousValue)) select.value = previousValue;
+}
+
 function renderRelays(relays) {
   const panel = document.getElementById("relays-panel");
   knownRelays = relays || [];
@@ -1357,6 +1410,7 @@ function renderRelays(relays) {
     return;
   }
   panel.hidden = false;
+  renderNodeAppendTargets(knownRelays);
   if (isRenamePending()) return; // never yank an in-progress rename out from under the user — see isRenamePending()
   const list = document.getElementById("relays");
   document.getElementById("relays-count").textContent = relays.length > 0 ? String(relays.length) : "";
@@ -1433,6 +1487,50 @@ document.getElementById("create-relay-form").addEventListener("submit", async (e
     vibrate([12, 40, 12]);
   } finally {
     setCreateRelayBusy(submit, false);
+  }
+});
+
+function setSendNodeAppendBusy(submit, busy) {
+  submit.disabled = busy;
+  submit.textContent = busy ? "Invio..." : "Invia al nodo";
+}
+
+document.getElementById("send-node-append-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const targetInput = document.getElementById("send-node-append-target");
+  const labelInput = document.getElementById("send-node-append-label");
+  const textInput = document.getElementById("send-node-append-text");
+  const kindInput = document.getElementById("send-node-append-kind");
+  const status = document.getElementById("send-node-append-status");
+  const targetNodeId = targetInput.value;
+  if (!targetNodeId) return;
+  const text = textInput.value.trim();
+  if (!text) return;
+  const label = labelInput.value.trim();
+  const kind = kindInput.value;
+  const submit = event.target.querySelector("button[type=submit]");
+  setSendNodeAppendBusy(submit, true);
+  status.classList.remove("error");
+  status.textContent = "Invio in corso...";
+  try {
+    await createNodeAppend({ targetNodeId, text, label: label || undefined, kind });
+    textInput.value = "";
+    labelInput.value = "";
+    kindInput.value = "info";
+    targetInput.value = "";
+    status.textContent = "Inviato al nodo.";
+    vibrate(kind === "emergency" ? [15, 40, 15] : kind === "hazard" ? [12, 30] : 10);
+    showToast("Messaggio inviato al nodo", "inbox");
+  } catch (err) {
+    if (err.status === 401) {
+      handlePasswordRejected();
+      return;
+    }
+    status.classList.add("error");
+    status.textContent = "Errore: " + err.message;
+    vibrate([12, 40, 12]);
+  } finally {
+    setSendNodeAppendBusy(submit, false);
   }
 });
 
@@ -1513,6 +1611,12 @@ let dropSeenIds = new Set();
  */
 let knownDrops = [];
 
+// ---------- bacheca del nodo / node appends (docs/beacon.md, "Directed Content Delivery + Node
+// Append") — content deposited specifically on THIS node, read-only here (sending happens from the
+// Relay panel below, targeting a chosen relay) ----------
+
+let nodeAppendSeenIds = new Set();
+
 /** Severity ranking for a drop's `kind` — higher sorts first in `renderDrops()`. Mirrors `node/src/node.ts`'s `dropKindPriority()` ordering (emergency > hazard > info), kept independent since this file has no access to `Priority`. */
 function dropKindRank(kind) {
   if (kind === "emergency") return 2;
@@ -1560,6 +1664,44 @@ function renderDrops(drops) {
     list.append(li);
   }
   dropSeenIds = nextSeen;
+}
+
+/**
+ * `nodeAppends` is always an array (GET /api/node-appends is unauthenticated and offered on every
+ * node, like GET /api/drops) — the panel itself is always visible, never capability-gated. Unlike
+ * the Bacheca above, this list is specific to THIS node only: it never shows what's on any other
+ * node, so there is nothing to sync/merge across gateways. Sorted newest-first, same severity
+ * ranking as `renderDrops()` (`dropKindRank()`).
+ */
+function renderNodeAppends(nodeAppends) {
+  const list = document.getElementById("node-appends");
+  document.getElementById("node-appends-count").textContent = nodeAppends.length > 0 ? String(nodeAppends.length) : "";
+  if (renderEmptyIfNeeded(list, nodeAppends, "Nessun messaggio depositato qui.", "inbox")) {
+    nodeAppendSeenIds = new Set();
+    return;
+  }
+  const sorted = [...nodeAppends].sort((a, b) => dropKindRank(b.kind) - dropKindRank(a.kind));
+  const nextSeen = new Set();
+  for (const a of sorted) {
+    nextSeen.add(a.appendId);
+    const tags = [];
+    if (a.kind === "emergency") tags.push(el("span", { className: "tag urgent", textContent: "Emergenza" }));
+    else if (a.kind === "hazard") tags.push(el("span", { className: "tag hazard", textContent: "Pericolo" }));
+    tags.push(el("span", { className: "tag", textContent: "da " + getContactName(a.author, "NODE-" + a.author.slice(0, 8)) }));
+    const li = el("li", null, [
+      el("div", { className: "row" }, [
+        el("span", { className: "row-title", textContent: a.label || "Messaggio", title: a.label || "Messaggio" }),
+        el("span", { className: "muted", textContent: timeAgo(a.timestamp) }),
+      ]),
+      el("div", { textContent: a.text }),
+      el("div", { className: "tags" }, tags),
+    ]);
+    if (a.kind === "emergency") li.classList.add("is-urgent");
+    else if (a.kind === "hazard") li.classList.add("is-hazard");
+    if (!nodeAppendSeenIds.has(a.appendId)) li.classList.add("enter");
+    list.append(li);
+  }
+  nodeAppendSeenIds = nextSeen;
 }
 
 function setCreateDropBusy(submit, busy) {
@@ -2444,24 +2586,27 @@ let refreshCycleId = 0;
 async function refreshAll() {
   const cycleId = ++refreshCycleId;
   try {
-    const [status, peers, services, channels, drops, groups, locationReports, relays, emergencyBeacons, mapInfoResult] = await Promise.all([
-      fetchJson("/api/status"),
-      fetchJson("/api/peers"),
-      fetchJson("/api/services"),
-      fetchJson("/api/channels"),
-      fetchJson("/api/drops"),
-      fetchGroups(),
-      fetchLocationRegistry(),
-      fetchRelayRegistry(),
-      fetchEmergencyBeacons(),
-      fetchMapInfo(),
-    ]);
+    const [status, peers, services, channels, drops, nodeAppends, groups, locationReports, relays, emergencyBeacons, mapInfoResult] =
+      await Promise.all([
+        fetchJson("/api/status"),
+        fetchJson("/api/peers"),
+        fetchJson("/api/services"),
+        fetchJson("/api/channels"),
+        fetchJson("/api/drops"),
+        fetchJson("/api/node-appends"),
+        fetchGroups(),
+        fetchLocationRegistry(),
+        fetchRelayRegistry(),
+        fetchEmergencyBeacons(),
+        fetchMapInfo(),
+      ]);
     if (cycleId !== refreshCycleId) return; // superseded by a newer refresh while this one was in flight
     renderStats(status);
     renderPeers(peers);
     renderServices(services);
     renderChannels(channels);
     renderDrops(drops);
+    renderNodeAppends(nodeAppends);
     renderGroups(groups);
     renderLocationReports(locationReports);
     renderRelays(relays);

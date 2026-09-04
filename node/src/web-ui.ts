@@ -835,6 +835,10 @@ export class WebUiServer {
         void this.handleCreateDrop(req, res);
         return;
       }
+      if (url.pathname === "/api/node-append") {
+        void this.handleSendNodeAppend(req, res);
+        return;
+      }
       if (url.pathname === "/api/groups") {
         void this.handleCreateGroup(req, res);
         return;
@@ -937,6 +941,11 @@ export class WebUiServer {
 
     if (url.pathname === "/api/drops") {
       sendJson(res, 200, this.node.drops.list());
+      return;
+    }
+
+    if (url.pathname === "/api/node-appends") {
+      sendJson(res, 200, this.node.nodeAppends.list());
       return;
     }
 
@@ -1378,6 +1387,97 @@ export class WebUiServer {
       // failure mode.
       const message = (err as Error).message;
       sendJson(res, message.includes("too many high-priority drops") ? 429 : 400, { error: message });
+    }
+  }
+
+  /**
+   * `POST /api/node-append` — sends a Node Append (body
+   * `{ targetNodeId, text, label?, kind?, expiresInMs? }`) via
+   * `NomadNode.appendToNode()` (`docs/beacon.md`, "Directed Content Delivery
+   * + Node Append"). Same auth as `POST /api/drops` — this originates mesh
+   * traffic on behalf of the HTTP caller, so it's gated behind pairing like
+   * every other write this class exposes. Unlike `POST /api/drops`, there is
+   * no unauthenticated read counterpart to this specific endpoint — `GET
+   * /api/node-appends` (plural) reads what landed on *this* node, an
+   * entirely separate, always-public concern (see that handler's own
+   * comment). `kind` validated the same way `handleCreateDrop()` already
+   * does, for the same reason (an invalid value must 400 before ever
+   * reaching `appendToNode()`).
+   */
+  private async handleSendNodeAppend(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.allowServiceCalls || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+
+    let raw: Buffer;
+    try {
+      raw = await readRequestBody(req, MAX_MESSAGE_BODY_BYTES, MAX_CALL_BODY_READ_MS);
+    } catch (err) {
+      if (res.writableEnded || res.destroyed) return; // connection already gone — nothing to answer
+      if (err instanceof BodyTooLargeError) {
+        sendJson(res, 413, { error: "request body too large" });
+      } else if (err instanceof Error && err.message.includes("timed out")) {
+        sendJson(res, 408, { error: "timed out waiting for the request body" });
+      } else {
+        sendJson(res, 400, { error: "failed to read request body" });
+      }
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = raw.length === 0 ? {} : JSON.parse(raw.toString("utf8"));
+    } catch {
+      sendJson(res, 400, { error: "malformed JSON body" });
+      return;
+    }
+
+    const body = parsed as
+      | { targetNodeId?: unknown; text?: unknown; label?: unknown; kind?: unknown; expiresInMs?: unknown }
+      | null;
+    const targetNodeId = body?.targetNodeId;
+    if (typeof targetNodeId !== "string" || targetNodeId.length === 0) {
+      sendJson(res, 400, { error: "'targetNodeId' must be a non-empty string" });
+      return;
+    }
+    const text = body?.text;
+    if (typeof text !== "string" || text.length === 0) {
+      sendJson(res, 400, { error: "'text' must be a non-empty string" });
+      return;
+    }
+    const label = body?.label;
+    if (label !== undefined && typeof label !== "string") {
+      sendJson(res, 400, { error: "'label' must be a string" });
+      return;
+    }
+    const kind = body?.kind ?? "info";
+    if (kind !== "info" && kind !== "hazard" && kind !== "emergency") {
+      sendJson(res, 400, { error: "'kind' must be one of 'info', 'hazard', 'emergency'" });
+      return;
+    }
+    const expiresInMs = body?.expiresInMs;
+    if (expiresInMs !== undefined && typeof expiresInMs !== "number") {
+      sendJson(res, 400, { error: "'expiresInMs' must be a number" });
+      return;
+    }
+
+    try {
+      this.node.appendToNode(targetNodeId, { text, label, kind, expiresInMs });
+      sendJson(res, 200, { sent: true });
+    } catch (err) {
+      // appendToNode()'s own validation throws for a rejected input (bad text/label — 400, same
+      // convention as handleCreateDrop()), an exhausted elevated-node-append rate limit (429), and an
+      // unknown target encryption key (400 — a client error: the target hasn't been discovered yet,
+      // not a server-side failure) — distinguished by message content, same split already used
+      // elsewhere in this class.
+      const message = (err as Error).message;
+      sendJson(res, message.includes("too many high-priority node appends") ? 429 : 400, { error: message });
     }
   }
 

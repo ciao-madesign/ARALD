@@ -226,6 +226,17 @@
         <ul id="drops"></ul>
       </details>
 
+      <details class="panel" id="node-appends-panel">
+        <summary>
+          <div class="summary-row">
+            <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-inbox"></use></svg> Bacheca del nodo <span class="count" id="node-appends-count"></span></h2>
+            <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+          </div>
+          <p class="hint">Messaggi depositati apposta su QUESTO nodo da un operatore (es. un avviso per chi passa di qui) — diverso dalla Bacheca sopra, che è visibile ovunque nella rete.</p>
+        </summary>
+        <ul id="node-appends"></ul>
+      </details>
+
       <details class="panel" id="channels-panel">
         <summary>
           <div class="summary-row">
@@ -305,6 +316,21 @@
           <p id="create-relay-status" class="muted" role="status" aria-live="polite"></p>
         </form>
         <ul id="relays"></ul>
+        <p class="hint">Deposita un messaggio su un relay specifico: resta solo lì, per chi si collegherà a quel nodo — non viene diffuso al resto della rete.</p>
+        <form id="send-node-append-form">
+          <select id="send-node-append-target" required>
+            <option value="" disabled selected>Scegli un relay...</option>
+          </select>
+          <input id="send-node-append-label" type="text" placeholder="Etichetta breve (opzionale), es. Sentiero chiuso" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="100">
+          <textarea id="send-node-append-text" placeholder="Messaggio da lasciare su quel nodo..." rows="2" required></textarea>
+          <select id="send-node-append-kind">
+            <option value="info" selected>Informazione</option>
+            <option value="hazard">Pericolo</option>
+            <option value="emergency">Emergenza</option>
+          </select>
+          <button type="submit">Invia al nodo</button>
+          <p id="send-node-append-status" class="muted" role="status" aria-live="polite"></p>
+        </form>
       </details>
 
       <!-- Nascosto finché GET /api/emergency-beacons non risponde (mai un 404) — solo un nodo con

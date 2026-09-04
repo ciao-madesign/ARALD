@@ -59,6 +59,7 @@ import {
   type EmergencyBeaconSighting,
 } from "./emergency-beacon.js";
 import type { BeaconBroadcastTransport } from "./transports/beacon-broadcast.js";
+import { NodeAppends, extractNodeAppendPayload, MAX_NODE_APPEND_LABEL_LENGTH, type NodeAppend, type NodeAppendPayload } from "./node-appends.js";
 import { RoutingTable } from "./routing-table.js";
 import { ServiceDirectory } from "./service-directory.js";
 import { serviceSigningPayload, verifyServiceAnnouncement, type ServiceAnnouncement, type ServiceHandler } from "./service.js";
@@ -139,6 +140,25 @@ export interface NomadNodeOptions {
   maxRelays?: number;
   /** Max distinct SOS sightings tracked in `emergencyBeacons` at once (spec §57 resource limits). */
   maxEmergencyBeacons?: number;
+  /** Max distinct Node Appends tracked in `nodeAppends` at once (spec §57 resource limits). */
+  maxNodeAppends?: number;
+  /**
+   * Minimum trust level (spec §54) a sender must have, *as seen by this
+   * node*, before a Node Append (`docs/beacon.md`, "Directed Content
+   * Delivery + Node Append") from them is accepted into `nodeAppends`
+   * rather than silently dropped (`considerNodeAppend()`). Defaults to
+   * `TrustLevel.VERIFIED` — same threshold already used elsewhere in this
+   * codebase for a real (if modest) gate, e.g. `minTrustToRelay`'s own
+   * doc comment. Worth being explicit about what `VERIFIED` actually
+   * proves here (`trust.ts`'s own doc comment): it proves the sender's
+   * self-signed identity announcement reached and checked out on *this*
+   * node — via ordinary identity gossip, which happens automatically once
+   * two nodes are mesh-connected, not via any deliberate "become an
+   * operator" step. It excludes a sender whose identity has genuinely
+   * never propagated this far, not an unverified stranger in the everyday
+   * sense of the word.
+   */
+  minTrustForNodeAppend?: TrustLevel;
 }
 
 interface ContentWaiter {
@@ -247,6 +267,30 @@ const EMERGENCY_BEACON_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 /** Default/maximum lifetime for an emergency beacon's underlying content (`NomadNode.sendEmergencyBeacon()`) — long enough that a delay-tolerant relay/sync can still deliver it well after the fact, same reasoning `PendingDeliveryQueue.emergencyTtlMs` (`store-and-forward.ts`, voce #55) already uses for EMERGENCY-priority traffic. */
 const DEFAULT_BEACON_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_BEACON_TTL_MS = 72 * 60 * 60 * 1000;
+
+/**
+ * Same reasoning as `MAX_ELEVATED_DROPS_PER_WINDOW`, applied to
+ * `appendToNode()` instead of `publishDrop()` — a separate, independent
+ * budget rather than sharing the drops one, matching this codebase's
+ * established convention of one mirrored-but-separate constant per feature
+ * (see `MAX_EMERGENCY_BEACON_PER_WINDOW` immediately above for the same
+ * pattern). The risk is structurally identical: a `kind !== "info"` Node
+ * Append is *not* automatically a small, single-hop send — `floodExcept()`
+ * only takes a single-hop shortcut when the routing table already has a
+ * route to the target; absent one, it floods to every connected peer
+ * exactly like a broadcast (routing.ts's `decideForward()` only stops the
+ * *final* recipient from re-forwarding, every intermediate hop still relays
+ * it onward at whatever priority the sender chose) — so a misbehaving or
+ * compromised paired client calling `appendToNode()` in a tight loop with
+ * `kind: "emergency"` could otherwise flood the *entire* mesh at top
+ * priority, not just the path to one target.
+ */
+const MAX_ELEVATED_NODE_APPENDS_PER_WINDOW = 3;
+const ELEVATED_NODE_APPEND_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
+
+/** Default/maximum lifetime for a Node Append (`NomadNode.appendToNode()`) — same bounds as `publishDrop()`'s own (`DEFAULT_DROP_TTL_MS`/`MAX_DROP_TTL_MS`), kept as separate constants rather than shared ones so either can be retuned independently later without the two features silently moving together. */
+const DEFAULT_NODE_APPEND_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_NODE_APPEND_TTL_MS = 72 * 60 * 60 * 1000;
 
 /** Defaults for `sendEmergencyBeacon()`'s broadcast repetition (see its own doc comment for why this is "repeat the same signed packet on a timer", not a real ACK-based retry). */
 const DEFAULT_BEACON_BROADCAST_REPEAT_COUNT = 5;
@@ -567,10 +611,22 @@ export class NomadNode extends EventEmitter {
    */
   readonly emergencyBeacons: EmergencyBeacons;
 
+  /**
+   * Content deposited on this specific node via a Node Append
+   * (`docs/beacon.md`, "Directed Content Delivery + Node Append") —
+   * populated by `considerNodeAppend()`, exposed read-only and
+   * unconditionally via `web-ui.ts`'s `GET /api/node-appends`, same
+   * always-on public-read posture as `drops` (never an opt-in flag like
+   * `locationRegistry`/`relayRegistry`, since the intended reader is
+   * "whoever connects to this node", not a dedicated operator).
+   */
+  readonly nodeAppends: NodeAppends;
+
   private readonly defaultTtl: number;
   private readonly contentRequestTimeoutMs: number;
   private readonly contentProviderTimeoutMs: number;
   private readonly minTrustToRelay?: TrustLevel;
+  private readonly minTrustForNodeAppend: TrustLevel;
   private readonly seenCache = new SeenCache();
   private readonly requesterAssembler: ChunkAssembler;
   private readonly relayAssembler: ChunkAssembler;
@@ -612,6 +668,8 @@ export class NomadNode extends EventEmitter {
   private elevatedDropWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
   /** Sliding-window state for `MAX_EMERGENCY_BEACON_PER_WINDOW` (see its own doc comment) — `sendEmergencyBeacon()` checks and updates this before publishing. */
   private emergencyBeaconWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
+  /** Sliding-window state for `MAX_ELEVATED_NODE_APPENDS_PER_WINDOW` (see its own doc comment) — `appendToNode({ kind: "hazard" | "emergency" })` checks and updates this before sending. */
+  private elevatedNodeAppendWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
   /**
    * Optional advertising-only transport for Beacon Mode (`transports/beacon-broadcast.ts`)
    * — deliberately **not** part of `transports`/`peerTransport` above:
@@ -705,6 +763,8 @@ export class NomadNode extends EventEmitter {
     });
     this.relayRegistry = new RelayRegistry({ maxRelays: options.maxRelays });
     this.emergencyBeacons = new EmergencyBeacons({ maxBeacons: options.maxEmergencyBeacons });
+    this.nodeAppends = new NodeAppends({ maxNodeAppends: options.maxNodeAppends });
+    this.minTrustForNodeAppend = options.minTrustForNodeAppend ?? TrustLevel.VERIFIED;
   }
 
   get nodeId(): string {
@@ -986,8 +1046,15 @@ export class NomadNode extends EventEmitter {
    * recorded into `messageHistory` — `payload` is otherwise unconstrained
    * (this method has other callers/tests that pass arbitrary shapes), so
    * anything else is sent normally but simply isn't added to the chat log.
+   *
+   * `options.priority` defaults to `Priority.MESSAGING`, the level every
+   * caller before `appendToNode()` implicitly relied on — added so a Node
+   * Append's `kind` can propagate onto the wire as `Priority.EMERGENCY`
+   * (same reasoning `dropKindPriority()` already applies to drops) without
+   * every other private-message caller (1:1 chat, group invites, location
+   * reports) needing to pass anything new.
    */
-  sendPrivateMessage(destination: string, payload: unknown): string {
+  sendPrivateMessage(destination: string, payload: unknown, options: { priority?: Priority } = {}): string {
     const peerKey = this.peerDirectory.getKey(destination);
     if (!peerKey) {
       throw new Error(`cannot send private message: encryption key for ${destination} is not yet known`);
@@ -997,12 +1064,126 @@ export class NomadNode extends EventEmitter {
     const packet = this.originate<PrivateMessagePayload>(
       MessageType.PRIVATE_MESSAGE,
       { ...encryptedPayload, senderAnnouncement: this.ownAnnouncement },
-      { destination, priority: Priority.MESSAGING },
+      { destination, priority: options.priority ?? Priority.MESSAGING },
     );
     void this.floodExcept(packet);
     const text = extractChatText(payload);
     if (text !== undefined) this.messageHistory.record(destination, "sent", text);
     return packet.id;
+  }
+
+  /**
+   * Sends a "Node Append" (`docs/beacon.md`, "Directed Content Delivery +
+   * Node Append") to `targetNodeId`: content deposited specifically at one
+   * node — typically a Fixed Relay, but nothing here enforces that — rather
+   * than flooded mesh-wide, for that node to locally redistribute to
+   * whoever connects to *it* (`web-ui.ts`'s `GET /api/node-appends`), never
+   * re-propagated further through the wider network.
+   *
+   * Directed delivery itself needed no new mechanism: `packet.destination`
+   * + `floodExcept()`'s existing unicast/store-and-forward path
+   * (`pendingDeliveries`) already deliver a packet to a specific node id
+   * opportunistically, and `decideForward()` (`routing.ts`) already stops
+   * the *final* recipient from forwarding it any further — exactly
+   * "DIRECTED" semantics, reused as-is. What this method actually adds is
+   * reusing `sendPrivateMessage()`'s existing E2E-encrypted unicast
+   * (X25519+AES-256-GCM) instead of a new packet type or signing scheme:
+   * the same ECDH-derived per-peer channel already used for group
+   * invites/location reports/1:1 chat, which (a) makes `packet.source`
+   * cryptographically authenticated once decryption succeeds at the target
+   * — the trust gate `considerNodeAppend()` applies depends on this — and
+   * (b) keeps the content genuinely private in transit, so an intermediate
+   * relay can carry it without ever reading it.
+   *
+   * `expiresInMs` is resolved to an absolute `expiresAt` *here*, at send
+   * time (like `publishContent()`'s `ttlMs` becoming `ContentMetadata.expiresAt`)
+   * — never left as a relative duration for the target to reinterpret,
+   * because store-and-forward delay before arrival is exactly the scenario
+   * this feature exists for (spec §32 courier model). `kind` selects the
+   * wire priority via the same `dropKindPriority()` drops already use —
+   * `"emergency"`/`"hazard"` also consume the shared
+   * `MAX_ELEVATED_NODE_APPENDS_PER_WINDOW` budget (validated *before* it's
+   * consumed, same ordering fix `publishDrop()` already applies, for the
+   * same reason: a non-positive `expiresInMs` must never burn budget on a
+   * call that was never going to send anything).
+   *
+   * Throws (same as `sendPrivateMessage()`/`createGroup()`) if
+   * `targetNodeId`'s encryption key isn't known yet. Acceptance at the
+   * target is a separate, receiver-side decision
+   * (`considerNodeAppend()`'s trust gate) this method has no visibility
+   * into — a successful call here means "sent", never "accepted". Returns
+   * the underlying packet id (`sendPrivateMessage()`'s own return value),
+   * unchanged as the packet is relayed — useful for a caller/test that
+   * needs to correlate a specific append with what shows up on the wire.
+   */
+  appendToNode(targetNodeId: string, append: { text: string; label?: string; kind?: DropKind; expiresInMs?: number }): string {
+    if (append.text.length === 0 || append.text.length > MAX_MESSAGE_TEXT_LENGTH) {
+      throw new Error(`node append text must be 1-${MAX_MESSAGE_TEXT_LENGTH} characters`);
+    }
+    if (append.label !== undefined && (append.label.length === 0 || append.label.length > MAX_NODE_APPEND_LABEL_LENGTH)) {
+      throw new Error(`node append label must be 1-${MAX_NODE_APPEND_LABEL_LENGTH} characters`);
+    }
+    const kind: DropKind = append.kind ?? "info";
+    if (kind !== "info" && kind !== "hazard" && kind !== "emergency") {
+      throw new Error("appendToNode: 'kind' must be one of 'info', 'hazard', 'emergency'");
+    }
+    // Validated *before* the elevated rate limit below is consumed — same ordering fix as
+    // publishDrop()'s own (see MAX_ELEVATED_NODE_APPENDS_PER_WINDOW's doc comment).
+    if (append.expiresInMs !== undefined && (!Number.isFinite(append.expiresInMs) || append.expiresInMs <= 0)) {
+      throw new Error("appendToNode: 'expiresInMs' must be a finite positive number");
+    }
+    // Same reasoning, same place in the ordering: an unknown target key is exactly the kind of
+    // "this call was never going to send anything" failure the expiresInMs check above already
+    // guards against — checked here (duplicating sendPrivateMessage()'s own error message so the
+    // caller sees the identical text either way) rather than letting sendPrivateMessage() itself
+    // discover it *after* the rate limit below has already been consumed (found by review).
+    if (!this.peerDirectory.getKey(targetNodeId)) {
+      throw new Error(`cannot send private message: encryption key for ${targetNodeId} is not yet known`);
+    }
+    if (kind !== "info") {
+      const now = Date.now();
+      if (now - this.elevatedNodeAppendWindow.windowStart >= ELEVATED_NODE_APPEND_RATE_LIMIT_WINDOW_MS) {
+        this.elevatedNodeAppendWindow = { windowStart: now, count: 0 };
+      }
+      if (this.elevatedNodeAppendWindow.count >= MAX_ELEVATED_NODE_APPENDS_PER_WINDOW) {
+        throw new Error("appendToNode: too many high-priority node appends, try again later");
+      }
+      this.elevatedNodeAppendWindow.count++;
+    }
+    const timestamp = Date.now();
+    const ttlMs = Math.min(append.expiresInMs ?? DEFAULT_NODE_APPEND_TTL_MS, MAX_NODE_APPEND_TTL_MS);
+    const payload: NodeAppendPayload = {
+      type: "node-append",
+      text: append.text,
+      label: append.label,
+      kind,
+      timestamp,
+      expiresAt: timestamp + ttlMs,
+    };
+    return this.sendPrivateMessage(targetNodeId, payload, { priority: dropKindPriority(kind) });
+  }
+
+  /**
+   * Accepts (or silently rejects) a Node Append addressed to this node —
+   * called from `handlePrivateMessage()` with `senderId` = the
+   * cryptographically-authenticated `packet.source` (see `NodeAppend`'s own
+   * doc comment for why that's trustworthy). Gated on `minTrustForNodeAppend`
+   * (default `TrustLevel.VERIFIED`) — an insufficiently-trusted sender's
+   * append is dropped without any error surfaced back to them (same silent
+   * defensive posture as `considerLocationReport()`/`considerGroupInvite()`
+   * for a shape/signature failure; there is no ack channel for
+   * `PRIVATE_MESSAGE` to report rejection through even if this method
+   * wanted to).
+   */
+  private considerNodeAppend(senderId: string, appendId: string, payload: NodeAppendPayload | undefined): void {
+    if (!payload) return;
+    if (!meetsTrustLevel(this.trust.get(senderId), this.minTrustForNodeAppend)) {
+      this.emit("node-append:rejected", senderId);
+      return;
+    }
+    const append: NodeAppend = { ...payload, appendId, author: senderId };
+    this.nodeAppends.record(append);
+    this.emit("node-append:received", append);
   }
 
   /**
@@ -2519,14 +2700,32 @@ export class NomadNode extends EventEmitter {
   /**
    * Shared trust-boundary check for one self-signed `IdentityAnnouncement`
    * (spec §52/§55) — extracted out of `handleIdentityResponse()`'s own loop
-   * body so `handleContentAnnounce()` can reuse it for
-   * `ContentAnnouncePayload.senderAnnouncement` (see that field's own doc
-   * comment): both are "here is node X's encryption key, self-signed by X"
-   * claims arriving by two different paths, so both funnel through this one
-   * check rather than keeping two near-identical copies that could silently
-   * drift apart — same reasoning `acceptCatalogEntry()` already applies to
-   * content metadata. Returns whether it was newly accepted (a duplicate
-   * claim already on file is not "new", but not an error either).
+   * body so `handleContentAnnounce()` and `handlePrivateMessage()` can both
+   * reuse it for their own piggybacked `senderAnnouncement`
+   * (`ContentAnnouncePayload`/`PrivateMessagePayload`): all three are "here
+   * is node X's encryption key, self-signed by X" claims arriving by
+   * different paths, so all three funnel through this one check rather than
+   * keeping near-identical copies that could silently drift apart — same
+   * reasoning `acceptCatalogEntry()` already applies to content metadata.
+   * Returns whether it was newly accepted (a duplicate claim already on
+   * file is not "new", but not an error either).
+   *
+   * **Bug found while building Node Append (`docs/beacon.md`, piece 2),
+   * fixed here**: `handlePrivateMessage()` used to duplicate this method's
+   * first three checks inline (nodeId match against `packet.source`,
+   * signature, `peerDirectory.record()`) but never called
+   * `this.trust.markVerified()` afterward, unlike this shared method and
+   * unlike `handleContentAnnounce()`'s own use of it — an inconsistency
+   * invisible until Node Append became the first feature to actually gate
+   * behavior on a private-message sender's trust level. In practice this
+   * made the very first private message from a sender a target had never
+   * independently gossiped-verified (the common case for a multi-hop
+   * relayed message — see `PrivateMessagePayload`'s own doc comment on why
+   * the announcement is piggybacked at all) leave that sender stuck at
+   * `UNKNOWN`/`SEEN` forever, since nothing else re-triggers this check for
+   * an already-recorded peer-directory entry. Routing `handlePrivateMessage()`
+   * through this same method (see its own call site) fixes it for every
+   * trust-gated feature built on `PRIVATE_MESSAGE`, not just this one.
    */
   private acceptIdentityAnnouncement(announcement: IdentityAnnouncement | undefined | null): boolean {
     if (!announcement || announcement.nodeId === this.nodeId) return false; // malformed, or a claim about ourselves — never record either
@@ -2581,13 +2780,12 @@ export class NomadNode extends EventEmitter {
    * couldn't be trusted".
    */
   private handlePrivateMessage(packet: Packet<PrivateMessagePayload>): void {
+    // Guard kept here rather than folded into acceptIdentityAnnouncement() itself: a PRIVATE_MESSAGE
+    // must only ever accept an announcement *about its own sender*, never an arbitrary identity
+    // riding along (same "never let a relay pass off someone else's identity" principle
+    // handleContentAnnounce() already applies to a beacon's own senderAnnouncement).
     const senderAnnouncement = packet.payload?.senderAnnouncement;
-    if (
-      senderAnnouncement &&
-      senderAnnouncement.nodeId === packet.source &&
-      verifyIdentityAnnouncement(senderAnnouncement) &&
-      this.peerDirectory.record(senderAnnouncement)
-    ) {
+    if (senderAnnouncement && senderAnnouncement.nodeId === packet.source && this.acceptIdentityAnnouncement(senderAnnouncement)) {
       this.emit("identity:synced", [senderAnnouncement.nodeId]);
     }
 
@@ -2603,6 +2801,7 @@ export class NomadNode extends EventEmitter {
       if (text !== undefined) this.messageHistory.record(packet.source, "received", text);
       this.considerGroupInvite(packet.source, extractGroupInvite(payload));
       this.considerLocationReport(packet.source, extractLocationReport(payload));
+      this.considerNodeAppend(packet.source, packet.id, extractNodeAppendPayload(payload));
       this.emit("private-message", { ...packet, payload });
     } catch (err) {
       this.emit("private-message:failed", packet.source, (err as Error).message);
