@@ -440,6 +440,19 @@ function extractChatText(payload: unknown): string | undefined {
 }
 
 /**
+ * Single-hop "Observation" attribution — shared by `considerDrop()` and
+ * `considerEmergencyBeacon()`: whoever delivered a `CONTENT_ANNOUNCE`/sync
+ * entry directly to this node, unless that's the content's own publisher
+ * (a direct, non-relayed reception — recording "received from myself"
+ * would be circular and useless). Never a full multi-hop path, only the
+ * single hop closest to *this* node — see `Drop.receivedFrom`/
+ * `EmergencyBeaconSighting.receivedFrom`'s own doc comments for why.
+ */
+function singleHopReceivedFrom(fromPeerId: string, publisherId: string): string | undefined {
+  return fromPeerId !== publisherId ? fromPeerId : undefined;
+}
+
+/**
  * Distance-vector route advertisement (spec §22), exchanged directly
  * between neighbors like IDENTITY_REQUEST/RESPONSE — never flooded, since
  * it only ever concerns the two nodes on that link. `cost: null` withdraws
@@ -1122,7 +1135,17 @@ export class NomadNode extends EventEmitter {
       priority: dropKindPriority(drop.kind),
       ttlMs,
     });
-    const record: Drop = { ...payload, dropId: metadata.contentId, author: this.nodeId, expiresAt: metadata.expiresAt };
+    const record: Drop = {
+      ...payload,
+      dropId: metadata.contentId,
+      author: this.nodeId,
+      expiresAt: metadata.expiresAt,
+      // A fresh Date.now(), not a reuse of `timestamp` above — same reasoning as
+      // sendEmergencyBeacon()'s own sighting.observedAt: genuinely the moment this node recorded
+      // its own publish, not the moment it decided to publish (they coincide today because
+      // publishContent() is synchronous, but the two are conceptually distinct fields).
+      observedAt: Date.now(),
+    };
     this.drops.record(record);
     return record;
   }
@@ -2338,7 +2361,7 @@ export class NomadNode extends EventEmitter {
         this.acceptIdentityAnnouncement(packet.payload.senderAnnouncement);
       }
       this.considerChannelMessage(accepted);
-      this.considerDrop(accepted);
+      this.considerDrop(accepted, fromPeerId);
       this.considerEmergencyBeacon(accepted, fromPeerId);
     }
   }
@@ -2360,7 +2383,7 @@ export class NomadNode extends EventEmitter {
       if (result) {
         accepted.push(result);
         this.considerChannelMessage(result);
-        this.considerDrop(result);
+        this.considerDrop(result, fromPeerId);
         this.considerEmergencyBeacon(result, fromPeerId);
       }
     }
@@ -2415,8 +2438,15 @@ export class NomadNode extends EventEmitter {
    * content's name matches `DROP_CONTENT_NAME` exactly. Bounded to
    * `MAX_CONCURRENT_DROP_FETCHES` in flight (independent budget from
    * `considerChannelMessage()`'s, see that constant's own doc comment).
+   *
+   * `fromPeerId` becomes `Drop.receivedFrom` — same reasoning and same
+   * single-hop-only limitation as `considerEmergencyBeacon()`'s own doc
+   * comment: `undefined` when it coincides with the drop's own author (a
+   * direct, non-relayed reception — recording "received from myself" would
+   * be circular and useless), otherwise the peer that delivered the
+   * `CONTENT_ANNOUNCE`/sync entry directly to this node, never a full path.
    */
-  private considerDrop(metadata: ContentMetadata): void {
+  private considerDrop(metadata: ContentMetadata, fromPeerId: string): void {
     if (metadata.name !== DROP_CONTENT_NAME) return;
     const publisherId = metadata.publisherId;
     if (!publisherId) return;
@@ -2433,7 +2463,14 @@ export class NomadNode extends EventEmitter {
         }
         const payload = extractDropPayload(parsed);
         if (!payload) return;
-        this.drops.record({ ...payload, dropId: contentId, author: publisherId, expiresAt: metadata.expiresAt });
+        this.drops.record({
+          ...payload,
+          dropId: contentId,
+          author: publisherId,
+          expiresAt: metadata.expiresAt,
+          receivedFrom: singleHopReceivedFrom(fromPeerId, publisherId),
+          observedAt: Date.now(),
+        });
       })
       .catch(() => {})
       .finally(() => this.pendingDropFetches.delete(contentId));
@@ -2478,7 +2515,7 @@ export class NomadNode extends EventEmitter {
           beaconContentId: contentId,
           deviceId: publisherId,
           observedAt: Date.now(),
-          receivedFrom: fromPeerId !== publisherId ? fromPeerId : undefined,
+          receivedFrom: singleHopReceivedFrom(fromPeerId, publisherId),
         });
       })
       .catch(() => {})

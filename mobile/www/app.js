@@ -1546,6 +1546,7 @@ function renderDrops(drops) {
       const distance = haversineDistanceMeters(myLastKnownPosition.lat, myLastKnownPosition.lon, d.lat, d.lon);
       tags.push(el("span", { className: "tag", textContent: distance < 1000 ? Math.round(distance) + " m" : (distance / 1000).toFixed(1) + " km" }));
     }
+    if (d.receivedFrom) tags.push(el("span", { className: "tag", textContent: "via " + getContactName(d.receivedFrom, "NODE-" + d.receivedFrom.slice(0, 8)) }));
     const li = el("li", null, [
       el("div", { className: "row" }, [
         el("span", { className: "row-title", textContent: d.label || "Segnalazione", title: d.label || "Segnalazione" }),

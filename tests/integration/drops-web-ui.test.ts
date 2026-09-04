@@ -58,6 +58,7 @@ describe("WebUiServer /api/drops", () => {
         kind: "info",
         timestamp: expect.any(Number),
         expiresAt: expect.any(Number),
+        observedAt: expect.any(Number),
       },
     ]);
   });
@@ -151,6 +152,7 @@ describe("WebUiServer /api/drops", () => {
       kind: "emergency",
       timestamp: expect.any(Number),
       expiresAt: expect.any(Number),
+      observedAt: expect.any(Number),
     });
     expect(a.node.drops.list()).toHaveLength(1);
   });

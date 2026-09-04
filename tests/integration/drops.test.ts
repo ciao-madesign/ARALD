@@ -60,6 +60,7 @@ describe("Bacheca drops (publishDrop / considerDrop)", () => {
     // The sender's own view is updated synchronously — no round trip needed for its own publish.
     expect(a.node.drops.list()).toEqual([sent]);
     expect(sent.author).toBe(a.node.nodeId);
+    expect(sent.receivedFrom).toBeUndefined(); // self-publish — nothing was "received"
 
     await waitFor(() => c.node.drops.list().length === 1);
     const received = c.node.drops.list()[0];
@@ -69,6 +70,9 @@ describe("Bacheca drops (publishDrop / considerDrop)", () => {
     expect(received.lon).toBe(7.5);
     expect(received.author).toBe(a.node.nodeId);
     expect(received.dropId).toBe(sent.dropId);
+    // C learned this from B (the relay), never directly from A (the original author) — Observation
+    // credits the actual deliverer, same reasoning as EmergencyBeaconSighting.receivedFrom.
+    expect(received.receivedFrom).toBe(b.node.nodeId);
   });
 
   it("a node that connects *after* the drop was published still learns it via catalog sync", async () => {
@@ -84,6 +88,33 @@ describe("Bacheca drops (publishDrop / considerDrop)", () => {
 
     await waitFor(() => c.node.drops.list().length === 1);
     expect(c.node.drops.list()[0].text).toBe("pubblicato prima che C si connetta");
+  });
+
+  it("receivedFrom credits the relay, not the original publisher, when a drop is learned via catalog sync from a non-publisher peer (regression — found by code-review: the only prior sync test connected the learner directly to the publisher, so it couldn't tell handleSyncResponse()'s fromPeerId wiring apart from handleContentAnnounce()'s)", async () => {
+    const a = makeNode("A");
+    nodes.push(a.node);
+    await a.node.start();
+    a.node.publishDrop({ text: "frana", lat: 1, lon: 1, kind: "info" });
+
+    // B learns it via catalog sync directly from A (the publisher) — B's own receivedFrom would be
+    // undefined here, but that's not what this test is about.
+    const b = makeNode("B");
+    nodes.push(b.node);
+    await b.node.start();
+    await b.node.connect({ host: "127.0.0.1", port: a.transport.port });
+    await waitFor(() => b.node.drops.list().length === 1);
+
+    // C connects only to B (never to A) *after* B already has the drop — so C can only learn it via
+    // a SYNC_RESPONSE from B, a relay that is not the drop's publisher.
+    const c = makeNode("C");
+    nodes.push(c.node);
+    await c.node.start();
+    await c.node.connect({ host: "127.0.0.1", port: b.transport.port });
+
+    await waitFor(() => c.node.drops.list().length === 1);
+    const received = c.node.drops.list()[0];
+    expect(received.author).toBe(a.node.nodeId);
+    expect(received.receivedFrom).toBe(b.node.nodeId);
   });
 
   it("each drop kind is announced at its own Priority on the wire: info=CONTENT, hazard=MESSAGING, emergency=EMERGENCY", async () => {
