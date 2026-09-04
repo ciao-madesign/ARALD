@@ -79,6 +79,24 @@ Punto esplicito della proposta, puramente hardware/business — nessuna implicaz
 
 L'evoluzione naturale è un **NOMAD Radio Module** standardizzato, fornito anche a produttori terzi (zaini, caschi, giacche, dispositivi GPS outdoor, smartwatch, e-bike, veicoli, droni) — stessa idea già documentata come obiettivo di lungo periodo nel principio "NOMAD-Net Network Effect" (`docs/emergency-rescue-network.md`), qui con una forma tecnica concreta (un modulo radio con PCB standardizzata invece di un concetto generico di "integrazione"). Stessa nota di quella sezione: **decisione commerciale/di partnership dell'utente, non tecnica di questo repository**.
 
+### NOMAD Cover e NOMAD Clip — due varianti hardware dello stesso NOMAD Radio Module
+
+Proposte ricevute dall'utente il 4 settembre 2026, puramente hardware/industrial design — **nessuna implicazione software**: entrambe risolvono lo stesso problema (uno smartphone non ha un ricetrasmettitore LoRa proprio) riusando la stessa elettronica del NOMAD Radio Module già descritta sopra, non un progetto elettronico nuovo.
+
+- **NOMAD Cover** — custodia smartphone con MCU+SX1262+BLE+batteria integrati. Lo smartphone resta l'interfaccia (UI, GPS, mappe, autenticazione, contenuti), la cover fa da modem LoRa/BLE con batteria indipendente (continua a funzionare a telefono scarico/spento). Un interruttore fisico disabilita solo la radio LoRa/BLE (`radio enable switch`), mai l'intera elettronica — l'app resta utilizzabile anche a radio spenta (GPS/Internet quando disponibili).
+- **NOMAD Clip** — modulo universale applicabile a qualunque cover già esistente, invece di una cover dedicata per modello: stessa elettronica, enclosure in plastica (mai metallo, per non degradare l'antenna LoRa), fissaggio intercambiabile tra **biadesivo** (soluzione universale primaria, economica, applicata alla cover non allo smartphone) e **MagSafe** (soluzione rapida/premium, via un anello magnetico adesivo per smartphone non nativamente MagSafe) sullo stesso modulo — non due prodotti separati. Stessa batteria indipendente e interruttore radio-only del Cover. Zona antenna tenuta lontana da masse metalliche/magneti/batteria per ragioni RF, da validare con test reali quando si arriverà all'hardware.
+
+Famiglia hardware aggiornata:
+
+| Dispositivo | Richiede smartphone | UI | Batteria |
+|---|---|---|---|
+| **NOMAD Card** | No | LED/pulsante | Propria |
+| **NOMAD Cover** | Sì (nativo) | Smartphone | Propria, indipendente dal telefono |
+| **NOMAD Clip** | Sì (universale, via fissaggio) | Smartphone | Propria, indipendente dal telefono |
+| **NOMAD Fixed Relay** | No | — | Solare + batteria |
+
+Il Card resta comunque necessario per chi non ha (o non vuole usare) uno smartphone compatibile — nessuna delle tre varianti sostituisce le altre, stesso principio "densità di rete" già in `docs/emergency-rescue-network.md`.
+
 ---
 
 ## Fixed Relay e Relay Registry
