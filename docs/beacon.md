@@ -135,6 +135,8 @@ Famiglia hardware risultante (dalla proposta):
 | **ARALD Box** | Orange Pi 4 Pro (`docs/deployment.md`) | rete elettrica/solare | nodo infrastrutturale + servizi |
 | **ARALD Portable** | computer/nodo portatile (`docs/deployment.md`) | batteria | nodo operativo |
 
+**Nota, 5 settembre 2026 — radio LoRa allineata su tutta la famiglia**: fino a questa data, la tabella hardware del Box in `docs/deployment.md` non includeva alcuna radio LoRa (solo Wi-Fi/Bluetooth/Ethernet) — un disallineamento reale rispetto a Card/Relay, che la includono già. Su richiesta esplicita dell'utente, `docs/deployment.md` ("ARALD Box e PORTABLE") è stato aggiornato per raccomandare un modulo LoRa esterno (SX126x/SX127x, via USB o header UART/SPI) anche per Box e Portable, così l'intera famiglia hardware condivide lo stesso mezzo di trasmissione — Box segnalato come priorità in quanto nodo infrastrutturale principale. Vale comunque, per l'intera famiglia **Card inclusa**, la stessa verifica software fatta in quella sede: `node/src/transports/lora.ts` è oggi **interamente simulato** (`docs/security.md` voce #51) — nessun dispositivo di questo elenco ha un driver LoRa reale funzionante su hardware fisico, un limite universale e non specifico di Box/Portable. L'interfaccia `Transport` (`node/src/transport.ts`) resta comunque pronta a ospitare un driver reale in futuro senza toccare la logica di rete condivisa.
+
 Il pezzo davvero nuovo era il **Relay Registry**, che non aveva un equivalente nel codice — **ora implementato** (`node/src/relay-registry.ts`, `docs/security.md` voce #54):
 
 | Aspetto | Come è stato costruito |
