@@ -14,9 +14,13 @@
     "build": "tsc -p .",
     "start": "node dist/cli.js"
   },
+  "dependencies": {
+    "@serialport/stream": "^13.0.0"
+  },
   "devDependencies": {
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
-    "@types/node": "^22.9.0"
+    "@types/node": "^22.9.0",
+    "@serialport/binding-mock": "^10.2.2"
   }
 }

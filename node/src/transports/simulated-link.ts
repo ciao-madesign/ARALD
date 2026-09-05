@@ -50,7 +50,8 @@ const MAX_PENDING_CONNECTIONS = 32;
 const MAX_CONCURRENT_REASSEMBLIES = 32;
 
 /** Bounds memory: a fragment claiming more total pieces than this is rejected outright, before anything is stored — generous headroom over what any legitimate packet would ever produce at any MTU a radio module here configures. */
-const MAX_FRAGMENTS_PER_MESSAGE = 8192;
+/** Exported so `LoraSerialTransport` (`lora-serial.ts`) can reject an oversized packet at the *sender* before ever transmitting a single fragment, against the exact same cap `FragmentReassembler.addFragment()` below enforces on the receiving end — a sender-side limit that disagreed with this one would let a packet transmit "successfully" while every fragment was silently rejected on arrival (found by review). */
+export const MAX_FRAGMENTS_PER_MESSAGE = 8192;
 
 /**
  * Anti-flood for received broadcasts (`receiveBroadcast()`) — deliberately
@@ -84,7 +85,16 @@ const MAX_FRAGMENTS_PER_MESSAGE = 8192;
 const MAX_BROADCAST_PACKETS_PER_WINDOW = 20;
 const BROADCAST_WINDOW_MS = 1000;
 
-interface Fragment {
+/**
+ * Exported (beyond this file's own use) so `LoraSerialTransport`
+ * (`lora-serial.ts`) can reuse the exact same fragment shape and
+ * `FragmentReassembler` below instead of re-deriving them — a real SX127x
+ * link needs the identical fragmentation story this simulated one already
+ * proves (small physical payload budget forcing multi-fragment packets),
+ * just carried over a real serial byte stream instead of an in-process
+ * `setTimeout` delivery.
+ */
+export interface Fragment {
   connectionId: string;
   msgId: string;
   index: number;
@@ -105,7 +115,7 @@ interface ReassemblyEntry {
  * the way a real radio implementation behind the same `Transport` interface
  * would have to be, fragment reassembly included.
  */
-class FragmentReassembler {
+export class FragmentReassembler {
   private readonly entries = new BoundedFifoMap<string, ReassemblyEntry>({ maxSize: MAX_CONCURRENT_REASSEMBLIES });
 
   /** Returns the reassembled bytes once every fragment for `fragment.msgId` has arrived, otherwise undefined. */

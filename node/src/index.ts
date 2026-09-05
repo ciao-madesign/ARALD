@@ -21,4 +21,5 @@ export * from "./loopback-http-server.js";
 export { TcpTransport } from "./transports/tcp.js";
 export { BleSimulatedTransport, BleMedium, type BleSimulatedTransportOptions } from "./transports/ble.js";
 export { LoraSimulatedTransport, LoraMedium, type LoraSimulatedTransportOptions } from "./transports/lora.js";
+export { LoraSerialTransport, type LoraSerialTransportOptions } from "./transports/lora-serial.js";
 export { BeaconBroadcastTransport } from "./transports/beacon-broadcast.js";
