@@ -5,3 +5,6 @@ dist/
 *.key
 !test/**/*.key
 coverage/
+.next/
+mirror-portal/.env.local
+*.tsbuildinfo

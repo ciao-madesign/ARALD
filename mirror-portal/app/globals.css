@@ -1,0 +1,157 @@
+/* Same palette/shape language as node/src/web-ui.ts's own status page — this mirror shows the same
+   kind of data (nodes/relays/SOS/drops) at a different scope (many nodes, not one), so it deliberately
+   looks like a sibling of that page rather than inventing a third visual identity alongside it and
+   mobile/www/'s "Waypoint". */
+:root {
+  color-scheme: light dark;
+  --bg: #f4f6f5;
+  --card: #ffffff;
+  --border: #d9dfdc;
+  --ink: #16211e;
+  --muted: #5c6b66;
+  --accent: #1f7a68;
+  --accent-soft: #e2f1ed;
+  --emergency: #b3261e;
+  --emergency-soft: #fbe9e7;
+  --hazard: #a8631a;
+  --hazard-soft: #faeee0;
+  --good: #1f7a4a;
+  --good-soft: #e3f3e8;
+  --off: #8a938f;
+  --off-soft: #ecefed;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101614;
+    --card: #182220;
+    --border: #2b3733;
+    --ink: #e7ece9;
+    --muted: #93a19b;
+    --accent: #4fbfa2;
+    --accent-soft: #163a32;
+    --emergency: #ff6b60;
+    --emergency-soft: #3a1614;
+    --hazard: #e0a352;
+    --hazard-soft: #3a2c14;
+    --good: #4fbf7c;
+    --good-soft: #163a24;
+    --off: #6b7671;
+    --off-soft: #202a26;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  line-height: 1.45;
+}
+
+main {
+  max-width: 64em;
+  margin: 0 auto;
+  padding: 1.5em 1em 3em;
+}
+
+h1 {
+  margin: 0 0 0.3em;
+  font-size: 1.5em;
+  letter-spacing: 0.02em;
+}
+
+h2 {
+  margin: 0 0 0.7em;
+  font-size: 1em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 0.85em;
+}
+
+.panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 0.6em;
+  padding: 1em;
+  margin-bottom: 1em;
+}
+
+.panel.error {
+  border-color: var(--emergency);
+  background: var(--emergency-soft);
+}
+
+.panel ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.panel li {
+  padding: 0.6em 0;
+  border-top: 1px solid var(--border);
+}
+
+.panel li:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6em;
+}
+
+.empty {
+  color: var(--muted);
+  font-style: italic;
+  padding: 0.4em 0;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15em 0.6em;
+  border-radius: 999px;
+  font-size: 0.72em;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.tag.emergency {
+  background: var(--emergency-soft);
+  color: var(--emergency);
+}
+
+.tag.hazard {
+  background: var(--hazard-soft);
+  color: var(--hazard);
+}
+
+.tag.info {
+  background: var(--off-soft);
+  color: var(--off);
+}
+
+.tag.online {
+  background: var(--good-soft);
+  color: var(--good);
+}
+
+.tag.offline {
+  background: var(--off-soft);
+  color: var(--off);
+}

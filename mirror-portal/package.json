@@ -1,0 +1,23 @@
+{
+  "name": "arald-mirror-portal",
+  "private": true,
+  "version": "0.1.0",
+  "description": "ARALD Emergency Portal — read-only Internet mirror (docs/emergency-portal.md). Reads the arald_portal Postgres schema that arald-backend/sync.ts writes to; never writes back, never a dependency of the mesh or the Box's own local-portal/ dashboard.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "14.2.35",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "pg": "8.13.1"
+  },
+  "devDependencies": {
+    "typescript": "5.6.3",
+    "@types/node": "20.16.11",
+    "@types/react": "18.3.11",
+    "@types/pg": "8.11.10"
+  }
+}

@@ -51,6 +51,8 @@ export interface DropRow {
   lat: number;
   lon: number;
   kind: string;
+  /** The drop's own event time (`DropPayload.timestamp`, `node/src/drops.ts`), never re-derived from when this sync happened to observe it — `mirror-portal/lib/db.ts` orders/ranks recent drops by this field, not by `synced_at`, since the latter is bumped by every re-sync and would otherwise make "most recent 50" an arbitrary subset once more than 50 exist (found by review of the mirror-portal piece). */
+  timestamp: number;
 }
 
 export interface NodeAppendRow {
@@ -143,7 +145,8 @@ function extractDropRow(raw: unknown): DropRow | undefined {
   if (typeof r.author !== "string" || typeof r.text !== "string") return undefined;
   if (!isFiniteNumber(r.lat) || !isFiniteNumber(r.lon)) return undefined;
   if (typeof r.kind !== "string") return undefined;
-  return { dropId: r.dropId, author: r.author, text: r.text, lat: r.lat, lon: r.lon, kind: r.kind };
+  if (!isFiniteNumber(r.timestamp)) return undefined;
+  return { dropId: r.dropId, author: r.author, text: r.text, lat: r.lat, lon: r.lon, kind: r.kind, timestamp: r.timestamp };
 }
 
 function extractNodeAppendRow(raw: unknown): NodeAppendRow | undefined {

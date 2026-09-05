@@ -32,7 +32,7 @@ describe("syncSnapshotToPostgres", () => {
       status: { nodeId: "N1", displayName: "Rifugio", connected: true, peers: 2, relaying: true },
       relays: [{ relayId: "R1", type: "fixed", lat: 45.1, lon: 9.2, online: true }],
       emergencyBeacons: [{ beaconContentId: "B1", deviceId: "D1", timestamp: 1000 }],
-      drops: [{ dropId: "DR1", author: "A1", text: "attenzione", lat: 45.1, lon: 9.2, kind: "hazard" }],
+      drops: [{ dropId: "DR1", author: "A1", text: "attenzione", lat: 45.1, lon: 9.2, kind: "hazard", timestamp: 1500 }],
       nodeAppends: [{ appendId: "AP1", text: "ciao", kind: "info", timestamp: 2000 }],
       skipped: [],
     };
