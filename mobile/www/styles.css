@@ -493,8 +493,14 @@ li.skel-row { display: flex; flex-direction: column; }
 
 #home-hero { text-align: center; padding: 1.4em 0 1em; }
 /* Plain ink, not accent — only the separating dot carries the beacon color (echoes the mark's own
-   center node), so the wordmark itself doesn't become one more place accent shows up. */
-#home-hero .wordmark { font-size: 1.9em; letter-spacing: 0.06em; margin: 0 0 0.9em; color: var(--ink); }
+   center node), so the wordmark itself doesn't become one more place accent shows up.
+   font-size is fluid (clamp), not the fixed 1.9em this rule used to have: "ARALD·NETWORK" is three
+   characters longer than the "NOMAD·NET" it replaced, and at that fixed size it genuinely overflowed
+   a 320px-wide viewport (iPhone SE-class, still a real device class) — found with Playwright while
+   verifying the renamed wordmark, not caught by the earlier check that only confirmed no *fixed*
+   width constraint existed on the rule. clamp() scales it down smoothly below ~380px instead of
+   needing a discrete breakpoint, and stays at the original 1.9em from there up. */
+#home-hero .wordmark { font-size: clamp(1.5em, 7.5vw, 1.9em); letter-spacing: 0.06em; margin: 0 0 0.9em; color: var(--ink); }
 #home-hero .search-box {
   display: flex; align-items: center; gap: 0.5em; max-width: 26em; margin: 0 auto;
   padding: 0.75em 1.1em; border-radius: 999px; border: 1px solid var(--border);
