@@ -113,19 +113,21 @@ Realizza sia la parte energy-aware di spec §51/§58 ("Relay OFF / Relay when ch
 
 **Sforzo relativo**: **basso-medio**, confermato — ha riusato quasi interamente `node/src/web-ui.ts` e il protocollo esistente.
 
-### Passo 2 — Connettività Bluetooth dal telefono (bloccata sullo stesso hardware dell'Opzione A)
+### Passo 2 — Connettività Bluetooth dal telefono — ✅ lato telefono fatto (voce #62, `docs/security.md`), lato gateway/Clip resta bloccato su hardware reale
 
 **Cosa costruire**: uno stack BLE-centrale nell'app (plugin Capacitor tipo `@capacitor-community/bluetooth-le`) che scopre e si connette a un gateway raggiungibile via Bluetooth invece che Wi-Fi, riusando lo stesso protocollo a pacchetti (framing/frammentazione già progettati per BLE nella voce #8, solo applicati a un client reale invece che a due lati entrambi simulati).
 
-**Prerequisiti**: la stessa cosa già segnalata come bloccata nell'Opzione A — un dispositivo con hardware BLE reale **dal lato gateway** che parli ARALD (non necessariamente un secondo telefono: potrebbe essere un Raspberry Pi/mini-PC con supporto BlueZ). **Stato: bloccata — stesso prerequisito hardware dell'Opzione A, non uno nuovo.**
+**Fatto, 6-7 settembre 2026 (voce #62)**: il lato telefono di questo passo — scan/connect/handshake HELLO verso un dispositivo BLE vicino, oggi mirato a una ARALD Clip/Cover (`docs/beacon.md`) piuttosto che genericamente a "un gateway" — è scritto e la sua logica di protocollo (framing/frammentazione) è unit-testata (`mobile/www/ble-link.js`, `tests/unit/mobile-ble-link.test.ts`). Ambito deliberatamente ristretto al solo "tubo" (nessuna funzionalità applicativa instradata sopra ancora). Vedi `mobile/README.md` per il dettaglio completo, incluso cosa resta scritto a spec e mai verificato (tutto ciò che chiama il plugin Bluetooth reale).
+
+**Prerequisiti ancora aperti**: quanto già segnalato come bloccato nell'Opzione A — un dispositivo con hardware BLE reale **dal lato gateway/Clip** che parli ARALD (non necessariamente un secondo telefono: potrebbe essere un Raspberry Pi/mini-PC con supporto BlueZ, o una futura Clip/Cover fisica). **Stato: il codice lato telefono esiste, ma resta bloccato sullo stesso prerequisito hardware dell'Opzione A per qualunque verifica end-to-end reale.**
 
 **Criteri di accettazione**: gli stessi del Passo 1, ma il telefono raggiunge il gateway via Bluetooth con il Wi-Fi disattivato — la dimostrazione "vera" dello scenario rifugio/emergenza che la spec descrive.
 
-**Sforzo relativo**: **alto**, e non stimabile con precisione finché non si decide come/quando procurarsi l'hardware per l'Opzione A — le due stime sono la stessa stima.
+**Sforzo relativo**: la parte lato telefono era **alta** ma è ora fatta; la verifica end-to-end contro hardware reale resta non stimabile con precisione finché non si decide come/quando procurarsi l'hardware per l'Opzione A.
 
 ### Come procedere
 
-Il Passo 1 è pronto per essere pianificato in dettaglio e avviato senza aspettare nulla. Il Passo 2 conviene accantonarlo fino a quando non si decide cosa fare per l'hardware BLE reale (stesso punto di decisione dell'Opzione A) — costruirla prima sarebbe codice che nessuno può testare davvero.
+Il Passo 1 è pronto e già completo. Il Passo 2 ha ora anche il proprio lato telefono completo (voce #62) — resta da fare solo la parte che richiede hardware reale (gateway/Clip BLE, stesso punto di decisione dell'Opzione A).
 
 ### Debito di design della UI mobile — ✅ affrontato (voce #28, `docs/security.md`)
 
