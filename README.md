@@ -1,8 +1,8 @@
 # ARALD
 
-A distributed, content-centric, delay-tolerant network for emergencies, mountain shelters, and environments without connectivity.
+A distributed, content-centric, delay-tolerant network for places where connectivity is absent, intermittent, costly, or unreliable.
 
-ARALD lets mobile devices and edge nodes share communications, content, and services without any Internet infrastructure — local mesh networks, store-and-forward, opportunistic caching, distributed replication, and intermittent Internet gateways — syncing automatically once an external connection becomes available.
+ARALD lets mobile devices and edge nodes share communications, content, and services without any Internet infrastructure — local mesh networks, store-and-forward, opportunistic caching, distributed replication, and intermittent Internet gateways — syncing automatically once an external connection becomes available. Mountain shelters, emergency/disaster response, and NGO/humanitarian field operations are its three primary validation environments — peers, not a hierarchy: the same architecture (Card/Relay/Box/Portable, store-and-forward, mesh routing) applies unchanged to any context where reliable connectivity can't be assumed, from an alpine hut to a rural clinic to a relief camp (see [`docs/deployment.md`](docs/deployment.md) for pilots and [`docs/beacon.md`](docs/beacon.md) for the wider scope beyond the alpine case).
 
 ```
 GET content://wikipedia/italy
@@ -21,7 +21,7 @@ The name comes from *araldo* — a herald, the messenger who carries word to the
 - [`docs/transport.md`](docs/transport.md) — transport abstraction, TCP/BLE/LoRa, iOS/Android constraints
 - [`docs/security.md`](docs/security.md) — identity, content integrity, what's still missing
 - [`docs/development.md`](docs/development.md) — how to build, run, and test
-- [`docs/deployment.md`](docs/deployment.md) — target deployment scenarios (mountain shelter, emergency)
+- [`docs/deployment.md`](docs/deployment.md) — target deployment scenarios: mountain shelter, emergency/disaster response, and NGO/humanitarian field operations, plus events, schools, and expeditions
 - [`docs/beacon.md`](docs/beacon.md) — the ARALD Card: a single radio device (credit-card form factor) that unifies Beacon and Emergency Relay roles into three firmware profiles (Beacon/Relay/Beacon+Relay Mode), plus Fixed Relay/Relay Registry and a note on EU regulatory compliance (RED, ETSI EN 300 328/300 220, CE) for a possible future commercial release — the **physical device** remains a proposal (no hardware built), but the **network logic** behind all three profiles is implemented and tested (`docs/security.md` entries #54-56: Relay Registry, courier profile, Beacon SOS)
 - [`docs/emergency-rescue-network.md`](docs/emergency-rescue-network.md) — ARALD Emergency & Rescue Network: a phased validation roadmap (prototype, micro pilot, field pilot), network-effect/density considerations and participation levels, and possible field partners for the Beacon/Relay ecosystem — reference documentation, no code or hardware
 - [`docs/test-protocol.md`](docs/test-protocol.md) — a technical test/validation protocol across phases 0-8 (Box/Portable/Card/Smartphone progression, numbered tests, KPIs, PASS/CONDITIONAL/FAIL criteria) — a complementary axis to `emergency-rescue-network.md` (technical scale here, budget/partners there), reference documentation
