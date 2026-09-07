@@ -1,184 +1,248 @@
-// Bluetooth LE central client — the phone connecting *to* a wearable ARALD Clip/Cover
-// (docs/beacon.md, "ARALD Cover e ARALD Clip"), user-initiated (never a background/passive relay),
-// which is exactly what makes this realistic on iOS too: the phone only ever acts as BLE *central*
-// (scan + connect out), never as a *peripheral* accepting incoming connections — the role Apple
-// restricts heavily in the background and this project's own mobile/README.md already documents as
-// poorly supported by hybrid frameworks. The Clip is the always-on peripheral instead.
+// Bluetooth LE relay — the phone as a genuine mesh relay node (docs/security.md voce #63): "ogni
+// nodo della mesh deve poter fare da relay, compresi gli smartphone" (istruzione esplicita
+// dell'utente). Scopre e si collega automaticamente a *qualunque* dispositivo ARALD nei paraggi
+// (Clip, altri relay), tiene più connessioni simultanee, e relaya davvero pacchetti tra di loro —
+// dedup, TTL, instradamento broadcast/unicast, coda in memoria per un peer non ancora raggiungibile.
+// Sostituisce il pezzo precedente (voce #62), che connetteva a UN SOLO dispositivo scelto
+// dall'utente: qui non c'è più un "abbinamento" — è un toggle on/off, il resto è automatico.
 //
-// Classic (non-module) script, loaded after ble-link.js (a module) in index.html — reads the pure
-// protocol logic from `window.AraldBleLink` (the one deliberate bridge point that file's own header
-// documents) and reuses app.js's existing UI helpers (`showToast`, `vibrate`, both defined as plain
-// globals, no import needed here either). Every access to `window.AraldBleLink` below happens only
-// inside event handlers (never at script top level), so it never matters whether ble-link.js's module
-// script has finished executing by the time *this* classic script runs — by the time a user can tap
-// anything, the page has long since finished loading.
+// Il telefono agisce sempre e solo come BLE *centrale* (scan + connect out), mai come periferica —
+// vedi mobile/README.md per l'indagine sulla fattibilità del lato periferica (annotata per un
+// prossimo sviluppo, non costruita qui): il plugin scelto (@capacitor-community/bluetooth-le) è
+// central-only per dichiarazione esplicita del proprio README.
 //
-// SCOPE OF THIS PIECE (deliberately limited, agreed with the user before writing this file): connect
-// to a nearby Clip, exchange a HELLO handshake, show its node id once identified. Nothing is routed
-// over this connection yet beyond that handshake — no SOS, chat, or location report. A future piece
-// decides what to send once this pipe itself is trusted to work; see the plan/CLAUDE.md entry for
-// this piece for the full reasoning.
+// Classic (non-module) script, loaded after ble-link.js/ble-relay.js (entrambi moduli) in
+// index.html — legge la logica pura da `window.AraldBleLink` (framing/frammentazione) e
+// `window.AraldBleRelay` (dedup/instradamento/coda), gli stessi ponti deliberati già documentati
+// nei rispettivi file. Ogni accesso a quegli oggetti avviene solo dentro gestori di evento, mai a
+// livello di script — stesso motivo già spiegato in ble-link.js.
 //
-// WHAT IS AND ISN'T VERIFIED HERE: the protocol logic this file calls into (ble-link.js) is unit
-// tested (tests/unit/mobile-ble-link.test.ts). Everything below that calls into
-// `window.Capacitor.Plugins.BluetoothLe` is written from the publicly documented behavior of
-// @capacitor-community/bluetooth-le as best understood, but has never run against the real plugin,
-// a real native bridge, or real Bluetooth hardware — no phone, no Clip, and no Bluetooth radio exist
-// in this development environment. Verify exact method/parameter names against that plugin's own
-// documentation before relying on this against real hardware, the same honesty already applied to
-// node/src/transports/lora-serial.ts before it was checked against a real SX127x chip.
+// AMBITO DI QUESTO PEZZO: il telefono relaya pacchetti — non li interpreta né li mostra ancora
+// (nessuna UI per SOS/chat/drop ricevuti via questo percorso). Il telefono non ha un'identità
+// crittografica reale (nessuna chiave Ed25519) — relaySessionNodeId è un'etichetta usa-e-getta per
+// tutta la sessione di relay, mai una vera identità di rete.
+//
+// COSA È VERIFICATO QUI, COSA NO: la logica di relay pura (ble-relay.js) è unit-testata
+// (tests/unit/mobile-ble-relay.test.ts). Tutto ciò che chiama window.Capacitor.Plugins.BluetoothLe
+// resta scritto a spec, mai eseguito contro il plugin reale/un bridge nativo/hardware Bluetooth
+// reale — stessa onestà già applicata al pezzo precedente e a node/src/transports/lora-serial.ts.
 
 /**
- * Provisional GATT identifiers for a Clip this phone looks for — invented by this project as a
- * placeholder, not a standard or a firmware commitment (docs/beacon.md has no formal GATT profile
- * for the Clip yet, deliberately out of scope for this piece — see its own "Cosa NON è costruibile"
- * section). Random v4 UUIDs, not "cute" hand-picked ones, specifically so they never collide by
- * accident with a real assigned Bluetooth SIG service. Replace these, and only these, once real Clip
- * firmware work begins — nothing else in this file depends on their specific values.
+ * Provisional GATT identifiers — stesso placeholder invenzione-di-questo-progetto già usato nel
+ * pezzo precedente (voce #62), non uno standard/una specifica firmware. Vedi il commento originale
+ * lì per il ragionamento completo.
  */
-const CLIP_SERVICE_UUID = "6f2c6a2e-6b7b-4b8e-9a1a-0c1a6f6e5b2a";
-const CLIP_WRITE_CHARACTERISTIC_UUID = "6f2c6a2f-6b7b-4b8e-9a1a-0c1a6f6e5b2a";
-const CLIP_NOTIFY_CHARACTERISTIC_UUID = "6f2c6a30-6b7b-4b8e-9a1a-0c1a6f6e5b2a";
+const RELAY_SERVICE_UUID = "6f2c6a2e-6b7b-4b8e-9a1a-0c1a6f6e5b2a";
+const RELAY_WRITE_CHARACTERISTIC_UUID = "6f2c6a2f-6b7b-4b8e-9a1a-0c1a6f6e5b2a";
+const RELAY_NOTIFY_CHARACTERISTIC_UUID = "6f2c6a30-6b7b-4b8e-9a1a-0c1a6f6e5b2a";
 
-/**
- * BLE's un-negotiated ATT MTU (20 usable bytes) — same value and rationale as
- * node/src/transports/ble.ts's own DEFAULT_MTU: the value every device must support without
- * negotiation, so this genuinely exercises fragmentation rather than only working because a generous
- * value was assumed. This is the *full* per-write budget (header included) — see ble-link.js's
- * FRAGMENT_HEADER_SIZE for how much of it is payload.
- */
+/** Stesso valore/motivazione di node/src/transports/ble.ts's DEFAULT_MTU — vedi ble-client.js precedente (voce #62). */
 const BLE_MTU = 20;
 
-/** How long to scan for a nearby Clip before giving up — generous for a real BLE scan (advertising intervals can be slow), but still bounded so a tap on "Collega" never hangs forever with no feedback. */
-const SCAN_TIMEOUT_MS = 15000;
+/** Tetto di connessioni simultanee — stesso numero di node/src/transports/ble.ts's DEFAULT_MAX_CONNECTIONS (limite tipico di un chipset BLE reale per un ruolo periferica; qui il telefono è centrale, ma un tetto prudente evita comunque di provare a tenere aperte connessioni oltre quanto uno stack BLE reale gestirebbe bene). */
+const MAX_CONNECTIONS = 7;
 
-/** How long to wait for the Clip's own HELLO once connected before giving up — mirrors CONNECT_TIMEOUT_MS in node/src/transports/simulated-link.ts. */
+/** Quanto attendere l'HELLO di un peer appena connesso prima di rinunciare a quella singola connessione — mirrors CONNECT_TIMEOUT_MS in node/src/transports/simulated-link.ts. */
 const HELLO_TIMEOUT_MS = 5000;
 
-let connectedDeviceId = null;
-let myEphemeralNodeId = null;
+/**
+ * Ogni quanto ri-emettere una scansione mentre il relay è attivo — difesa "best-effort" contro
+ * un'eventuale scansione che si fermasse da sola: le esatte semantiche del ciclo di vita della
+ * promise ritornata da `requestLEScan()` di questo plugin (si risolve subito dopo l'avvio, o resta
+ * pendente finché non si chiama `stopLEScan()`?) non sono verificabili in questo ambiente — invece
+ * di assumerle, questo file ri-emette periodicamente la scansione (fermando prima quella
+ * precedente, un'operazione sicura anche se non ce n'era già una attiva) come rete di sicurezza,
+ * mai come sostituto di una scansione realmente continua se il plugin già la fornisce.
+ */
+const SCAN_REFRESH_INTERVAL_MS = 30000;
+
+let relayActive = false;
+/**
+ * Contatore incrementato a ogni attivazione/disattivazione — permette a un `connectToPeer()`/
+ * `handleScanResult()` ancora in corso al momento di una disattivazione (o di una riattivazione
+ * rapida) di accorgersi che la sessione a cui appartiene non esiste più, e abortire invece di
+ * continuare a operare su stato di sessione ormai azzerato (`relaySessionNodeId`/`pendingQueue`) —
+ * trovato mancante dalla revisione, vedi il commento di `connectToPeer()`.
+ */
+let relaySessionId = 0;
+/** Un solo id per l'intera sessione di relay (non più uno per singola connessione, a differenza della voce #62) — generato una volta all'attivazione, riusato in ogni HELLO verso ogni peer. Necessario perché un pacchetto unicast diretto "al telefono" arrivato da un peer non sarebbe mai riconoscibile come tale se il telefono si presentasse con identità diverse a peer diversi. */
+let relaySessionNodeId = null;
+let seenCache = null;
+let pendingQueue = null;
+/** Map<deviceId, { peerNodeId: string|null, reassembler: FragmentReassembler, identifyResolvers: {resolve,reject}|null }> — una entry per ogni connessione, riservata (vedi handleScanResult()) prima ancora che plugin.connect() sia stato chiamato, per evitare una doppia connessione allo stesso device da due risultati di scansione ravvicinati. */
+let connections = new Map();
+let scanRefreshTimer = null;
 
 /**
- * Not a cryptographic node identity (no Ed25519 keys here, unlike a real NomadNode) — a throwaway
- * label the phone uses only to identify itself in this connection's HELLO handshake, regenerated
- * every connection. Real identity/crypto for whatever gets routed over this pipe is explicitly future
- * work (see this file's own scope note above).
+ * Non un'identità crittografica (nessuna chiave Ed25519, a differenza di un vero NomadNode) — una
+ * etichetta usa-e-getta per l'intera sessione di relay, rigenerata solo quando il relay viene
+ * riattivato. Identità/crittografia reale per qualunque cosa il telefono arrivasse un giorno a
+ * originare (non solo relayare) resta esplicitamente lavoro futuro.
  */
-function ephemeralPhoneNodeId() {
+function newRelaySessionNodeId() {
   return `phone-${crypto.randomUUID()}`;
 }
 
-function bleClipPlugin() {
+function bleRelayPlugin() {
   return window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BluetoothLe;
 }
 
-function setBleClipStatus(text, isError) {
-  const status = document.getElementById("ble-clip-status");
+function setBleRelayStatus(text, isError) {
+  const status = document.getElementById("ble-relay-status");
   if (!status) return;
   status.classList.toggle("error", Boolean(isError));
   status.textContent = text;
 }
 
-function setBleClipConnectedUi(peerNodeId) {
-  document.getElementById("ble-clip-connect-button").hidden = true;
-  document.getElementById("ble-clip-disconnect-button").hidden = false;
-  setBleClipStatus(`Collegato alla Clip: ${peerNodeId}`, false);
+function renderRelayPeers() {
+  const list = document.getElementById("ble-relay-peers");
+  if (!list) return;
+  list.textContent = "";
+  const identified = [...connections.values()].filter((conn) => conn.peerNodeId !== null);
+  if (identified.length === 0) {
+    const li = document.createElement("li");
+    li.className = "muted";
+    li.textContent = relayActive ? "In cerca di dispositivi nelle vicinanze..." : "";
+    list.append(li);
+    return;
+  }
+  for (const conn of identified) {
+    const li = document.createElement("li");
+    li.textContent = conn.peerNodeId;
+    list.append(li);
+  }
 }
 
-function setBleClipDisconnectedUi() {
-  document.getElementById("ble-clip-connect-button").hidden = false;
-  document.getElementById("ble-clip-disconnect-button").hidden = true;
+function findConnectionByPeerNodeId(peerNodeId) {
+  for (const [deviceId, conn] of connections) {
+    if (conn.peerNodeId === peerNodeId) return { deviceId, conn };
+  }
+  return null;
 }
 
-/** Writes one already-fragmented ARALD packet to the Clip's write characteristic, one plugin call per fragment — each fragment is a single self-contained wire-ready byte array (header + payload, see ble-link.js's fragmentPacket()), base64-encoded as this plugin's documented `value` wire shape. */
+/** Scrive un pacchetto già frammentato sulla caratteristica di scrittura di un peer — stessa funzione della voce #62, invariata. */
 async function sendFragmentedPacket(plugin, deviceId, packet) {
   const fragments = window.AraldBleLink.fragmentPacket(packet, BLE_MTU);
   for (const fragment of fragments) {
     await plugin.write({
       deviceId,
-      service: CLIP_SERVICE_UUID,
-      characteristic: CLIP_WRITE_CHARACTERISTIC_UUID,
+      service: RELAY_SERVICE_UUID,
+      characteristic: RELAY_WRITE_CHARACTERISTIC_UUID,
       value: window.AraldBleLink.bytesToBase64(fragment),
     });
   }
 }
 
-/** Scans for a nearby Clip advertising CLIP_SERVICE_UUID and resolves with its deviceId, or rejects on timeout/scan failure. Always stops the scan itself before settling, on every path. */
-function scanForClip(plugin) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      plugin.stopLEScan().catch(() => {});
-      reject(new Error("Nessuna Clip trovata nelle vicinanze — assicurati che sia accesa e vicina."));
-    }, SCAN_TIMEOUT_MS);
-
-    plugin
-      .requestLEScan({ services: [CLIP_SERVICE_UUID] }, (result) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        plugin.stopLEScan().catch(() => {});
-        resolve(result.device.deviceId);
-      })
-      .catch((err) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        reject(err);
-      });
-  });
+/**
+ * Invia le entry in coda destinate esattamente al peer appena identificato — chiamata subito dopo
+ * l'handshake di ogni nuova connessione. Se l'invio di una singola entry fallisce, la rimette in
+ * coda invece di perderla silenziosamente (stesso spirito di requeue() in ble-relay.js).
+ */
+function flushPendingFor(plugin, deviceId, peerNodeId) {
+  if (!pendingQueue) return;
+  for (const entry of pendingQueue.drainFor(peerNodeId)) {
+    sendFragmentedPacket(plugin, deviceId, entry.packet).catch(() => {
+      pendingQueue.requeue(entry);
+    });
+  }
 }
 
 /**
- * Subscribes to the Clip's notify characteristic and resolves once a HELLO packet has been fully
- * reassembled from it, or rejects on timeout/subscription failure. Subscribing happens synchronously
- * before this returns its promise, so the caller can send its own HELLO immediately after calling this
- * without risking missing a fast reply — see connectToClip()'s own comment on handshake ordering.
+ * Decide cosa fare di un pacchetto già identificato come "da inoltrare" (decideForward() lo ha già
+ * decrementato di TTL) — mai chiamata per un pacchetto duplicato o già a destinazione, quello lo
+ * decide decideForward() stesso. Pacchetto unicast → al peer connesso corrispondente se c'è,
+ * altrimenti in coda; pacchetto broadcast → a ogni altro peer connesso e identificato (mai a quello
+ * da cui è arrivato — floodExcept(), stesso principio di routing.ts lato mesh).
  */
-function waitForPeerHello(plugin, deviceId) {
-  const reassembler = new window.AraldBleLink.FragmentReassembler();
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      reject(new Error("La Clip non ha risposto in tempo."));
-    }, HELLO_TIMEOUT_MS);
-
-    plugin
-      .startNotifications(
-        { deviceId, service: CLIP_SERVICE_UUID, characteristic: CLIP_NOTIFY_CHARACTERISTIC_UUID },
-        (event) => {
-          if (settled) return;
-          try {
-            const bytes = window.AraldBleLink.base64ToBytes(event.value);
-            const reassembled = reassembler.addFragment(bytes);
-            if (!reassembled) return;
-            const packet = window.AraldBleLink.decodePacket(reassembled);
-            if (packet.type !== "HELLO") return; // ignore anything else until the pipe itself is trusted — see scope note above
-            settled = true;
-            clearTimeout(timer);
-            resolve(packet.source);
-          } catch {
-            // malformed notification — never trust it, same posture as every other packet handler in this codebase
-          }
-        },
-      )
-      .catch((err) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        reject(err);
+function forwardPacket(plugin, fromDeviceId, packet) {
+  if (packet.destination !== undefined) {
+    const target = findConnectionByPeerNodeId(packet.destination);
+    if (target) {
+      // Se l'invio fallisce (link congestionato, scrittura GATT respinta — guasti reali comuni sul
+      // BLE), la connessione al peer potrebbe restare comunque valida: la stessa logica di
+      // floodExcept() lato mesh (node.ts) ricade sulla coda invece di perdere il pacchetto per
+      // sempre, trovato mancante qui dalla revisione.
+      sendFragmentedPacket(plugin, target.deviceId, packet).catch(() => {
+        if (pendingQueue) pendingQueue.enqueue(packet, fromDeviceId);
       });
-  });
+    } else if (pendingQueue) {
+      pendingQueue.enqueue(packet, fromDeviceId);
+    }
+    return;
+  }
+  for (const [deviceId, conn] of connections) {
+    if (deviceId === fromDeviceId || conn.peerNodeId === null) continue;
+    sendFragmentedPacket(plugin, deviceId, packet).catch(() => {});
+  }
 }
 
-/** Best-effort teardown of a connection that was opened but never made it to a fully identified state — every step independently caught so one failure (e.g. notifications were never actually subscribed) never stops the rest from being attempted. */
-async function cleanupFailedConnection(plugin, deviceId) {
+/**
+ * Gestore delle notifiche di UNA connessione — persistente per tutta la vita della connessione
+ * (a differenza della voce #62, dove smetteva di ascoltare dopo l'HELLO): prima dell'identificazione
+ * accetta solo un HELLO (che identifica il peer, mai inoltrato oltre — è locale alla connessione,
+ * stesso trattamento di TTL=1 già riservato a HELLO lato mesh); dopo, ogni pacchetto passa da
+ * decideForward() e viene eventualmente inoltrato.
+ *
+ * `conn.peerNodeId` viene impostato SINCRONAMENTE qui dentro, non dopo un `await` in connectToPeer()
+ * — se fosse impostato più tardi (dopo che la promise di identificazione si risolve) esisterebbe una
+ * finestra in cui un secondo pacchetto arrivato molto in fretta dopo l'HELLO troverebbe ancora
+ * `peerNodeId === null` e verrebbe scartato come se fosse pre-identificazione.
+ */
+function handleNotification(plugin, deviceId, event) {
+  const conn = connections.get(deviceId);
+  if (!conn) return; // connessione già smontata — evento residuo, ignoralo
+
+  let packet;
   try {
-    await plugin.stopNotifications({ deviceId, service: CLIP_SERVICE_UUID, characteristic: CLIP_NOTIFY_CHARACTERISTIC_UUID });
+    const bytes = window.AraldBleLink.base64ToBytes(event.value);
+    const reassembled = conn.reassembler.addFragment(bytes);
+    if (!reassembled) return;
+    packet = window.AraldBleLink.decodePacket(reassembled);
+  } catch {
+    return; // malformato — non fidarsi mai, stessa postura di ogni altro handler di questo progetto
+  }
+
+  if (conn.peerNodeId === null) {
+    if (packet.type === "HELLO" && conn.identifyResolvers) {
+      conn.peerNodeId = packet.source;
+      conn.identifyResolvers.resolve(packet.source);
+      conn.identifyResolvers = null;
+    }
+    return; // qualunque altra cosa prima dell'identificazione viene ignorata
+  }
+
+  const decision = window.AraldBleRelay.decideForward(packet, relaySessionNodeId, seenCache);
+  if (decision.duplicate || !decision.forwardPacket) return;
+  forwardPacket(plugin, deviceId, decision.forwardPacket);
+}
+
+/** Riserva una entry nella mappa delle connessioni PRIMA di qualunque await — vedi la nota nel commento di `connections` sopra sul perché è necessario farlo sincronamente. */
+function reserveConnectionSlot(deviceId) {
+  const entry = { peerNodeId: null, reassembler: new window.AraldBleLink.FragmentReassembler(), identifyResolvers: null };
+  connections.set(deviceId, entry);
+  return entry;
+}
+
+/**
+ * Smonta una connessione riservata/aperta che non è mai arrivata a un'identificazione riuscita (o
+ * che il chiamante ha comunque deciso di abbandonare).
+ *
+ * `conn` è l'oggetto riservato al momento della connessione (non solo il `deviceId`) — un secondo
+ * controllo di identità oltre al `sessionId` già verificato da `connectToPeer()`, trovato ancora
+ * mancante dalla revisione: un tentativo scaduto (sessione precedente, mai riuscito a connettersi in
+ * tempo) può risolversi *dopo* che una scansione della sessione nuova ha già ri-scoperto lo stesso
+ * `deviceId` fisico e stabilito una connessione reale e valida su quello slot. Senza questo
+ * controllo, il cleanup del tentativo vecchio cancellerebbe dalla mappa `connections` — e
+ * disconnetterebbe a livello nativo — la connessione nuova e legittima, solo perché condivide lo
+ * stesso `deviceId`. `connections.get(deviceId) === conn` è vero solo se questo è ancora lo slot
+ * "corrente" per quel device; se non lo è più, questa chiamata non tocca né la mappa né la
+ * connessione nativa — quel device è già gestito da un tentativo più recente.
+ */
+async function cleanupConnection(plugin, deviceId, conn) {
+  if (connections.get(deviceId) !== conn) return;
+  connections.delete(deviceId);
+  try {
+    await plugin.stopNotifications({ deviceId, service: RELAY_SERVICE_UUID, characteristic: RELAY_NOTIFY_CHARACTERISTIC_UUID });
   } catch {
     // best-effort
   }
@@ -187,121 +251,211 @@ async function cleanupFailedConnection(plugin, deviceId) {
   } catch {
     // best-effort
   }
+  renderRelayPeers();
+}
+
+/** Chiamata dal plugin quando una connessione cade inaspettatamente — stessa guardia di identità di cleanupConnection() (un callback legato a un tentativo di connessione ormai superato non deve mai cancellare lo slot di una connessione più recente sullo stesso deviceId). Il link nativo di *questa* connessione è già morto, nessun bisogno di richiamare stopNotifications()/disconnect() su di esso. */
+function handlePeerDisconnected(deviceId, conn) {
+  if (connections.get(deviceId) !== conn) return;
+  connections.delete(deviceId);
+  renderRelayPeers();
 }
 
 /**
- * Connects to a nearby Clip: scan -> connect -> subscribe to notifications -> send our own HELLO ->
- * wait for the Clip's HELLO to arrive and reassemble -> resolve with the Clip's node id.
- *
- * Handshake ordering (found wrong by code review in an earlier version of this file, which waited for
- * the Clip's HELLO *before* sending its own): both sides must send their HELLO independently, the same
- * way node/src/transports/simulated-link.ts's sendHelloOnce() does on each side of a connection —
- * never gated on hearing the other side first, or two peers that both wait to hear a HELLO before
- * sending one would deadlock forever. Notifications are subscribed (waitForPeerHello) before this
- * phone sends its own HELLO, so a fast reply is never missed.
- *
- * Cleanup on failure (also found missing by code review): once `plugin.connect()` succeeds, a real
- * native BLE connection exists regardless of what happens next. Every step after that point runs
- * inside a try/catch that tears the connection back down on any failure — otherwise a timed-out
- * handshake would leave a real connection open with no way for the UI to ever reach it again, since
- * `connectedDeviceId` (what disconnectFromClip() checks) is only set once the whole handshake
- * succeeds.
+ * Errore sentinella usato solo per abortire un `connectToPeer()` la cui sessione di relay è stata
+ * disattivata mentre era in corso — mai mostrato all'utente (chi chiama `.catch(() => {})` su
+ * `connectToPeer()` lo ignora comunque), serve solo a far scattare `cleanupConnection()` invece di
+ * lasciare una connessione nativa appesa. Vedi `connectToPeer()`'s controlli su `sessionId`.
  */
-async function connectToClip() {
-  const plugin = bleClipPlugin();
-  if (!plugin) throw new Error("Bluetooth non disponibile su questo dispositivo.");
-  if (connectedDeviceId) throw new Error("Già collegato a una Clip.");
+class RelaySessionEndedError extends Error {}
 
-  await plugin.initialize();
-  const deviceId = await scanForClip(plugin);
-  await plugin.connect({ deviceId }, () => {
-    // Called by the plugin on an unexpected disconnect — reset our local state so a stale
-    // "collegato" status is never shown once the physical link is actually gone.
-    if (connectedDeviceId === deviceId) {
-      connectedDeviceId = null;
-      setBleClipDisconnectedUi();
-      setBleClipStatus("Collegamento con la Clip interrotto.", true);
-    }
-  });
+/**
+ * Connette un device già riservato in `connections` (via reserveConnectionSlot()): connect ->
+ * sottoscrizione notifiche persistente -> invio del proprio HELLO -> attesa dell'HELLO del peer.
+ * Ordine handshake e cleanup-su-fallimento: stessa disciplina già stabilita nella voce #62 (invio
+ * indipendente, mai gated su sentire l'altro lato prima — altrimenti deadlock).
+ *
+ * `plugin.connect()` vive DENTRO il try/catch (non prima, come in una prima versione corretta dalla
+ * revisione) — altrimenti un fallimento del connect stesso (il caso più comune di tutti: il
+ * dispositivo è uscito dal raggio tra la scansione e il tentativo, radio occupata, timeout nativo)
+ * saltava `cleanupConnection()` per intero, lasciando lo slot riservato in `connections` per sempre
+ * — occupando per sempre un posto su `MAX_CONNECTIONS` senza mai una connessione reale dietro.
+ *
+ * `sessionId` (catturato da `handleScanResult()` al momento della riserva dello slot) è controllato
+ * dopo ogni `await`: se il relay è stato disattivato/riattivato nel frattempo (`relaySessionId` è
+ * cambiato — vedi `deactivateRelay()`), questa funzione abortisce invece di continuare a operare su
+ * stato di sessione ormai stale (`relaySessionNodeId`/`pendingQueue` potrebbero essere già stati
+ * azzerati) — trovato dalla revisione: senza questo controllo, una connessione ancora in corso al
+ * momento della disattivazione poteva sopravvivere al `connections.clear()` di
+ * `deactivateRelay()` (invisibile lì, quindi mai smontata da quel ciclo) e più tardi inviare un
+ * HELLO con `source: null`.
+ */
+async function connectToPeer(plugin, deviceId, sessionId) {
+  const conn = connections.get(deviceId);
+  if (!conn) return; // lo slot è stato rimosso nel frattempo — nulla da fare
 
   try {
-    const peerHelloPromise = waitForPeerHello(plugin, deviceId);
-    // Attach a handler immediately, before anything below can throw — found by code review: if
-    // sendFragmentedPacket() rejects (e.g. a GATT write failure), the code below never reaches
-    // `await peerHelloPromise`, but that promise's own HELLO_TIMEOUT_MS timer still fires later and
-    // rejects it with nothing attached, an unhandled rejection surfacing ~5s after the real error was
-    // already shown to the user. This no-op catch doesn't change what the `await` below sees or
-    // throws — a promise can have more than one handler.
-    peerHelloPromise.catch(() => {});
+    await plugin.connect({ deviceId }, () => handlePeerDisconnected(deviceId, conn));
+    if (sessionId !== relaySessionId) throw new RelaySessionEndedError();
 
-    myEphemeralNodeId = ephemeralPhoneNodeId();
-    await sendFragmentedPacket(plugin, deviceId, window.AraldBleLink.createHello(myEphemeralNodeId));
-    const peerNodeId = await peerHelloPromise;
-    connectedDeviceId = deviceId;
-    return peerNodeId;
+    await plugin.startNotifications(
+      { deviceId, service: RELAY_SERVICE_UUID, characteristic: RELAY_NOTIFY_CHARACTERISTIC_UUID },
+      (event) => handleNotification(plugin, deviceId, event),
+    );
+    if (sessionId !== relaySessionId) throw new RelaySessionEndedError();
+
+    const peerNodeId = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        conn.identifyResolvers = null;
+        reject(new Error("nessuna risposta HELLO in tempo"));
+      }, HELLO_TIMEOUT_MS);
+      conn.identifyResolvers = {
+        resolve: (id) => {
+          clearTimeout(timer);
+          resolve(id);
+        },
+        reject: (err) => {
+          clearTimeout(timer);
+          conn.identifyResolvers = null;
+          reject(err);
+        },
+      };
+      sendFragmentedPacket(plugin, deviceId, window.AraldBleLink.createHello(relaySessionNodeId)).catch((err) => {
+        if (conn.identifyResolvers) conn.identifyResolvers.reject(err);
+      });
+    });
+    if (sessionId !== relaySessionId) throw new RelaySessionEndedError();
+
+    flushPendingFor(plugin, deviceId, peerNodeId);
+    renderRelayPeers();
   } catch (err) {
-    await cleanupFailedConnection(plugin, deviceId);
+    await cleanupConnection(plugin, deviceId, conn);
     throw err;
   }
 }
 
-/**
- * `connectedDeviceId` is cleared only once `plugin.disconnect()` itself has actually succeeded — found
- * wrong by code review in an earlier version, which cleared it upfront: if `plugin.disconnect()` then
- * failed, the UI would already claim "disconnesso" while the native connection could still be alive,
- * a claim this code had no way to back up.
- */
-async function disconnectFromClip() {
-  const plugin = bleClipPlugin();
-  if (!plugin || !connectedDeviceId) return;
-  const deviceId = connectedDeviceId;
-  try {
-    await plugin.stopNotifications({ deviceId, service: CLIP_SERVICE_UUID, characteristic: CLIP_NOTIFY_CHARACTERISTIC_UUID });
-  } catch {
-    // best-effort only — still proceed to disconnect below even if this failed
-  }
-  await plugin.disconnect({ deviceId });
-  connectedDeviceId = null;
+/** Chiamata per ogni risultato di scansione — connette al device solo se il relay è ancora attivo, non è già (in via di) connessione, e c'è capacità libera. Riserva sincronamente lo slot prima di qualunque await, così due risultati di scansione ravvicinati per lo stesso device non possano mai avviare due tentativi di connessione paralleli. */
+function handleScanResult(plugin, sessionId, result) {
+  if (!relayActive || sessionId !== relaySessionId) return;
+  const deviceId = result.device.deviceId;
+  if (connections.has(deviceId)) return;
+  if (connections.size >= MAX_CONNECTIONS) return;
+  reserveConnectionSlot(deviceId);
+  renderRelayPeers();
+  connectToPeer(plugin, deviceId, sessionId).catch(() => {
+    // connectToPeer()/cleanupConnection() hanno già ripulito lo slot in caso di fallimento — una
+    // futura scansione può ritentare naturalmente, nessun'altra azione richiesta qui.
+  });
 }
 
-const bleClipPanel = document.getElementById("ble-clip-panel");
-if (bleClipPanel) {
-  // Feature-gated on the plugin's presence, not a server capability flag like every other
-  // conditional panel in this app (#location-registry-panel, #map-panel, ...) — there is no gateway
-  // involved in deciding whether Bluetooth is available, only this device's own runtime.
-  bleClipPanel.hidden = !bleClipPlugin();
+/**
+ * Emette una scansione per `sessionId`. Controlla `relaySessionId` subito dopo l'unico `await`
+ * prima della vera e propria `requestLEScan()` — trovato mancante dalla revisione (nonostante il
+ * commento su `relaySessionId` lo dichiarasse già fatto): senza questo controllo, una chiamata
+ * ormai superata (es. il refresh periodico di una sessione appena disattivata) poteva comunque
+ * eseguire `requestLEScan()` *dopo* che la sessione nuova aveva già registrato la propria
+ * scansione, sovrascrivendola con un callback legato alla sessione vecchia — ogni risultato futuro
+ * sarebbe arrivato con un `sessionId` scartato da `handleScanResult()`, lasciando la sessione nuova
+ * silenziosamente senza scoperta di nuovi peer fino al refresh periodico successivo.
+ */
+async function issueScan(plugin, sessionId) {
+  try {
+    await plugin.stopLEScan();
+  } catch {
+    // best-effort — va bene anche se non c'era nulla in corso
+  }
+  if (sessionId !== relaySessionId) return; // sessione già superata — non registrare una scansione che nessuno ascolterebbe più
+  try {
+    await plugin.requestLEScan({ services: [RELAY_SERVICE_UUID] }, (result) => handleScanResult(plugin, sessionId, result));
+  } catch {
+    // la scansione non è partita — il refresh periodico sotto ritenterà
+  }
+}
 
-  document.getElementById("ble-clip-connect-button").addEventListener("click", async () => {
-    const button = document.getElementById("ble-clip-connect-button");
-    button.disabled = true;
-    setBleClipStatus("Ricerca della tua Clip...", false);
+async function activateRelay() {
+  const plugin = bleRelayPlugin();
+  if (!plugin) throw new Error("Bluetooth non disponibile su questo dispositivo.");
+
+  relaySessionId += 1;
+  const sessionId = relaySessionId;
+  relaySessionNodeId = newRelaySessionNodeId();
+  seenCache = new window.AraldBleRelay.SeenCache();
+  pendingQueue = new window.AraldBleRelay.PendingRelayQueue();
+  connections = new Map();
+  relayActive = true;
+
+  await plugin.initialize();
+  if (sessionId !== relaySessionId) return; // disattivato/riattivato mentre initialize() era in corso — non avviare una scansione per una sessione già superata
+  await issueScan(plugin, sessionId);
+  scanRefreshTimer = setInterval(() => {
+    if (relayActive && sessionId === relaySessionId) issueScan(plugin, sessionId);
+  }, SCAN_REFRESH_INTERVAL_MS);
+}
+
+async function deactivateRelay() {
+  relayActive = false;
+  relaySessionId += 1; // invalida qualunque connectToPeer()/handleScanResult() ancora in corso per la sessione precedente
+  if (scanRefreshTimer) {
+    clearInterval(scanRefreshTimer);
+    scanRefreshTimer = null;
+  }
+
+  const plugin = bleRelayPlugin();
+  if (plugin) {
     try {
-      const peerNodeId = await connectToClip();
-      vibrate(15);
-      showToast("Collegato alla Clip", "wifi");
-      setBleClipConnectedUi(peerNodeId);
-    } catch (err) {
-      setBleClipStatus("Errore: " + err.message, true);
-    } finally {
-      button.disabled = false;
+      await plugin.stopLEScan();
+    } catch {
+      // best-effort
     }
-  });
+    for (const deviceId of [...connections.keys()]) {
+      try {
+        await plugin.stopNotifications({ deviceId, service: RELAY_SERVICE_UUID, characteristic: RELAY_NOTIFY_CHARACTERISTIC_UUID });
+      } catch {
+        // best-effort
+      }
+      try {
+        await plugin.disconnect({ deviceId });
+      } catch {
+        // best-effort
+      }
+    }
+  }
 
-  document.getElementById("ble-clip-disconnect-button").addEventListener("click", async () => {
-    const button = document.getElementById("ble-clip-disconnect-button");
-    button.disabled = true;
+  connections.clear();
+  seenCache = null;
+  pendingQueue = null;
+  relaySessionNodeId = null;
+}
+
+const bleRelayPanel = document.getElementById("ble-relay-panel");
+if (bleRelayPanel) {
+  // Feature-gated sulla presenza del plugin, non su una capability del gateway — stesso schema già
+  // usato nella voce #62.
+  bleRelayPanel.hidden = !bleRelayPlugin();
+
+  document.getElementById("ble-relay-toggle").addEventListener("click", async () => {
+    const toggle = document.getElementById("ble-relay-toggle");
+    toggle.disabled = true;
     try {
-      await disconnectFromClip();
-      setBleClipDisconnectedUi();
-      setBleClipStatus("Disconnesso dalla Clip.", false);
+      if (relayActive) {
+        await deactivateRelay();
+        setBleRelayStatus("Relay Bluetooth disattivato.", false);
+        toggle.textContent = "Attiva relay Bluetooth";
+        toggle.setAttribute("aria-pressed", "false");
+      } else {
+        await activateRelay();
+        setBleRelayStatus("Relay Bluetooth attivo — in cerca di dispositivi nelle vicinanze...", false);
+        toggle.textContent = "Disattiva relay Bluetooth";
+        toggle.setAttribute("aria-pressed", "true");
+        vibrate(15);
+        showToast("Relay Bluetooth attivo", "wifi");
+      }
+      renderRelayPeers();
     } catch (err) {
-      setBleClipStatus("Errore durante la disconnessione: " + err.message, true);
-      // Deliberately does NOT call setBleClipDisconnectedUi() here (found by code review): if
-      // plugin.disconnect() itself failed, connectedDeviceId is still set and the native connection
-      // may still be alive — switching the UI to "Collega" would claim a disconnection this code
-      // can't back up. The Disconnetti button stays visible so the user can retry.
+      relayActive = false; // l'attivazione è fallita — non deve restare bloccato come se fosse attivo
+      setBleRelayStatus("Errore: " + err.message, true);
     } finally {
-      button.disabled = false;
+      toggle.disabled = false;
     }
   });
 }

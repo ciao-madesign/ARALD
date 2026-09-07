@@ -184,15 +184,19 @@
     <!-- Nascosto finché window.Capacitor.Plugins.BluetoothLe non è disponibile (ble-client.js) — a
          differenza degli altri pannelli condizionali qui sopra, non dipende da una capability del
          gateway ma solo dal runtime di questo dispositivo: non ogni telefono/browser ha il plugin
-         Bluetooth, stesso degrado onesto applicato a un caso diverso. Collega attivamente il telefono
-         (ruolo centrale) a una ARALD Clip/Cover indossabile (docs/beacon.md) — mai una scoperta
-         passiva in background, per restare realisticamente supportabile anche su iPhone. -->
-    <div id="ble-clip-panel" class="panel" hidden>
-      <button type="button" id="ble-clip-connect-button" class="call-submit">
-        <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-wifi"></use></svg> Collega alla tua Clip via Bluetooth
+         Bluetooth, stesso degrado onesto applicato a un caso diverso. Un toggle, non un "collega a
+         una Clip specifica" (voce #62, sostituita da #63): da attivo, il telefono scopre e si
+         collega automaticamente a ogni dispositivo ARALD nei paraggi (Clip, altri relay), più
+         connessioni contemporanee, e relaya davvero pacchetti tra loro — "ogni nodo della mesh deve
+         poter fare da relay, compresi gli smartphone". Sempre e solo ruolo centrale (mai periferica,
+         per restare realisticamente supportabile anche su iPhone) — vedi mobile/README.md per
+         l'indagine sul lato periferica, annotata per un prossimo sviluppo, non ancora costruita. -->
+    <div id="ble-relay-panel" class="panel" hidden>
+      <button type="button" id="ble-relay-toggle" class="call-submit" aria-pressed="false">
+        <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-wifi"></use></svg> Attiva relay Bluetooth
       </button>
-      <button type="button" id="ble-clip-disconnect-button" class="link-button" hidden>Disconnetti dalla Clip</button>
-      <p id="ble-clip-status" class="muted" role="status" aria-live="polite"></p>
+      <p id="ble-relay-status" class="muted" role="status" aria-live="polite"></p>
+      <ul id="ble-relay-peers"></ul>
     </div>
 
     <div class="panels-grid">
@@ -382,13 +386,15 @@
 
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
-<!-- ble-link.js è un vero modulo ES (type="module", quindi implicitamente deferred) — l'unico in
-     questa pagina, per poter essere anche importato da tests/unit/ con vitest; espone
-     window.AraldBleLink come ponte verso ble-client.js sotto, uno script classico. Per non rischiare
-     che ble-client.js (non deferred) giri prima che il modulo abbia eseguito e popolato
-     window.AraldBleLink, ble-client.js accede a quell'oggetto solo dentro gestori di evento (mai a
-     livello di script) — per allora la pagina è certamente già caricata per intero. -->
+<!-- ble-link.js/ble-relay.js sono veri moduli ES (type="module", quindi implicitamente deferred) —
+     gli unici in questa pagina, per poter essere anche importati da tests/unit/ con vitest;
+     espongono rispettivamente window.AraldBleLink e window.AraldBleRelay come ponte verso
+     ble-client.js sotto, uno script classico. Per non rischiare che ble-client.js (non deferred) giri
+     prima che i moduli abbiano eseguito e popolato quegli oggetti, ble-client.js li usa solo dentro
+     gestori di evento (mai a livello di script) — per allora la pagina è certamente già caricata per
+     intero. -->
 <script type="module" src="ble-link.js"></script>
+<script type="module" src="ble-relay.js"></script>
 
 <!-- mapview.js prima di app.js: app.js chiama fetchMapInfo()/renderMapAvailability() (definite in
      mapview.js) in modo sincrono dal proprio codice di avvio (showDashboard() -> refreshAll(), per
