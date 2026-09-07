@@ -181,6 +181,20 @@
       </button>
     </div>
 
+    <!-- Nascosto finché window.Capacitor.Plugins.BluetoothLe non è disponibile (ble-client.js) — a
+         differenza degli altri pannelli condizionali qui sopra, non dipende da una capability del
+         gateway ma solo dal runtime di questo dispositivo: non ogni telefono/browser ha il plugin
+         Bluetooth, stesso degrado onesto applicato a un caso diverso. Collega attivamente il telefono
+         (ruolo centrale) a una ARALD Clip/Cover indossabile (docs/beacon.md) — mai una scoperta
+         passiva in background, per restare realisticamente supportabile anche su iPhone. -->
+    <div id="ble-clip-panel" class="panel" hidden>
+      <button type="button" id="ble-clip-connect-button" class="call-submit">
+        <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-wifi"></use></svg> Collega alla tua Clip via Bluetooth
+      </button>
+      <button type="button" id="ble-clip-disconnect-button" class="link-button" hidden>Disconnetti dalla Clip</button>
+      <p id="ble-clip-status" class="muted" role="status" aria-live="polite"></p>
+    </div>
+
     <div class="panels-grid">
       <details class="panel" id="content-panel">
         <summary>
@@ -368,11 +382,22 @@
 
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
+<!-- ble-link.js è un vero modulo ES (type="module", quindi implicitamente deferred) — l'unico in
+     questa pagina, per poter essere anche importato da tests/unit/ con vitest; espone
+     window.AraldBleLink come ponte verso ble-client.js sotto, uno script classico. Per non rischiare
+     che ble-client.js (non deferred) giri prima che il modulo abbia eseguito e popolato
+     window.AraldBleLink, ble-client.js accede a quell'oggetto solo dentro gestori di evento (mai a
+     livello di script) — per allora la pagina è certamente già caricata per intero. -->
+<script type="module" src="ble-link.js"></script>
+
 <!-- mapview.js prima di app.js: app.js chiama fetchMapInfo()/renderMapAvailability() (definite in
      mapview.js) in modo sincrono dal proprio codice di avvio (showDashboard() -> refreshAll(), per
      un dispositivo già paired) — se l'ordine fosse invertito, quella chiamata fallirebbe con un
      ReferenceError alla primissima apertura della dashboard. -->
 <script src="mapview.js"></script>
 <script src="app.js"></script>
+<!-- Dopo app.js: usa showToast()/vibrate(), definite lì come funzioni globali (nessun import
+     possibile, vedi il commento in cima a ble-client.js). -->
+<script src="ble-client.js"></script>
 </body>
 </html>
