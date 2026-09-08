@@ -91,6 +91,23 @@ Richiesta esplicita dell'utente — telefono↔telefono via Bluetooth **senza** 
 
 **Nessuna decisione presa, nessuna dipendenza aggiunta.** Prerequisito prima di pianificare l'implementazione: una sessione di planning dedicata con l'utente (stesso trattamento del candidato "Node Capabilities" in `docs/next-steps.md`), che scelga tra adottare il plugin (con i limiti sopra), investigare un plugin nativo scritto ad hoc, o una topologia alternativa (es. duty-cycle centrale/periferica alternato invece di ruolo doppio simultaneo).
 
+#### Design proposto (8 settembre 2026, seguito): switch evento-guidato, non un toggle a tempo fisso
+
+Discusso con l'utente dopo il punto sopra. Prima verifica richiesta esplicitamente dall'utente: **questo problema non riguarda Card/Clip/Fixed Relay**, per due motivi già nel codice/documentazione esistente, non nuovi — (1) la Card è sempre periferica verso il telefono (mai le serve iniziare una connessione BLE, il telefono centrale si connette a lei); (2) il traffico Card↔Card a lungo raggio usa **LoRa**, non BLE (`docs/beacon.md`, tabella dei profili operativi — "radio BLE (incluso Long Range) e LoRa a basso consumo"), e LoRa non ha l'asimmetria centrale/periferica di BLE. Il firmware della Card sarà scritto da zero (non userà questo plugin Capacitor), quindi anche un eventuale BLE Card↔Card ravvicinato non erediterebbe il limite del plugin — i chip BLE nudi supportano nativamente centrale+periferica insieme. Il problema resta specifico della combinazione smartphone + plugin Capacitor scelto.
+
+Scartato il duty-cycle a finestre fisse (troppa latenza di scoperta nel caso comune, in cui basta che un solo telefono sia "a riposo" perché l'altro lo trovi). Design sostituito con uno **evento-guidato basato su priorità di invio**, con un caso limite identificato e risolto esplicitamente — due telefoni entrambi con necessità di invio, unici l'uno per l'altro nel raggio: nessuno dei due è periferica finché non demorde, rischio di stallo prolungato (non un deadlock tecnico, ma lo stesso effetto pratico di interruzione mesh che l'utente vuole evitare) se il retry è simmetrico — risolto con backoff randomizzato (jitter), stesso principio del backoff usato nelle reti radio/CSMA per rompere la simmetria.
+
+**Decisioni prese con l'utente** (default fissati, nessuna verifica pratica possibile — nessun hardware/emulatore in questo ambiente):
+
+- **Trigger per passare a centrale**: qualunque necessità di invio locale, nessuna restrizione a `Priority.EMERGENCY` — decisione esplicita dell'utente ("ogni comunicazione fatta attraverso ARALD si suppone sia importante").
+- **A riposo (nessun invio in coda)**: sempre periferica — stato di default, discoverable.
+- **Necessità di invio**: passa a centrale, scansiona/connette; **accetta il drop delle connessioni periferica attive** — scelta esplicita dell'utente, non un bug da evitare.
+- **Invio riuscito / coda esaurita**: ritorno immediato e fisso a periferica — nessuna finestra residua in centrale.
+- **Nessun peer trovato**: finestra di tentativo in centrale di 8-10s, poi ritorno a periferica per un intervallo random **30-45s** (jitter, "meno frequente di 30s" per vincolo esplicito dell'utente — anche per non incappare in un eventuale throttling OS su scan/advertising ripetuti, non verificato qui) prima di ritentare centrale.
+- **Durata massima del ciclo di retry attivo**: limitata (proposta: 3-5 tentativi o ~3 minuti totali) — oltre, niente retry infinito: il messaggio resta nella coda passiva già esistente (`PendingRelayQueue` in `ble-relay.js`), consegnato quando un peer si connette spontaneamente mentre il telefono è a riposo/periferica — stesso principio di store-and-forward già in uso nel resto del progetto (`node/src/store-and-forward.ts`).
+
+**Ancora aperto, non deciso**: se e come gestire il caso "nessuna necessità di invio ma nessun peer periferica nei paraggi da tempo" (un telefono isolato che potrebbe voler fare uno sweep centrale opportunistico anche a riposo, per costruire relay preventivamente) — fuori dal problema posto dall'utente in questa sessione, segnalato solo per completezza. Implementazione (codice, test, gestione delle race condition dello switch con lo stesso pattern del contatore di sessione già in `ble-client.js`) non ancora iniziata: in attesa di ok esplicito, stesso workflow a doppio check di ogni voce precedente.
+
 ## Cosa manca ancora (Passo 2, `docs/next-steps.md` Opzione H)
 
 Il lato telefono di "Passo 2" (connettività Bluetooth centrale, incluso ora il relay vero — voci #62/#63) è fatto; resta il lato periferica (vedi sopra) e la verifica end-to-end contro hardware reale, bloccata sullo stesso prerequisito hardware dell'Opzione A.
