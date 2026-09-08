@@ -188,6 +188,8 @@ L'unica conseguenza pratica per la documentazione di questo progetto: i "Pilot" 
 
 ## Conformità normativa e sicurezza (UE)
 
+**Metodo di progettazione orientato alla conformità**: [`docs/compliance.md`](./compliance.md) (8 settembre 2026) è il documento dedicato al *come* progettare hardware/RF in modo da poter arrivare a una valutazione di conformità senza ridisegni sostanziali (PCB singolo, antenna come progetto RF, protocollo di test A-D, Technical File scaffoldato sotto `docs/compliance/`, Design Freeze, roadmap M0-M9) — complementare a questa sezione, che resta la fonte per il *quadro normativo* (RED/CE, ETSI, RoHS/RAEE).
+
 **Stato**: testo di riferimento fornito dall'utente lo stesso giorno — nessuna verifica indipendente delle citazioni normative specifiche in questa sessione (nessun accesso a internet reale, stessa limitazione già dichiarata altrove nel progetto per informazioni istituzionali/hardware non verificabili qui). Riguarda **tutti** i dispositivi radio di questo ecosistema (ARALD Card, Fixed Relay) qualora si arrivasse mai a una commercializzazione reale — nessuna implicazione per il codice o la documentazione tecnica esistente, che restano una simulazione software indipendente dal fatto che l'hardware finale sia mai certificato o meno.
 
 **Precisazione importante segnalata dall'utente**: per la commercializzazione nell'Unione Europea non basta usare un modulo radio già certificato — la conformità va valutata sul **dispositivo finale** e sulla sua **configurazione d'uso**, non sul solo componente radio.

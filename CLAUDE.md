@@ -28,6 +28,7 @@ Il piano d'insieme originario (milestone 0-20 + i follow-up post-audit) è compl
 | Storia feature-per-feature: cosa è stato costruito, perché, bug trovati dalla revisione (voci numerate #1-64+) | [`docs/security.md`](docs/security.md) |
 | Candidati aperti/non ancora pianificati | [`docs/next-steps.md`](docs/next-steps.md) |
 | Ecosistema ARALD Card (Beacon/Relay Mode), Fixed Relay, Relay Registry | [`docs/beacon.md`](docs/beacon.md) |
+| Metodo di progettazione hardware/RF orientato alla conformità (PCB, antenna, Technical File, Design Freeze, roadmap M0-M9) | [`docs/compliance.md`](docs/compliance.md) |
 | Roadmap di validazione sul campo, budget, partner, effetto di rete | [`docs/emergency-rescue-network.md`](docs/emergency-rescue-network.md) |
 | Protocollo di test tecnico (fasi 0-8, T-number, KPI) | [`docs/test-protocol.md`](docs/test-protocol.md) |
 | Emergency Portal (`arald-backend/`, `local-portal/`, `mirror-portal/`) | [`docs/emergency-portal.md`](docs/emergency-portal.md) |
