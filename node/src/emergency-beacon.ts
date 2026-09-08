@@ -1,8 +1,24 @@
 import { BoundedFifoMap } from "./bounded-map.js";
 import type { EncryptedPayload } from "./encryption.js";
 
-/** A short, free-text status message accompanying a SOS (e.g. "gamba rotta, non posso camminare") — distinct from `Drop`'s `text`, which is a public notice, not an emergency signal; optional, same bound as any other short free-text field in this codebase. */
-export const MAX_BEACON_MESSAGE_LENGTH = 200;
+/**
+ * A free-text status message accompanying a SOS (e.g. "gamba rotta, non posso camminare, siamo in
+ * due") — distinct from `Drop`'s `text`, which is a public notice, not an emergency signal; optional.
+ *
+ * Same value as `message-history.ts`'s `MAX_MESSAGE_TEXT_LENGTH` (the canonical "long free text"
+ * bound already used for 1:1/channel messages), not this project's shorter labels — raised from an
+ * original 200 (`docs/security.md` voce #65): a phone-originated SOS (`mobile/www/ble-sos.js`) needs
+ * room for an actual description of the situation, not just a terse status word, and this bound is
+ * shared by every originator (Card included, `docs/beacon.md`) rather than split per-originator — a
+ * message accepted by `extractEmergencyBeaconPayload()` below but rejected by a phone's own
+ * client-side check (or vice versa) would be strictly worse than one shared limit: a longer message
+ * that verifies and signs fine but then silently fails to produce a sighting on every real Emergency
+ * Node it reaches (`considerEmergencyBeacon()`, `node.ts`) is worse than never having sent it at all.
+ * 4000 bytes of UTF-8 text still comfortably fragments over BLE/LoRa's own MTU-based
+ * fragmentation/reassembly (`transports/simulated-link.ts`) exactly like any other multi-fragment
+ * packet already does — nothing about this bound assumes a beacon fits in one physical radio frame.
+ */
+export const MAX_BEACON_MESSAGE_LENGTH = 4000;
 
 /**
  * Fixed, exact `ContentMetadata.name` an emergency beacon is published
