@@ -1,5 +1,8 @@
+import { redirect } from "next/navigation";
+import { auth } from "@/auth";
 import { getMirrorSnapshot, type MirrorSectionError, type MirrorSnapshot } from "../lib/db";
 import { beaconMessage, dropKind, formatCoords, nodeDisplayName, relayOnline, relayType } from "../lib/format";
+import { LogoutButton } from "./LogoutButton";
 
 // Never statically cached — a mirror whose whole point is showing what arald-backend/sync.ts most
 // recently wrote would be actively misleading if Vercel served a stale build-time snapshot instead of
@@ -17,9 +20,19 @@ function sectionError(errors: MirrorSectionError[], section: MirrorSectionError[
 }
 
 export default async function HomePage(): Promise<JSX.Element> {
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+
+  // An Admin (organizationId === null) sees every organization's data — undefined tells
+  // getMirrorSnapshot()/organizationFilterClause() to apply no filter at all. An Operatore always has
+  // organizationId set (enforced by the users table's operatore_requires_org CHECK constraint), but this
+  // stays defensive rather than asserting it — a null here degrades to "sees nothing" via an empty-string
+  // filter that matches no node, never to "sees everything" the way an admin does.
+  const organizationId = session.user.role === "admin" ? undefined : session.user.organizationId ?? "";
+
   let snapshot: MirrorSnapshot;
   try {
-    snapshot = await getMirrorSnapshot();
+    snapshot = await getMirrorSnapshot(organizationId);
   } catch (err) {
     // getMirrorSnapshot() itself never throws for an expected failure (a missing DATABASE_URL or one
     // failing query both surface as snapshot.errors instead) — this is a last-resort net for a truly
@@ -38,7 +51,16 @@ export default async function HomePage(): Promise<JSX.Element> {
   return (
     <main>
       <header>
-        <h1>ARALD — Specchio Emergency Portal</h1>
+        <div className="row">
+          <h1>ARALD — Specchio Emergency Portal</h1>
+          <div className="header-account">
+            <span className="muted">
+              {session.user.email} · {session.user.role === "admin" ? "Admin ARALD" : "Operatore"}
+            </span>
+            {session.user.role === "admin" && <a href="/admin">Pannello Admin</a>}
+            <LogoutButton />
+          </div>
+        </div>
         <p className="muted">
           Vista di sola lettura, sincronizzata periodicamente da un ARALD Box (<code>arald-backend/sync.ts</code>). Il
           portale operativo vero gira sul Box stesso via LAN — questo è solo uno specchio per la gestione ordinaria da

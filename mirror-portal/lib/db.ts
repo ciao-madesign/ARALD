@@ -16,7 +16,7 @@ import { Pool } from "pg";
 
 let pool: Pool | undefined;
 
-function getPool(): Pool {
+export function getPool(): Pool {
   if (pool) return pool;
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
@@ -94,23 +94,67 @@ function asFiniteNumber(value: unknown): number | undefined {
 }
 
 /**
+ * Builds the (optional) organization filter shared by every query below —
+ * pulled out as its own pure function so the SQL-shape/param-position logic
+ * is testable without a `pg.Pool` at all. `organizationId` set (an Operatore
+ * session, `lib/auth.ts`) restricts to nodes registered to that organization
+ * via the `nodes` table (`lib/auth-db.ts`); `undefined` (an Admin session, or
+ * no session filtering applied) means no clause at all — an Admin sees every
+ * row, including ones from a node never assigned to any organization, which
+ * is deliberate: those are exactly the ones an Admin needs to see in order
+ * to assign them (`app/admin/`).
+ *
+ * `paramIndex` is always 1 today (the filter, when present, is always the
+ * first bound parameter of its query) — kept as a parameter rather than a
+ * hardcoded `$1` so a future caller that needs another parameter ahead of
+ * this one doesn't have to remember to renumber this function's innards too.
+ *
+ * Only `undefined` means "no filter" — an empty string still builds an
+ * active (if useless) clause rather than being treated the same as
+ * `undefined`. This matters for fail-closed safety: `app/page.tsx` passes
+ * `session.user.organizationId ?? ""` as a defensive fallback for an
+ * Operatore session that somehow has no organization; that fallback must
+ * degrade to "matches no real node" (an organization id is never an empty
+ * string in practice — every real one comes from `randomUUID()`), never to
+ * "no filter at all", which would silently grant that session an Admin's
+ * full-mesh view.
+ */
+export function organizationFilterClause(
+  organizationId: string | undefined,
+  paramIndex: number,
+): { clause: string; params: unknown[] } {
+  if (organizationId === undefined) return { clause: "", params: [] };
+  return {
+    clause: `WHERE node_url IN (SELECT node_url FROM nodes WHERE organization_id = $${paramIndex})`,
+    params: [organizationId],
+  };
+}
+
+/**
  * One row per distinct `node_url`, its most recent status snapshot only —
  * `node_status_snapshots` is append-only (a point-in-time status has no
  * natural id to upsert against, `postgres-sync.ts`'s own doc comment), so
  * without `DISTINCT ON` this would show every historical snapshot ever
  * synced instead of "what does each node look like right now".
  */
-async function queryLatestNodeStatus(db: Pool): Promise<NodeStatusRow[]> {
+async function queryLatestNodeStatus(db: Pool, organizationId?: string): Promise<NodeStatusRow[]> {
+  const filter = organizationFilterClause(organizationId, 1);
   const res = await db.query(
     `SELECT DISTINCT ON (node_url) node_url, node_id, data, synced_at
      FROM node_status_snapshots
+     ${filter.clause}
      ORDER BY node_url, synced_at DESC`,
+    filter.params,
   );
   return res.rows.map((r) => ({ nodeUrl: r.node_url, nodeId: r.node_id, data: asRecord(r.data), syncedAt: r.synced_at }));
 }
 
-async function queryRelays(db: Pool): Promise<RelayRow[]> {
-  const res = await db.query(`SELECT relay_id, node_url, data, synced_at FROM relays ORDER BY synced_at DESC`);
+async function queryRelays(db: Pool, organizationId?: string): Promise<RelayRow[]> {
+  const filter = organizationFilterClause(organizationId, 1);
+  const res = await db.query(
+    `SELECT relay_id, node_url, data, synced_at FROM relays ${filter.clause} ORDER BY synced_at DESC`,
+    filter.params,
+  );
   return res.rows.map((r) => ({ relayId: r.relay_id, nodeUrl: r.node_url, data: asRecord(r.data), syncedAt: r.synced_at }));
 }
 
@@ -137,17 +181,24 @@ export function rankByEventTimestamp<T extends { data: Record<string, unknown> }
   return [...rows].sort((a, b) => eventTimestamp(b.data) - eventTimestamp(a.data)).slice(0, RECENT_LIST_LIMIT);
 }
 
-async function queryRecentBeacons(db: Pool): Promise<BeaconRow[]> {
+async function queryRecentBeacons(db: Pool, organizationId?: string): Promise<BeaconRow[]> {
+  const filter = organizationFilterClause(organizationId, 1);
   const res = await db.query(
-    `SELECT beacon_content_id, node_url, data, synced_at FROM emergency_beacons ORDER BY synced_at DESC LIMIT $1`,
-    [SQL_FETCH_CAP],
+    `SELECT beacon_content_id, node_url, data, synced_at FROM emergency_beacons ${filter.clause}
+     ORDER BY synced_at DESC LIMIT $${filter.params.length + 1}`,
+    [...filter.params, SQL_FETCH_CAP],
   );
   const rows = res.rows.map((r) => ({ beaconContentId: r.beacon_content_id, nodeUrl: r.node_url, data: asRecord(r.data), syncedAt: r.synced_at }));
   return rankByEventTimestamp(rows);
 }
 
-async function queryRecentDrops(db: Pool): Promise<DropRow[]> {
-  const res = await db.query(`SELECT drop_id, node_url, data, synced_at FROM drops ORDER BY synced_at DESC LIMIT $1`, [SQL_FETCH_CAP]);
+async function queryRecentDrops(db: Pool, organizationId?: string): Promise<DropRow[]> {
+  const filter = organizationFilterClause(organizationId, 1);
+  const res = await db.query(
+    `SELECT drop_id, node_url, data, synced_at FROM drops ${filter.clause}
+     ORDER BY synced_at DESC LIMIT $${filter.params.length + 1}`,
+    [...filter.params, SQL_FETCH_CAP],
+  );
   const rows = res.rows.map((r) => ({ dropId: r.drop_id, nodeUrl: r.node_url, data: asRecord(r.data), syncedAt: r.synced_at }));
   return rankByEventTimestamp(rows);
 }
@@ -195,7 +246,14 @@ export function assembleSnapshot(results: {
   };
 }
 
-export async function getMirrorSnapshot(): Promise<MirrorSnapshot> {
+/**
+ * `organizationId` set restricts every section to that organization's nodes
+ * (an Operatore session, `lib/auth.ts`'s `session.user.organizationId`);
+ * `undefined` (an Admin session) applies no filter at all — see
+ * `organizationFilterClause()`'s doc comment above for why an Admin seeing
+ * unassigned nodes too is deliberate, not an oversight.
+ */
+export async function getMirrorSnapshot(organizationId?: string): Promise<MirrorSnapshot> {
   let db: Pool;
   try {
     db = getPool();
@@ -204,10 +262,10 @@ export async function getMirrorSnapshot(): Promise<MirrorSnapshot> {
   }
 
   const [nodes, relays, beacons, drops] = await Promise.allSettled([
-    queryLatestNodeStatus(db),
-    queryRelays(db),
-    queryRecentBeacons(db),
-    queryRecentDrops(db),
+    queryLatestNodeStatus(db, organizationId),
+    queryRelays(db, organizationId),
+    queryRecentBeacons(db, organizationId),
+    queryRecentDrops(db, organizationId),
   ]);
 
   return assembleSnapshot({ nodes, relays, beacons, drops });
