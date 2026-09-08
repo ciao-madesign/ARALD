@@ -159,6 +159,10 @@ Il pezzo davvero nuovo era il **Relay Registry**, che non aveva un equivalente n
 - La scelta reale dei punti di installazione lungo sentieri/vie ferrate/rifugi — decisione operativa sul campo, non software.
 - Qualunque validazione di copertura radio reale (BLE Long Range/LoRa su un percorso montano) — misurabile solo con hardware e un dispiegamento reale.
 
+### Telemetria batteria e comando di riavvio remoto — fatto
+
+`docs/security.md` voce #64 per il dettaglio tecnico completo. Su richiesta esplicita dell'utente: i relay ora riportano periodicamente la propria batteria (auto-dichiarata, spec §51, stesso valore già usato da `RelayPolicy` per la decisione di relay) tramite la stessa mesh, visibile come badge nel pannello Relay dell'app mobile; un operatore autenticato può inviare un comando di riavvio remoto (gated su `TrustLevel.ADMIN`, il livello più severo del codebase, protetto da replay). **Aggiornamento software/firmware da remoto è stato valutato ed esplicitamente escluso dall'utente** — resta il pezzo a rischio più alto mai considerato per questo ecosistema, e per ora un relay si aggiorna solo con un operatore fisicamente collegato all'hardware.
+
 ---
 
 ## Ambito di applicazione: oltre il rifugio alpino
