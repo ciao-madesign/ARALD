@@ -143,6 +143,16 @@ Scenario: Internet e rete cellulare assenti, alcuni nodi spenti, alcuni nodi mob
 
 Metriche da raccogliere (vedi anche §76-79): tempo di discovery, percentuale di messaggi consegnati, percentuale di contenuti disponibili, tempo di sincronizzazione tra segmenti, consumo batteria, traffico generato, numero medio di hop.
 
+## Pilot: ONG e missioni umanitarie (§6.7, aree rurali/comunità isolate — proposta esterna dell'utente, 7 settembre 2026)
+
+Pari dignità con rifugio alpino ed emergenza, non un caso secondario: la proprietà che conta (connettività assente/intermittente/costosa) è identica, cambia solo il contesto operativo — una base ONG invece di un rifugio, un'area rurale o un campo temporaneo invece di una montagna.
+
+Configurazione target, stesso schema del pilot rifugio: 1 ARALD Box/Portable alla base come server locale e punto di sincronizzazione (contenuti pesanti, AI locale, storage — nessun servizio nuovo rispetto a quanto già esiste in `gateway/nomad/`); Fixed/Mobile Relay per estendere la copertura verso villaggi/cliniche/scuole dell'area, con la stessa logica store-and-forward già verificata per il rifugio (un operatore che si sposta tra i siti sincronizza semplicemente riconnettendosi alla base, nessun meccanismo dedicato necessario); ARALD Card/smartphone come terminali sul campo per gli operatori.
+
+Contenuti/servizi tipici, tutti già coperti da funzionalità generali della mesh: bacheca (`drops.ts`) per segnalazioni/avvisi locali, canali pubblici/gruppi cifrati per il coordinamento tra team, `service://translation` per la comunicazione con la popolazione locale, mappe offline (`map-tiles.ts`) per l'orientamento sul territorio, contenuti statici (documentazione, protocolli, materiale formativo) via `content://`.
+
+**Limite dichiarato onestamente**: domini applicativi verticali menzionati in proposte esterne (cartelle sanitarie strutturate, gestione inventario/logistica, registrazione strutturata di richieste) non hanno oggi alcun servizio dedicato in questo repository — sarebbero nuovi `service://...`/schemi di contenuto da progettare come lavoro futuro, non un'estensione automatica di ciò che esiste. Il substrato di rete (routing, store-and-forward, cifratura, trust) è lo stesso indipendentemente dal dominio applicativo sopra; costruire quei servizi resta un candidato non pianificato.
+
 ## Pilot: eventi affollati (§6.4)
 
 A differenza di rifugio ed emergenza, qui la mesh **non sostituisce** la connettività ma la **moltiplica**: lo scenario presuppone un gateway con accesso a Internet reale (spec: "Nodi collegati a Internet + rete locale distribuita"), usato per raggiungere in scala migliaia di dispositivi su un sito con copertura cellulare probabilmente satura, non per sopravvivere alla sua assenza. È il caso d'uso più vicino a ciò che ARALD fa già bene senza modifiche: contenuto statico pubblicato una volta e replicato via `CONTENT_ANNOUNCE` (voce #34) o canali pubblici (voce #40), letto da un numero di client molto più alto (migliaia, non decine) ma per una durata breve (la durata dell'evento, non un deployment permanente).

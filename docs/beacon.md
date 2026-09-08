@@ -159,6 +159,10 @@ Il pezzo davvero nuovo era il **Relay Registry**, che non aveva un equivalente n
 - La scelta reale dei punti di installazione lungo sentieri/vie ferrate/rifugi — decisione operativa sul campo, non software.
 - Qualunque validazione di copertura radio reale (BLE Long Range/LoRa su un percorso montano) — misurabile solo con hardware e un dispiegamento reale.
 
+### Telemetria batteria e comando di riavvio remoto — fatto
+
+`docs/security.md` voce #64 per il dettaglio tecnico completo. Su richiesta esplicita dell'utente: i relay ora riportano periodicamente la propria batteria (auto-dichiarata, spec §51, stesso valore già usato da `RelayPolicy` per la decisione di relay) tramite la stessa mesh, visibile come badge nel pannello Relay dell'app mobile; un operatore autenticato può inviare un comando di riavvio remoto (gated su `TrustLevel.ADMIN`, il livello più severo del codebase, protetto da replay). **Aggiornamento software/firmware da remoto è stato valutato ed esplicitamente escluso dall'utente** — resta il pezzo a rischio più alto mai considerato per questo ecosistema, e per ora un relay si aggiorna solo con un operatore fisicamente collegato all'hardware.
+
 ---
 
 ## Ambito di applicazione: oltre il rifugio alpino
@@ -183,6 +187,8 @@ L'unica conseguenza pratica per la documentazione di questo progetto: i "Pilot" 
 ---
 
 ## Conformità normativa e sicurezza (UE)
+
+**Metodo di progettazione orientato alla conformità**: [`docs/compliance.md`](./compliance.md) (8 settembre 2026) è il documento dedicato al *come* progettare hardware/RF in modo da poter arrivare a una valutazione di conformità senza ridisegni sostanziali (PCB singolo, antenna come progetto RF, protocollo di test A-D, Technical File scaffoldato sotto `docs/compliance/`, Design Freeze, roadmap M0-M9) — complementare a questa sezione, che resta la fonte per il *quadro normativo* (RED/CE, ETSI, RoHS/RAEE).
 
 **Stato**: testo di riferimento fornito dall'utente lo stesso giorno — nessuna verifica indipendente delle citazioni normative specifiche in questa sessione (nessun accesso a internet reale, stessa limitazione già dichiarata altrove nel progetto per informazioni istituzionali/hardware non verificabili qui). Riguarda **tutti** i dispositivi radio di questo ecosistema (ARALD Card, Fixed Relay) qualora si arrivasse mai a una commercializzazione reale — nessuna implicazione per il codice o la documentazione tecnica esistente, che restano una simulazione software indipendente dal fatto che l'hardware finale sia mai certificato o meno.
 
