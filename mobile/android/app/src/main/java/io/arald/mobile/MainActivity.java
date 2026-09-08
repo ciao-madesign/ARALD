@@ -1,4 +1,4 @@
-package net.nomadnet.mobile;
+package io.arald.mobile;
 
 import com.getcapacitor.BridgeActivity;
 

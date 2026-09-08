@@ -2,6 +2,25 @@
 
 Riferimento completo: [`SPECIFICATION.md`](./SPECIFICATION.md) §1-10, §37-40, §75, §98-99.
 
+## Posizionamento: tre assi concettuali (Connectivity / Compute / Services)
+
+Una lettura utile di ciò che segue, non un'architettura aggiuntiva: i componenti di questo repository si dividono lungo tre assi ortogonali, che possono crescere indipendentemente sullo stesso nodo.
+
+```
+CONNECTIVITY   come un nodo raggiunge un altro nodo
+               node/src/transport.ts + transports/{tcp,ble,lora,lora-serial}.ts
+
+COMPUTE        quanta capacità di elaborazione/storage ha quel nodo
+               da un ARALD Card (solo radio) a un ARALD Box/Portable con Docker+AI locale
+
+SERVICES       cosa quel nodo può offrire alla mesh, dato ciò che ha
+               node/src/service.ts + gateway/nomad/*.ts (service://ai, service://kiwix-search, ...)
+```
+
+Un ARALD Card è quasi solo Connectivity. Un ARALD Box può essere Connectivity + Compute + Services sullo stesso dispositivo. Nessuno dei tre assi impone gli altri: un nodo con ottima radio e poco calcolo è un buon Relay, uno con calcolo importante e radio modesta è un buon nodo Compute/Service — il protocollo non forza a scalare i tre assi insieme (spec §7, §99). Questa lettura non introduce nulla di nuovo nel codice: è solo il modo in cui la documentazione di deployment (`docs/deployment.md`, `docs/beacon.md`) e gli ambienti di validazione (rifugio alpino, emergenza, missioni umanitarie — pari dignità tra loro) si mappano su ciò che esiste già.
+
+Un'estensione **non ancora costruita** di questo posizionamento — un nodo che annuncia le proprie capacità (Connectivity/Compute/Services disponibili) così che il routing possa scegliere non solo "quale nodo è più vicino" ma anche "quale nodo può fare X" — è un candidato aperto, non pianificato: vedi `docs/next-steps.md`, "Node Capabilities".
+
 ## Livelli
 
 ```
