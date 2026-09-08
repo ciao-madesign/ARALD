@@ -1,35 +1,55 @@
 # ARALD
 
-A distributed, content-centric, delay-tolerant network for places where connectivity is absent, intermittent, costly, or unreliable.
+**A network that works where the internet doesn't.**
 
-ARALD lets mobile devices and edge nodes share communications, content, and services without any Internet infrastructure — local mesh networks, store-and-forward, opportunistic caching, distributed replication, and intermittent Internet gateways — syncing automatically once an external connection becomes available. Mountain shelters, emergency/disaster response, and NGO/humanitarian field operations are its three primary validation environments — peers, not a hierarchy: the same architecture (Card/Relay/Box/Portable, store-and-forward, mesh routing) applies unchanged to any context where reliable connectivity can't be assumed, from an alpine hut to a rural clinic to a relief camp (see [`docs/deployment.md`](docs/deployment.md) for pilots and [`docs/beacon.md`](docs/beacon.md) for the wider scope beyond the alpine case).
+ARALD lets phones, small radio devices, and local computers share content, messages, and services directly with each other — no cell towers, no Wi-Fi router, no satellite link. Requests hop from device to device until they reach an answer, and sync automatically the moment a connection becomes available.
 
 ```
 GET content://wikipedia/italy
 ```
 
-Users never need to know which device holds a piece of content, how many hops away it is, or whether it's reachable right now: the network figures that out on its own.
+You never need to know which device holds a piece of content, how many hops away it is, or whether it's reachable right now — the network figures that out on its own.
 
-The name comes from *araldo* — a herald, the messenger who carries word to the next stop — a fitting image for a store-and-forward network where every node can end up carrying a message further along.
+New here? Start with **[What ARALD Is, and Why](docs/overview.md)** and **[How ARALD Works](docs/how-it-works.md)** — five minutes, no technical background needed.
+
+## Where it works
+
+Three environments have driven ARALD's design so far — equally important, not a hierarchy:
+
+- **⛰️ Mountain shelters and remote huts**
+- **🚨 Emergency and disaster response**
+- **🤝 NGOs and humanitarian operations**
+
+The same architecture applies without changes anywhere reliable connectivity can't be assumed: ships and islands, expeditions, rural communities, forests, deserts, crowded events, schools, and temporary or crisis infrastructure. See [`docs/overview.md`](docs/overview.md) for the full list and [`docs/deployment.md`](docs/deployment.md) for concrete deployment scenarios.
+
+## Project status
+
+A working software prototype, not a mockup: core networking (identity, routing, encryption, store-and-forward, content caching) runs today over real local networks and is covered by automated tests. Radio transports and higher-level features (chat, an SOS beacon, local search/AI services) are built and tested in software; the physical radio devices (ARALD Card/Relay) haven't been manufactured yet. See [How ARALD Works](docs/how-it-works.md#whats-real-today) for the plain-language summary, or [`docs/roadmap.md`](docs/roadmap.md) for full technical milestone tracking.
 
 ## Documentation
 
+**Start here, no code required:**
+
+- [`docs/overview.md`](docs/overview.md) — what ARALD is, why it exists, where it's used.
+- [`docs/how-it-works.md`](docs/how-it-works.md) — the mechanism, the device family, current status.
+
+**Technical documentation** (for contributors and developers):
+
 - [`docs/SPECIFICATION.md`](docs/SPECIFICATION.md) — full design specification (single source of truth)
-- [`docs/reuse-vs-new.md`](docs/reuse-vs-new.md) — what's reused from Project NOMAD / BitChat / other prior art, with license review, and what's built from scratch
 - [`docs/architecture.md`](docs/architecture.md) — layered architecture, component roles
 - [`docs/protocol.md`](docs/protocol.md) — packet format, message types, content IDs
 - [`docs/transport.md`](docs/transport.md) — transport abstraction, TCP/BLE/LoRa, iOS/Android constraints
-- [`docs/security.md`](docs/security.md) — identity, content integrity, what's still missing
+- [`docs/security.md`](docs/security.md) — identity, content integrity, full feature-by-feature build history
 - [`docs/development.md`](docs/development.md) — how to build, run, and test
-- [`docs/deployment.md`](docs/deployment.md) — target deployment scenarios: mountain shelter, emergency/disaster response, and NGO/humanitarian field operations, plus events, schools, and expeditions
-- [`docs/beacon.md`](docs/beacon.md) — the ARALD Card: a single radio device (credit-card form factor) that unifies Beacon and Emergency Relay roles into three firmware profiles (Beacon/Relay/Beacon+Relay Mode), plus Fixed Relay/Relay Registry and a note on EU regulatory compliance (RED, ETSI EN 300 328/300 220, CE) for a possible future commercial release — the **physical device** remains a proposal (no hardware built), but the **network logic** behind all three profiles is implemented and tested (`docs/security.md` entries #54-56: Relay Registry, courier profile, Beacon SOS)
-- [`docs/emergency-rescue-network.md`](docs/emergency-rescue-network.md) — ARALD Emergency & Rescue Network: a phased validation roadmap (prototype, micro pilot, field pilot), network-effect/density considerations and participation levels, and possible field partners for the Beacon/Relay ecosystem — reference documentation, no code or hardware
-- [`docs/test-protocol.md`](docs/test-protocol.md) — a technical test/validation protocol across phases 0-8 (Box/Portable/Card/Smartphone progression, numbered tests, KPIs, PASS/CONDITIONAL/FAIL criteria) — a complementary axis to `emergency-rescue-network.md` (technical scale here, budget/partners there), reference documentation
-- [`docs/emergency-portal.md`](docs/emergency-portal.md) — architecture for a web **Emergency Portal**: the operator dashboard runs locally on the ARALD Box/PC+Portable itself (LAN-only, no Internet dependency), with an Internet-hosted mirror (Vercel + Neon) for ordinary remote management — evaluated against the mesh mechanisms that already exist. Two real pieces built so far: `arald-backend/`, a one-shot sync script verified against a live Postgres database on Neon (Box → mirror), and `local-portal/`, a static server that serves the existing `mobile/www/` dashboard directly from the Box over the LAN, pre-configured to pair with the node automatically
+- [`docs/deployment.md`](docs/deployment.md) — deployment scenarios: mountain shelter, emergency/disaster response, NGO/humanitarian operations, plus events, schools, and expeditions
+- [`docs/beacon.md`](docs/beacon.md) — the ARALD Card, Fixed Relay, and Relay Registry: device design and the network logic behind them (implemented and tested; physical hardware not yet built)
+- [`docs/emergency-rescue-network.md`](docs/emergency-rescue-network.md) — phased field-validation roadmap, network-effect considerations, possible field partners
+- [`docs/test-protocol.md`](docs/test-protocol.md) — technical test/validation protocol across phases 0-8
+- [`docs/emergency-portal.md`](docs/emergency-portal.md) — the Emergency Portal: a local operator dashboard with a read-only internet-hosted mirror for remote management
 - [`docs/roadmap.md`](docs/roadmap.md) — milestone status
-- [`docs/next-steps.md`](docs/next-steps.md) — concrete action plans for candidate next-step milestones
-- [`docs/audit-report.html`](docs/audit-report.html) — a plain-language project verification report (tests, security, next steps), updated with every new pass
-- [`docs/due-diligence-naming-2026-09-04.md`](docs/due-diligence-naming-2026-09-04.md) — the naming/licensing/trademark due-diligence report behind the "Nomad-Net" → "ARALD" rename (in Italian)
+- [`docs/next-steps.md`](docs/next-steps.md) — open candidates for future work
+- [`docs/reuse-vs-new.md`](docs/reuse-vs-new.md) — what's reused from prior art (with license review) vs. built from scratch
+- [`docs/due-diligence-naming-2026-09-04.md`](docs/due-diligence-naming-2026-09-04.md) — the naming/licensing/trademark review behind the "Nomad-Net" → "ARALD" rename (in Italian)
 
 ## About the name
 
@@ -38,24 +58,7 @@ This project was previously developed under the working name "Nomad-Net". It has
 - **[Project N.O.M.A.D.](https://github.com/Crosstalk-Solutions/project-nomad)** (Crosstalk Solutions LLC, Apache-2.0) — an offline-first knowledge/education server. ARALD's `gateway/nomad/` module can optionally talk to a Project NOMAD instance over plain HTTP (Kiwix, Ollama, and similar services it can expose), the same way it can talk to any other locally reachable service — no Project NOMAD source code is included in or derived from this repository.
 - **[NomadNet](https://github.com/markqvist/NomadNet)** (Mark Qvist, GPL-3.0), built on **[Reticulum](https://github.com/markqvist/Reticulum)** and **[LXMF](https://github.com/markqvist/LXMF)** (Mark Qvist, modified MIT) — an off-grid encrypted mesh communications platform. No code from any of these three projects is used here; see [`docs/reuse-vs-new.md`](docs/reuse-vs-new.md) for the full review.
 
-See [`docs/reuse-vs-new.md`](docs/reuse-vs-new.md) for the complete third-party review: what's reused (with attribution and license), what's mocked/interfaced against, and what's original to this project.
-
-## Project status
-
-A software prototype with roadmap Milestones 0-7, 12, 13, 15, 16, 20 complete: per-node cryptographic identity, a packet protocol with TTL and deduplication, TCP transport, multi-hop routing (controlled flooding plus distance-vector cost-based routing for unicast traffic), content discovery and caching, store-and-forward, catalog sync between reconnected network segments, content signing, trust levels, rate limiting, end-to-end encryption for private messages, battery/charge-aware relay policy, and a scale simulator — all demonstrated on a real local network (TCP), no Internet required.
-
-Following a full technical audit (see [`docs/audit-report.html`](docs/audit-report.html)), a long series of features were added — full detail in [`docs/security.md`](docs/security.md): content-provider retry, a shared bounded data structure, trust-weighted eviction, real priority-based scheduling, `CONTENT_NOT_FOUND` + content expiry, service discovery, a local web status/search interface (`node/src/web-ui.ts`), a **simulated** BLE transport (no real radio), a **mocked** third-party gateway with sub-services for Kiwix search, a local AI model, and a news feed (against local fake servers), a **mobile app** (`mobile/`, Capacitor) pairing with a gateway Wi-Fi-style (network name + password, also via QR code), and a search-engine-style mobile dashboard with quick links to available services. Everything is covered by repeated automated tests and multiple code-review passes (real bugs found and fixed at every step, documented in `docs/security.md`).
-
-Since that pass, a large amount of additional application logic has shipped, also fully covered by tests and code review — see [`docs/security.md`](docs/security.md) for entry-by-entry detail:
-
-- **Messaging and location** (all of "Option J"): 1:1 chat, unencrypted public channels, end-to-end encrypted private/group chat, and opt-in opportunistic location sharing through a dedicated registry node.
-- **Content typing and directed delivery**: a `Drops` board (`node/src/drops.ts`) with three severity levels (info/hazard/emergency, priority-mapped), and Directed Content Delivery + "Node Append" — a way to leave content specifically on one target node (e.g. a Fixed Relay) without flooding it to the rest of the mesh.
-- **The ARALD Card ecosystem** (`docs/beacon.md`): a Relay Registry, a courier/relay profile for `PendingDeliveryQueue`, and a broadcast-based SOS beacon mechanism (a new non-connected transport model, `transports/beacon-broadcast.ts`) with an end-to-end encrypted payload option. The **network logic behind every one of these is implemented and tested in pure software** — see "What's still blocked" below for what remains hardware-only.
-- **A first real (non-simulated) LoRa driver**, `LoraSerialTransport` (`node/src/transports/lora-serial.ts`): talks to a real SX127x chip over a serial bridge, with register/FIFO logic faithful to the public datasheet, validated against a fake device — not yet verified against physical hardware (none available in this environment).
-- **`nomad-hub/`**, a separate Management API that administers Docker on whatever host runs a Project NOMAD instance (start/stop/restart/logs, a host capability profile) — verified against both a fake and a real local Docker daemon.
-- **An Emergency Portal** (`docs/emergency-portal.md`): an operator dashboard that runs locally on the ARALD Box/PC+Portable over the LAN (no Internet dependency for the operational path), with a read-only Internet-hosted mirror (`arald-backend/` syncs to a real Postgres database on Neon, `mirror-portal/` is the Next.js app that reads it) for ordinary remote management.
-
-**What's still blocked**: the **real hardware/Docker** versions of BLE and the third-party gateway (these need, respectively, physical BLE hardware and Docker plus a reachable Project NOMAD instance) — their simulated/mocked counterparts above have already validated all the application logic in pure software. **Proposed hardware expansions, never built**: the ARALD Box/Portable (`docs/deployment.md`, no code) and the ARALD Card (`docs/beacon.md`, a single radio device unifying Beacon Mode/Relay Mode/Beacon+Relay Mode into one hardware architecture, plus Fixed Relay/Relay Registry) — for the latter, unlike Box/Portable, the **network logic is already implemented and tested** in pure software (`node/src/relay-registry.ts`, `emergency-beacon.ts`, `transports/beacon-broadcast.ts`, changes to `store-and-forward.ts` — `docs/security.md` entries #54-56): only the physical device itself (PCB, firmware, enclosure) remains unbuilt, unavailable in this environment. **Mobile UI design debt: addressed** — a full rebrand pass ("Waypoint" visual identity, topographic palette, mark, components) plus a dedicated UX pass for a general, non-technical audience have already shipped (see `docs/security.md` entries #28-31 and #48); only a possible future visual refresh remains noted, not yet planned in detail. See [`docs/roadmap.md`](docs/roadmap.md) for the detailed status of every milestone and [`docs/next-steps.md`](docs/next-steps.md) for action plans.
+The name comes from *araldo* — a herald, the messenger who carries word to the next stop, a fitting image for a store-and-forward network where every node can end up carrying a message further along.
 
 ## Quick start
 
