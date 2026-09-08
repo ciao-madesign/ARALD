@@ -164,7 +164,55 @@ export class PendingRelayQueue {
   }
 }
 
-const AraldBleRelay = { SeenCache, decideForward, PendingRelayQueue };
+// Stessa costante di node/src/drops.ts's DROP_CONTENT_NAME — duplicata per lo stesso motivo
+// no-bundler già spiegato in cima a questo file.
+const DROP_CONTENT_NAME = "drop";
+// Stessa costante di node/src/public-channels.ts's CHANNEL_NAME_PREFIX/CHANNEL_NAME_PATTERN.
+const CHANNEL_NAME_PREFIX = "chat:";
+const CHANNEL_NAME_PATTERN = /^[a-z0-9_-]{1,32}$/;
+// Stessa costante di node/src/emergency-beacon.ts's EMERGENCY_BEACON_CONTENT_NAME.
+const EMERGENCY_BEACON_CONTENT_NAME = "emergency-beacon";
+
+/**
+ * Classifica un pacchetto che il relay ha appena deciso di inoltrare (voce #66, `docs/security.md`)
+ * — usata da `ble-client.js` per contare *cosa* passa attraverso il telefono senza mai mostrarne il
+ * contenuto, rispettando un vincolo esplicito dell'utente: solo contenuti destinati a visione
+ * pubblica, mai contenuti privati; per un SOS solo il conteggio, mai il contenuto.
+ *
+ * **Allowlist, non denylist** — la postura più sicura qui: riconosce esplicitamente solo le tre
+ * categorie pubbliche (bacheca, canale, SOS); qualunque altra cosa — `PRIVATE_MESSAGE`,
+ * `GROUP_MESSAGE`, `HELLO`, `PEER_LIST`, `SERVICE_*`, un `CONTENT_ANNOUNCE` con un `name` non
+ * riconosciuto — ritorna `undefined`, mai contata né mostrata. Non serve un ramo "privato" da
+ * popolare: tutto ciò che questa funzione non riconosce esplicitamente resta invisibile per
+ * costruzione.
+ *
+ * Classifica **solo** in base a `packet.type`/`payload.metadata.name`, entrambi campi già in chiaro
+ * nell'involucro del pacchetto (mai serve decifrare nulla — `PRIVATE_MESSAGE`/`GROUP_MESSAGE` sono
+ * già ciphertext per costruzione, il telefono non ha comunque la chiave per leggerli). Per la
+ * categoria `"sos"`, **non accede a nessun altro campo del payload oltre a `name`** — nemmeno
+ * `payload.data` (che per un SOS di `sendEmergencyBeacon()` conterrebbe i byte veri e propri,
+ * `ble-sos.js`'s stesso schema) — così è strutturalmente impossibile che un dettaglio di un SOS
+ * arrivi mai a chi chiama questa funzione, non solo per disciplina di chi la usa.
+ *
+ * Nessuna verifica della firma qui (limite accettato, dichiarato esplicitamente) — un peer potrebbe
+ * gonfiare i conteggi con un `metadata.name` falsificato, ma non c'è mai alcun contenuto mostrato in
+ * nessun caso: un problema di accuratezza del conteggio, mai di privacy.
+ */
+export function classifyRelayedPacket(packet) {
+  if (!packet || packet.type !== "CONTENT_ANNOUNCE") return undefined;
+  const name = packet.payload && packet.payload.metadata && packet.payload.metadata.name;
+  if (typeof name !== "string") return undefined;
+
+  if (name === DROP_CONTENT_NAME) return { kind: "drop" };
+  if (name === EMERGENCY_BEACON_CONTENT_NAME) return { kind: "sos" };
+  if (name.startsWith(CHANNEL_NAME_PREFIX)) {
+    const channel = name.slice(CHANNEL_NAME_PREFIX.length);
+    if (CHANNEL_NAME_PATTERN.test(channel)) return { kind: "channel", channel };
+  }
+  return undefined;
+}
+
+const AraldBleRelay = { SeenCache, decideForward, PendingRelayQueue, classifyRelayedPacket };
 
 // The one deliberate bridge to the classic, non-module scripts in this directory — see ble-link.js's file header for the same pattern.
 if (typeof window !== "undefined") {

@@ -91,6 +91,48 @@ let scanRefreshTimer = null;
 let pendingSosTimers = new Set();
 
 /**
+ * Contatori di attività relay (pezzo 3, `docs/security.md` voce successiva) — quanti pacchetti
+ * *altrui* questo telefono ha inoltrato per categoria, mai il contenuto stesso. Vincolo esplicito
+ * dell'utente: "mostra soltanto contenuti destinati a visione pubblica ... anche per SOS mostra solo
+ * numero di contenuti relayati, non il contenuto vero e proprio". Popolati solo in
+ * `handleNotification()`, solo per pacchetti classificati da `window.AraldBleRelay.classifyRelayedPacket()`
+ * (allowlist — vedi quel commento) — mai per un SOS originato da questo stesso telefono
+ * (`sendEmergencyBeaconViaRelay()` non tocca questi contatori: è origine, non relay-di-terzi, già
+ * visibile altrove nell'UI tramite lo stato del pannello SOS). Azzerati a ogni attivazione del relay
+ * (`activateRelay()`), stessa vita di `seenCache`/`pendingQueue` — nessuna persistenza tra sessioni.
+ */
+let relayActivityDrops = 0;
+let relayActivitySos = 0;
+/** Map<canale, conteggio> — un canale mai visto in questa sessione semplicemente non compare, niente voce a zero da popolare in anticipo. */
+let relayActivityChannels = new Map();
+
+/**
+ * Tetto sul numero di canali distinti tracciati per sessione (trovato mancante dalla revisione):
+ * `relayActivityChannels` è alimentata da `payload.metadata.name`, un campo del pacchetto — mai
+ * fidato quanto il tipo dichiarato (stessa convenzione di CLAUDE.md già rispettata da `SeenCache`/
+ * `PendingRelayQueue` in questo stesso file, entrambe bounded). Senza un tetto, un peer connesso
+ * potrebbe trasmettere un flusso di `CONTENT_ANNOUNCE` con nomi canale distinti ma validi
+ * (`chat:<1-32 char da [a-z0-9_-]>`, uno spazio enorme) durante una sessione di relay lunga (es. un
+ * dispiegamento sul campo di ore), facendo crescere questa mappa senza limite — la stessa classe di
+ * bug che `SeenCache`/`PendingRelayQueue` esistono già per evitare in questo file.
+ */
+const MAX_RELAY_ACTIVITY_CHANNELS = 256;
+
+/**
+ * Incrementa il contatore di un canale, con la stessa eviction FIFO semplice già usata da
+ * `SeenCache.markSeen()` sopra (nessuna informazione di fiducia disponibile qui, stesso motivo per
+ * cui `SeenCache` stessa non ne ha una) quando si raggiunge `MAX_RELAY_ACTIVITY_CHANNELS`: il canale
+ * osservato per primo in questa sessione lascia spazio al più recente, mai il contrario.
+ */
+function recordChannelActivity(channel) {
+  if (!relayActivityChannels.has(channel) && relayActivityChannels.size >= MAX_RELAY_ACTIVITY_CHANNELS) {
+    const oldestKey = relayActivityChannels.keys().next().value;
+    relayActivityChannels.delete(oldestKey);
+  }
+  relayActivityChannels.set(channel, (relayActivityChannels.get(channel) ?? 0) + 1);
+}
+
+/**
  * Non un'identità crittografica (nessuna chiave Ed25519) — una etichetta usa-e-getta per l'intera
  * sessione di relay, rigenerata solo quando il relay viene riattivato, usata solo per instradare
  * pacchetti altrui (mai per firmare nulla). Distinta deliberatamente dall'identità Ed25519 vera e
@@ -130,6 +172,54 @@ function renderRelayPeers() {
     li.textContent = conn.peerNodeId;
     list.append(li);
   }
+}
+
+/** Aggiorna i due contatori semplici (Bacheca/SOS) — O(1), separata dalla lista canali sotto (trovato dalla revisione: le due cose hanno un costo molto diverso, non vale la pena accoppiarle). */
+function renderRelayActivityCounts() {
+  const dropsEl = document.getElementById("ble-relay-activity-drops");
+  const sosEl = document.getElementById("ble-relay-activity-sos");
+  if (dropsEl) dropsEl.textContent = String(relayActivityDrops);
+  if (sosEl) sosEl.textContent = String(relayActivitySos);
+}
+
+/**
+ * Svuota e ricostruisce l'elenco canali — stesso schema di `renderRelayPeers()`, mai un aggiornamento
+ * incrementale del DOM. Separata da `renderRelayActivityCounts()` perché molto più costosa (fino a
+ * `MAX_RELAY_ACTIVITY_CHANNELS` elementi, ordinamento incluso): chiamata solo quando l'insieme dei
+ * canali può davvero essere cambiato (un pacchetto canale relayato, o un reset), mai per ogni singolo
+ * drop/SOS relayato — trovato dalla revisione: prima di questa voce, ogni pacchetto qualunque
+ * ricostruiva anche questa lista, un costo reale su un telefono che relaya per ore.
+ */
+function renderRelayActivityChannels() {
+  const channelsEl = document.getElementById("ble-relay-activity-channels");
+  if (!channelsEl) return;
+
+  channelsEl.textContent = "";
+  const channels = [...relayActivityChannels.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  if (channels.length === 0) {
+    const li = document.createElement("li");
+    li.className = "muted";
+    li.textContent = "Nessuno";
+    channelsEl.append(li);
+    return;
+  }
+  for (const [channel, count] of channels) {
+    const li = document.createElement("li");
+    li.textContent = `${channel}: ${count}`;
+    channelsEl.append(li);
+  }
+}
+
+/**
+ * Renderizza l'intero blocco "Attività relay" (contatori + elenco canali) — usata solo sui reset
+ * (`activateRelay()`/`deactivateRelay()`), dove tutto è comunque azzerato insieme. Mostra sempre e solo
+ * un numero/nome canale per categoria (mai un elenco di contenuti) — l'unico modo in cui questo blocco
+ * potrebbe mostrare qualcosa di privato è se `relayActivity*` lo contenesse già, e quei contatori non lo
+ * contengono mai per costruzione (vedi il commento su `classifyRelayedPacket()` in ble-relay.js).
+ */
+function renderRelayActivity() {
+  renderRelayActivityCounts();
+  renderRelayActivityChannels();
 }
 
 function findConnectionByPeerNodeId(peerNodeId) {
@@ -232,6 +322,24 @@ function handleNotification(plugin, deviceId, event) {
 
   const decision = window.AraldBleRelay.decideForward(packet, relaySessionNodeId, seenCache);
   if (decision.duplicate || !decision.forwardPacket) return;
+
+  // Conta *cosa* passa (pezzo 3), mai il contenuto — vedi il commento su classifyRelayedPacket() in
+  // ble-relay.js per la postura allowlist. Solo per pacchetti altrui: questa funzione gestisce
+  // esclusivamente notifiche in arrivo da una connessione, mai un SOS che questo telefono origina
+  // (quello passa da sendEmergencyBeaconViaRelay() -> forwardPacket() direttamente, senza mai
+  // transitare da qui).
+  const classification = window.AraldBleRelay.classifyRelayedPacket(decision.forwardPacket);
+  if (classification) {
+    if (classification.kind === "drop") relayActivityDrops += 1;
+    else if (classification.kind === "sos") relayActivitySos += 1;
+    else if (classification.kind === "channel") recordChannelActivity(classification.channel);
+    renderRelayActivityCounts();
+    // La lista canali (fino a MAX_RELAY_ACTIVITY_CHANNELS elementi, con ordinamento) è molto più
+    // costosa dei due contatori sopra — ricostruita solo quando l'insieme dei canali può davvero
+    // essere cambiato, mai per un drop/SOS relayato (trovato dalla revisione).
+    if (classification.kind === "channel") renderRelayActivityChannels();
+  }
+
   forwardPacket(plugin, deviceId, decision.forwardPacket);
 }
 
@@ -402,6 +510,11 @@ async function activateRelay() {
   pendingQueue = new window.AraldBleRelay.PendingRelayQueue();
   connections = new Map();
   relayActive = true;
+  // Azzerati ad ogni (ri)attivazione — stessa vita di seenCache/pendingQueue sopra, mai persistenti tra sessioni.
+  relayActivityDrops = 0;
+  relayActivitySos = 0;
+  relayActivityChannels = new Map();
+  renderRelayActivity();
 
   try {
     await plugin.initialize();
@@ -477,6 +590,10 @@ async function deactivateRelay() {
   seenCache = null;
   pendingQueue = null;
   relaySessionNodeId = null;
+  relayActivityDrops = 0;
+  relayActivitySos = 0;
+  relayActivityChannels = new Map();
+  renderRelayActivity();
 }
 
 /**

@@ -221,6 +221,16 @@
       </button>
       <p id="ble-relay-status" class="muted" role="status" aria-live="polite"></p>
       <ul id="ble-relay-peers"></ul>
+      <!-- Attività relay (pezzo 3, docs/security.md): solo conteggi, mai contenuto — vincolo esplicito
+           dell'utente, vedi ble-client.js's renderRelayActivity()/classifyRelayedPacket() in
+           ble-relay.js. Anche per SOS: solo un numero, mai il testo/posizione. -->
+      <div id="ble-relay-activity" class="ble-relay-activity">
+        <h3>Attività relay</h3>
+        <p>Bacheca: <span id="ble-relay-activity-drops">0</span></p>
+        <p>SOS: <span id="ble-relay-activity-sos">0</span></p>
+        <p>Canali:</p>
+        <ul id="ble-relay-activity-channels"></ul>
+      </div>
     </div>
 
     <div class="panels-grid">

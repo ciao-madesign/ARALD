@@ -25,7 +25,7 @@ Il piano d'insieme originario (milestone 0-20 + i follow-up post-audit) è compl
 | Cosa cerchi | Dove vive |
 |---|---|
 | Stato delle milestone 0-20, cosa resta bloccato e su cosa | [`docs/roadmap.md`](docs/roadmap.md) |
-| Storia feature-per-feature: cosa è stato costruito, perché, bug trovati dalla revisione (voci numerate #1-65+) | [`docs/security.md`](docs/security.md) |
+| Storia feature-per-feature: cosa è stato costruito, perché, bug trovati dalla revisione (voci numerate #1-66+) | [`docs/security.md`](docs/security.md) |
 | Candidati aperti/non ancora pianificati | [`docs/next-steps.md`](docs/next-steps.md) |
 | Ecosistema ARALD Card (Beacon/Relay Mode), Fixed Relay, Relay Registry | [`docs/beacon.md`](docs/beacon.md) |
 | Metodo di progettazione hardware/RF orientato alla conformità (PCB, antenna, Technical File, Design Freeze, roadmap M0-M9) | [`docs/compliance.md`](docs/compliance.md) |
