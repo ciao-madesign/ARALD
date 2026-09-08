@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import { RelayRegistry, extractRelayRegistration, MAX_RELAY_OPERATOR_LENGTH, type RelayStaticFields } from "../../node/src/relay-registry.js";
+import {
+  RelayRegistry,
+  extractRelayRegistration,
+  extractRelayTelemetry,
+  extractRelayCommand,
+  MAX_RELAY_OPERATOR_LENGTH,
+  type RelayStaticFields,
+  type RelayTelemetryPayload,
+} from "../../node/src/relay-registry.js";
 
 function validFields(overrides: Partial<RelayStaticFields> = {}): RelayStaticFields {
   return { relayId: "relay-a", type: "fixed", lat: 45.4642, lon: 9.19, radio: { ble: true, lora: false }, operator: "Soccorso Alpino", installedAt: 1000, ...overrides };
@@ -171,5 +179,141 @@ describe("RelayRegistry", () => {
 
     expect(registry.get("a")).toMatchObject({ lat: 3, lon: 3 });
     expect(registry.get("b")).toBeDefined();
+  });
+
+  it("re-registering an existing relay never discards previously recorded telemetry (found by review — upsert() used to rebuild the entry from fields alone)", () => {
+    const registry = new RelayRegistry();
+    registry.upsert(validFields({ relayId: "relay-a" }));
+    registry.recordTelemetry("relay-a", { type: "relay-telemetry", batteryPercent: 77, timestamp: 500 });
+    expect(registry.get("relay-a")).toMatchObject({ batteryPercent: 77, lastTelemetryAt: 500 });
+
+    // An ordinary re-registration, e.g. the operator correcting the operator label — must not wipe
+    // the telemetry already on file.
+    registry.upsert(validFields({ relayId: "relay-a", operator: "Corrected Name" }));
+    expect(registry.get("relay-a")).toMatchObject({ operator: "Corrected Name", batteryPercent: 77, lastTelemetryAt: 500 });
+  });
+
+  describe("recordTelemetry()", () => {
+    it("is a no-op for a relayId that isn't already registered — never creates a new entry", () => {
+      const registry = new RelayRegistry();
+      registry.recordTelemetry("never-registered", { type: "relay-telemetry", batteryPercent: 50, timestamp: 1 });
+      expect(registry.get("never-registered")).toBeUndefined();
+      expect(registry.list()).toEqual([]);
+    });
+
+    it("updates batteryPercent/lastTelemetryAt on an already-registered relay", () => {
+      const registry = new RelayRegistry();
+      registry.upsert(validFields({ relayId: "relay-a" }));
+      registry.recordTelemetry("relay-a", { type: "relay-telemetry", batteryPercent: 72, timestamp: 100 });
+      expect(registry.get("relay-a")).toMatchObject({ batteryPercent: 72, lastTelemetryAt: 100 });
+    });
+
+    it("ignores a report no newer than the currently recorded one — same anti-out-of-order guard as LocationRegistry.record()", () => {
+      const registry = new RelayRegistry();
+      registry.upsert(validFields({ relayId: "relay-a" }));
+      registry.recordTelemetry("relay-a", { type: "relay-telemetry", batteryPercent: 50, timestamp: 100 });
+      registry.recordTelemetry("relay-a", { type: "relay-telemetry", batteryPercent: 10, timestamp: 100 }); // same timestamp
+      registry.recordTelemetry("relay-a", { type: "relay-telemetry", batteryPercent: 5, timestamp: 50 }); // older
+      expect(registry.get("relay-a")).toMatchObject({ batteryPercent: 50, lastTelemetryAt: 100 });
+
+      registry.recordTelemetry("relay-a", { type: "relay-telemetry", batteryPercent: 40, timestamp: 200 }); // genuinely newer
+      expect(registry.get("relay-a")).toMatchObject({ batteryPercent: 40, lastTelemetryAt: 200 });
+    });
+
+    it("clamps a future-dated timestamp to Date.now() — a fabricated far-future report can't permanently poison the slot", () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(1000);
+        const registry = new RelayRegistry();
+        registry.upsert(validFields({ relayId: "relay-a" }));
+        registry.recordTelemetry("relay-a", { type: "relay-telemetry", batteryPercent: 99, timestamp: 999_999_999 });
+        expect(registry.get("relay-a")).toMatchObject({ batteryPercent: 99, lastTelemetryAt: 1000 });
+
+        vi.setSystemTime(2000);
+        registry.recordTelemetry("relay-a", { type: "relay-telemetry", batteryPercent: 42, timestamp: 2000 });
+        expect(registry.get("relay-a")).toMatchObject({ batteryPercent: 42, lastTelemetryAt: 2000 });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("never overwrites online/lastSeenAt or the static fields — only the telemetry fields change", () => {
+      const registry = new RelayRegistry();
+      registry.upsert(validFields({ relayId: "relay-a", operator: "Soccorso Alpino" }));
+      registry.markOnline("relay-a", 5);
+      registry.recordTelemetry("relay-a", { type: "relay-telemetry", batteryPercent: 60, timestamp: 10 });
+      expect(registry.get("relay-a")).toMatchObject({ operator: "Soccorso Alpino", online: true, lastSeenAt: 5, batteryPercent: 60 });
+    });
+  });
+});
+
+function validTelemetry(overrides: Partial<RelayTelemetryPayload> = {}): RelayTelemetryPayload {
+  return { type: "relay-telemetry", batteryPercent: 55, timestamp: 1000, ...overrides };
+}
+
+describe("extractRelayTelemetry", () => {
+  it("accepts a well-formed telemetry payload", () => {
+    expect(extractRelayTelemetry(validTelemetry())).toEqual(validTelemetry());
+  });
+
+  it("rejects a non-object payload without throwing", () => {
+    expect(extractRelayTelemetry(undefined)).toBeUndefined();
+    expect(extractRelayTelemetry(null)).toBeUndefined();
+    expect(extractRelayTelemetry("nope")).toBeUndefined();
+    expect(extractRelayTelemetry(42)).toBeUndefined();
+  });
+
+  it("rejects a wrong/missing type discriminator", () => {
+    expect(extractRelayTelemetry({ ...validTelemetry(), type: "location-report" })).toBeUndefined();
+    const { type: _type, ...withoutType } = validTelemetry();
+    expect(extractRelayTelemetry(withoutType)).toBeUndefined();
+  });
+
+  it("rejects an out-of-range or non-finite batteryPercent", () => {
+    expect(extractRelayTelemetry(validTelemetry({ batteryPercent: -0.001 }))).toBeUndefined();
+    expect(extractRelayTelemetry(validTelemetry({ batteryPercent: 100.001 }))).toBeUndefined();
+    expect(extractRelayTelemetry(validTelemetry({ batteryPercent: Number.NaN }))).toBeUndefined();
+    expect(extractRelayTelemetry({ ...validTelemetry(), batteryPercent: "50" as unknown as number })).toBeUndefined();
+    expect(extractRelayTelemetry(validTelemetry({ batteryPercent: 0 }))).toBeDefined(); // exactly at the lower limit
+    expect(extractRelayTelemetry(validTelemetry({ batteryPercent: 100 }))).toBeDefined(); // exactly at the upper limit
+  });
+
+  it("rejects a missing/non-finite timestamp", () => {
+    expect(extractRelayTelemetry({ ...validTelemetry(), timestamp: undefined })).toBeUndefined();
+    expect(extractRelayTelemetry(validTelemetry({ timestamp: Number.NaN }))).toBeUndefined();
+  });
+
+  it("ignores extra fields on the payload", () => {
+    expect(extractRelayTelemetry({ ...validTelemetry(), extra: "field" })).toEqual(validTelemetry());
+  });
+});
+
+describe("extractRelayCommand", () => {
+  it("accepts a well-formed reboot command", () => {
+    const command = { type: "relay-command" as const, command: "reboot" as const, timestamp: 1000 };
+    expect(extractRelayCommand(command)).toEqual(command);
+  });
+
+  it("rejects a non-object payload without throwing", () => {
+    expect(extractRelayCommand(undefined)).toBeUndefined();
+    expect(extractRelayCommand(null)).toBeUndefined();
+    expect(extractRelayCommand("nope")).toBeUndefined();
+    expect(extractRelayCommand(42)).toBeUndefined();
+  });
+
+  it("rejects a wrong/missing type discriminator", () => {
+    expect(extractRelayCommand({ type: "relay-telemetry", command: "reboot", timestamp: 1 })).toBeUndefined();
+    expect(extractRelayCommand({ command: "reboot", timestamp: 1 })).toBeUndefined();
+  });
+
+  it("rejects any command other than exactly 'reboot' — forward-compatible rejection, not a crash on an unrecognized future value", () => {
+    expect(extractRelayCommand({ type: "relay-command", command: "shutdown", timestamp: 1 })).toBeUndefined();
+    expect(extractRelayCommand({ type: "relay-command", command: "", timestamp: 1 })).toBeUndefined();
+    expect(extractRelayCommand({ type: "relay-command", timestamp: 1 })).toBeUndefined();
+  });
+
+  it("rejects a missing/non-finite timestamp", () => {
+    expect(extractRelayCommand({ type: "relay-command", command: "reboot", timestamp: undefined })).toBeUndefined();
+    expect(extractRelayCommand({ type: "relay-command", command: "reboot", timestamp: Number.NaN })).toBeUndefined();
   });
 });

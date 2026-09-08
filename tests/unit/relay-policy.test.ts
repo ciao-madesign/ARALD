@@ -40,4 +40,15 @@ describe("RelayPolicy", () => {
     const policy = new RelayPolicy({ mode: "battery-above", getResourceState: () => ({}) });
     expect(policy.canRelayNow()).toBe(false);
   });
+
+  describe("getCurrentResourceState()", () => {
+    it("returns an empty object when no getResourceState was configured", () => {
+      expect(new RelayPolicy().getCurrentResourceState()).toEqual({});
+    });
+
+    it("returns exactly what the configured getResourceState() returns — the same value canRelayNow() itself reads", () => {
+      const policy = new RelayPolicy({ getResourceState: () => ({ batteryPercent: 42, charging: true }) });
+      expect(policy.getCurrentResourceState()).toEqual({ batteryPercent: 42, charging: true });
+    });
+  });
 });

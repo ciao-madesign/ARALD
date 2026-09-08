@@ -49,7 +49,15 @@ import {
 } from "./groups.js";
 import { LocationRegistry, extractLocationReport, type LocationReportPayload } from "./location-registry.js";
 import { Drops, DROP_CONTENT_NAME, MAX_DROP_LABEL_LENGTH, extractDropPayload, type Drop, type DropPayload, type DropKind } from "./drops.js";
-import { RelayRegistry, type RelayEntry, type RelayStaticFields } from "./relay-registry.js";
+import {
+  RelayRegistry,
+  extractRelayTelemetry,
+  extractRelayCommand,
+  type RelayEntry,
+  type RelayStaticFields,
+  type RelayTelemetryPayload,
+  type RelayCommandPayload,
+} from "./relay-registry.js";
 import {
   EmergencyBeacons,
   EMERGENCY_BEACON_CONTENT_NAME,
@@ -160,6 +168,24 @@ export interface NomadNodeOptions {
    * sense of the word.
    */
   minTrustForNodeAppend?: TrustLevel;
+  /**
+   * Minimum trust level (spec §54) a sender must have before a relay
+   * command (`docs/beacon.md`, "Fixed Relay e Registro dei relay" — remote
+   * reboot) from them is acted on (`considerRelayCommand()`) rather than
+   * silently dropped. **Deliberately defaults to `TrustLevel.ADMIN`** — the
+   * highest level `TrustManager` can assign, one full tier stricter than
+   * `minTrustForNodeAppend`'s own `VERIFIED` default — because accepting
+   * this payload causes this process to shut down
+   * (`"relay:reboot-requested"`, see that event's own doc comment), not
+   * merely store something for later reading. `ADMIN` is never assigned
+   * automatically by ordinary protocol activity the way `SEEN`/`VERIFIED`
+   * are (`trust.ts`'s own doc comment) — an operator provisioning a relay
+   * must explicitly call `this.trust.set(emergencyNodeId, TrustLevel.ADMIN)`
+   * for the one specific node id allowed to reboot it (`cli.ts`'s
+   * `--trust-admin`), the same "provisioned out-of-band by whoever sets up
+   * the mesh" model already used for `emergencyBeaconKey`.
+   */
+  minTrustForRelayCommand?: TrustLevel;
   /**
    * Pre-shared 32-byte AES-256-GCM key (`docs/beacon.md`, "Packet-vs-Observation/RSSI"
    * pezzo 3, parte "cifratura del payload verso il relay") — when set,
@@ -310,6 +336,21 @@ const ELEVATED_NODE_APPEND_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 const DEFAULT_NODE_APPEND_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_NODE_APPEND_TTL_MS = 72 * 60 * 60 * 1000;
 
+/**
+ * Same reasoning as `MAX_ELEVATED_NODE_APPENDS_PER_WINDOW`, applied to
+ * `sendRelayCommand()` — not partitioned per-target/per-caller because
+ * `sendRelayCommand()` is only ever invoked on behalf of an already
+ * network-password-authenticated HTTP caller (`web-ui.ts`'s
+ * `POST /api/relay-command`, gated the same way as `POST /api/relays`), the
+ * same reasoning `MAX_ELEVATED_DROPS_PER_WINDOW` already documents for why
+ * its own budget isn't split per caller. This exists to bound a buggy or
+ * compromised Emergency Node dashboard from reboot-looping a relay by
+ * accident, not to defend against an adversarial mesh peer — the real
+ * defense against that is `minTrustForRelayCommand` on the *receiving* end.
+ */
+const MAX_RELAY_COMMANDS_PER_WINDOW = 3;
+const RELAY_COMMAND_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
+
 /** Defaults for `sendEmergencyBeacon()`'s broadcast repetition (see its own doc comment for why this is "repeat the same signed packet on a timer", not a real ACK-based retry). */
 const DEFAULT_BEACON_BROADCAST_REPEAT_COUNT = 5;
 const DEFAULT_BEACON_BROADCAST_REPEAT_INTERVAL_MS = 2000;
@@ -341,6 +382,9 @@ const MAX_ROUTES_PER_ANNOUNCE = 512;
 
 /** Discovery-only service id a dedicated location-registry node advertises via `registerAsLocationRegistry()` — see that method's doc comment for why its handler never actually does anything with a `SERVICE_REQUEST`. */
 const LOCATION_REGISTRY_SERVICE_ID = "service://location-registry";
+
+/** Discovery-only service id a dedicated relay-registry node advertises via `registerAsRelayRegistry()` — same discovery-only shape as `LOCATION_REGISTRY_SERVICE_ID`, used only so `reportRelayTelemetry()` can find where to send telemetry. */
+const RELAY_REGISTRY_SERVICE_ID = "service://relay-registry";
 
 interface PendingContentEntry {
   contentId: string;
@@ -658,6 +702,7 @@ export class NomadNode extends EventEmitter {
   private readonly contentProviderTimeoutMs: number;
   private readonly minTrustToRelay?: TrustLevel;
   private readonly minTrustForNodeAppend: TrustLevel;
+  private readonly minTrustForRelayCommand: TrustLevel;
   private readonly emergencyBeaconKey: Buffer | undefined;
   private readonly seenCache = new SeenCache();
   private readonly requesterAssembler: ChunkAssembler;
@@ -702,6 +747,12 @@ export class NomadNode extends EventEmitter {
   private emergencyBeaconWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
   /** Sliding-window state for `MAX_ELEVATED_NODE_APPENDS_PER_WINDOW` (see its own doc comment) — `appendToNode({ kind: "hazard" | "emergency" })` checks and updates this before sending. */
   private elevatedNodeAppendWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
+  /** Sliding-window state for `MAX_RELAY_COMMANDS_PER_WINDOW` (see its own doc comment) — `sendRelayCommand()` checks and updates this before sending. */
+  private relayCommandWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
+  /** Replay protection for `considerRelayCommand()` (see its own doc comment) — the timestamp of the last *accepted* relay command from each sender, keyed by that sender's node id. Deliberately unbounded: an entry only exists for a sender that already cleared `minTrustForRelayCommand` (ADMIN by default), a small, operator-curated set. */
+  private readonly lastAcceptedRelayCommandAt = new Map<string, number>();
+  /** Monotonic counter backing `sendRelayCommand()`'s own timestamps (see that method's own comment) — guarantees every command this node sends is strictly newer than the last, even across two calls landing in the same `Date.now()` millisecond. */
+  private lastSentRelayCommandTimestamp = 0;
   /**
    * Optional advertising-only transport for Beacon Mode (`transports/beacon-broadcast.ts`)
    * — deliberately **not** part of `transports`/`peerTransport` above:
@@ -797,6 +848,7 @@ export class NomadNode extends EventEmitter {
     this.emergencyBeacons = new EmergencyBeacons({ maxBeacons: options.maxEmergencyBeacons });
     this.nodeAppends = new NodeAppends({ maxNodeAppends: options.maxNodeAppends });
     this.minTrustForNodeAppend = options.minTrustForNodeAppend ?? TrustLevel.VERIFIED;
+    this.minTrustForRelayCommand = options.minTrustForRelayCommand ?? TrustLevel.ADMIN;
     if (options.emergencyBeaconKey !== undefined && options.emergencyBeaconKey.length !== 32) {
       throw new Error("NomadNode: emergencyBeaconKey must be exactly 32 bytes (AES-256-GCM)");
     }
@@ -1762,6 +1814,191 @@ export class NomadNode extends EventEmitter {
     // upsert() just set this key, so get() finding nothing here is unreachable — the non-null
     // assertion only tells TypeScript that, it doesn't skip any real check.
     return this.relayRegistry.get(fields.relayId)!;
+  }
+
+  /**
+   * Opts this node into being a **relay registry** — a node other relays'
+   * `reportRelayTelemetry()` calls can discover and send battery reports to
+   * (`docs/beacon.md`, "Fixed Relay e Registro dei relay"). Mirrors
+   * `registerAsLocationRegistry()` exactly, including *why* it's a
+   * discovery-only service rather than an ordinary `callService()` target
+   * (see that method's own doc comment): the real read/write paths are
+   * `reportRelayTelemetry()`/`considerRelayTelemetry()`, both over
+   * `PRIVATE_MESSAGE`, whose sender is cryptographically authenticated —
+   * unlike a `SERVICE_REQUEST`'s `fromNodeId`.
+   *
+   * **Never called automatically**: only an operator who explicitly wants
+   * this node to collect relay telemetry should call it (typically the same
+   * Emergency Node that also has `WebUiOptions.exposeRelayRegistry` on to
+   * read `relayRegistry` back over HTTP — a separate opt-in, same split as
+   * `registerAsLocationRegistry()`/`exposeLocationRegistry`).
+   */
+  registerAsRelayRegistry(): ServiceAnnouncement {
+    return this.registerService(
+      RELAY_REGISTRY_SERVICE_ID,
+      "1.0.0",
+      ["relay-registry"],
+      () => {
+        throw new Error(`${RELAY_REGISTRY_SERVICE_ID} is discovery-only — send telemetry via reportRelayTelemetry(), not callService()`);
+      },
+      { resourceRequirements: "richiede WebUiOptions.exposeRelayRegistry per la lettura via HTTP" },
+    );
+  }
+
+  /**
+   * Reports this node's own current battery level to whichever node
+   * advertises `service://relay-registry` (`registerAsRelayRegistry()`) —
+   * mirrors `shareLocation()`'s discover-then-send shape exactly, applied to
+   * relay telemetry instead of a position (`docs/beacon.md`, "Fixed Relay e
+   * Registro dei relay"). `batteryPercent` is read from
+   * `relayPolicy.getCurrentResourceState()` — the *same* self-declared value
+   * (spec §51, no real hardware sensors in this prototype) already governing
+   * whether this node relays at all under `RelayMode "battery-above"` — so a
+   * caller never passes a battery value explicitly, and there is exactly one
+   * place a deployment configures "what my battery level is"
+   * (`NomadNodeOptions.relayPolicy.getResourceState`), not two that could
+   * drift apart.
+   *
+   * Throws if no battery level is currently reported by `relayPolicy` (a
+   * node with no `getResourceState` configured, or one that returns
+   * `batteryPercent: undefined`, has nothing meaningful to send — reporting
+   * a fabricated number would be worse than refusing), or (same as
+   * `shareLocation()`) if no registry is discovered within
+   * `options.timeoutMs`, or if the registry's encryption key isn't known
+   * yet. `timestamp` is stamped here with this node's own clock, once,
+   * never accepted as an argument — same anti-forgery reasoning already
+   * applied to `shareLocation()`'s own `timestamp`.
+   */
+  async reportRelayTelemetry(options: { timeoutMs?: number } = {}): Promise<void> {
+    const { batteryPercent } = this.relayPolicy.getCurrentResourceState();
+    if (batteryPercent === undefined) {
+      throw new Error("reportRelayTelemetry: no battery level is currently reported by relayPolicy");
+    }
+    const provider = await this.discoverService(RELAY_REGISTRY_SERVICE_ID, options);
+    const payload: RelayTelemetryPayload = { type: "relay-telemetry", batteryPercent, timestamp: Date.now() };
+    this.sendPrivateMessage(provider.providerId, payload);
+  }
+
+  /**
+   * Handles a `relay-telemetry`-shaped `PRIVATE_MESSAGE` payload (from
+   * `handlePrivateMessage()`, after successful decryption) — forwards it to
+   * `relayRegistry.recordTelemetry()`, keyed by `senderId` (the
+   * cryptographically-authenticated `packet.source`), same authentication
+   * boundary already established for `considerLocationReport()`. See
+   * `RelayRegistry.recordTelemetry()`'s own doc comment for why this is a
+   * no-op for a `relayId` that isn't already a *registered* relay — this
+   * method has no visibility into that decision, it just passes the report
+   * through.
+   */
+  private considerRelayTelemetry(senderId: string, report: RelayTelemetryPayload | undefined): void {
+    if (!report) return;
+    this.relayRegistry.recordTelemetry(senderId, report);
+    this.emit("relay:telemetry-reported", senderId);
+  }
+
+  /**
+   * Sends a relay command (currently only `"reboot"`) to `targetNodeId` —
+   * the operator-initiated counterpart to `reportRelayTelemetry()`, reusing
+   * the same directed-delivery `sendPrivateMessage()` mechanism as
+   * `appendToNode()` (see that method's own doc comment for why DIRECTED
+   * delivery itself needed no new mechanism). Intended caller is
+   * `web-ui.ts`'s `POST /api/relay-command`, itself gated by
+   * `WebUiOptions.exposeRelayRegistry` + the node's network password — the
+   * *origin*-side authentication. The *target*-side authorization is a
+   * separate, receiver-side decision this method has no visibility into
+   * (`considerRelayCommand()`'s `minTrustForRelayCommand` gate, default
+   * `TrustLevel.ADMIN`): a successful call here means "sent", never
+   * "accepted, and the relay is now rebooting".
+   *
+   * Same validation-before-rate-limit ordering already established for
+   * `appendToNode()` (found by review there, applied proactively here): an
+   * unknown target encryption key must never consume
+   * `MAX_RELAY_COMMANDS_PER_WINDOW`'s budget on a call that was never going
+   * to send anything.
+   *
+   * Throws (same as `sendPrivateMessage()`/`appendToNode()`) if
+   * `targetNodeId`'s encryption key isn't known yet, or if the rate limit is
+   * exhausted. Returns the underlying packet id, unchanged as `appendToNode()`'s.
+   */
+  sendRelayCommand(targetNodeId: string, command: "reboot" = "reboot"): string {
+    if (!this.peerDirectory.getKey(targetNodeId)) {
+      throw new Error(`cannot send private message: encryption key for ${targetNodeId} is not yet known`);
+    }
+    const now = Date.now();
+    if (now - this.relayCommandWindow.windowStart >= RELAY_COMMAND_RATE_LIMIT_WINDOW_MS) {
+      this.relayCommandWindow = { windowStart: now, count: 0 };
+    }
+    if (this.relayCommandWindow.count >= MAX_RELAY_COMMANDS_PER_WINDOW) {
+      throw new Error("sendRelayCommand: too many relay commands, try again later");
+    }
+    this.relayCommandWindow.count++;
+    // Strictly greater than the previous command's timestamp, even if this call and the last one
+    // land in the same Date.now() millisecond (a real possibility for back-to-back calls, e.g. an
+    // operator hitting several relays in a burst) — considerRelayCommand()'s replay guard on the
+    // receiving end requires a strictly increasing timestamp per sender (this node's own identity,
+    // as seen by whichever relay receives it), so a single, purely local monotonic counter here —
+    // shared across every target — is sufficient: every legitimate command this node ever sends
+    // carries a timestamp strictly greater than the one before it, to any receiver.
+    const timestamp = Math.max(now, this.lastSentRelayCommandTimestamp + 1);
+    this.lastSentRelayCommandTimestamp = timestamp;
+    const payload: RelayCommandPayload = { type: "relay-command", command, timestamp };
+    return this.sendPrivateMessage(targetNodeId, payload);
+  }
+
+  /**
+   * Accepts (or silently rejects) a relay command addressed to this node —
+   * called from `handlePrivateMessage()` with `senderId` = the
+   * cryptographically-authenticated `packet.source`. Gated on
+   * `minTrustForRelayCommand` (default `TrustLevel.ADMIN` — see that
+   * option's own doc comment for why this is deliberately the strictest
+   * gate in this codebase). An insufficiently-trusted sender's command is
+   * dropped without any error surfaced back to them, same silent defensive
+   * posture as `considerNodeAppend()` — there is no ack channel for
+   * `PRIVATE_MESSAGE` to report rejection through even if this method
+   * wanted to.
+   *
+   * On acceptance, **only emits `"relay:reboot-requested"`** — this class
+   * never calls `process.exit()` or otherwise acts on the command itself.
+   * That's a deliberate boundary: a library class calling `process.exit()`
+   * would be untestable (it would kill the test runner) and would hardcode
+   * one specific idea of "reboot" (a bare process exit) into `NomadNode`
+   * itself, when the actual right action depends entirely on how this
+   * process is being supervised (`cli.ts`'s `--allow-remote-reboot` is the
+   * intended listener — see its own comment for why the actual exit is
+   * opt-in *again*, on top of the trust gate here, and reuses the existing
+   * `shutdown()` for a clean exit that a process supervisor then restarts).
+   *
+   * **Replay protection (found by review)**: `PRIVATE_MESSAGE`'s only
+   * dedup is `SeenCache`'s bounded, evictable `packet.id` cache
+   * (`routing.ts`) — an old copy of the *exact same* encrypted packet
+   * (identical ciphertext/auth tag, so it still decrypts once its
+   * `packet.id` has aged out of that cache) would otherwise re-trigger a
+   * reboot with no operator action at that moment, unlike
+   * `considerNodeAppend()`, which persists an `appendId` making redelivery
+   * idempotent — nothing analogous exists for a fire-and-forget command
+   * with no store. Guarded here instead by requiring
+   * `command.timestamp` to be strictly greater than the last *accepted*
+   * command's timestamp from the same `senderId` — a genuine resend uses a
+   * fresh `Date.now()` (`sendRelayCommand()` never lets a caller supply
+   * one), so this only ever blocks a literal replay of prior wire bytes,
+   * never a legitimate new command. `lastAcceptedRelayCommandAt` is safe to
+   * leave unbounded: it only ever gains an entry once `senderId` has
+   * already cleared the `minTrustForRelayCommand` gate above (`ADMIN` by
+   * default), a small, operator-curated set, not an attacker-controlled one.
+   */
+  private considerRelayCommand(senderId: string, command: RelayCommandPayload | undefined): void {
+    if (!command) return;
+    if (!meetsTrustLevel(this.trust.get(senderId), this.minTrustForRelayCommand)) {
+      this.emit("relay-command:rejected", senderId);
+      return;
+    }
+    const lastAccepted = this.lastAcceptedRelayCommandAt.get(senderId);
+    if (lastAccepted !== undefined && command.timestamp <= lastAccepted) {
+      this.emit("relay-command:rejected", senderId);
+      return;
+    }
+    this.lastAcceptedRelayCommandAt.set(senderId, command.timestamp);
+    this.emit("relay:reboot-requested", senderId);
   }
 
   /**
@@ -2900,6 +3137,8 @@ export class NomadNode extends EventEmitter {
       this.considerGroupInvite(packet.source, extractGroupInvite(payload));
       this.considerLocationReport(packet.source, extractLocationReport(payload));
       this.considerNodeAppend(packet.source, packet.id, extractNodeAppendPayload(payload));
+      this.considerRelayTelemetry(packet.source, extractRelayTelemetry(payload));
+      this.considerRelayCommand(packet.source, extractRelayCommand(payload));
       this.emit("private-message", { ...packet, payload });
     } catch (err) {
       this.emit("private-message:failed", packet.source, (err as Error).message);

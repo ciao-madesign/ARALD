@@ -504,6 +504,39 @@ async function submitRelayRegistration(fields) {
 }
 
 /**
+ * POST /api/relay-command (node/src/web-ui.ts) — sends a remote command (currently only "reboot")
+ * to a relay. Same auth/gating as submitRelayRegistration() above (both live behind
+ * exposeRelayRegistry) — a caller of this function is expected to have already confirmed the
+ * action with the user (window.confirm(), same pattern as hub-control.js's Stop/Restart buttons),
+ * since unlike registering a relay this actually shuts down a remote process.
+ */
+async function sendRelayCommand(targetNodeId, command) {
+  const res = await fetchWithTimeout(
+    apiUrl("/api/relay-command"),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + networkPassword },
+      body: JSON.stringify({ targetNodeId, command }),
+    },
+    CALL_TIMEOUT_MS,
+  );
+  let body;
+  try {
+    body = await res.json();
+  } catch {
+    const err = new Error("risposta non valida dal gateway (HTTP " + res.status + ")");
+    err.status = res.status;
+    throw err;
+  }
+  if (!res.ok) {
+    const err = new Error(body.error || "HTTP " + res.status);
+    err.status = res.status;
+    throw err;
+  }
+  return body;
+}
+
+/**
  * GET /api/emergency-beacons (node/src/web-ui.ts) — every locally-known SOS sighting, the Emergency
  * Node view (docs/beacon.md). Same graceful-degradation posture as fetchRelayRegistry() above (only
  * offered on a node with `exposeEmergencyBeacons` on — 404 there means "not offered here", returned
@@ -1376,6 +1409,18 @@ let relaySeenIds = new Set();
 let knownRelays = [];
 
 /**
+ * relayId -> "pending" | "sent", surviving across renderRelays() re-renders — found by review:
+ * refreshAll()'s periodic GET /api/relays (every few seconds) rebuilds the whole relay list from
+ * scratch, including brand-new "Riavvia" button elements, which would otherwise silently discard an
+ * in-flight or just-confirmed reboot command's disabled/"Comando inviato" state (the DOM-only state a
+ * naive version of this button relied on) — the same class of bug isRenamePending() already guards
+ * against for a nickname rename, applied here to a per-relay button instead of a single global one.
+ */
+const relayCommandStatus = new Map();
+/** How long a "Comando inviato" reboot button stays disabled before its relayCommandStatus entry is cleared — long enough to discourage an accidental immediate re-click, short enough not to lock the button forever (found by review — a first version never reset it at all). */
+const RELAY_COMMAND_STATUS_RESET_MS = 60000;
+
+/**
  * `relays` is `null` when GET /api/relays 404s on this gateway — this device isn't paired to a node
  * with `exposeRelayRegistry` on (node/src/web-ui.ts), the ordinary case for most gateways. The whole
  * panel stays hidden in that case, same graceful-degradation posture as renderLocationReports() above.
@@ -1427,6 +1472,14 @@ function renderRelays(relays) {
     ];
     if (r.radio && r.radio.ble) tags.push(el("span", { className: "tag", textContent: "BLE" }));
     if (r.radio && r.radio.lora) tags.push(el("span", { className: "tag", textContent: "LoRa" }));
+    // batteryPercent is entirely self-declared by the relay (spec §51, no real hardware sensors in
+    // this prototype — see relay-policy.ts) and optional: undefined means this relay has never sent
+    // telemetry (--report-relay-telemetry-interval-ms/--battery-percent not configured on it), not
+    // "battery unknown/dead" — distinguished from a real 0% reading, which does render.
+    if (typeof r.batteryPercent === "number") {
+      const batteryClass = r.batteryPercent < 15 ? "bad" : r.batteryPercent < 30 ? "warn" : "good";
+      tags.push(el("span", { className: "pill " + batteryClass, textContent: Math.round(r.batteryPercent) + "%" }));
+    }
     const li = el("li", null, [
       el("div", { className: "row" }, [
         el("span", { className: "row-title", textContent: r.operator || "NODE-" + r.relayId.slice(0, 8), title: r.relayId }),
@@ -1434,6 +1487,42 @@ function renderRelays(relays) {
       ]),
       el("div", { className: "tags" }, tags),
     ]);
+    // Status restored from relayCommandStatus (not just "always start at Riavvia/enabled") — see
+    // that map's own comment for why: a periodic re-render must not resurrect a button whose command
+    // is already pending or was already sent.
+    const commandStatus = relayCommandStatus.get(r.relayId);
+    const rebootButton = el("button", {
+      className: "call-button",
+      textContent: commandStatus === "sent" ? "Comando inviato" : commandStatus === "pending" ? "Invio..." : "Riavvia",
+    });
+    // el()'s props whitelist has no "disabled" entry (found while writing this) — set the property
+    // directly instead of relying on it silently doing nothing.
+    rebootButton.disabled = commandStatus === "sent" || commandStatus === "pending";
+    rebootButton.addEventListener("click", async () => {
+      const name = r.operator || "NODE-" + r.relayId.slice(0, 8);
+      if (!window.confirm('Riavviare il relay "' + name + '"? Resterà irraggiungibile finché non si riavvia.')) return;
+      relayCommandStatus.set(r.relayId, "pending");
+      rebootButton.disabled = true;
+      rebootButton.textContent = "Invio...";
+      try {
+        await sendRelayCommand(r.relayId, "reboot");
+        relayCommandStatus.set(r.relayId, "sent");
+        rebootButton.textContent = "Comando inviato";
+        // Found by review: without this, "sent" never clears and the button stays permanently
+        // disabled for the rest of the page session — even once the relay has long since rebooted
+        // and might need it again. RELAY_COMMAND_STATUS_RESET_MS gives enough time to discourage an
+        // accidental immediate re-click (the relay really is unreachable while it restarts) without
+        // locking the button forever; the next periodic renderRelays() after this fires picks the
+        // cleared status up automatically, no manual re-render needed here.
+        setTimeout(() => relayCommandStatus.delete(r.relayId), RELAY_COMMAND_STATUS_RESET_MS);
+      } catch (err) {
+        relayCommandStatus.delete(r.relayId);
+        rebootButton.disabled = false;
+        rebootButton.textContent = "Riavvia";
+        window.alert("Riavvio non riuscito: " + err.message);
+      }
+    });
+    li.append(rebootButton);
     if (!relaySeenIds.has(r.relayId)) li.classList.add("enter");
     list.append(li);
   }
