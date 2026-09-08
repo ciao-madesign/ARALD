@@ -17,22 +17,28 @@ Ogni decisione hardware/RF di questo progetto (quando comincerà) dovrebbe esser
 
 Il punto 4 è il motivo di questo documento: evitare che scelte prese "per far funzionare il prototipo" (antenna improvvisata, layout PCB senza considerazioni RF, parametri radio hard-coded) diventino un ostacolo costoso da disfare quando si arriverà a una valutazione di conformità.
 
-## 2. Architettura ARALD Card: un solo PCB
+## 2. Architettura ARALD Card: una sola carrier PCB
 
-**Non sviluppare due PCB differenti salvo necessità tecnica dimostrata.** Le configurazioni **Standalone** e **Clip** (vedi `docs/beacon.md`, "ARALD Cover e ARALD Clip") condividono lo stesso PCB — la differenza è meccanica (involucro) e di firmware (quale profilo attivo), non elettrica. Due PCB distinti raddoppierebbero il lavoro di validazione RF/EMC senza un motivo tecnico che oggi non esiste.
+**Non sviluppare due PCB differenti salvo necessità tecnica dimostrata.** Le configurazioni **Standalone** e **Clip** (vedi `docs/beacon.md`, "ARALD Cover e ARALD Clip") condividono la stessa carrier PCB — la differenza è meccanica (involucro) e di firmware (quale profilo attivo), non elettrica. Due PCB distinti raddoppierebbero il lavoro di validazione RF/EMC senza un motivo tecnico che oggi non esiste.
+
+**Aggiornamento (8 settembre 2026 — scelta MCU Arduino Nano ESP32)**: "una sola PCB" non significa più un progetto interamente custom attorno a un MCU bare, ma una **carrier PCB** che ospita il modulo **Arduino Nano ESP32 ABX00092** (MCU + BLE + Wi-Fi integrati, pre-assemblato e — presumibilmente — pre-certificato dal produttore, non verificato in questa sessione) più il modulo **SX1262** (LoRa, separato) più gestione batteria/pulsante SOS/LED. Il principio "una sola PCB riusata su Card/Cover/Clip/Relay" (§20) resta invariato — cambia solo cosa la carrier PCB ospita.
 
 ## 3. Documentazione dei componenti radio
 
 Ogni modulo radio usato (reale o candidato) va documentato con gli stessi campi, indipendentemente dal fornitore:
 
-- **LoRa (banda EU868)**: frequenze/canali effettivamente usati, potenza di trasmissione, larghezza di banda, spreading factor, coding rate, duty-cycle applicato (vedi la nota già in `docs/beacon.md` sulla necessità di scegliere la sotto-banda EN 300 220-2 corretta, non ancora fatta).
-- **BLE**: chipset e versione dello stack Bluetooth, potenza di trasmissione, canali usati, tipo di antenna.
+- **LoRa (banda EU868)**: frequenze/canali effettivamente usati, potenza di trasmissione, larghezza di banda, spreading factor, coding rate, duty-cycle applicato (vedi la nota già in `docs/beacon.md` sulla necessità di scegliere la sotto-banda EN 300 220-2 corretta, non ancora fatta). Modulo scelto: **SX1262**.
+- **BLE**: non più un chipset scelto separatamente — ereditato dal modulo **Arduino Nano ESP32 ABX00092** (ESP32-S3). Documentare a partire dal datasheet del modulo, non da una scelta chipset indipendente: potenza di trasmissione, canali usati, tipo di antenna (integrata sul modulo).
+- **Wi-Fi (nuovo, 8 settembre 2026)**: stesso modulo ESP32-S3, stessa antenna del BLE. Ruolo deciso con l'utente: client verso reti esistenti + punto di accesso proprio (SoftAP) **solo on-demand**, mai attivo di default (vedi `docs/beacon.md`, sottosezione "Wi-Fi: terzo radio, non più escluso", per il ragionamento completo) — da documentare qui: canale/i usati, potenza, modalità (STA/AP), quando si attiva.
+- **Coesistenza radio**: BLE e Wi-Fi condividono chip/antenna/banda 2.4GHz sull'ESP32-S3 — interferenza reciproca non verificata in questa sessione (accesso bloccato alla documentazione del produttore), registrata come rischio aperto in RF-002 (§16).
 
 Il primo driver LoRa reale del progetto (`node/src/transports/lora-serial.ts`) parla con il chip via bridge seriale, mai via SPI/GPIO diretto — questo documento riguarda la parte RF/hardware a monte di quel driver (il modulo radio stesso, la sua antenna, il suo layout), non il protocollo software del bridge.
 
-## 4. L'antenna è un progetto RF, non un accessorio
+## 4. L'antenna è un progetto RF, non un accessorio (per LoRa) — integrata e verificata per BLE/Wi-Fi
 
-Va trattata con lo stesso rigore ingegneristico del resto del circuito RF: impedenza, rete di adattamento (matching network), traccia RF, piano di massa, zona di clearance, distanze da batteria/componenti digitali/involucro. Un'antenna scelta o posizionata "perché ci stava" è la causa più comune di problemi RF/EMC scoperti tardi.
+Per l'antenna **LoRa** (SX1262, esterna): va trattata con lo stesso rigore ingegneristico del resto del circuito RF — impedenza, rete di adattamento (matching network), traccia RF, piano di massa, zona di clearance, distanze da batteria/componenti digitali/involucro. Un'antenna scelta o posizionata "perché ci stava" è la causa più comune di problemi RF/EMC scoperti tardi. Resta piena responsabilità di questo progetto, invariata dalla decisione sull'MCU.
+
+Per le antenne **BLE/Wi-Fi**: integrate sul modulo Arduino Nano ESP32, non progettate da zero — il lavoro si sposta da "progetto RF" a "verifica dell'integrazione secondo le linee guida del produttore" (clearance dal piano di massa della carrier PCB, orientamento, nessuna schermatura metallica sopra l'antenna del modulo) — comunque da verificare con misure reali quando si arriverà all'hardware, non un'esenzione dal punto 12 (protocollo di test RF).
 
 ## 5. ARALD Clip: l'ambiente RF è lo smartphone
 
@@ -101,6 +107,7 @@ docs/compliance/
 ├─ radio/
 │  ├─ lora/
 │  ├─ ble/
+│  ├─ wifi/
 │  ├─ antennas/
 │  └─ rf_parameters/
 ├─ firmware/
@@ -122,7 +129,9 @@ Formato tabellare: `ID | Rischio | Probabilità | Impatto | Mitigazione | Stato`
 
 | ID | Rischio | Probabilità | Impatto | Mitigazione | Stato |
 |---|---|---|---|---|---|
-| RF-001 | Antenna disadattata (impedenza non verificata) | Media | Alto (portata ridotta, possibile non conformità EMC) | Progetto antenna dedicato + misura matching network in fase di test | Aperto |
+| RF-001 | Antenna disadattata (impedenza non verificata) | Media | Alto (portata ridotta, possibile non conformità EMC) | Progetto antenna dedicato (LoRa) + misura matching network in fase di test | Aperto |
+| RF-002 | Coesistenza BLE/Wi-Fi non verificata (stesso chip/antenna, banda 2.4GHz condivisa sull'ESP32-S3) | Media | Medio (degrado prestazioni radio, possibile interferenza reciproca) | Verificare firmware di coesistenza del chip in fase di pre-compliance (§13); misurare RSSI/packet loss con entrambi i radio attivi (protocollo Test A-D, §12) | Aperto |
+| CERT-001 | Certificazione modulare del Nano ESP32 (BLE/Wi-Fi) non verificata — ignoto se e a quali condizioni sia ereditabile dal prodotto finale | Bassa (da confermare) | Medio (potrebbe non ridurre l'iter di conformità come sperato) | Verificare le condizioni di certificazione modulare del produttore in fase di pre-compliance, prima di fare affidamento su questo per pianificare l'iter RED/CE | Aperto |
 | BAT-001 | Batteria vicina all'antenna oltre la clearance minima | Media | Medio (degrado RF, possibile rischio sicurezza) | Rispetto della RF Clearance Area (punto 5) fin dal layout PCB | Aperto |
 
 Il registro vive in `docs/compliance/risk_assessment/` quando avrà contenuto reale — questa tabella resta solo l'esempio/punto di partenza indicato dal testo originale.
@@ -158,6 +167,8 @@ Fasi previste (nessuna iniziata — bring-up fisico è lavoro privato dell'utent
 | M8-M9 | Design Freeze |
 
 **Output di M9**: "ARALD Card/Clip Candidate for Compliance Testing" — una piattaforma funzionante, documentata, riproducibile, progettata in modo da poter affrontare una valutazione di conformità senza un ridisegno sostanziale. **Non** è la certificazione stessa, che resta uno stadio successivo non pianificato qui (stessa distinzione già fatta in `docs/beacon.md` tra Prototype/Field Pilot/Commercial product).
+
+**Stato di M0 (8 settembre 2026)**: la scelta del componente MCU (Arduino Nano ESP32 ABX00092) è fatta — resta aperto il resto di M0-M2 (schema a blocchi completo, dimensionamento fisico spessore/consumi/autonomia con la dev board scelta, vedi `docs/beacon.md`).
 
 ## 20. ARALD Box e ARALD Portable: stesso principio
 
