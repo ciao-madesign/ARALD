@@ -155,3 +155,101 @@ h2 {
   background: var(--off-soft);
   color: var(--off);
 }
+
+a {
+  color: var(--accent);
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 0.4em;
+  padding: 0.55em 1.1em;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+input,
+select {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 0.4em;
+  padding: 0.5em 0.7em;
+}
+
+/* header's own .row: title on the left, account info + admin link + logout on the right */
+.header-account {
+  display: flex;
+  align-items: center;
+  gap: 0.9em;
+}
+
+.logout-button {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+/* Login page — deliberately its own small layout, not app/globals.css's <main> grid of panels: a
+   single centered card, since there is nothing else on this page. */
+.login-main {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5em;
+}
+
+.login-panel {
+  width: 100%;
+  max-width: 24em;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9em;
+  margin-top: 1em;
+}
+
+.login-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+  font-size: 0.85em;
+  color: var(--muted);
+}
+
+.login-error {
+  color: var(--emergency);
+  margin: 0;
+  font-size: 0.85em;
+}
+
+/* Admin panel's three write forms — same label/input stacking as .login-form, its own class only so
+   the two can diverge later without one accidentally affecting the other. */
+.admin-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9em;
+}
+
+.admin-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+  font-size: 0.85em;
+  color: var(--muted);
+}

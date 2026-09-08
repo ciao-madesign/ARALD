@@ -1,7 +1,37 @@
 import { describe, expect, it } from "vitest";
-import { asRecord, assembleSnapshot, eventTimestamp, rankByEventTimestamp } from "../../mirror-portal/lib/db.js";
+import { asRecord, assembleSnapshot, eventTimestamp, organizationFilterClause, rankByEventTimestamp } from "../../mirror-portal/lib/db.js";
 
 describe("mirror-portal/lib/db", () => {
+  describe("organizationFilterClause", () => {
+    it("returns no clause and no params when organizationId is undefined (an Admin session)", () => {
+      expect(organizationFilterClause(undefined, 1)).toEqual({ clause: "", params: [] });
+    });
+
+    it("regression: an empty-string organizationId still builds an active (fail-closed) filter, never treated the same as undefined", () => {
+      // app/page.tsx passes `session.user.organizationId ?? ""` as a defensive fallback for a
+      // malformed Operatore session — that must match zero real nodes (no organization id is ever
+      // an empty string), never silently fall through to "no filter" and grant a full-mesh view.
+      expect(organizationFilterClause("", 1)).toEqual({
+        clause: "WHERE node_url IN (SELECT node_url FROM nodes WHERE organization_id = $1)",
+        params: [""],
+      });
+    });
+
+    it("builds a WHERE clause bound to the given param index when organizationId is set", () => {
+      expect(organizationFilterClause("org-1", 1)).toEqual({
+        clause: "WHERE node_url IN (SELECT node_url FROM nodes WHERE organization_id = $1)",
+        params: ["org-1"],
+      });
+    });
+
+    it("uses the caller-supplied param index, not always $1 — so it composes with a query that has an earlier parameter", () => {
+      expect(organizationFilterClause("org-1", 2)).toEqual({
+        clause: "WHERE node_url IN (SELECT node_url FROM nodes WHERE organization_id = $2)",
+        params: ["org-1"],
+      });
+    });
+  });
+
   describe("asRecord", () => {
     it("passes through a plain object", () => {
       expect(asRecord({ a: 1 })).toEqual({ a: 1 });
