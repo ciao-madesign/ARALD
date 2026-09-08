@@ -125,12 +125,36 @@
       <div id="node-label" class="mono muted"></div>
     </div>
     <div class="header-actions">
+      <!-- Nascosto finché window.Capacitor.Plugins.BluetoothLe non è disponibile (ble-client.js) —
+           stesso feature-gating di #ble-relay-panel sotto: un SOS via Bluetooth non ha senso senza
+           quel plugin. Niente trattamento "faro" (riservato a due soli bottoni in tutta l'app, voce
+           #50) — colore d'emergenza (--bad, già usato per #emergency-beacons) per distinguerlo
+           visivamente senza aggiungere una terza eccezione a quella disciplina. -->
+      <button type="button" id="sos-button" class="icon-button sos-button" aria-label="Invia un SOS" hidden>
+        <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-alert-circle"></use></svg>
+      </button>
       <button type="button" id="show-intro" class="icon-button" aria-label="Cosa posso fare qui?">
         <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-help-circle"></use></svg>
       </button>
       <button id="forget-network" class="link-button">Cambia rete</button>
     </div>
   </header>
+
+  <!-- Pannello aperto/chiuso dal bottone #sos-button — mai un overlay a schermo intero (un SOS non
+       deve richiedere un passo "chiudi questo" in più): un messaggio è facoltativo, inviare deve
+       restare il più rapido possibile. Conferma nativa window.confirm() prima dell'invio vero (unica
+       protezione contro un tap accidentale, stesso pattern già usato in hub-control.js per
+       Ferma/Riavvia — nessun pattern di conferma custom esiste già in mobile/www/ da riusare). -->
+  <div id="sos-panel" class="panel sos-panel" hidden>
+    <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-alert-circle"></use></svg> Invia un SOS</h2>
+    <p class="hint">Invia una richiesta di soccorso ai dispositivi ARALD Bluetooth nelle vicinanze — Clip, altri telefoni, relay. Un messaggio è facoltativo, ma puoi inviare subito anche senza scriverlo.</p>
+    <textarea id="sos-message" placeholder="Descrivi la situazione (facoltativo)..." rows="3" maxlength="4000"></textarea>
+    <div class="sos-panel-actions">
+      <button type="button" id="sos-cancel" class="link-button">Annulla</button>
+      <button type="button" id="sos-send" class="call-submit sos-send-button">Invia SOS</button>
+    </div>
+    <p id="sos-status" class="muted" role="status" aria-live="polite"></p>
+  </div>
 
   <main id="dashboard-main" tabindex="-1">
     <!-- Mostrato una sola volta in automatico dopo il primo pairing riuscito (stato "già visto" in
@@ -197,6 +221,16 @@
       </button>
       <p id="ble-relay-status" class="muted" role="status" aria-live="polite"></p>
       <ul id="ble-relay-peers"></ul>
+      <!-- Attività relay (pezzo 3, docs/security.md): solo conteggi, mai contenuto — vincolo esplicito
+           dell'utente, vedi ble-client.js's renderRelayActivity()/classifyRelayedPacket() in
+           ble-relay.js. Anche per SOS: solo un numero, mai il testo/posizione. -->
+      <div id="ble-relay-activity" class="ble-relay-activity">
+        <h3>Attività relay</h3>
+        <p>Bacheca: <span id="ble-relay-activity-drops">0</span></p>
+        <p>SOS: <span id="ble-relay-activity-sos">0</span></p>
+        <p>Canali:</p>
+        <ul id="ble-relay-activity-channels"></ul>
+      </div>
     </div>
 
     <div class="panels-grid">
@@ -395,6 +429,13 @@
      intero. -->
 <script type="module" src="ble-link.js"></script>
 <script type="module" src="ble-relay.js"></script>
+<!-- vendor/nacl.js (classic, unmodified-below-header TweetNaCl — vedi il file per la provenienza
+     completa) prima di ble-identity.js: quest'ultimo referenzia il globale `nacl` solo dentro un
+     corpo funzione (mai a livello di script), quindi l'ordine stretto non è tecnicamente necessario
+     — mantenuto comunque per coerenza con l'ordine "dipendenza prima" già seguito sopra. -->
+<script src="vendor/nacl.js"></script>
+<script type="module" src="ble-identity.js"></script>
+<script type="module" src="ble-sos.js"></script>
 
 <!-- mapview.js prima di app.js: app.js chiama fetchMapInfo()/renderMapAvailability() (definite in
      mapview.js) in modo sincrono dal proprio codice di avvio (showDashboard() -> refreshAll(), per

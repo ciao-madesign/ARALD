@@ -1,5 +1,8 @@
+import { autoDetect } from "@serialport/bindings-cpp";
+import { SerialPortStream } from "@serialport/stream";
 import { NomadNode } from "./node.js";
 import { TcpTransport } from "./transports/tcp.js";
+import { LoraSerialTransport } from "./transports/lora-serial.js";
 import { WebUiServer, generateNetworkPassword } from "./web-ui.js";
 import { MbtilesReader } from "./map-tiles.js";
 import { TrustLevel } from "./trust.js";
@@ -19,6 +22,39 @@ function parseArgs(argv: string[]): Record<string, string> {
     }
   }
   return args;
+}
+
+/** Same `Number()` + explicit range check + `process.exit(1)` pattern already used inline for `--battery-percent` above, factored out since the LoRa flags below need it four times. `undefined` when the flag itself is absent — lets `--lora-frequency-hz`/etc. fall through to `LoraSerialTransportOptions`'s own defaults instead of this file re-declaring them (`--lora-baud-rate`'s caller applies its own `?? 115200` on top, since a serial baud rate isn't one of that options object's fields). */
+function parsePositiveNumberFlag(flagName: string, rawValue: string | undefined): number | undefined {
+  if (rawValue === undefined) return undefined;
+  const value = Number(rawValue);
+  if (!Number.isFinite(value) || value <= 0) {
+    console.error(`--${flagName} must be a positive number, got: ${rawValue}`);
+    process.exit(1);
+  }
+  return value;
+}
+
+/** Same shape as `parsePositiveNumberFlag()`, additionally requiring an integer within `[min, max]` — used for `--lora-spreading-factor` (SX127x supports 6-12, `sx127x-registers.ts`). */
+function parseRangedIntFlag(flagName: string, rawValue: string | undefined, min: number, max: number): number | undefined {
+  if (rawValue === undefined) return undefined;
+  const value = Number(rawValue);
+  if (!Number.isInteger(value) || value < min || value > max) {
+    console.error(`--${flagName} must be an integer in [${min}, ${max}], got: ${rawValue}`);
+    process.exit(1);
+  }
+  return value;
+}
+
+/** `LoraSerialTransportOptions.codingRateDenominator` is typed as exactly `5 | 6 | 7 | 8` (the four coding rates `RegModemConfig1` supports) — validated against that literal set, not just "a number in range", so an invalid value is rejected here rather than silently reaching `buildModemConfig1Byte()` (`sx127x-registers.ts`, which does not itself validate). */
+function parseCodingRateDenominatorFlag(rawValue: string | undefined): 5 | 6 | 7 | 8 | undefined {
+  if (rawValue === undefined) return undefined;
+  const value = Number(rawValue);
+  if (value !== 5 && value !== 6 && value !== 7 && value !== 8) {
+    console.error(`--lora-coding-rate-denominator must be one of 5, 6, 7, 8, got: ${rawValue}`);
+    process.exit(1);
+  }
+  return value;
 }
 
 async function main(): Promise<void> {
@@ -45,7 +81,49 @@ async function main(): Promise<void> {
     relayPolicy: batteryPercent !== undefined ? { getResourceState: () => ({ batteryPercent }) } : undefined,
   });
   node.addTransport(new TcpTransport(node.nodeId, port));
+
+  // Opt-in, off by default — wires node/src/transports/lora-serial.ts (voce #61, real but never
+  // hardware-verified SX127x driver) onto an actual serial device via @serialport/bindings-cpp
+  // (autoDetect() picks the right native binding for the current OS). Everything below this flag is
+  // still unverified against a real chip in this environment (no hardware available here) — this only
+  // makes the driver *reachable* from the CLI, the same honest boundary already declared for
+  // lora-serial.ts itself.
+  //
+  // `!== undefined` (not a truthy check) plus an explicit empty-string rejection — found by review:
+  // `--lora-serial-port ""` (e.g. an unset shell variable interpolated into the flag) would otherwise
+  // silently skip this entire block, starting the node over TCP alone with no error at all, exactly
+  // the opposite of this feature's own stated intent ("un operatore che chiede esplicitamente un
+  // profilo LoRa reale merita un fallimento immediato e chiaro").
+  let loraStatusLine: string | undefined;
+  if (args["lora-serial-port"] !== undefined) {
+    const serialPortPath = args["lora-serial-port"];
+    if (serialPortPath === "") {
+      console.error("--lora-serial-port was given an empty value");
+      process.exit(1);
+    }
+    const baudRate = parsePositiveNumberFlag("lora-baud-rate", args["lora-baud-rate"]) ?? 115200;
+    const frequencyHz = parsePositiveNumberFlag("lora-frequency-hz", args["lora-frequency-hz"]);
+    const bandwidthHz = parsePositiveNumberFlag("lora-bandwidth-hz", args["lora-bandwidth-hz"]);
+    const spreadingFactor = parseRangedIntFlag("lora-spreading-factor", args["lora-spreading-factor"], 6, 12);
+    const codingRateDenominator = parseCodingRateDenominatorFlag(args["lora-coding-rate-denominator"]);
+
+    const stream = new SerialPortStream({ binding: autoDetect(), path: serialPortPath, baudRate });
+    const loraTransport = new LoraSerialTransport(node.nodeId, stream, {
+      frequencyHz,
+      bandwidthHz,
+      spreadingFactor,
+      codingRateDenominator,
+    });
+    node.addTransport(loraTransport);
+    // Logged only after `node.start()` below actually succeeds (see that line) — found by review:
+    // printing this here, before the chip handshake `node.start()` performs, reads as a success
+    // message immediately followed by a fatal crash whenever the chip doesn't respond, unlike every
+    // other status line in this file (all printed only once their underlying action has completed).
+    loraStatusLine = `LoRa (seriale reale): ${serialPortPath} @ ${baudRate} baud`;
+  }
+
   await node.start();
+  if (loraStatusLine) console.log(loraStatusLine);
 
   console.log("ARALD Node");
   console.log(`Display name: ${displayName}`);
@@ -101,12 +179,20 @@ async function main(): Promise<void> {
   // node advertises service://relay-registry — a no-op error (logged, not fatal) until a registry is
   // actually discovered, e.g. right after this relay starts up before it has connected to anything.
   let telemetryInterval: NodeJS.Timeout | undefined;
-  if (args["report-relay-telemetry-interval-ms"]) {
+  // `!== undefined`, not a truthy check — found by a second review round, the exact same
+  // empty-string-silently-skips-the-block pattern just fixed for --lora-serial-port above. Unlike that
+  // flag (a path, not validatable as "a number"), an empty string here flows straight into
+  // parsePositiveNumberFlag() below and is rejected there on its own (`Number("") === 0`, which fails
+  // the `value <= 0` check) — no separate empty-string branch needed for a numeric flag.
+  if (args["report-relay-telemetry-interval-ms"] !== undefined) {
+    // Reuses parsePositiveNumberFlag() (added below for the --lora-* flags) for the validation itself
+    // instead of the separate inline check this block had before — found by review: the two were an
+    // identical "positive finite number, else error and exit(1)" rule kept in two places, easy to
+    // update one and miss the other. Re-parsed via Number() right after — cheap, and avoids the type
+    // system seeing a possible `undefined` here that can't actually happen (the flag is present, per
+    // the `if` above, and the helper already exits the process before ever returning on any invalid value).
+    parsePositiveNumberFlag("report-relay-telemetry-interval-ms", args["report-relay-telemetry-interval-ms"]);
     const intervalMs = Number(args["report-relay-telemetry-interval-ms"]);
-    if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
-      console.error(`--report-relay-telemetry-interval-ms must be a positive number, got: ${args["report-relay-telemetry-interval-ms"]}`);
-      process.exit(1);
-    }
     telemetryInterval = setInterval(() => {
       node.reportRelayTelemetry().catch((err) => console.error(`Relay telemetry report failed: ${(err as Error).message}`));
     }, intervalMs);

@@ -63,11 +63,33 @@ export function decodePacket(text) {
   return parsed;
 }
 
+/**
+ * `crypto.randomUUID()`, falling back to a manually-assembled RFC 4122 v4 UUID when it's
+ * unavailable — found by testing this app in an actual insecure-context (plain-HTTP LAN) browser
+ * page (docs/security.md voce #65): unlike `crypto.getRandomValues()` (verified available
+ * everywhere), `crypto.randomUUID()` is *also* gated behind a secure context (HTTPS or
+ * `localhost`/`127.0.0.1`) in this Chromium — a real, pre-existing gap in every caller of it in this
+ * directory (this file's own `createHello()`, `ble-client.js`'s `newRelaySessionNodeId()`), not
+ * previously caught because earlier manual verification happened to run against `127.0.0.1` (a
+ * secure context) rather than a genuine LAN-style address. The fallback uses the same
+ * `crypto.getRandomValues()` this file/`ble-identity.js` already rely on — no new capability
+ * required, no new dependency.
+ */
+export function randomUUID() {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+  bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 10xx
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 /** Builds a HELLO packet identifying this phone to whatever it connects to — same fields/defaults node/src/transports/simulated-link.ts's sendHelloOnce() gives one (ttl 1, default MESSAGING priority, empty payload). */
 export function createHello(nodeId) {
   return {
     version: PROTOCOL_VERSION,
-    id: crypto.randomUUID(),
+    id: randomUUID(),
     type: "HELLO",
     source: nodeId,
     ttl: 1,
@@ -219,6 +241,7 @@ export function base64ToBytes(base64) {
 
 const AraldBleLink = {
   MAX_FRAGMENTS_PER_MESSAGE,
+  randomUUID,
   encodePacket,
   decodePacket,
   createHello,

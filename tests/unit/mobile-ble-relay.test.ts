@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PendingRelayQueue, SeenCache, decideForward } from "../../mobile/www/ble-relay.js";
+import { PendingRelayQueue, SeenCache, classifyRelayedPacket, decideForward } from "../../mobile/www/ble-relay.js";
 
 function packet(overrides: Record<string, unknown> = {}) {
   return {
@@ -160,6 +160,60 @@ describe("mobile/www/ble-relay (phone-side relay/store-and-forward logic)", () =
       // The forged entry must lose eviction priority to the legitimate EMERGENCY one — never the other way around.
       expect(queue.has("legit-emergency")).toBe(true);
       expect(queue.has("forged")).toBe(false);
+    });
+  });
+
+  describe("classifyRelayedPacket (pezzo 3 — conta cosa passa, mai il contenuto)", () => {
+    function announce(name: unknown, extra: Record<string, unknown> = {}) {
+      return packet({ type: "CONTENT_ANNOUNCE", payload: { metadata: { name }, ...extra } });
+    }
+
+    it("recognizes a drop announce", () => {
+      expect(classifyRelayedPacket(announce("drop"))).toEqual({ kind: "drop" });
+    });
+
+    it("recognizes an emergency-beacon announce as sos", () => {
+      expect(classifyRelayedPacket(announce("emergency-beacon"))).toEqual({ kind: "sos" });
+    });
+
+    it("recognizes a valid channel announce and extracts the channel name", () => {
+      expect(classifyRelayedPacket(announce("chat:rifugio-1"))).toEqual({ kind: "channel", channel: "rifugio-1" });
+    });
+
+    it("does not read any field beyond metadata.name for a sos packet, even when data is present", () => {
+      const withData = announce("emergency-beacon", { data: { message: "dettaglio privato", lat: 1, lon: 2 } });
+      const result = classifyRelayedPacket(withData);
+      expect(result).toEqual({ kind: "sos" }); // solo il kind, nessun campo copiato dal payload
+    });
+
+    it("ignores a CONTENT_ANNOUNCE with an unrecognized name", () => {
+      expect(classifyRelayedPacket(announce("something-else"))).toBeUndefined();
+    });
+
+    it("ignores an invalid channel name (uppercase, out of pattern)", () => {
+      expect(classifyRelayedPacket(announce("chat:Not_Valid!"))).toBeUndefined();
+    });
+
+    it("ignores an invalid channel name (too long)", () => {
+      expect(classifyRelayedPacket(announce("chat:" + "a".repeat(33)))).toBeUndefined();
+    });
+
+    it("ignores a CONTENT_ANNOUNCE whose metadata.name is missing or not a string", () => {
+      expect(classifyRelayedPacket(packet({ type: "CONTENT_ANNOUNCE", payload: {} }))).toBeUndefined();
+      expect(classifyRelayedPacket(announce(42))).toBeUndefined();
+    });
+
+    it.each(["PRIVATE_MESSAGE", "GROUP_MESSAGE", "HELLO", "PEER_LIST", "SERVICE_REQUEST", "SERVICE_RESPONSE"])(
+      "ignores non-CONTENT_ANNOUNCE type %s entirely, regardless of payload shape",
+      (type) => {
+        expect(classifyRelayedPacket(packet({ type, payload: { metadata: { name: "drop" } } }))).toBeUndefined();
+      },
+    );
+
+    it("never throws on a malformed/absent packet", () => {
+      expect(classifyRelayedPacket(undefined as never)).toBeUndefined();
+      expect(classifyRelayedPacket(null as never)).toBeUndefined();
+      expect(classifyRelayedPacket({} as never)).toBeUndefined();
     });
   });
 });

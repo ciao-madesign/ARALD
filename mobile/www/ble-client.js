@@ -11,21 +11,32 @@
 // prossimo sviluppo, non costruita qui): il plugin scelto (@capacitor-community/bluetooth-le) è
 // central-only per dichiarazione esplicita del proprio README.
 //
-// Classic (non-module) script, loaded after ble-link.js/ble-relay.js (entrambi moduli) in
-// index.html — legge la logica pura da `window.AraldBleLink` (framing/frammentazione) e
-// `window.AraldBleRelay` (dedup/instradamento/coda), gli stessi ponti deliberati già documentati
-// nei rispettivi file. Ogni accesso a quegli oggetti avviene solo dentro gestori di evento, mai a
-// livello di script — stesso motivo già spiegato in ble-link.js.
+// Classic (non-module) script, loaded after ble-link.js/ble-relay.js/ble-identity.js/ble-sos.js
+// (tutti moduli) in index.html — legge la logica pura da `window.AraldBleLink`
+// (framing/frammentazione), `window.AraldBleRelay` (dedup/instradamento/coda),
+// `window.AraldBleIdentity` (identità Ed25519 reale) e `window.AraldBleSos` (costruzione del
+// pacchetto SOS), gli stessi ponti deliberati già documentati nei rispettivi file. Ogni accesso a
+// quegli oggetti avviene solo dentro gestori di evento, mai a livello di script — stesso motivo già
+// spiegato in ble-link.js.
 //
-// AMBITO DI QUESTO PEZZO: il telefono relaya pacchetti — non li interpreta né li mostra ancora
-// (nessuna UI per SOS/chat/drop ricevuti via questo percorso). Il telefono non ha un'identità
-// crittografica reale (nessuna chiave Ed25519) — relaySessionNodeId è un'etichetta usa-e-getta per
-// tutta la sessione di relay, mai una vera identità di rete.
+// AMBITO: il telefono relaya pacchetti altrui (nessuna interpretazione/UI per SOS/chat/drop ricevuti
+// via relay — resta esplicitamente fuori scope, `docs/security.md` voce #65) **e**, da questo pezzo
+// in avanti, ne origina uno proprio — un SOS (`sendEmergencyBeaconViaRelay()` sotto). Due identità
+// distinte e deliberatamente diverse coesistono in questo file: `relaySessionNodeId` resta
+// un'etichetta usa-e-getta rigenerata a ogni sessione di relay, usata solo per instradare pacchetti
+// altrui (mai per firmare nulla); l'identità Ed25519 vera e persistente
+// (`window.AraldBleIdentity.loadOrCreateIdentity()`) è usata solo per firmare un SOS originato da
+// questo telefono — necessaria perché `verifyContentSignature()` lato mesh scarterebbe qualunque
+// contenuto non firmato davvero non appena tocca un `NomadNode` reale, vedi `ble-sos.js`'s header.
 //
-// COSA È VERIFICATO QUI, COSA NO: la logica di relay pura (ble-relay.js) è unit-testata
-// (tests/unit/mobile-ble-relay.test.ts). Tutto ciò che chiama window.Capacitor.Plugins.BluetoothLe
-// resta scritto a spec, mai eseguito contro il plugin reale/un bridge nativo/hardware Bluetooth
-// reale — stessa onestà già applicata al pezzo precedente e a node/src/transports/lora-serial.ts.
+// COSA È VERIFICATO QUI, COSA NO: la logica di relay pura (ble-relay.js), l'identità/firma
+// (ble-identity.js) e la costruzione del pacchetto SOS (ble-sos.js) sono unit-testate
+// (tests/unit/mobile-ble-relay.test.ts, mobile-ble-identity.test.ts, mobile-ble-sos.test.ts) — e un
+// SOS costruito da questi moduli è verificato end-to-end contro un vero NomadNode via socket TCP
+// grezzo (tests/integration/phone-originated-sos-interop.test.ts), non solo contro helper esportati
+// in isolamento. Tutto ciò che chiama window.Capacitor.Plugins.BluetoothLe resta scritto a spec, mai
+// eseguito contro il plugin reale/un bridge nativo/hardware Bluetooth reale — stessa onestà già
+// applicata al pezzo precedente e a node/src/transports/lora-serial.ts.
 
 /**
  * Provisional GATT identifiers — stesso placeholder invenzione-di-questo-progetto già usato nel
@@ -56,6 +67,10 @@ const HELLO_TIMEOUT_MS = 5000;
  */
 const SCAN_REFRESH_INTERVAL_MS = 30000;
 
+/** Same defaults as node/src/node.ts's DEFAULT_BEACON_BROADCAST_REPEAT_COUNT/_INTERVAL_MS — see `sendEmergencyBeaconViaRelay()`'s own comment for why an SOS is repeated on a timer instead of sent once. */
+const SOS_BROADCAST_REPEAT_COUNT = 5;
+const SOS_BROADCAST_REPEAT_INTERVAL_MS = 2000;
+
 let relayActive = false;
 /**
  * Contatore incrementato a ogni attivazione/disattivazione — permette a un `connectToPeer()`/
@@ -72,15 +87,61 @@ let pendingQueue = null;
 /** Map<deviceId, { peerNodeId: string|null, reassembler: FragmentReassembler, identifyResolvers: {resolve,reject}|null }> — una entry per ogni connessione, riservata (vedi handleScanResult()) prima ancora che plugin.connect() sia stato chiamato, per evitare una doppia connessione allo stesso device da due risultati di scansione ravvicinati. */
 let connections = new Map();
 let scanRefreshTimer = null;
+/** `setTimeout` handles for an in-flight `sendEmergencyBeaconViaRelay()`'s scheduled repeats (voce #65) — tracked so `deactivateRelay()` can cancel them, same discipline `node.ts`'s `pendingBeaconRepeats` already applies for the exact same reason: without this, a repeat could still fire after the relay (and its connections) has already been torn down. */
+let pendingSosTimers = new Set();
 
 /**
- * Non un'identità crittografica (nessuna chiave Ed25519, a differenza di un vero NomadNode) — una
- * etichetta usa-e-getta per l'intera sessione di relay, rigenerata solo quando il relay viene
- * riattivato. Identità/crittografia reale per qualunque cosa il telefono arrivasse un giorno a
- * originare (non solo relayare) resta esplicitamente lavoro futuro.
+ * Contatori di attività relay (pezzo 3, `docs/security.md` voce successiva) — quanti pacchetti
+ * *altrui* questo telefono ha inoltrato per categoria, mai il contenuto stesso. Vincolo esplicito
+ * dell'utente: "mostra soltanto contenuti destinati a visione pubblica ... anche per SOS mostra solo
+ * numero di contenuti relayati, non il contenuto vero e proprio". Popolati solo in
+ * `handleNotification()`, solo per pacchetti classificati da `window.AraldBleRelay.classifyRelayedPacket()`
+ * (allowlist — vedi quel commento) — mai per un SOS originato da questo stesso telefono
+ * (`sendEmergencyBeaconViaRelay()` non tocca questi contatori: è origine, non relay-di-terzi, già
+ * visibile altrove nell'UI tramite lo stato del pannello SOS). Azzerati a ogni attivazione del relay
+ * (`activateRelay()`), stessa vita di `seenCache`/`pendingQueue` — nessuna persistenza tra sessioni.
+ */
+let relayActivityDrops = 0;
+let relayActivitySos = 0;
+/** Map<canale, conteggio> — un canale mai visto in questa sessione semplicemente non compare, niente voce a zero da popolare in anticipo. */
+let relayActivityChannels = new Map();
+
+/**
+ * Tetto sul numero di canali distinti tracciati per sessione (trovato mancante dalla revisione):
+ * `relayActivityChannels` è alimentata da `payload.metadata.name`, un campo del pacchetto — mai
+ * fidato quanto il tipo dichiarato (stessa convenzione di CLAUDE.md già rispettata da `SeenCache`/
+ * `PendingRelayQueue` in questo stesso file, entrambe bounded). Senza un tetto, un peer connesso
+ * potrebbe trasmettere un flusso di `CONTENT_ANNOUNCE` con nomi canale distinti ma validi
+ * (`chat:<1-32 char da [a-z0-9_-]>`, uno spazio enorme) durante una sessione di relay lunga (es. un
+ * dispiegamento sul campo di ore), facendo crescere questa mappa senza limite — la stessa classe di
+ * bug che `SeenCache`/`PendingRelayQueue` esistono già per evitare in questo file.
+ */
+const MAX_RELAY_ACTIVITY_CHANNELS = 256;
+
+/**
+ * Incrementa il contatore di un canale, con la stessa eviction FIFO semplice già usata da
+ * `SeenCache.markSeen()` sopra (nessuna informazione di fiducia disponibile qui, stesso motivo per
+ * cui `SeenCache` stessa non ne ha una) quando si raggiunge `MAX_RELAY_ACTIVITY_CHANNELS`: il canale
+ * osservato per primo in questa sessione lascia spazio al più recente, mai il contrario.
+ */
+function recordChannelActivity(channel) {
+  if (!relayActivityChannels.has(channel) && relayActivityChannels.size >= MAX_RELAY_ACTIVITY_CHANNELS) {
+    const oldestKey = relayActivityChannels.keys().next().value;
+    relayActivityChannels.delete(oldestKey);
+  }
+  relayActivityChannels.set(channel, (relayActivityChannels.get(channel) ?? 0) + 1);
+}
+
+/**
+ * Non un'identità crittografica (nessuna chiave Ed25519) — una etichetta usa-e-getta per l'intera
+ * sessione di relay, rigenerata solo quando il relay viene riattivato, usata solo per instradare
+ * pacchetti altrui (mai per firmare nulla). Distinta deliberatamente dall'identità Ed25519 vera e
+ * persistente usata per originare un SOS (`window.AraldBleIdentity.loadOrCreateIdentity()`, voce
+ * #64) — vedi il commento di intestazione di questo file per la spiegazione completa di perché
+ * coesistono due identità diverse.
  */
 function newRelaySessionNodeId() {
-  return `phone-${crypto.randomUUID()}`;
+  return `phone-${window.AraldBleLink.randomUUID()}`;
 }
 
 function bleRelayPlugin() {
@@ -111,6 +172,54 @@ function renderRelayPeers() {
     li.textContent = conn.peerNodeId;
     list.append(li);
   }
+}
+
+/** Aggiorna i due contatori semplici (Bacheca/SOS) — O(1), separata dalla lista canali sotto (trovato dalla revisione: le due cose hanno un costo molto diverso, non vale la pena accoppiarle). */
+function renderRelayActivityCounts() {
+  const dropsEl = document.getElementById("ble-relay-activity-drops");
+  const sosEl = document.getElementById("ble-relay-activity-sos");
+  if (dropsEl) dropsEl.textContent = String(relayActivityDrops);
+  if (sosEl) sosEl.textContent = String(relayActivitySos);
+}
+
+/**
+ * Svuota e ricostruisce l'elenco canali — stesso schema di `renderRelayPeers()`, mai un aggiornamento
+ * incrementale del DOM. Separata da `renderRelayActivityCounts()` perché molto più costosa (fino a
+ * `MAX_RELAY_ACTIVITY_CHANNELS` elementi, ordinamento incluso): chiamata solo quando l'insieme dei
+ * canali può davvero essere cambiato (un pacchetto canale relayato, o un reset), mai per ogni singolo
+ * drop/SOS relayato — trovato dalla revisione: prima di questa voce, ogni pacchetto qualunque
+ * ricostruiva anche questa lista, un costo reale su un telefono che relaya per ore.
+ */
+function renderRelayActivityChannels() {
+  const channelsEl = document.getElementById("ble-relay-activity-channels");
+  if (!channelsEl) return;
+
+  channelsEl.textContent = "";
+  const channels = [...relayActivityChannels.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  if (channels.length === 0) {
+    const li = document.createElement("li");
+    li.className = "muted";
+    li.textContent = "Nessuno";
+    channelsEl.append(li);
+    return;
+  }
+  for (const [channel, count] of channels) {
+    const li = document.createElement("li");
+    li.textContent = `${channel}: ${count}`;
+    channelsEl.append(li);
+  }
+}
+
+/**
+ * Renderizza l'intero blocco "Attività relay" (contatori + elenco canali) — usata solo sui reset
+ * (`activateRelay()`/`deactivateRelay()`), dove tutto è comunque azzerato insieme. Mostra sempre e solo
+ * un numero/nome canale per categoria (mai un elenco di contenuti) — l'unico modo in cui questo blocco
+ * potrebbe mostrare qualcosa di privato è se `relayActivity*` lo contenesse già, e quei contatori non lo
+ * contengono mai per costruzione (vedi il commento su `classifyRelayedPacket()` in ble-relay.js).
+ */
+function renderRelayActivity() {
+  renderRelayActivityCounts();
+  renderRelayActivityChannels();
 }
 
 function findConnectionByPeerNodeId(peerNodeId) {
@@ -213,6 +322,24 @@ function handleNotification(plugin, deviceId, event) {
 
   const decision = window.AraldBleRelay.decideForward(packet, relaySessionNodeId, seenCache);
   if (decision.duplicate || !decision.forwardPacket) return;
+
+  // Conta *cosa* passa (pezzo 3), mai il contenuto — vedi il commento su classifyRelayedPacket() in
+  // ble-relay.js per la postura allowlist. Solo per pacchetti altrui: questa funzione gestisce
+  // esclusivamente notifiche in arrivo da una connessione, mai un SOS che questo telefono origina
+  // (quello passa da sendEmergencyBeaconViaRelay() -> forwardPacket() direttamente, senza mai
+  // transitare da qui).
+  const classification = window.AraldBleRelay.classifyRelayedPacket(decision.forwardPacket);
+  if (classification) {
+    if (classification.kind === "drop") relayActivityDrops += 1;
+    else if (classification.kind === "sos") relayActivitySos += 1;
+    else if (classification.kind === "channel") recordChannelActivity(classification.channel);
+    renderRelayActivityCounts();
+    // La lista canali (fino a MAX_RELAY_ACTIVITY_CHANNELS elementi, con ordinamento) è molto più
+    // costosa dei due contatori sopra — ricostruita solo quando l'insieme dei canali può davvero
+    // essere cambiato, mai per un drop/SOS relayato (trovato dalla revisione).
+    if (classification.kind === "channel") renderRelayActivityChannels();
+  }
+
   forwardPacket(plugin, deviceId, decision.forwardPacket);
 }
 
@@ -383,8 +510,24 @@ async function activateRelay() {
   pendingQueue = new window.AraldBleRelay.PendingRelayQueue();
   connections = new Map();
   relayActive = true;
+  // Azzerati ad ogni (ri)attivazione — stessa vita di seenCache/pendingQueue sopra, mai persistenti tra sessioni.
+  relayActivityDrops = 0;
+  relayActivitySos = 0;
+  relayActivityChannels = new Map();
+  renderRelayActivity();
 
-  await plugin.initialize();
+  try {
+    await plugin.initialize();
+  } catch (err) {
+    // Trovato dalla revisione: senza questo, un fallimento qui (Bluetooth spento, permesso negato)
+    // lasciava `relayActive` bloccato a true per sempre — non solo il gestore del toggle (che aveva
+    // già il proprio reset ridondante, ora rimosso) ma anche `sendEmergencyBeaconViaRelay()` (che non
+    // ce l'aveva affatto) avrebbero poi saltato una riattivazione reale a ogni chiamata successiva,
+    // inviando su una `connections` map vuota e riportando un falso successo. Il reset vive qui, non
+    // in ogni singolo chiamante, così ogni chiamante presente e futuro lo eredita gratis.
+    if (sessionId === relaySessionId) relayActive = false;
+    throw err;
+  }
   if (sessionId !== relaySessionId) return; // disattivato/riattivato mentre initialize() era in corso — non avviare una scansione per una sessione già superata
   await issueScan(plugin, sessionId);
   scanRefreshTimer = setInterval(() => {
@@ -392,13 +535,30 @@ async function activateRelay() {
   }, SCAN_REFRESH_INTERVAL_MS);
 }
 
+/**
+ * `sessionId` catturato subito dopo l'incremento di `relaySessionId` sopra — stesso schema già
+ * usato da `activateRelay()`/`connectToPeer()`/`issueScan()`. Trovato mancante dalla revisione:
+ * prima di questa voce (#64) `deactivateRelay()` era l'unica funzione a scrivere su stato condiviso
+ * (`connections`/`seenCache`/`pendingQueue`/`relaySessionNodeId`) senza mai controllare la propria
+ * sessione — innocuo finché `activateRelay()` aveva un solo chiamante sincronizzato (il gestore del
+ * toggle, disabilitato mentre in corso). `sendEmergencyBeaconViaRelay()` è un secondo chiamante di
+ * `activateRelay()` non protetto da quello stesso mutex: se l'utente disattiva il relay e poi preme
+ * SOS mentre `deactivateRelay()` è ancora a metà dei propri `await` di disconnessione,
+ * `sendEmergencyBeaconViaRelay()` può far ripartire una nuova sessione (nuovo `connections`/
+ * `seenCache`/ecc.) *prima* che la vecchia `deactivateRelay()` raggiunga la propria coda — che,
+ * senza questo controllo, cancellerebbe/azzererebbe lo stato della sessione nuova e già viva, non
+ * più quello della sessione vecchia a cui si riferiva.
+ */
 async function deactivateRelay() {
   relayActive = false;
   relaySessionId += 1; // invalida qualunque connectToPeer()/handleScanResult() ancora in corso per la sessione precedente
+  const sessionId = relaySessionId;
   if (scanRefreshTimer) {
     clearInterval(scanRefreshTimer);
     scanRefreshTimer = null;
   }
+  for (const timer of pendingSosTimers) clearTimeout(timer);
+  pendingSosTimers.clear();
 
   const plugin = bleRelayPlugin();
   if (plugin) {
@@ -407,6 +567,10 @@ async function deactivateRelay() {
     } catch {
       // best-effort
     }
+    // Snapshot preso qui, prima di qualunque await del loop — sono comunque i device della sessione
+    // che questa chiamata sta smontando, indipendentemente da cosa succede a `connections` nel
+    // frattempo; disconnetterli a livello nativo resta corretto anche se una sessione più recente è
+    // nel frattempo partita.
     for (const deviceId of [...connections.keys()]) {
       try {
         await plugin.stopNotifications({ deviceId, service: RELAY_SERVICE_UUID, characteristic: RELAY_NOTIFY_CHARACTERISTIC_UUID });
@@ -421,10 +585,77 @@ async function deactivateRelay() {
     }
   }
 
+  if (sessionId !== relaySessionId) return; // una sessione più recente è già partita (es. sendEmergencyBeaconViaRelay() ha riattivato) — non toccare il suo stato live
   connections.clear();
   seenCache = null;
   pendingQueue = null;
   relaySessionNodeId = null;
+  relayActivityDrops = 0;
+  relayActivitySos = 0;
+  relayActivityChannels = new Map();
+  renderRelayActivity();
+}
+
+/**
+ * Costruisce e invia un SOS reale — non più solo relayare pacchetti altrui (voce #63), il telefono ne
+ * origina uno proprio (voce #65, `docs/security.md`), chiudendo l'asimmetria "relaya ma non origina".
+ * A differenza di `relaySessionNodeId` (un'etichetta usa-e-getta, mai una vera identità), il SOS è
+ * firmato con una vera chiave Ed25519 (`window.AraldBleIdentity.loadOrCreateIdentity()`) — necessario
+ * perché `verifyContentSignature()` (lato mesh, `node/src/node.ts`) scarta senza pietà qualunque
+ * contenuto non firmato davvero, non appena tocca un `NomadNode` reale lungo il percorso: senza una
+ * firma vera un SOS avrebbe portata zero oltre la bolla Bluetooth locale del telefono, vedi
+ * `docs/security.md` voce #65 per il ragionamento completo.
+ *
+ * Se il relay non è ancora attivo, lo attiva prima — un SOS non deve richiedere all'utente di aver
+ * già acceso il relay come passo separato, coerente con l'obiettivo di massimizzare la portata senza
+ * ostacoli. Il pacchetto viene costruito una sola volta (stesso `packet.id` per ogni ripetizione,
+ * stesso motivo di `sendEmergencyBeacon()`/`buildContentAnnouncePacket()` lato Node: `SeenCache` deve
+ * riconoscerle come lo stesso evento, non un secondo SOS distinto), marcato subito come "visto" nel
+ * proprio `seenCache` (stesso motivo di `originate()` lato mesh: se rimbalza indietro da un peer che
+ * lo relaya a sua volta, non va ri-processato), poi inviato subito a ogni peer connesso e identificato
+ * — riusando `forwardPacket()` col suo stesso percorso broadcast (nessuna nuova logica di invio),
+ * `fromDeviceId` impostato a un sentinella che non combacia mai con un vero deviceId così nessun peer
+ * viene escluso. Ripetuto `SOS_BROADCAST_REPEAT_COUNT` volte ogni `SOS_BROADCAST_REPEAT_INTERVAL_MS`
+ * (stessi valori di `DEFAULT_BEACON_BROADCAST_REPEAT_COUNT`/`_INTERVAL_MS` lato Node) — un broadcast
+ * non connesso non ha canale di risposta, "ripeti, non fingere un ACK", stessa reasoning già accettata
+ * lì; questo cattura anche un peer che si connette nei secondi immediatamente successivi al tap,
+ * perché ogni ripetizione ricalcola `connections` al momento dell'invio, non una sola volta all'inizio.
+ *
+ * **Nessun vero rate limiting anti-flood qui** (a differenza di `MAX_EMERGENCY_BEACON_PER_WINDOW`
+ * lato Node) — dichiarato esplicitamente come limite accettato: un livello client-side non potrebbe
+ * comunque impedire a un chiamante determinato di aggirarlo, la vera difesa vive a valle nella mesh
+ * reale. L'unica protezione qui è di UX (il bottone resta disabilitato durante l'invio,
+ * `#sos-button`), non di sicurezza.
+ */
+async function sendEmergencyBeaconViaRelay({ message, lat, lon } = {}) {
+  const plugin = bleRelayPlugin();
+  if (!plugin) throw new Error("Bluetooth non disponibile su questo dispositivo.");
+
+  if (!relayActive) await activateRelay();
+  if (!relayActive) throw new Error("impossibile attivare il relay Bluetooth"); // activateRelay() può essere stato superato da una disattivazione nel frattempo
+
+  const identity = window.AraldBleIdentity.loadOrCreateIdentity();
+  const packet = window.AraldBleSos.buildEmergencyBeaconPacket({ message, lat, lon }, identity);
+  seenCache.markSeen(packet.id);
+
+  const sessionId = relaySessionId;
+  const sendOnce = () => {
+    if (!relayActive || sessionId !== relaySessionId) return; // relay disattivato/riattivato nel frattempo — non un errore, solo nessun'altra ripetizione ha senso
+    forwardPacket(plugin, "__sos_origin__", packet);
+  };
+  sendOnce();
+  for (let i = 1; i < SOS_BROADCAST_REPEAT_COUNT; i++) {
+    const timer = setTimeout(() => {
+      pendingSosTimers.delete(timer);
+      sendOnce();
+    }, i * SOS_BROADCAST_REPEAT_INTERVAL_MS);
+    pendingSosTimers.add(timer);
+  }
+
+  // Attende l'ultima ripetizione prima di risolvere, così il chiamante (il gestore del bottone SOS)
+  // sa quando può riabilitare l'interfaccia — non un ack di consegna reale (non esiste in un
+  // broadcast non connesso), solo "ho finito di provare".
+  await new Promise((resolve) => setTimeout(resolve, (SOS_BROADCAST_REPEAT_COUNT - 1) * SOS_BROADCAST_REPEAT_INTERVAL_MS));
 }
 
 const bleRelayPanel = document.getElementById("ble-relay-panel");
@@ -452,10 +683,70 @@ if (bleRelayPanel) {
       }
       renderRelayPeers();
     } catch (err) {
-      relayActive = false; // l'attivazione è fallita — non deve restare bloccato come se fosse attivo
+      // Nessun reset di relayActive qui — activateRelay() lo fa già da sé su un proprio fallimento
+      // (vedi il suo commento), così ogni chiamante (questo gestore e sendEmergencyBeaconViaRelay())
+      // eredita lo stesso comportamento senza doverlo ripetere.
       setBleRelayStatus("Errore: " + err.message, true);
     } finally {
       toggle.disabled = false;
+    }
+  });
+}
+
+const sosButton = document.getElementById("sos-button");
+if (sosButton) {
+  // Stesso feature-gating di #ble-relay-panel sopra — un SOS via Bluetooth non ha senso senza il plugin.
+  sosButton.hidden = !bleRelayPlugin();
+
+  const sosPanel = document.getElementById("sos-panel");
+  const sosMessage = document.getElementById("sos-message");
+  const sosStatus = document.getElementById("sos-status");
+  const sosSend = document.getElementById("sos-send");
+
+  sosButton.addEventListener("click", () => {
+    sosPanel.hidden = !sosPanel.hidden;
+    if (!sosPanel.hidden) sosMessage.focus();
+  });
+
+  document.getElementById("sos-cancel").addEventListener("click", () => {
+    sosPanel.hidden = true;
+    sosStatus.classList.remove("error");
+    sosStatus.textContent = "";
+  });
+
+  sosSend.addEventListener("click", async () => {
+    // Unica conferma nativa — previene un tap accidentale senza aggiungere passi in un'emergenza
+    // reale (nessun modulo di conferma custom esiste già in mobile/www/ da riusare, stesso ragionamento
+    // già applicato a hub-control.js per Ferma/Riavvia).
+    if (!window.confirm("Inviare una richiesta di soccorso (SOS) ai dispositivi Bluetooth nelle vicinanze?")) return;
+
+    sosSend.disabled = true;
+    sosStatus.classList.remove("error");
+    sosStatus.textContent = "Invio SOS in corso...";
+    try {
+      // Best-effort: una posizione nota rende il SOS più utile, ma la sua assenza (permesso negato,
+      // GPS non disponibile) non deve mai bloccare l'invio — stesso principio già applicato altrove
+      // in questo file a ogni altro percorso di geolocalizzazione.
+      let lat, lon;
+      try {
+        const position = await getCurrentPosition();
+        lat = position.lat;
+        lon = position.lon;
+      } catch {
+        // nessuna posizione — il SOS parte comunque
+      }
+      const message = sosMessage.value.trim() || undefined;
+      await sendEmergencyBeaconViaRelay({ message, lat, lon });
+      sosStatus.textContent = "SOS inviato.";
+      vibrate([30, 50, 30, 50, 30]);
+      showToast("SOS inviato", "alert-circle");
+      sosMessage.value = "";
+      sosPanel.hidden = true;
+    } catch (err) {
+      sosStatus.classList.add("error");
+      sosStatus.textContent = "Errore: " + err.message;
+    } finally {
+      sosSend.disabled = false;
     }
   });
 }

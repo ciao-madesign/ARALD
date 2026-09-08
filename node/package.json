@@ -15,6 +15,7 @@
     "start": "node dist/cli.js"
   },
   "dependencies": {
+    "@serialport/bindings-cpp": "^13.0.1",
     "@serialport/stream": "^13.0.0"
   },
   "devDependencies": {

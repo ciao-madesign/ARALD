@@ -764,6 +764,43 @@ li.skel-row { display: flex; flex-direction: column; }
 #emergency-beacons li { border-left: 3px solid var(--bad); padding-left: 0.6em; }
 #emergency-beacons .call-button { margin-top: 0.5em; }
 
+/* ---------- Invio SOS dal telefono (docs/security.md voce #65) ---------- */
+
+/* Colore d'emergenza (--bad, stesso già usato sopra per #emergency-beacons), mai il trattamento
+   "faro" con glow/anello riservato a due soli bottoni in tutta l'app (voce #50) — un terzo se lo
+   darebbe da solo. */
+.sos-button { color: var(--bad); }
+.sos-button:hover { background: var(--bad-soft); color: var(--bad); }
+
+.sos-panel {
+  margin: 0 1em 1em; padding: 1em; border: 1px solid var(--bad); background: var(--bad-soft);
+  box-shadow: var(--shadow-lg);
+  clip-path: polygon(0 0, calc(100% - 1em) 0, 100% 1em, 100% 100%, 0 100%);
+  animation: item-in 200ms var(--ease);
+}
+.sos-panel h2 { color: var(--bad); }
+.sos-panel textarea {
+  width: 100%; box-sizing: border-box; margin-top: 0.6em; padding: 0.6em 0.7em; border-radius: 0.5em;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; resize: vertical;
+}
+.sos-panel-actions { display: flex; justify-content: flex-end; gap: 0.8em; align-items: center; margin-top: 0.7em; }
+.sos-send-button { border-radius: 0.5em; padding: 0.55em 1em; background: var(--bad); color: var(--accent-ink); border: none; font-weight: 600; }
+.sos-send-button:active { transform: scale(0.97); }
+.sos-send-button:disabled { opacity: 0.6; }
+
+/* ---------- Attività relay: solo conteggi, mai contenuto (pezzo 3, docs/security.md) ---------- */
+
+/* Dentro #ble-relay-panel (già .panel) — un piccolo blocco distinto dalla lista peer sopra, stesso
+   bordo/sfondo leggero già usato altrove per un sotto-riquadro dentro un .panel (es. .call-form-advanced-warning). */
+.ble-relay-activity {
+  margin-top: 0.8em; padding: 0.7em 0.8em; border-radius: 0.5em;
+  border: 1px solid var(--border); background: var(--surface);
+}
+.ble-relay-activity h3 { margin: 0 0 0.4em; font-size: 0.9em; color: var(--muted); }
+.ble-relay-activity p { margin: 0.2em 0; font-size: 0.92em; }
+.ble-relay-activity ul { list-style: none; margin: 0.2em 0 0; padding: 0; }
+.ble-relay-activity li { padding: 0.1em 0; border-top: none; font-size: 0.92em; } /* niente divisori — voci brevi, un rigo ciascuna */
+
 /* #group-panel reuses #chat-panel's own look exactly, same as #channel-panel above. */
 #group-panel:not([hidden]) {
   margin-top: 1em; padding: 1em; border: 1px solid var(--accent); background: var(--accent-soft); box-shadow: var(--shadow-lg);
