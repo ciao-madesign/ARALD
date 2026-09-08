@@ -2,6 +2,7 @@ import { NomadNode } from "./node.js";
 import { TcpTransport } from "./transports/tcp.js";
 import { WebUiServer, generateNetworkPassword } from "./web-ui.js";
 import { MbtilesReader } from "./map-tiles.js";
+import { TrustLevel } from "./trust.js";
 
 function parseArgs(argv: string[]): Record<string, string> {
   const args: Record<string, string> = {};
@@ -25,7 +26,24 @@ async function main(): Promise<void> {
   const port = Number(args.port ?? 9001);
   const displayName = args.id ?? `NODE-${port}`;
 
-  const node = new NomadNode({ displayName });
+  // Self-declared battery level (spec §51 — no real hardware sensors in this prototype), same value
+  // both RelayPolicy's own "battery-above" mode and reportRelayTelemetry() read via
+  // relayPolicy.getCurrentResourceState(). Omit --battery-percent entirely to leave it unknown
+  // (relayPolicy default, reportRelayTelemetry() then throws a clear error instead of reporting
+  // garbage — see that method's own doc comment).
+  let batteryPercent: number | undefined;
+  if (args["battery-percent"] !== undefined) {
+    batteryPercent = Number(args["battery-percent"]);
+    if (!Number.isFinite(batteryPercent) || batteryPercent < 0 || batteryPercent > 100) {
+      console.error(`--battery-percent must be a number in [0, 100], got: ${args["battery-percent"]}`);
+      process.exit(1);
+    }
+  }
+
+  const node = new NomadNode({
+    displayName,
+    relayPolicy: batteryPercent !== undefined ? { getResourceState: () => ({ batteryPercent }) } : undefined,
+  });
   node.addTransport(new TcpTransport(node.nodeId, port));
   await node.start();
 
@@ -59,6 +77,40 @@ async function main(): Promise<void> {
   if (args["register-as-location-registry"] === "true") {
     node.registerAsLocationRegistry();
     console.log("Registered as a location registry (service://location-registry)");
+  }
+
+  // Same opt-in shape as --register-as-location-registry, for reportRelayTelemetry() instead of
+  // shareLocation() (docs/beacon.md, "Fixed Relay e Registro dei relay").
+  if (args["register-as-relay-registry"] === "true") {
+    node.registerAsRelayRegistry();
+    console.log("Registered as a relay registry (service://relay-registry)");
+  }
+
+  // The one specific node id (typically the Emergency Node this relay reports to) allowed to send
+  // this relay a command (node.ts's minTrustForRelayCommand, default TrustLevel.ADMIN — the
+  // strictest gate in this codebase). Never assigned automatically by ordinary protocol activity,
+  // unlike SEEN/VERIFIED — an operator provisioning this relay must set it explicitly, out-of-band,
+  // the same "provisioned once, by whoever sets up the mesh" model already used for
+  // --report-relay-telemetry-interval-ms's counterpart on the Emergency Node side.
+  if (args["trust-admin"]) {
+    node.trust.set(args["trust-admin"], TrustLevel.ADMIN);
+    console.log(`Trusted as ADMIN (can send this relay commands, e.g. reboot): ${args["trust-admin"]}`);
+  }
+
+  // Periodically reports this relay's own battery level (see --battery-percent above) to whichever
+  // node advertises service://relay-registry — a no-op error (logged, not fatal) until a registry is
+  // actually discovered, e.g. right after this relay starts up before it has connected to anything.
+  let telemetryInterval: NodeJS.Timeout | undefined;
+  if (args["report-relay-telemetry-interval-ms"]) {
+    const intervalMs = Number(args["report-relay-telemetry-interval-ms"]);
+    if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+      console.error(`--report-relay-telemetry-interval-ms must be a positive number, got: ${args["report-relay-telemetry-interval-ms"]}`);
+      process.exit(1);
+    }
+    telemetryInterval = setInterval(() => {
+      node.reportRelayTelemetry().catch((err) => console.error(`Relay telemetry report failed: ${(err as Error).message}`));
+    }, intervalMs);
+    console.log(`Reporting relay telemetry every ${intervalMs}ms`);
   }
 
   // Off by default (spec §59 web interface) — only started when explicitly requested, since it
@@ -142,6 +194,7 @@ async function main(): Promise<void> {
     }
     if (exposeRelayRegistry) {
       console.log(`Relay registry exposed: GET/POST /api/relays (stessa password di rete)`);
+      console.log(`Relay remote-reboot command exposed: POST /api/relay-command (stessa password di rete)`);
     }
     if (exposeEmergencyBeacons) {
       console.log(`Emergency beacon sightings exposed: GET /api/emergency-beacons (stessa password di rete)`);
@@ -151,14 +204,61 @@ async function main(): Promise<void> {
     }
   }
 
+  // Idempotency guard (found by review): with --allow-remote-reboot below, more than one accepted
+  // relay command (allowed within MAX_RELAY_COMMANDS_PER_WINDOW) — or a reboot command racing an
+  // ordinary SIGINT/SIGTERM — would otherwise each independently call the body below, overlapping
+  // clearInterval/webUi.stop()/node.stop() calls before the first invocation's process.exit(0) has
+  // actually run. A plain boolean is enough: shutdown() is only ever called from synchronous event
+  // handlers (never awaited by its own callers), so there's no interleaving between the check and
+  // the flag being set.
+  //
+  // The flag is reset on failure (found by a second review): without the catch/reset below, a
+  // thrown error partway through (e.g. webUi.stop() failing) would leave shuttingDown permanently
+  // true, silently swallowed by void shutdown()'s missing .catch — every later SIGINT/SIGTERM/reboot
+  // command would then hit the early return and do nothing, leaving the process stuck with only
+  // SIGKILL left as an escape hatch. Resetting lets a repeated Ctrl-C (or a second remote reboot
+  // command) try again, the same retry behavior a naive, unguarded shutdown() had before this fix —
+  // which in turn requires every step in the retried sequence to itself be safe to repeat.
+  // LoopbackHttpServer.stop() (webUi) already guards itself (`if (!this.server) return`), but
+  // node:sqlite's DatabaseSync.close() (mapTiles) does not — it throws on an already-closed
+  // database (found by a third review) — so mapTiles is nulled out right after a successful close,
+  // making a retry's `mapTiles?.close()` the safe no-op it needs to be, rather than a second,
+  // permanent throw that would make every later retry fail at the exact same line forever.
+  let shuttingDown = false;
   const shutdown = async (): Promise<void> => {
-    if (webUi) await webUi.stop();
-    mapTiles?.close();
-    await node.stop();
-    process.exit(0);
+    if (shuttingDown) return;
+    shuttingDown = true;
+    try {
+      if (telemetryInterval) clearInterval(telemetryInterval);
+      if (webUi) await webUi.stop();
+      if (mapTiles) {
+        mapTiles.close();
+        mapTiles = undefined;
+      }
+      await node.stop();
+      process.exit(0);
+    } catch (err) {
+      console.error("Shutdown failed, will retry on the next signal/command:", err);
+      shuttingDown = false;
+    }
   };
   process.on("SIGINT", () => void shutdown());
   process.on("SIGTERM", () => void shutdown());
+
+  // Opt-in on top of the trust gate itself (node.ts's minTrustForRelayCommand) — deliberately a
+  // *second*, independent switch: even a correctly-configured --trust-admin should not, by itself,
+  // make this specific process exit on command unless the operator running it has also explicitly
+  // decided that's the right consequence here (e.g. because it's running under a supervisor —
+  // systemd, pm2, a Docker restart policy — that will bring it back up). Reuses shutdown() above for
+  // a clean exit (closes webUi/mapTiles/transports) rather than a bare process.exit() — the same
+  // "reboot" a SIGTERM would already trigger, just initiated remotely instead of locally.
+  if (args["allow-remote-reboot"] === "true") {
+    node.on("relay:reboot-requested", (senderId: string) => {
+      console.log(`[RELAY] reboot requested by ${senderId} — shutting down for the process supervisor to restart`);
+      void shutdown();
+    });
+    console.log("Remote reboot enabled — only a node trusted at TrustLevel.ADMIN (see --trust-admin) can trigger it");
+  }
 }
 
 main().catch((err) => {

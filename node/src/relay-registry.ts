@@ -54,6 +54,94 @@ export interface RelayEntry {
   online: boolean;
   /** Last time this relay was seen connecting or disconnecting — `undefined` if it has never been observed as a peer since being registered (e.g. registered in advance of ever coming online). */
   lastSeenAt?: number;
+  /** Last self-reported battery level, 0-100 (`RelayTelemetryPayload`, `NomadNode.reportRelayTelemetry()`) — `undefined` if this relay has never sent telemetry, or was never configured to report one (`RelayPolicyOptions.getResourceState`). Distinct from `online`/`lastSeenAt`: a relay can be online with no known battery level (telemetry is opt-in and self-declared, spec §51 — there is no way to *derive* it from mesh connectivity the way online/offline is derived). */
+  batteryPercent?: number;
+  /** When `batteryPercent` was last updated, by the reporting relay's own clock (clamped, see `recordTelemetry()`) — `undefined` until the first telemetry report arrives. */
+  lastTelemetryAt?: number;
+}
+
+/**
+ * The `PRIVATE_MESSAGE` payload shape a relay's self-reported telemetry has
+ * — discriminated by `type: "relay-telemetry"`, same pattern as
+ * `LocationReportPayload`/`NodeAppendPayload`: a relay reports its own
+ * battery level to whichever node holds the registry it discovered via
+ * `service://relay-registry` (`NomadNode.registerAsRelayRegistry()`/
+ * `reportRelayTelemetry()`), reusing `PRIVATE_MESSAGE`'s existing
+ * ECDH-derived per-peer encryption exactly as-is — no new packet type, no
+ * new signing scheme, same reasoning already applied to a location report.
+ *
+ * `batteryPercent` is read from `RelayPolicy.getCurrentResourceState()` —
+ * the *same* self-declared value (spec §51, no real hardware sensors in
+ * this prototype) that already governs whether this node relays at all
+ * under `RelayMode "battery-above"`, reused here instead of a second,
+ * independent battery-reporting channel.
+ */
+export interface RelayTelemetryPayload {
+  type: "relay-telemetry";
+  batteryPercent: number;
+  timestamp: number;
+}
+
+/**
+ * Validates and extracts relay telemetry from an already-decrypted
+ * `PRIVATE_MESSAGE` payload — same defensive posture as every other
+ * network-sourced payload in this codebase (`extractLocationReport()`,
+ * `extractDropPayload()`): never trusted just because it decrypted/parsed
+ * successfully. Returns `undefined` for anything not shaped exactly like
+ * valid telemetry.
+ */
+export function extractRelayTelemetry(payload: unknown): RelayTelemetryPayload | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+  const p = payload as Record<string, unknown>;
+  if (p.type !== "relay-telemetry") return undefined;
+  if (typeof p.batteryPercent !== "number" || !Number.isFinite(p.batteryPercent) || p.batteryPercent < 0 || p.batteryPercent > 100) return undefined;
+  if (typeof p.timestamp !== "number" || !Number.isFinite(p.timestamp)) return undefined;
+  return { type: "relay-telemetry", batteryPercent: p.batteryPercent, timestamp: p.timestamp };
+}
+
+/**
+ * The `PRIVATE_MESSAGE` payload shape a remote relay command has —
+ * discriminated by `type: "relay-command"`, same directed-delivery pattern
+ * as `NodeAppendPayload`. **Deliberately the single most sensitive payload
+ * in this codebase** (`NomadNode.considerRelayCommand()` gates it on
+ * `minTrustForRelayCommand`, default `TrustLevel.ADMIN` — the highest level
+ * `TrustManager` can assign, stricter than every other gated feature here):
+ * unlike a Node Append (deposits content to be read later) or a location
+ * report (records a position), accepting this payload causes the *receiving
+ * process itself* to shut down (`NomadNode` only ever emits
+ * `"relay:reboot-requested"` — it never calls `process.exit()` itself, see
+ * that event's own doc comment in `node.ts`).
+ *
+ * `command` is a closed union of exactly one value today (`"reboot"`) —
+ * kept as a discriminated field rather than a boolean specifically so a
+ * future second command doesn't need a second payload shape/extractor, the
+ * same reasoning `DropKind`/`NodeAppendPayload.kind` already follow.
+ * Deliberately **not** an OTA/firmware-update mechanism — that was
+ * evaluated and explicitly rejected as too high-risk for this project's
+ * current trust model (see `docs/beacon.md`, "Cosa manca davvero" — an
+ * update requires an operator physically connected to the hardware).
+ */
+export interface RelayCommandPayload {
+  type: "relay-command";
+  command: "reboot";
+  timestamp: number;
+}
+
+/**
+ * Validates and extracts a relay command from an already-decrypted
+ * `PRIVATE_MESSAGE` payload — same defensive posture as
+ * `extractRelayTelemetry()` above. Returns `undefined` for anything not
+ * shaped exactly like a valid command, including an unrecognized `command`
+ * value (forward-compatible rejection, same as `extractDropPayload()`'s
+ * exact-match check on `kind`).
+ */
+export function extractRelayCommand(payload: unknown): RelayCommandPayload | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+  const p = payload as Record<string, unknown>;
+  if (p.type !== "relay-command") return undefined;
+  if (p.command !== "reboot") return undefined;
+  if (typeof p.timestamp !== "number" || !Number.isFinite(p.timestamp)) return undefined;
+  return { type: "relay-command", command: p.command, timestamp: p.timestamp };
 }
 
 /**
@@ -134,6 +222,14 @@ const DEFAULT_MAX_RELAYS = 512;
  *    project's blanket "every remotely-writable structure is bounded"
  *    convention (spec §57), not because this input is adversarial.
  *
+ * **`recordTelemetry()` is the one real mesh-fed write this class has** (a
+ * relay self-reports its own battery level over `PRIVATE_MESSAGE`, not
+ * through the authenticated HTTP endpoint) — deliberately restricted to
+ * *updating* an already-registered `relayId`, never creating a new entry,
+ * so it can't be turned into a second, unauthenticated write path into a
+ * structure whose eviction policy assumes every entry came from an operator
+ * (see that method's own doc comment).
+ *
  * **Online/offline derivation, by design kept out of this class**: this
  * class has zero dependency on `NomadNode` — `markOnline()`/`markOffline()`
  * are plain methods a caller invokes. `NomadNode` itself does the wiring
@@ -151,7 +247,16 @@ export class RelayRegistry {
     this.relays = new BoundedFifoMap({ maxSize: options.maxRelays ?? DEFAULT_MAX_RELAYS });
   }
 
-  /** Creates or updates the static fields for `fields.relayId` — a relay can be re-registered (e.g. physically moved, operator changed) without losing its current online/lastSeenAt state. */
+  /**
+   * Creates or updates the static fields for `fields.relayId` — a relay can
+   * be re-registered (e.g. physically moved, operator changed) without
+   * losing its current online/lastSeenAt *or* telemetry state (`batteryPercent`/
+   * `lastTelemetryAt` also carried forward from `existing`, same as
+   * `online`/`lastSeenAt` — found by review: an earlier version of this
+   * method rebuilt the entry from `fields` alone, silently discarding
+   * already-recorded telemetry on every ordinary re-registration, e.g. an
+   * operator correcting a typo'd `operator` label).
+   */
   upsert(fields: RelayStaticFields): RelayEntry {
     const existing = this.relays.get(fields.relayId);
     const entry: RelayEntry = {
@@ -164,6 +269,8 @@ export class RelayRegistry {
       installedAt: fields.installedAt ?? Date.now(),
       online: existing?.online ?? false,
       lastSeenAt: existing?.lastSeenAt,
+      batteryPercent: existing?.batteryPercent,
+      lastTelemetryAt: existing?.lastTelemetryAt,
     };
     this.relays.set(fields.relayId, entry);
     return entry;
@@ -181,6 +288,38 @@ export class RelayRegistry {
     const entry = this.relays.get(relayId);
     if (!entry) return;
     this.relays.set(relayId, { ...entry, online: false, lastSeenAt: at });
+  }
+
+  /**
+   * Records self-reported telemetry (currently just `batteryPercent`) from
+   * `relayId` — **no-op if `relayId` isn't already a registered relay**,
+   * same deliberate restriction as `markOnline()`/`markOffline()`: this
+   * registry only ever knows about relays an authenticated operator
+   * explicitly registered via `upsert()` (an HTTP write behind the node's
+   * own network password), and must never silently grow a new entry just
+   * because *some* mesh peer sent a telemetry-shaped `PRIVATE_MESSAGE`
+   * claiming a `relayId` — that would let an arbitrary peer fabricate
+   * unbounded distinct "relay" entries this class has no trust-weighted
+   * eviction to defend against (`relay-registry.ts`'s own class doc comment
+   * explains why plain FIFO is safe *only* because every write today is
+   * operator-authenticated; telemetry from the open mesh must not become a
+   * second, unauthenticated write path into the same structure).
+   *
+   * Same anti-out-of-order/anti-future-timestamp guards as
+   * `LocationRegistry.record()` (see that method's own doc comment for the
+   * full reasoning — store-and-forward delay means a stale telemetry report
+   * can arrive after a newer one already did, and a fabricated far-future
+   * timestamp must never be able to permanently poison a relay's slot): a
+   * report older than or equal to the entry's current `lastTelemetryAt` is
+   * silently ignored, and `report.timestamp` is clamped to never exceed
+   * this node's own `Date.now()`.
+   */
+  recordTelemetry(relayId: string, report: RelayTelemetryPayload): void {
+    const entry = this.relays.get(relayId);
+    if (!entry) return;
+    const timestamp = Math.min(report.timestamp, Date.now());
+    if (entry.lastTelemetryAt !== undefined && entry.lastTelemetryAt >= timestamp) return;
+    this.relays.set(relayId, { ...entry, batteryPercent: report.batteryPercent, lastTelemetryAt: timestamp });
   }
 
   get(relayId: string): RelayEntry | undefined {

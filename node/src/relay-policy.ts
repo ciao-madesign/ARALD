@@ -60,4 +60,16 @@ export class RelayPolicy {
         return true;
     }
   }
+
+  /**
+   * The current self-reported resource snapshot, as returned by
+   * `getResourceState()` — a plain passthrough, exposed so a caller outside
+   * this class (`NomadNode.reportRelayTelemetry()`) can read the same
+   * self-declared battery value this class already uses for its own
+   * relay-or-not decision, instead of introducing a second, independent
+   * battery-reporting channel that could drift out of sync with the first.
+   */
+  getCurrentResourceState(): ResourceState {
+    return this.getResourceState();
+  }
 }

@@ -855,6 +855,10 @@ export class WebUiServer {
         void this.handleRegisterRelay(req, res);
         return;
       }
+      if (url.pathname === "/api/relay-command") {
+        void this.handleSendRelayCommand(req, res);
+        return;
+      }
       res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("Method Not Allowed");
       return;
@@ -1765,6 +1769,77 @@ export class WebUiServer {
     }
     const entry = this.node.registerRelay(fields);
     sendJson(res, 200, entry);
+  }
+
+  /**
+   * `POST /api/relay-command` — sends a remote command (currently only
+   * `"reboot"`) to a relay via `NomadNode.sendRelayCommand()`
+   * (`docs/beacon.md`, "Fixed Relay e Registro dei relay"). Same
+   * 404-then-401 gating as `handleRegisterRelay()`/`handleGetRelayRegistry()`
+   * — this endpoint only exists on the same kind of deployment that manages
+   * a relay registry at all, on `exposeRelayRegistry` — this is the
+   * *origin*-side authentication only; the target relay's own
+   * `minTrustForRelayCommand` gate is a separate, receiver-side decision
+   * this endpoint has no visibility into (see `sendRelayCommand()`'s own
+   * doc comment).
+   */
+  private async handleSendRelayCommand(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.exposeRelayRegistry || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+
+    let raw: Buffer;
+    try {
+      raw = await readRequestBody(req, MAX_MESSAGE_BODY_BYTES, MAX_CALL_BODY_READ_MS);
+    } catch (err) {
+      if (res.writableEnded || res.destroyed) return; // connection already gone — nothing to answer
+      if (err instanceof BodyTooLargeError) {
+        sendJson(res, 413, { error: "request body too large" });
+      } else if (err instanceof Error && err.message.includes("timed out")) {
+        sendJson(res, 408, { error: "timed out waiting for the request body" });
+      } else {
+        sendJson(res, 400, { error: "failed to read request body" });
+      }
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = raw.length === 0 ? {} : JSON.parse(raw.toString("utf8"));
+    } catch {
+      sendJson(res, 400, { error: "malformed JSON body" });
+      return;
+    }
+
+    const body = parsed as { targetNodeId?: unknown; command?: unknown } | null;
+    const targetNodeId = body?.targetNodeId;
+    if (typeof targetNodeId !== "string" || targetNodeId.length === 0) {
+      sendJson(res, 400, { error: "'targetNodeId' must be a non-empty string" });
+      return;
+    }
+    const command = body?.command ?? "reboot";
+    if (command !== "reboot") {
+      sendJson(res, 400, { error: "'command' must be 'reboot'" });
+      return;
+    }
+
+    try {
+      this.node.sendRelayCommand(targetNodeId, command);
+      sendJson(res, 200, { sent: true });
+    } catch (err) {
+      // sendRelayCommand()'s own validation throws for an unknown target encryption key (400 — a
+      // client error: the target hasn't been discovered yet, not a server-side failure) and an
+      // exhausted rate limit (429) — distinguished by message content, same convention as
+      // handleSendNodeAppend().
+      const message = (err as Error).message;
+      sendJson(res, message.includes("too many relay commands") ? 429 : 400, { error: message });
+    }
   }
 
   /**
