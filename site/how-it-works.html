@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>How ARALD Works — ARALD</title>
+  <meta name="description" content="The mechanism behind ARALD — a mesh network with no center, the device family it runs on, and an honest look at what's real today." />
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="wrap site-header-inner">
+      <a class="wordmark" href="index.html">ARALD<span class="dot">·</span>NET</a>
+      <nav class="site-nav" aria-label="Primary">
+        <a href="overview.html">Where it works</a>
+        <a href="how-it-works.html" aria-current="page">How it works</a>
+        <a class="nav-cta" href="https://github.com/ciao-madesign/ARALD" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+      <button class="nav-toggle" id="navToggle" aria-expanded="false" aria-controls="site-nav-mobile">
+        <span></span><span></span><span></span>
+        <span class="sr-only">Menu</span>
+      </button>
+    </div>
+    <nav class="site-nav-mobile" id="site-nav-mobile" aria-label="Primary, mobile">
+      <a href="overview.html">Where it works</a>
+      <a href="how-it-works.html">How it works</a>
+      <a href="https://github.com/ciao-madesign/ARALD" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="main">
+
+    <section class="page-banner" style="background-image: url('img/remote-connection.jpg');">
+      <div class="page-banner-scrim" aria-hidden="true"></div>
+      <div class="wrap">
+        <p class="eyebrow">The mechanism</p>
+        <h1>No towers. No center. No single point of failure.</h1>
+        <p class="page-banner-lede">Even from a car window in the middle of nowhere, a message can still find its way — just not instantly, and not through anyone's server.</p>
+      </div>
+    </section>
+
+    <section class="section how" aria-labelledby="how-title">
+      <div class="wrap">
+        <h2 id="how-title" class="sr-only">How it works</h2>
+        <div class="steps">
+          <div class="step">
+            <div class="step-num">01</div>
+            <h3>Every device is a peer</h3>
+            <p>A phone, a radio card, a fixed relay, a small computer — each one can hold content, pass it along, and ask for more. Nothing routes through a central server.</p>
+          </div>
+          <div class="step">
+            <div class="step-num">02</div>
+            <h3>Requests hop until they land</h3>
+            <p>When two devices come within range — Bluetooth, long-range radio, or plain local Wi-Fi — they exchange what they know and move on, carrying requests and answers forward.</p>
+          </div>
+          <div class="step">
+            <div class="step-num">03</div>
+            <h3>Nothing has to happen at once</h3>
+            <p>If no one nearby can answer right now, a message waits. The next device that can carry it forward picks it up on the next contact — a hiker, a boat, a relay coming back online.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section devices" id="devices" aria-labelledby="devices-title">
+      <div class="wrap">
+        <p class="section-eyebrow">The hardware</p>
+        <h2 id="devices-title">One network, sized to fit the situation</h2>
+        <p class="section-lede">The same software runs on very different hardware, matched to what a situation calls for. None of it needs the internet to talk to each other — a gateway can optionally bridge out when a connection is available, never as a requirement.</p>
+        <div class="device-grid">
+          <div class="device-card">
+            <div class="device-icon" data-icon="card" aria-hidden="true"></div>
+            <h3>ARALD Card</h3>
+            <p>Pocket-sized radio. Sends an SOS, relays other people's messages, or both.</p>
+          </div>
+          <div class="device-card">
+            <div class="device-icon" data-icon="relay" aria-hidden="true"></div>
+            <h3>ARALD Relay</h3>
+            <p>Same logic, fixed and solar-powered, or carried along as a courier.</p>
+          </div>
+          <div class="device-card">
+            <div class="device-icon" data-icon="box" aria-hidden="true"></div>
+            <h3>ARALD Box</h3>
+            <p>A small always-on computer: content, local search, translation, AI, coordination.</p>
+          </div>
+          <div class="device-card">
+            <div class="device-icon" data-icon="portable" aria-hidden="true"></div>
+            <h3>ARALD Portable</h3>
+            <p>The same environment on a bootable drive — plug into whatever computer is on hand.</p>
+          </div>
+          <div class="device-card">
+            <div class="device-icon" data-icon="phone" aria-hidden="true"></div>
+            <h3>Mobile app</h3>
+            <p>A dashboard onto any of the above: browse content, chat, share your location, call a service.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section status" id="status" aria-labelledby="status-title">
+      <div class="wrap status-grid">
+        <div class="status-text">
+          <p class="section-eyebrow">Where things stand</p>
+          <h2 id="status-title">A working prototype, built in the open</h2>
+          <p>Core networking — identity, routing, encryption, store-and-forward, content caching — is implemented and covered by automated tests, running today over real local networks (Wi-Fi/TCP). Radio transports (Bluetooth, LoRa) are implemented behind the same interface the real hardware will use, validated today in software simulation, with a first real LoRa driver already written and tested against a faithful hardware emulator. Application features on top — chat, a community noticeboard, opportunistic location sharing, an emergency SOS beacon, local search and AI services — are built and tested.</p>
+          <p class="status-honest">We say this plainly because it matters: this is real, working code — not a pitch deck. What's still ahead is hardware, field testing, and scale: the physical devices (Card, Relay) haven't been manufactured yet.</p>
+          <a class="btn btn-ghost" href="https://github.com/ciao-madesign/ARALD" target="_blank" rel="noopener">Explore the code and docs →</a>
+        </div>
+        <div class="status-stats">
+          <div class="stat"><span class="stat-num">1020</span><span class="stat-label">automated tests</span></div>
+          <div class="stat"><span class="stat-num">20</span><span class="stat-label">development milestones</span></div>
+          <div class="stat"><span class="stat-num">MIT</span><span class="stat-label">open-source license</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section cta">
+      <div class="wrap cta-inner">
+        <h2>See where it's already being used</h2>
+        <p>Ten environments, three of them driving the design from the start.</p>
+        <div class="hero-actions">
+          <a class="btn btn-beacon" href="overview.html">Where it works →</a>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap site-footer-inner">
+      <a class="wordmark small" href="index.html">ARALD<span class="dot">·</span>NET</a>
+      <p class="footer-note">Open source, MIT licensed. Not affiliated with Project N.O.M.A.D. or NomadNet — see the repository for the full attribution review.</p>
+      <a class="footer-link" href="https://github.com/ciao-madesign/ARALD" target="_blank" rel="noopener">github.com/ciao-madesign/ARALD</a>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
