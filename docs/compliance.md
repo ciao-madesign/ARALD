@@ -23,6 +23,8 @@ Il punto 4 è il motivo di questo documento: evitare che scelte prese "per far f
 
 **Aggiornamento (8 settembre 2026 — scelta MCU Arduino Nano ESP32)**: "una sola PCB" non significa più un progetto interamente custom attorno a un MCU bare, ma una **carrier PCB** che ospita il modulo **Arduino Nano ESP32 ABX00092** (MCU + BLE + Wi-Fi integrati, pre-assemblato e — presumibilmente — pre-certificato dal produttore, non verificato in questa sessione) più il modulo **SX1262** (LoRa, separato) più gestione batteria/pulsante SOS/LED. Il principio "una sola PCB riusata su Card/Cover/Clip/Relay" (§20) resta invariato — cambia solo cosa la carrier PCB ospita.
 
+**Aggiornamento (9 settembre 2026 — piattaforma di sviluppo XIAO ESP32-S3 + Wio-SX1262)**: valutazione ricevuta dall'utente, non una sostituzione della scelta MCU sopra. Il Nano ESP32 ABX00092 resta il riferimento della Card; **Seeed Studio XIAO ESP32-S3 + Wio-SX1262** (stesso ESP32-S3, LoRa SX1262 già affiancato sulla stessa espansione invece di un modulo separato da cablare, footprint ~21×18mm contro i 45×18mm del Nano ESP32, gestione batteria integrata nel kit) è una seconda piattaforma su cui validare firmware/architettura prima del passaggio a una PCB ARALD custom — utile proprio per la maggiore integrazione fisica, non per differenze di potenza di calcolo (sostanzialmente equivalenti). Costo indicativo fornito dall'utente: ~10-14 € per il kit XIAO+Wio contro ~27-32 € per Nano ESP32+SX1262 esterno (margine di fluttuazione al rialzo ~30% su entrambe le cifre, nessuna verifica indipendente di prezzo/disponibilità in questo ambiente). Certificazione modulare non verificata, stessa cautela di CERT-001 sotto — vedi CERT-002: la decisione esplicita dell'utente è affrontare la questione solo a fine progettazione, non ora.
+
 ## 3. Documentazione dei componenti radio
 
 Ogni modulo radio usato (reale o candidato) va documentato con gli stessi campi, indipendentemente dal fornitore:
@@ -132,6 +134,7 @@ Formato tabellare: `ID | Rischio | Probabilità | Impatto | Mitigazione | Stato`
 | RF-001 | Antenna disadattata (impedenza non verificata) | Media | Alto (portata ridotta, possibile non conformità EMC) | Progetto antenna dedicato (LoRa) + misura matching network in fase di test | Aperto |
 | RF-002 | Coesistenza BLE/Wi-Fi non verificata (stesso chip/antenna, banda 2.4GHz condivisa sull'ESP32-S3) | Media | Medio (degrado prestazioni radio, possibile interferenza reciproca) | Verificare firmware di coesistenza del chip in fase di pre-compliance (§13); misurare RSSI/packet loss con entrambi i radio attivi (protocollo Test A-D, §12) | Aperto |
 | CERT-001 | Certificazione modulare del Nano ESP32 (BLE/Wi-Fi) non verificata — ignoto se e a quali condizioni sia ereditabile dal prodotto finale | Bassa (da confermare) | Medio (potrebbe non ridurre l'iter di conformità come sperato) | Verificare le condizioni di certificazione modulare del produttore in fase di pre-compliance, prima di fare affidamento su questo per pianificare l'iter RED/CE | Aperto |
+| CERT-002 | Certificazione modulare di XIAO ESP32-S3/Wio-SX1262 (piattaforma di sviluppo alternativa, aggiunta 9 settembre 2026) non verificata — stesso tipo di rischio di CERT-001, produttore diverso | Bassa (da confermare) | Medio (potrebbe non ridurre l'iter di conformità come sperato) | Decisione esplicita dell'utente: non affrontare ora — solo segnalare il punto, reperire la documentazione del produttore quando possibile, valutare a fine progettazione insieme a CERT-001 | Aperto — rimandato a fine progettazione |
 | BAT-001 | Batteria vicina all'antenna oltre la clearance minima | Media | Medio (degrado RF, possibile rischio sicurezza) | Rispetto della RF Clearance Area (punto 5) fin dal layout PCB | Aperto |
 
 Il registro vive in `docs/compliance/risk_assessment/` quando avrà contenuto reale — questa tabella resta solo l'esempio/punto di partenza indicato dal testo originale.
@@ -169,6 +172,8 @@ Fasi previste (nessuna iniziata — bring-up fisico è lavoro privato dell'utent
 **Output di M9**: "ARALD Card/Clip Candidate for Compliance Testing" — una piattaforma funzionante, documentata, riproducibile, progettata in modo da poter affrontare una valutazione di conformità senza un ridisegno sostanziale. **Non** è la certificazione stessa, che resta uno stadio successivo non pianificato qui (stessa distinzione già fatta in `docs/beacon.md` tra Prototype/Field Pilot/Commercial product).
 
 **Stato di M0 (8 settembre 2026)**: la scelta del componente MCU (Arduino Nano ESP32 ABX00092) è fatta — resta aperto il resto di M0-M2 (schema a blocchi completo, dimensionamento fisico spessore/consumi/autonomia con la dev board scelta, vedi `docs/beacon.md`).
+
+**Aggiunta 9 settembre 2026**: affiancata (non sostituita) da una seconda piattaforma di sviluppo, XIAO ESP32-S3 + Wio-SX1262 (vedi §2/§3 sopra e CERT-002 in §16) — resta comunque aperto tutto il resto di M0-M2, la certificazione modulare di entrambe le piattaforme è esplicitamente rimandata a fine progettazione.
 
 ## 20. ARALD Box e ARALD Portable: stesso principio
 
