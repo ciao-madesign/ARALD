@@ -33,6 +33,7 @@ Il piano d'insieme originario (milestone 0-20 + i follow-up post-audit) è compl
 | Protocollo di test tecnico (fasi 0-8, T-number, KPI) | [`docs/test-protocol.md`](docs/test-protocol.md) |
 | Emergency Portal (`arald-backend/`, `local-portal/`, `mirror-portal/`) | [`docs/emergency-portal.md`](docs/emergency-portal.md) |
 | Deployment target (ARALD Box/Portable), pilot per scenario d'uso | [`docs/deployment.md`](docs/deployment.md) |
+| Catalogo servizi (mesh-native + NOMAD-backed), pacchetti pre-confezionati per caso d'uso | [`docs/service-catalog.md`](docs/service-catalog.md) |
 | Cosa è riusato da Project NOMAD/BitChat vs. costruito ex novo | [`docs/reuse-vs-new.md`](docs/reuse-vs-new.md) |
 
 **Leggi la voce/il documento pertinente prima di toccare il codice corrispondente** — spiegano non solo cosa è stato fatto ma perché, inclusi i bug trovati dalla revisione prima di considerare ogni voce conclusa.
