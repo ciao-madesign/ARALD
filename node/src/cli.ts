@@ -1,8 +1,10 @@
 import { autoDetect } from "@serialport/bindings-cpp";
 import { SerialPortStream } from "@serialport/stream";
 import { NomadNode } from "./node.js";
+import type { Transport } from "./transport.js";
 import { TcpTransport } from "./transports/tcp.js";
 import { LoraSerialTransport } from "./transports/lora-serial.js";
+import { LoraSerialSx1262Transport } from "./transports/lora-serial-sx1262.js";
 import { WebUiServer, generateNetworkPassword } from "./web-ui.js";
 import { MbtilesReader } from "./map-tiles.js";
 import { TrustLevel } from "./trust.js";
@@ -82,12 +84,16 @@ async function main(): Promise<void> {
   });
   node.addTransport(new TcpTransport(node.nodeId, port));
 
-  // Opt-in, off by default — wires node/src/transports/lora-serial.ts (voce #61, real but never
-  // hardware-verified SX127x driver) onto an actual serial device via @serialport/bindings-cpp
-  // (autoDetect() picks the right native binding for the current OS). Everything below this flag is
-  // still unverified against a real chip in this environment (no hardware available here) — this only
-  // makes the driver *reachable* from the CLI, the same honest boundary already declared for
-  // lora-serial.ts itself.
+  // Opt-in, off by default — wires either node/src/transports/lora-serial.ts (voce #61, SX127x) or
+  // node/src/transports/lora-serial-sx1262.ts (SX1262, ARALD's standardized chip across Box/Portable/
+  // Card as of docs/compliance.md's 9 settembre 2026 update — see that file's own doc comment for why
+  // it's not an adaptation of the SX127x one) onto an actual serial device via
+  // @serialport/bindings-cpp (autoDetect() picks the right native binding for the current OS).
+  // `--lora-chip` selects which (default "sx127x", for continuity with every existing deployment —
+  // an operator moving to SX1262 opts in explicitly). Everything below this flag is still unverified
+  // against a real chip in this environment (no hardware available here) — this only makes either
+  // driver *reachable* from the CLI, the same honest boundary already declared for both drivers
+  // themselves.
   //
   // `!== undefined` (not a truthy check) plus an explicit empty-string rejection — found by review:
   // `--lora-serial-port ""` (e.g. an unset shell variable interpolated into the flag) would otherwise
@@ -101,25 +107,51 @@ async function main(): Promise<void> {
       console.error("--lora-serial-port was given an empty value");
       process.exit(1);
     }
+    const loraChip = args["lora-chip"] ?? "sx127x";
+    if (loraChip !== "sx127x" && loraChip !== "sx1262") {
+      console.error(`--lora-chip must be "sx127x" or "sx1262", got: ${loraChip}`);
+      process.exit(1);
+    }
     const baudRate = parsePositiveNumberFlag("lora-baud-rate", args["lora-baud-rate"]) ?? 115200;
     const frequencyHz = parsePositiveNumberFlag("lora-frequency-hz", args["lora-frequency-hz"]);
     const bandwidthHz = parsePositiveNumberFlag("lora-bandwidth-hz", args["lora-bandwidth-hz"]);
-    const spreadingFactor = parseRangedIntFlag("lora-spreading-factor", args["lora-spreading-factor"], 6, 12);
+    // SX1262 supports spreading factor 5 (sx126x-commands.ts), one wider than SX127x's floor of 6.
+    const spreadingFactor = parseRangedIntFlag(
+      "lora-spreading-factor",
+      args["lora-spreading-factor"],
+      loraChip === "sx1262" ? 5 : 6,
+      12,
+    );
     const codingRateDenominator = parseCodingRateDenominatorFlag(args["lora-coding-rate-denominator"]);
 
     const stream = new SerialPortStream({ binding: autoDetect(), path: serialPortPath, baudRate });
-    const loraTransport = new LoraSerialTransport(node.nodeId, stream, {
-      frequencyHz,
-      bandwidthHz,
-      spreadingFactor,
-      codingRateDenominator,
-    });
+    let loraTransport: Transport;
+    if (loraChip === "sx1262") {
+      // -9..14 dBm — the same always-safe range buildSetTxParamsCommand() (sx126x-commands.ts) clamps
+      // to regardless; validated here too so an out-of-range value fails loudly at the CLI rather than
+      // silently getting clamped without the operator noticing.
+      const txPowerDbm = parseRangedIntFlag("lora-tx-power-dbm", args["lora-tx-power-dbm"], -9, 14);
+      loraTransport = new LoraSerialSx1262Transport(node.nodeId, stream, {
+        frequencyHz,
+        bandwidthHz,
+        spreadingFactor,
+        codingRateDenominator,
+        txPowerDbm,
+      });
+    } else {
+      loraTransport = new LoraSerialTransport(node.nodeId, stream, {
+        frequencyHz,
+        bandwidthHz,
+        spreadingFactor,
+        codingRateDenominator,
+      });
+    }
     node.addTransport(loraTransport);
     // Logged only after `node.start()` below actually succeeds (see that line) — found by review:
     // printing this here, before the chip handshake `node.start()` performs, reads as a success
     // message immediately followed by a fatal crash whenever the chip doesn't respond, unlike every
     // other status line in this file (all printed only once their underlying action has completed).
-    loraStatusLine = `LoRa (seriale reale): ${serialPortPath} @ ${baudRate} baud`;
+    loraStatusLine = `LoRa (seriale reale, ${loraChip.toUpperCase()}): ${serialPortPath} @ ${baudRate} baud`;
   }
 
   await node.start();
