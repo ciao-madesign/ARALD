@@ -1,19 +1,22 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 
 /**
- * `isPubliclyRoutableUrl()` (`gateway/nomad/url-safety.ts`) — the SSRF guard
- * shared by both `kind`s of `service://internet-fetch` (`internet-gateway.ts`).
- * Domain-name resolution is mocked (`node:dns/promises`) so these tests are
- * deterministic and don't depend on real DNS/network being reachable from
- * this sandbox (it isn't, per `docs/security.md`) — only IP-literal cases
- * and `localhost` (resolved via the OS hosts file, no network trip) exercise
- * the real code path end to end.
+ * `isPubliclyRoutableUrl()` (`node/src/url-safety.ts`, moved here from
+ * `gateway/nomad/` so `external-delivery.ts` could reuse it — see that
+ * file's own header comment) — the SSRF guard shared by both `kind`s of
+ * `service://internet-fetch` (`gateway/nomad/internet-gateway.ts`) and by
+ * the outbound POST in `external-delivery.ts`. Domain-name resolution is
+ * mocked (`node:dns/promises`) so these tests are deterministic and don't
+ * depend on real DNS/network being reachable from this sandbox (it isn't,
+ * per `docs/security.md`) — only IP-literal cases and `localhost` (resolved
+ * via the OS hosts file, no network trip) exercise the real code path end
+ * to end.
  */
 
 const { lookupMock } = vi.hoisted(() => ({ lookupMock: vi.fn() }));
 vi.mock("node:dns/promises", () => ({ lookup: lookupMock }));
 
-const { isPubliclyRoutableUrl } = await import("../../gateway/nomad/url-safety.js");
+const { isPubliclyRoutableUrl } = await import("../../node/src/url-safety.js");
 
 describe("isPubliclyRoutableUrl()", () => {
   afterEach(() => {
@@ -103,7 +106,7 @@ describe("isPubliclyRoutableUrl()", () => {
   it("rejects localhost end to end, without mocking dns (real hosts-file resolution)", async () => {
     vi.doUnmock("node:dns/promises");
     vi.resetModules();
-    const { isPubliclyRoutableUrl: real } = await import("../../gateway/nomad/url-safety.js");
+    const { isPubliclyRoutableUrl: real } = await import("../../node/src/url-safety.js");
     expect(await real(new URL("http://localhost/"))).toBe(false);
   });
 });

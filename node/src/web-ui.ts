@@ -859,6 +859,10 @@ export class WebUiServer {
         void this.handleSendRelayCommand(req, res);
         return;
       }
+      if (url.pathname === "/api/external-delivery") {
+        void this.handleSendExternalDelivery(req, res);
+        return;
+      }
       res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("Method Not Allowed");
       return;
@@ -950,6 +954,11 @@ export class WebUiServer {
 
     if (url.pathname === "/api/node-appends") {
       sendJson(res, 200, this.node.nodeAppends.list());
+      return;
+    }
+
+    if (url.pathname === "/api/external-delivery-destinations") {
+      sendJson(res, 200, this.node.externalDeliveryDirectory.list());
       return;
     }
 
@@ -1839,6 +1848,117 @@ export class WebUiServer {
       // handleSendNodeAppend().
       const message = (err as Error).message;
       sendJson(res, message.includes("too many relay commands") ? 429 : 400, { error: message });
+    }
+  }
+
+  /**
+   * `POST /api/external-delivery` — submits a "Consegna esterna differita"
+   * (`docs/service-catalog.md`, `external-delivery.ts`) via
+   * `NomadNode.sendExternalDelivery()`. Body `{ boxNodeId, destinationId,
+   * publicKeyHex, dataBase64, password? }` — the first three fields are
+   * never typed by the operator, only echoed back from whatever entry of
+   * `GET /api/external-delivery-destinations` they picked in the client UI
+   * (`docs/next-steps.md`'s own design: an operator selects a friendly
+   * label, never handles a technical address). `password` is the one field
+   * an operator genuinely types, only when the selected entry's
+   * `requiresPassword` was true — hashed into `authProof` by
+   * `sendExternalDelivery()` itself, never sent any further as-is.
+   *
+   * Same auth tier as `POST /api/drops`/`POST /api/node-append`
+   * (`allowServiceCalls` + `networkPassword`, not `exposeRelayRegistry` or
+   * any BOX-specific flag) — this node doesn't need to be the BOX itself,
+   * only a gateway the operator is paired with; the packet is routed
+   * mesh-wide toward `boxNodeId` regardless of which node originates it.
+   *
+   * Body size limit is sized dynamically off `node.maxExternalDeliveryPayloadBytes`
+   * (base64 expands the raw byte count by ~4/3, plus a fixed allowance for
+   * the JSON envelope's other, tiny fields) rather than a fixed constant
+   * like every other handler here — unlike a chat message or a relay
+   * command, this body's dominant field is an admin-configurable file
+   * payload, so a fixed cap sized for the *default* would silently reject
+   * a legitimate submission on a node configured with a larger cap.
+   */
+  private async handleSendExternalDelivery(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.allowServiceCalls || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+
+    const maxBodyBytes = Math.ceil((this.node.maxExternalDeliveryPayloadBytes * 4) / 3) + 4096;
+    let raw: Buffer;
+    try {
+      raw = await readRequestBody(req, maxBodyBytes, MAX_CALL_BODY_READ_MS);
+    } catch (err) {
+      if (res.writableEnded || res.destroyed) return; // connection already gone — nothing to answer
+      if (err instanceof BodyTooLargeError) {
+        sendJson(res, 413, { error: "request body too large" });
+      } else if (err instanceof Error && err.message.includes("timed out")) {
+        sendJson(res, 408, { error: "timed out waiting for the request body" });
+      } else {
+        sendJson(res, 400, { error: "failed to read request body" });
+      }
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = raw.length === 0 ? {} : JSON.parse(raw.toString("utf8"));
+    } catch {
+      sendJson(res, 400, { error: "malformed JSON body" });
+      return;
+    }
+
+    const body = parsed as
+      | { boxNodeId?: unknown; destinationId?: unknown; publicKeyHex?: unknown; dataBase64?: unknown; password?: unknown }
+      | null;
+    const boxNodeId = body?.boxNodeId;
+    if (typeof boxNodeId !== "string" || boxNodeId.length === 0) {
+      sendJson(res, 400, { error: "'boxNodeId' must be a non-empty string" });
+      return;
+    }
+    const destinationId = body?.destinationId;
+    if (typeof destinationId !== "string" || destinationId.length === 0) {
+      sendJson(res, 400, { error: "'destinationId' must be a non-empty string" });
+      return;
+    }
+    const publicKeyHex = body?.publicKeyHex;
+    if (typeof publicKeyHex !== "string" || publicKeyHex.length === 0) {
+      sendJson(res, 400, { error: "'publicKeyHex' must be a non-empty string" });
+      return;
+    }
+    const dataBase64 = body?.dataBase64;
+    if (typeof dataBase64 !== "string" || dataBase64.length === 0) {
+      sendJson(res, 400, { error: "'dataBase64' must be a non-empty string" });
+      return;
+    }
+    const password = body?.password;
+    if (password !== undefined && typeof password !== "string") {
+      sendJson(res, 400, { error: "'password' must be a string" });
+      return;
+    }
+
+    // Buffer.from(..., "base64") never throws (Node's decoder silently skips invalid characters
+    // instead) — the only observable failure mode of a garbage input is decoding to zero/fewer
+    // bytes than expected, caught below rather than via a try/catch that could never fire.
+    const data = Buffer.from(dataBase64, "base64");
+    if (data.length === 0) {
+      sendJson(res, 400, { error: "'dataBase64' decoded to an empty file" });
+      return;
+    }
+
+    try {
+      const packetId = this.node.sendExternalDelivery(boxNodeId, destinationId, publicKeyHex, data, { password });
+      sendJson(res, 200, { sent: true, packetId });
+    } catch (err) {
+      // sendExternalDelivery()'s own validation throws for oversized destinationId/data (400, the
+      // client picked/attached something outside this node's configured caps) — no rate limit exists
+      // on this path (unlike appendToNode()/sendRelayCommand()), so every failure here is a 400.
+      sendJson(res, 400, { error: (err as Error).message });
     }
   }
 

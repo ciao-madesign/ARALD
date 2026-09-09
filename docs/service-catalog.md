@@ -65,21 +65,22 @@ Nessuna criticità di sicurezza evidente, ma uno schema dati/ruoli reale da deci
 - **Inventario/logistica** — tracciamento scorte/materiali per un deployment ONG/emergenza.
 - **Richieste strutturate** — un ticket di soccorso/assistenza strutturato oltre al semplice SOS in testo libero.
 
-### Servizio pianificato, non ancora costruito — Consegna esterna differita (file store-and-forward verso l'esterno)
+### Consegna esterna differita (file store-and-forward verso l'esterno)
 
-Proposto dall'utente il 9 settembre 2026: un operatore sul campo invia un file (es. un report) attraverso la mesh; il pacchetto arriva a un nodo che ha *anche* accesso Internet reale (tipicamente un BOX/Portable); quel nodo lo tiene in coda finché Internet non torna disponibile, poi lo consegna verso una destinazione esterna (server di un'organizzazione, altro nodo ARALD raggiungibile solo via Internet).
+Costruito il 9 settembre 2026 (`docs/security.md` voce #70) — un operatore sul campo invia un file (es. un report) attraverso la mesh; il pacchetto arriva a un nodo che ha *anche* accesso Internet reale (tipicamente un BOX/Portable); quel nodo lo tiene in coda finché Internet non torna disponibile, poi lo consegna verso una destinazione esterna (server di un'organizzazione).
 
-**Non è una ricombinazione di meccanismi esistenti**: `content://` supporta già file binari ma è broadcast/pubblico; `node-appends.ts` è diretto a un solo nodo ed E2E cifrato ma si ferma lì (solo testo corto, nessuna nozione di "poi spingilo fuori dalla mesh"); `store-and-forward.ts` mette in coda finché il *prossimo hop mesh* non è raggiungibile, non finché torna *Internet*; `internet-gateway.ts`/`url-safety.ts` ha la disciplina giusta per un accesso esterno curato ma solo in ingresso (fetch), mai in uscita (consegna).
+**Non è una ricombinazione di meccanismi esistenti, ma un pezzo nuovo** (`node/src/external-delivery.ts`): `content://` supporta già file binari ma è broadcast/pubblico; `node-appends.ts` è diretto a un solo nodo ed E2E cifrato ma si ferma lì (solo testo corto, nessuna nozione di "poi spingilo fuori dalla mesh"); `store-and-forward.ts` mette in coda finché il *prossimo hop mesh* non è raggiungibile, non finché torna *Internet*; `internet-gateway.ts`/`url-safety.ts` ha la disciplina giusta per un accesso esterno curato ma solo in ingresso (fetch) — qui riusata anche in uscita (consegna).
 
-**Decisioni di design confermate con l'utente**, da usare come base quando si aprirà una sessione di planning dedicata (`docs/next-steps.md`):
+**Come funziona, in breve** (dettaglio tecnico completo in `docs/security.md` voce #70):
 
-1. **E2E fino alla destinazione finale** — il BOX/Portable che tiene il file in coda non può leggerlo, solo inoltrare byte cifrati; la garanzia di privacy non dipende dalla fiducia nell'operatore del BOX.
-2. **Solo destinazioni in una allowlist configurata dall'operatore del BOX** — mai una destinazione a scelta libera del mittente, stessa disciplina SSRF già applicata da `url-safety.ts` (altrimenti un nodo malevolo nella mesh userebbe il BOX come proxy di esfiltrazione verso un bersaglio arbitrario).
-3. **Chiunque nella mesh può inviare, ma deve specificare esattamente la destinazione** (un indirizzo/identificatore già noto al mittente, verificato contro l'allowlist) — nessuna scoperta delle destinazioni disponibili; un invio verso una destinazione non in allowlist o non riconosciuta viene rifiutato, non silenziosamente scartato.
-4. **Storage in attesa sul BOX**: bounded, con un tetto configurabile dall'operatore (stessa convenzione già obbligatoria per ogni struttura alimentata dalla rete — vedi "Convenzioni consolidate" in `CLAUDE.md`) — il valore esatto di default resta da decidere in base alle specifiche hardware reali del BOX al momento dell'implementazione, non fissato qui.
-5. **Conferma di consegna/retry**: desiderabile se non aggiunge complessità reale al design, non un requisito bloccante — può restare "invio best-effort, nessun ack" nella prima versione se la conferma end-to-end si rivelasse complessa (es. richiederebbe un canale di ritorno attraverso la stessa mesh, non scontato per un mittente che nel frattempo si è mosso).
+1. **E2E fino alla destinazione finale** — il BOX/Portable che tiene il file in coda non può mai leggerlo: cifratura X25519+AES-256-GCM con una coppia effimera generata ad-hoc per ogni invio (`sealExternalDelivery()`), non l'identità mesh a lungo periodo del mittente.
+2. **Solo destinazioni in una allowlist privata configurata dall'operatore del BOX** (`--external-delivery-destinations <file.json>`) — mai una destinazione a scelta libera del mittente.
+3. **L'operatore sceglie da un'etichetta amichevole** ("Headquarter"), mai un indirizzo tecnico: il BOX pubblica una directory pubblica via `content://` (`{destinationId, label, publicKeyHex, requiresPassword}`, mai l'URL reale né la password) che si propaga mesh-wide tramite la sincronizzazione dei cataloghi già esistente — un mittente non deve mai essere stato in contatto diretto col BOX.
+4. **Destinazioni sensibili (es. un centro operativo di soccorso, l'HQ di una ONG) possono richiedere una password semplice condivisa per canale** — una prova (`authProof`, mai la password grezza) viaggia nel pacchetto mesh, calcolata al gateway del mittente; un invio senza prova valida viene scartato in silenzio dal BOX, mai accodato.
+5. **Storage in attesa sul BOX**: `ExternalDeliveryQueue`, bounded su due assi (conteggio *e* byte totali — le entry variano molto in dimensione), eviction priority-weighted, TTL assoluto (default 100 entry / 50 MB / 24h, tarabile via flag CLI).
+6. **Consegna best-effort, nessun ack** — un ciclo periodico (`--external-delivery-poll-interval-ms`) tenta una `POST` HTTP verso la destinazione quando Internet torna disponibile; un tentativo fallito lascia l'entry in coda per il turno successivo, fino al TTL.
 
-Prerequisito prima del codice: una sessione di planning dedicata (stesso workflow a doppio check di ogni altra voce sostanziale), che dovrà anche scegliere un identificatore tecnico definitivo (qui non ancora nominato — il nome "Consegna esterna differita" è solo descrittivo) e il formato del pacchetto/coda.
+**UI mobile**: pannello "Invia a un'organizzazione" (`mobile/www/`, vedi `mobile/README.md`) — tendina delle sole etichette note, campo password mostrato solo se richiesto, un file, un bottone "Invia". Deliberatamente minimale, non una passata di design.
 
 ## Pacchetti per caso d'uso
 
@@ -107,7 +108,7 @@ Pilot "emergenza" di `docs/deployment.md`.
 
 - **Mesh-native**: emergency beacon (priorità massima, cifrato se una chiave pre-condivisa è disponibile), registro relay (Emergency Node designato), registro posizione, bacheca (`hazard`/`emergency` enfatizzati), node append per coordinamento diretto.
 - **NOMAD**: AI locale (se disponibile un nodo con abbastanza risorse), Kiwix (procedure/manuali di emergenza già caricati).
-- **Candidato futuro rilevante**: la Consegna esterna differita sopra si applica bene anche qui (report verso un'autorità/coordinamento).
+- **Consegna esterna differita**: si applica bene anche qui (report verso un'autorità/coordinamento) — vedi sopra.
 
 ### ONG / missioni umanitarie
 
@@ -115,7 +116,7 @@ Pilot "ONG e missioni umanitarie" di `docs/deployment.md` — pari dignità con 
 
 - **Mesh-native**: bacheca, canali pubblici/gruppi cifrati (coordinamento tra team), mappe offline, node append.
 - **NOMAD**: traduzione (comunicazione con la popolazione locale), Kiwix, AI locale.
-- **Candidato-flagship per la Consegna esterna differita**: è esattamente lo scenario che ha motivato la proposta — un operatore sul campo invia un report cifrato verso il server dell'organizzazione, il BOX/Portable alla base lo tiene finché Internet non torna disponibile.
+- **Consegna esterna differita** — è esattamente lo scenario che ha motivato la feature: un operatore sul campo invia un report cifrato verso il server dell'organizzazione, il BOX/Portable alla base lo tiene finché Internet non torna disponibile.
 - **Candidati segnalati ma non pianificati**: inventario/logistica, richieste strutturate (vedi sopra).
 
 ### Marittimo / spedizioni

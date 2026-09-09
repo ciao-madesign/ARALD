@@ -400,6 +400,41 @@ async function createNodeAppend({ targetNodeId, text, label, kind }) {
 }
 
 /**
+ * POST /api/external-delivery (node/src/web-ui.ts) — "Consegna esterna differita"
+ * (`docs/service-catalog.md`). `boxNodeId`/`destinationId`/`publicKeyHex` are never typed by hand —
+ * they come straight from whichever entry of GET /api/external-delivery-destinations the operator
+ * picked in the `<select>` (see `renderExternalDeliveryDestinations()` below); `password` is the one
+ * field the operator genuinely types, only when that entry's `requiresPassword` was true. Real E2E
+ * sealing to the destination happens server-side (`NomadNode.sendExternalDelivery()`) — this gateway
+ * only ever forwards the raw file as base64, over the same already-authenticated connection every
+ * other write on this page uses.
+ */
+async function sendExternalDelivery({ boxNodeId, destinationId, publicKeyHex, dataBase64, password }) {
+  const res = await fetchWithTimeout(
+    apiUrl("/api/external-delivery"),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + networkPassword },
+      body: JSON.stringify({ boxNodeId, destinationId, publicKeyHex, dataBase64, password: password || undefined }),
+    },
+    CALL_TIMEOUT_MS,
+  );
+  let body;
+  try {
+    body = await res.json();
+  } catch {
+    const err = new Error("risposta non valida dal gateway (HTTP " + res.status + ")");
+    err.status = res.status;
+    throw err;
+  }
+  if (!res.ok) {
+    const err = new Error(body.error || "HTTP " + res.status);
+    err.status = res.status;
+    throw err;
+  }
+}
+
+/**
  * GET /api/location-registry (node/src/web-ui.ts) — every currently-shared position this gateway
  * knows about. Only ever populated on a *dedicated* location-registry node with `exposeLocationRegistry`
  * turned on (docs/next-steps.md Opzione J) — an ordinary gateway 404s here, which this treats as "not
@@ -1623,6 +1658,108 @@ document.getElementById("send-node-append-form").addEventListener("submit", asyn
   }
 });
 
+// ---------- consegna esterna differita (docs/service-catalog.md — node/src/external-delivery.ts) ----------
+
+/**
+ * The full list from the latest GET /api/external-delivery-destinations — always an array (this
+ * endpoint is unauthenticated and offered on every gateway, like GET /api/drops/GET /api/node-appends,
+ * never a 404), but can be empty until at least one Box/Portable has published a directory and it has
+ * propagated here via content:// sync (`considerExternalDeliveryDirectory()`, `node/src/node.ts`).
+ * Read by the destination `<select>`'s change listener below to look up `requiresPassword`/
+ * `boxNodeId`/`publicKeyHex` for the currently-selected entry without a second fetch.
+ */
+let knownExternalDeliveryDestinations = [];
+
+/**
+ * Repopulates the "Invia a un'organizzazione" form's destination `<select>` — same
+ * preserve-the-current-selection-across-a-background-refresh shape as `renderNodeAppendTargets()`
+ * above. Shows only the friendly `label`, never `boxNodeId`/`publicKeyHex` (those travel invisibly
+ * with the selection, see the submit handler below) — the operator is never expected to recognize or
+ * type a technical address (`docs/service-catalog.md`, "Consegna esterna differita").
+ */
+function renderExternalDeliveryDestinations(destinations) {
+  knownExternalDeliveryDestinations = destinations || [];
+  const select = document.getElementById("send-external-delivery-destination");
+  const previousValue = select.value;
+  const placeholder = select.options[0];
+  select.textContent = "";
+  select.append(placeholder);
+  for (const d of knownExternalDeliveryDestinations) {
+    select.append(el("option", { value: d.destinationId, textContent: d.label }));
+  }
+  if ([...select.options].some((o) => o.value === previousValue)) select.value = previousValue;
+  updateExternalDeliveryPasswordVisibility();
+}
+
+/** Shows the password field only when the currently-selected destination's `requiresPassword` is true (`docs/service-catalog.md`'s per-destination lightweight authorization) — hidden and cleared otherwise, so a stale password never rides along to an unprotected destination by accident. */
+function updateExternalDeliveryPasswordVisibility() {
+  const select = document.getElementById("send-external-delivery-destination");
+  const passwordInput = document.getElementById("send-external-delivery-password");
+  const selected = knownExternalDeliveryDestinations.find((d) => d.destinationId === select.value);
+  const requiresPassword = Boolean(selected && selected.requiresPassword);
+  passwordInput.hidden = !requiresPassword;
+  if (!requiresPassword) passwordInput.value = "";
+}
+document.getElementById("send-external-delivery-destination").addEventListener("change", updateExternalDeliveryPasswordVisibility);
+
+/** Reads a `File` into a base64 string (no `data:...;base64,` prefix) for `POST /api/external-delivery`'s `dataBase64` field — no multipart upload exists anywhere in this codebase (`CLAUDE.md`, "niente di nuovo senza necessità reale"), same JSON-body convention every other write on this page already uses. */
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.slice(reader.result.indexOf(",") + 1));
+    reader.onerror = () => reject(new Error("impossibile leggere il file"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function setSendExternalDeliveryBusy(submit, busy) {
+  submit.disabled = busy;
+  submit.textContent = busy ? "Invio..." : "Invia";
+}
+
+document.getElementById("send-external-delivery-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const select = document.getElementById("send-external-delivery-destination");
+  const passwordInput = document.getElementById("send-external-delivery-password");
+  const fileInput = document.getElementById("send-external-delivery-file");
+  const status = document.getElementById("send-external-delivery-status");
+  const destinationId = select.value;
+  const destination = knownExternalDeliveryDestinations.find((d) => d.destinationId === destinationId);
+  const file = fileInput.files[0];
+  if (!destination || !file) return;
+  const submit = event.target.querySelector("button[type=submit]");
+  setSendExternalDeliveryBusy(submit, true);
+  status.classList.remove("error");
+  status.textContent = "Invio in corso...";
+  try {
+    const dataBase64 = await readFileAsBase64(file);
+    await sendExternalDelivery({
+      boxNodeId: destination.boxNodeId,
+      destinationId: destination.destinationId,
+      publicKeyHex: destination.publicKeyHex,
+      dataBase64,
+      password: passwordInput.hidden ? undefined : passwordInput.value,
+    });
+    fileInput.value = "";
+    passwordInput.value = "";
+    select.value = "";
+    updateExternalDeliveryPasswordVisibility();
+    status.textContent = "File inviato — verrà consegnato non appena la destinazione sarà raggiungibile.";
+    vibrate(10);
+    showToast("File inviato per la consegna", "cloud");
+  } catch (err) {
+    if (err.status === 401) {
+      handlePasswordRejected();
+      return;
+    }
+    status.classList.add("error");
+    status.textContent = "Errore: " + err.message;
+    vibrate([12, 40, 12]);
+  } finally {
+    setSendExternalDeliveryBusy(submit, false);
+  }
+});
+
 // ---------- emergency beacons (docs/beacon.md — the Emergency Node view) ----------
 
 /**
@@ -2676,20 +2813,33 @@ let refreshCycleId = 0;
 async function refreshAll() {
   const cycleId = ++refreshCycleId;
   try {
-    const [status, peers, services, channels, drops, nodeAppends, groups, locationReports, relays, emergencyBeacons, mapInfoResult] =
-      await Promise.all([
-        fetchJson("/api/status"),
-        fetchJson("/api/peers"),
-        fetchJson("/api/services"),
-        fetchJson("/api/channels"),
-        fetchJson("/api/drops"),
-        fetchJson("/api/node-appends"),
-        fetchGroups(),
-        fetchLocationRegistry(),
-        fetchRelayRegistry(),
-        fetchEmergencyBeacons(),
-        fetchMapInfo(),
-      ]);
+    const [
+      status,
+      peers,
+      services,
+      channels,
+      drops,
+      nodeAppends,
+      groups,
+      locationReports,
+      relays,
+      emergencyBeacons,
+      mapInfoResult,
+      externalDeliveryDestinations,
+    ] = await Promise.all([
+      fetchJson("/api/status"),
+      fetchJson("/api/peers"),
+      fetchJson("/api/services"),
+      fetchJson("/api/channels"),
+      fetchJson("/api/drops"),
+      fetchJson("/api/node-appends"),
+      fetchGroups(),
+      fetchLocationRegistry(),
+      fetchRelayRegistry(),
+      fetchEmergencyBeacons(),
+      fetchMapInfo(),
+      fetchJson("/api/external-delivery-destinations"),
+    ]);
     if (cycleId !== refreshCycleId) return; // superseded by a newer refresh while this one was in flight
     renderStats(status);
     renderPeers(peers);
@@ -2702,6 +2852,7 @@ async function refreshAll() {
     renderRelays(relays);
     renderEmergencyBeacons(emergencyBeacons);
     renderMapAvailability(mapInfoResult);
+    renderExternalDeliveryDestinations(externalDeliveryDestinations);
     await refreshContent();
     firstLoadDone = true;
     setDashboardError();

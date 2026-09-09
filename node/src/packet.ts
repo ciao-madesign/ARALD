@@ -27,6 +27,8 @@ export enum MessageType {
   SERVICE_RESPONSE = "SERVICE_RESPONSE",
   /** Broadcast, end-to-end encrypted group chat message (docs/next-steps.md Opzione J) — see node/src/groups.ts. */
   GROUP_MESSAGE = "GROUP_MESSAGE",
+  /** Unicast, E2E-sealed-to-an-external-destination file submission (docs/service-catalog.md, "Consegna esterna differita") — see node/src/external-delivery.ts. Never PRIVATE_MESSAGE: the packet's mesh recipient (a Box/Portable offering the role) is never who decrypts it. */
+  EXTERNAL_DELIVERY = "EXTERNAL_DELIVERY",
 }
 
 /**
@@ -46,6 +48,24 @@ export enum Priority {
 
 /** Number of distinct Priority levels — derived so it can never drift out of sync with the enum above. */
 export const PRIORITY_LEVEL_COUNT = Object.values(Priority).filter((v) => typeof v === "number").length;
+
+/**
+ * Clamps an untrusted `priority` (arrived inside a `Packet`'s payload/field,
+ * never validated by `decodePacket()` itself — see `CLAUDE.md`'s
+ * "convenzioni consolidate") to a real `Priority` value — a forged/out-of-range
+ * value is always treated as the LEAST urgent (`Priority.BULK`), never the
+ * most, otherwise a forged claim would become immune to priority-weighted
+ * eviction instead of a legitimate high-priority entry. Shared by
+ * `store-and-forward.ts` and `external-delivery.ts` (previously two
+ * verbatim-identical copies, found by code-review — consolidated here,
+ * next to `PRIORITY_LEVEL_COUNT` which the clamp itself depends on, so the
+ * two can never silently drift apart again).
+ */
+export function priorityRank(priority: unknown): Priority {
+  return Number.isInteger(priority) && (priority as number) >= 0 && (priority as number) < PRIORITY_LEVEL_COUNT
+    ? (priority as Priority)
+    : Priority.BULK;
+}
 
 export const PROTOCOL_VERSION = 1;
 export const DEFAULT_TTL = 8;
