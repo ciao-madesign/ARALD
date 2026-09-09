@@ -16,9 +16,9 @@
     <div class="wrap site-header-inner">
       <a class="wordmark" href="#top">ARALD<span class="dot">·</span>NET</a>
       <nav class="site-nav" aria-label="Primary">
-        <a href="#how">How it works</a>
-        <a href="#where">Where it works</a>
-        <a href="#status">Status</a>
+        <a href="overview.html">Where it works</a>
+        <a href="how-it-works.html">How it works</a>
+        <a href="contribute.html">Contribute</a>
         <a class="nav-cta" href="https://github.com/ciao-madesign/ARALD" target="_blank" rel="noopener">GitHub</a>
       </nav>
       <button class="nav-toggle" id="navToggle" aria-expanded="false" aria-controls="site-nav-mobile">
@@ -27,10 +27,9 @@
       </button>
     </div>
     <nav class="site-nav-mobile" id="site-nav-mobile" aria-label="Primary, mobile">
-      <a href="#how">How it works</a>
-      <a href="#where">Where it works</a>
-      <a href="#devices">Devices</a>
-      <a href="#status">Status</a>
+      <a href="overview.html">Where it works</a>
+      <a href="how-it-works.html">How it works</a>
+      <a href="contribute.html">Contribute</a>
       <a href="https://github.com/ciao-madesign/ARALD" target="_blank" rel="noopener">GitHub</a>
     </nav>
   </header>
@@ -38,11 +37,8 @@
   <main id="main">
 
     <!-- HERO -->
-    <section class="hero" id="top">
-      <div class="hero-bg" aria-hidden="true" data-placeholder="hero-background">
-        <div class="hero-bg-photo"></div>
-        <div class="hero-bg-scrim"></div>
-      </div>
+    <section class="hero hero-photo" id="top" style="background-image: url('img/hero.jpg');">
+      <div class="hero-bg-scrim" aria-hidden="true"></div>
       <div class="wrap hero-inner">
         <p class="eyebrow">Open-source mesh network</p>
         <h1>The internet ends.<br>ARALD doesn't.</h1>
@@ -52,27 +48,23 @@
         </p>
         <div class="hero-actions">
           <a class="btn btn-beacon" href="https://github.com/ciao-madesign/ARALD" target="_blank" rel="noopener">View on GitHub</a>
-          <a class="btn btn-ghost" href="../docs/overview.md" target="_blank" rel="noopener">Read the overview</a>
+          <a class="btn btn-ghost btn-ghost-dark" href="how-it-works.html">See how it works</a>
         </div>
-        <p class="hero-meta">Open source &middot; MIT licensed &middot; software prototype, hardware in progress</p>
       </div>
     </section>
 
-    <!-- THE EXAMPLE -->
+    <!-- THE EXAMPLE (condensed teaser) -->
     <section class="section example" aria-labelledby="example-title">
       <div class="wrap example-grid">
         <div class="example-text">
+          <p class="section-eyebrow">The idea, in one request</p>
           <h2 id="example-title">Ask for what you need.<br>Not where it is.</h2>
           <p>
-            Say you're at a mountain hut with no signal, and someone nearby has a copy of
-            Wikipedia stored locally. You don't connect to their device — you just ask for
-            the page you want.
+            No signal at a mountain hut? Ask for the page you want — the network finds a
+            path between devices and delivers it, the same way a letter reaches you
+            without you knowing which trucks carried it.
           </p>
-          <p class="example-note">
-            You never need to know which device has it, how many hops away it is, or
-            whether it's reachable right now. The network works that out on its own —
-            the same way a letter reaches you without you knowing which trucks carried it.
-          </p>
+          <a class="text-link" href="how-it-works.html">See the full mechanism →</a>
         </div>
         <div class="example-code" role="img" aria-label="A request for content, shown as a command: get content colon slash slash wikipedia slash italy">
           <div class="code-window">
@@ -87,145 +79,83 @@
       </div>
     </section>
 
-    <!-- HOW IT WORKS -->
-    <section class="section how" id="how" aria-labelledby="how-title">
-      <div class="wrap">
-        <p class="section-eyebrow">How it works</p>
-        <h2 id="how-title">No towers. No center. No single point of failure.</h2>
-        <div class="steps">
-          <div class="step">
-            <div class="step-num">01</div>
-            <h3>Every device is a peer</h3>
-            <p>A phone, a radio card, a fixed relay, a small computer — each one can hold content, pass it along, and ask for more. Nothing routes through a central server.</p>
-          </div>
-          <div class="step">
-            <div class="step-num">02</div>
-            <h3>Requests hop until they land</h3>
-            <p>When two devices come within range — Bluetooth, long-range radio, or plain local Wi-Fi — they exchange what they know and move on, carrying requests and answers forward.</p>
-          </div>
-          <div class="step">
-            <div class="step-num">03</div>
-            <h3>Nothing has to happen at once</h3>
-            <p>If no one nearby can answer right now, a message waits. The next device that can carry it forward picks it up on the next contact — a hiker, a boat, a relay coming back online.</p>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- WHERE IT WORKS -->
+    <!-- WHERE IT WORKS — 3 primary pillars, photo-forward -->
     <section class="section where" id="where" aria-labelledby="where-title">
       <div class="wrap">
         <p class="section-eyebrow">Where it works</p>
         <h2 id="where-title">Three environments have driven the design so far</h2>
         <p class="section-lede">Equally important — not a hierarchy.</p>
 
-        <div class="scenario-grid">
-          <article class="scenario-card" data-placeholder-image="scenario-alpine">
-            <div class="scenario-photo"></div>
-            <div class="scenario-body">
+        <div class="pillar-grid">
+          <a class="pillar-card" href="overview.html#scenarios">
+            <div class="pillar-photo" style="background-image: url('img/scenario-alpine.jpg');"></div>
+            <div class="pillar-body">
               <h3>Mountain shelters</h3>
-              <p>Remote huts where cell coverage never arrives and running a cable isn't an option.</p>
+              <p>Remote huts where cell coverage never arrives.</p>
             </div>
-          </article>
-          <article class="scenario-card" data-placeholder-image="scenario-emergency">
-            <div class="scenario-photo"></div>
-            <div class="scenario-body">
+          </a>
+          <a class="pillar-card" href="overview.html#scenarios">
+            <div class="pillar-photo" style="background-image: url('img/scenario-emergency.jpg');"></div>
+            <div class="pillar-body">
               <h3>Emergency &amp; disaster response</h3>
-              <p>Earthquakes, floods, fires — exactly when normal networks are damaged, overloaded, or without power.</p>
+              <p>Exactly when normal networks are damaged or overloaded.</p>
             </div>
-          </article>
-          <article class="scenario-card" data-placeholder-image="scenario-humanitarian">
-            <div class="scenario-photo"></div>
-            <div class="scenario-body">
+          </a>
+          <a class="pillar-card" href="overview.html#scenarios">
+            <div class="pillar-photo" style="background-image: url('img/scenario-humanitarian.jpg');"></div>
+            <div class="pillar-body">
               <h3>NGOs &amp; humanitarian operations</h3>
-              <p>Field bases, mobile clinics, and temporary camps in areas without reliable infrastructure.</p>
+              <p>Field bases and camps in areas without reliable infrastructure.</p>
             </div>
-          </article>
+          </a>
         </div>
 
-        <p class="scenario-more-label">The same architecture applies anywhere connectivity can't be assumed:</p>
-
-        <div class="scenario-tiles">
-          <figure class="scenario-tile">
-            <img src="img/scenario-ships.jpg" alt="A boat at sea" loading="lazy" />
-            <figcaption>Ships, coasts &amp; islands</figcaption>
-          </figure>
-          <figure class="scenario-tile">
-            <img src="img/scenario-events.jpg" alt="A crowd at an outdoor festival" loading="lazy" />
-            <figcaption>Crowded events</figcaption>
-          </figure>
-          <figure class="scenario-tile">
-            <img src="img/scenario-schools.jpg" alt="A rural school classroom" loading="lazy" />
-            <figcaption>Schools</figcaption>
-          </figure>
-          <figure class="scenario-tile">
-            <img src="img/scenario-rural.jpg" alt="An isolated rural village" loading="lazy" />
-            <figcaption>Rural &amp; isolated communities</figcaption>
-          </figure>
-        </div>
-
-        <ul class="scenario-chips">
-          <li>Expeditions &amp; remote stations</li>
-          <li>Forests &amp; nature reserves</li>
-          <li>Deserts</li>
-          <li>Temporary &amp; crisis infrastructure</li>
-        </ul>
+        <p class="where-more">+ 7 more environments — ships, expeditions, rural communities, forests, schools, crowded events, crisis infrastructure. Same architecture, same code. <a class="text-link" href="overview.html#scenarios">See all scenarios →</a></p>
       </div>
     </section>
 
-    <!-- DEVICE FAMILY -->
-    <section class="section devices" id="devices" aria-labelledby="devices-title">
+    <!-- DEVICE FAMILY — condensed strip -->
+    <section class="section devices-strip" aria-labelledby="devices-title">
       <div class="wrap">
         <p class="section-eyebrow">The hardware</p>
         <h2 id="devices-title">One network, sized to fit the situation</h2>
-        <div class="device-grid">
-          <div class="device-card">
-            <div class="device-icon" data-icon="card" aria-hidden="true"></div>
-            <h3>ARALD Card</h3>
-            <p>Pocket-sized radio. Sends an SOS, relays other people's messages, or both.</p>
-          </div>
-          <div class="device-card">
-            <div class="device-icon" data-icon="relay" aria-hidden="true"></div>
-            <h3>ARALD Relay</h3>
-            <p>Same logic, fixed and solar-powered, or carried along as a courier.</p>
-          </div>
-          <div class="device-card">
-            <div class="device-icon" data-icon="box" aria-hidden="true"></div>
-            <h3>ARALD Box</h3>
-            <p>A small always-on computer: content, local search, translation, AI, coordination.</p>
-          </div>
-          <div class="device-card">
-            <div class="device-icon" data-icon="portable" aria-hidden="true"></div>
-            <h3>ARALD Portable</h3>
-            <p>The same environment on a bootable drive — plug into whatever computer is on hand.</p>
-          </div>
+        <div class="device-row">
+          <div class="device-chip"><span class="device-icon" data-icon="card" aria-hidden="true"></span>ARALD Card</div>
+          <div class="device-chip"><span class="device-icon" data-icon="relay" aria-hidden="true"></span>ARALD Relay</div>
+          <div class="device-chip"><span class="device-icon" data-icon="box" aria-hidden="true"></span>ARALD Box</div>
+          <div class="device-chip"><span class="device-icon" data-icon="portable" aria-hidden="true"></span>ARALD Portable</div>
         </div>
-        <p class="devices-note">None of these need the internet to talk to each other. A gateway can optionally bridge out when a connection is available — never a requirement.</p>
+        <a class="text-link" href="how-it-works.html#devices">See what each device does →</a>
       </div>
     </section>
 
-    <!-- STATUS -->
+    <!-- OPEN PROJECT / COMMUNITY -->
+    <section class="section community">
+      <div class="wrap community-grid">
+        <div class="community-photo" style="background-image: url('img/community.jpg');"></div>
+        <div class="community-text">
+          <p class="section-eyebrow">An open project</p>
+          <h2>Built in the open, by anyone who wants to help</h2>
+          <p>Every line of this network — routing, encryption, the mobile app, the hardware plans — is public, tested, and documented as it's built.</p>
+          <a class="btn btn-ghost" href="https://github.com/ciao-madesign/ARALD" target="_blank" rel="noopener">Explore the repository →</a>
+          <p style="margin-top: 1.2em;"><a class="text-link" href="contribute.html">See how to contribute code or hardware →</a></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- STATUS — condensed -->
     <section class="section status" id="status" aria-labelledby="status-title">
       <div class="wrap status-grid">
-        <div class="status-text">
-          <p class="section-eyebrow">Where things stand</p>
-          <h2 id="status-title">A working prototype, built in the open</h2>
-          <p>
-            Core networking — identity, routing, encryption, store-and-forward, content
-            caching — runs today over real local networks and is covered by automated
-            tests. Radio transports and higher-level features are built and tested in
-            software. The physical devices haven't been manufactured yet.
-          </p>
-          <p class="status-honest">
-            We say this plainly because it matters: this is real, working code — not a
-            pitch deck. What's still ahead is hardware, field testing, and scale.
-          </p>
-          <a class="btn btn-ghost" href="https://github.com/ciao-madesign/ARALD" target="_blank" rel="noopener">Explore the code and docs →</a>
-        </div>
         <div class="status-stats">
-          <div class="stat"><span class="stat-num">1020</span><span class="stat-label">automated tests</span></div>
+          <div class="stat"><span class="stat-num">1108</span><span class="stat-label">automated tests</span></div>
           <div class="stat"><span class="stat-num">20</span><span class="stat-label">development milestones</span></div>
           <div class="stat"><span class="stat-num">MIT</span><span class="stat-label">open-source license</span></div>
+        </div>
+        <div class="status-text">
+          <p class="section-eyebrow">Where things stand</p>
+          <h2 id="status-title">A working prototype, not a pitch deck</h2>
+          <p>Core networking runs today over real local networks. The physical radio devices haven't been manufactured yet.</p>
+          <a class="text-link" href="how-it-works.html#status">Read the full status →</a>
         </div>
       </div>
     </section>
@@ -233,7 +163,7 @@
     <!-- CTA -->
     <section class="section cta">
       <div class="wrap cta-inner">
-        <h2>Built in the open. Coming to Kickstarter.</h2>
+        <h2>Coming to Kickstarter.</h2>
         <p>Follow the project on GitHub — that's where development happens, in public, today.</p>
         <div class="hero-actions">
           <a class="btn btn-beacon" href="https://github.com/ciao-madesign/ARALD" target="_blank" rel="noopener">View on GitHub</a>

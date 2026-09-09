@@ -1,6 +1,12 @@
 # ARALD public site
 
-A static landing page — plain HTML/CSS/JS, no build step, no framework. Separate from the rest of the repository (like `mobile/`, `mirror-portal/`, etc.): not part of the root npm workspace.
+A static site — plain HTML/CSS/JS, no build step, no framework. Separate from the rest of the repository (like `mobile/`, `mirror-portal/`, etc.): not part of the root npm workspace.
+
+Three pages, kept deliberately separate so the landing page stays short and visual — deep-dive content lives one click away, not stacked on the homepage:
+
+- `index.html` — the landing page: hero, a one-request example, the three primary scenarios (photo cards), a device strip, an "open project" section, status stats, CTA.
+- `overview.html` — "Where it works": the full gallery of all ten scenarios (the three primary ones plus seven more), each with a photo and a short description.
+- `how-it-works.html` — the mechanism (three steps), the full device family (five cards), and the honest "what's real today" status detail.
 
 ## Preview locally
 
@@ -18,22 +24,30 @@ Same pattern already used for `mirror-portal/`: create a new Vercel project poin
 
 ## Where images go
 
-All real photos live in `img/` (not `images/` — kept consistent with the folder the images actually arrive in). Attribution for every photo currently in use is tracked in [`img/CREDITS.md`](img/CREDITS.md) — add a line there for every new photo (source, photographer, license).
+All real photos live in `img/` (not `images/`). Attribution for every photo in use is tracked in [`img/CREDITS.md`](img/CREDITS.md) — add a line there for every new photo (source, photographer, license).
 
-**Already in place**, used as small tiles in the "Where it works" section: `img/scenario-ships.jpg`, `img/scenario-events.jpg`, `img/scenario-schools.jpg`, `img/scenario-rural.jpg`.
+Every scenario/hero slot is filled — no CSS placeholders left:
 
-**Still needed** — sections that expect one of these are marked in the code with `data-placeholder-image="..."` (in `index.html`) and a `/* PLACEHOLDER */` comment above the matching CSS rule (in `styles.css`); until added, those spots render a topographic pattern derived from the "Waypoint" palette, not a blank box:
+| File | Used for |
+|---|---|
+| `img/hero.jpg` | Landing page hero background |
+| `img/scenario-alpine.jpg` | "Mountain shelters" (primary) |
+| `img/scenario-emergency.jpg` | "Emergency & disaster response" (primary) |
+| `img/scenario-humanitarian.jpg` | "NGOs & humanitarian operations" (primary) |
+| `img/scenario-ships.jpg` | "Ships, coasts & islands" |
+| `img/scenario-expeditions.jpg` | "Expeditions & remote stations" |
+| `img/scenario-rural.jpg` | "Rural & isolated communities" |
+| `img/scenario-forests.jpg` | "Forests & nature reserves" |
+| `img/scenario-events.jpg` | "Crowded events" |
+| `img/scenario-schools.jpg` | "Schools" |
+| `img/scenario-crisis.jpg` | "Temporary & crisis infrastructure" |
+| `img/community.jpg` | "An open project" section (index.html) |
+| `img/where-it-works.jpg` | Page banner on `overview.html` |
+| `img/mechanism.jpg` | Page banner on `how-it-works.html` |
 
-| File | Used for | Suggested aspect ratio |
-|---|---|---|
-| `img/hero.jpg` | Hero background (behind the headline) | wide, e.g. 1920×1080 |
-| `img/scenario-alpine.jpg` | "Mountain shelters" card | 4:3 |
-| `img/scenario-emergency.jpg` | "Emergency & disaster response" card | 4:3 |
-| `img/scenario-humanitarian.jpg` | "NGOs & humanitarian operations" card | 4:3 |
+"Deserts" was considered and dropped — no photo, not pursued further (explicit decision).
 
-To wire one in, add the file here and set the corresponding CSS rule's `background-image` (see the `/* PLACEHOLDER */` comments in `styles.css` — `.hero-bg-photo` and `.scenario-photo`) to `url("img/<file>.jpg"); background-size: cover; background-position: center;`.
-
-Before adding a new photo, resize/compress it for web first (originals straight off Unsplash run 3-6MB at 5000+px wide) — e.g. with `sharp` (`npx sharp-cli resize 1600 -- input.jpg -o img/output.jpg -q 78`) or any equivalent tool. Target: max ~1600px on the long edge, JPEG quality ~75-80, well under 300KB.
+Before adding or replacing a photo, resize/compress it for web first (originals straight off Unsplash run 3-6MB at 5000+px wide) — e.g. with `sharp` (`npx sharp-cli resize 1600 -- input.jpg -o img/output.jpg -q 78`) or any equivalent tool. Target: max ~1200-1600px on the long edge (2400px for the hero, it's full-bleed), JPEG quality ~75-80, well under 300KB.
 
 ## Fonts
 

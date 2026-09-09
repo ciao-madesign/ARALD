@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { autoDetect } from "@serialport/bindings-cpp";
 import { SerialPortStream } from "@serialport/stream";
 import { NomadNode } from "./node.js";
@@ -8,6 +9,86 @@ import { LoraSerialSx1262Transport } from "./transports/lora-serial-sx1262.js";
 import { WebUiServer, generateNetworkPassword } from "./web-ui.js";
 import { MbtilesReader } from "./map-tiles.js";
 import { TrustLevel } from "./trust.js";
+import {
+  MAX_EXTERNAL_DELIVERY_DESTINATION_ID_LENGTH,
+  MAX_EXTERNAL_DELIVERY_LABEL_LENGTH,
+  type ExternalDeliveryAllowlist,
+  type ExternalDeliveryDestination,
+} from "./external-delivery.js";
+
+/**
+ * Loads `--external-delivery-destinations`' JSON file into an
+ * `ExternalDeliveryAllowlist` — the admin's single source of truth for
+ * "Consegna esterna differita" (`docs/service-catalog.md`): each entry's
+ * `url`/`password` never leave this process (`node.publishExternalDeliveryDirectory()`
+ * projects only `{destinationId, label, publicKeyHex, requiresPassword}`
+ * out to the mesh-wide public directory). Same non-fatal posture as
+ * `--map-file` immediately below in `main()`: a missing or malformed file
+ * only disables this role for this run (logged, never `process.exit()`) —
+ * a node offering ordinary mesh services has no reason to refuse to start
+ * just because an optional admin file wasn't ready yet.
+ */
+function loadExternalDeliveryAllowlist(path: string): ExternalDeliveryAllowlist | undefined {
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch (err) {
+    console.error(`--external-delivery-destinations: could not read ${path} — ${(err as Error).message}`);
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    console.error(`--external-delivery-destinations: malformed JSON in ${path} — ${(err as Error).message}`);
+    return undefined;
+  }
+  if (!Array.isArray(parsed)) {
+    console.error(`--external-delivery-destinations: ${path} must contain a JSON array`);
+    return undefined;
+  }
+  const allowlist: ExternalDeliveryAllowlist = new Map();
+  for (const raw of parsed) {
+    if (!raw || typeof raw !== "object") {
+      console.error(`--external-delivery-destinations: skipping a non-object entry in ${path}`);
+      continue;
+    }
+    const entry = raw as Record<string, unknown>;
+    if (
+      typeof entry.destinationId !== "string" ||
+      entry.destinationId.length === 0 ||
+      entry.destinationId.length > MAX_EXTERNAL_DELIVERY_DESTINATION_ID_LENGTH
+    ) {
+      console.error(`--external-delivery-destinations: skipping an entry with an invalid "destinationId" in ${path}`);
+      continue;
+    }
+    if (typeof entry.label !== "string" || entry.label.length === 0 || entry.label.length > MAX_EXTERNAL_DELIVERY_LABEL_LENGTH) {
+      console.error(`--external-delivery-destinations: skipping "${entry.destinationId}" — invalid "label" in ${path}`);
+      continue;
+    }
+    if (typeof entry.publicKeyHex !== "string" || entry.publicKeyHex.length === 0) {
+      console.error(`--external-delivery-destinations: skipping "${entry.destinationId}" — invalid "publicKeyHex" in ${path}`);
+      continue;
+    }
+    if (typeof entry.url !== "string" || entry.url.length === 0) {
+      console.error(`--external-delivery-destinations: skipping "${entry.destinationId}" — invalid "url" in ${path}`);
+      continue;
+    }
+    if (entry.password !== undefined && (typeof entry.password !== "string" || entry.password.length === 0)) {
+      console.error(`--external-delivery-destinations: skipping "${entry.destinationId}" — invalid "password" in ${path}`);
+      continue;
+    }
+    const destination: ExternalDeliveryDestination = {
+      destinationId: entry.destinationId,
+      label: entry.label,
+      publicKeyHex: entry.publicKeyHex,
+      url: entry.url,
+      password: entry.password as string | undefined,
+    };
+    allowlist.set(destination.destinationId, destination);
+  }
+  return allowlist;
+}
 
 function parseArgs(argv: string[]): Record<string, string> {
   const args: Record<string, string> = {};
@@ -78,9 +159,27 @@ async function main(): Promise<void> {
     }
   }
 
+  // Opt-in — nothing about "Consegna esterna differita" (docs/service-catalog.md) activates unless
+  // an operator explicitly points at a prepared destinations file, same posture as --map-file below.
+  const externalDeliveryAllowlist = args["external-delivery-destinations"]
+    ? loadExternalDeliveryAllowlist(args["external-delivery-destinations"])
+    : undefined;
+  const maxExternalDeliveryEntries = parsePositiveNumberFlag("max-external-delivery-entries", args["max-external-delivery-entries"]);
+  const maxExternalDeliveryBytes = parsePositiveNumberFlag("max-external-delivery-bytes", args["max-external-delivery-bytes"]);
+  const externalDeliveryTtlMs = parsePositiveNumberFlag("external-delivery-ttl-ms", args["external-delivery-ttl-ms"]);
+  const maxExternalDeliveryPayloadBytes = parsePositiveNumberFlag(
+    "max-external-delivery-payload-bytes",
+    args["max-external-delivery-payload-bytes"],
+  );
+
   const node = new NomadNode({
     displayName,
     relayPolicy: batteryPercent !== undefined ? { getResourceState: () => ({ batteryPercent }) } : undefined,
+    externalDeliveryAllowlist,
+    maxExternalDeliveryEntries,
+    maxExternalDeliveryBytes,
+    externalDeliveryTtlMs,
+    maxExternalDeliveryPayloadBytes,
   });
   node.addTransport(new TcpTransport(node.nodeId, port));
 
@@ -157,6 +256,14 @@ async function main(): Promise<void> {
   await node.start();
   if (loraStatusLine) console.log(loraStatusLine);
 
+  // Explicit call, never automatic (see NomadNode.publishExternalDeliveryDirectory()'s own doc
+  // comment — same "opt-in action on top of opt-in config" shape as registerAsLocationRegistry()/
+  // registerAsRelayRegistry() below) — only reached at all when the file above actually loaded.
+  if (externalDeliveryAllowlist) {
+    node.publishExternalDeliveryDirectory();
+    console.log(`Consegna esterna differita: ${externalDeliveryAllowlist.size} destinazioni pubblicate (content://external-delivery-directory)`);
+  }
+
   console.log("ARALD Node");
   console.log(`Display name: ${displayName}`);
   console.log(`Node ID: ${node.nodeId}`);
@@ -229,6 +336,26 @@ async function main(): Promise<void> {
       node.reportRelayTelemetry().catch((err) => console.error(`Relay telemetry report failed: ${(err as Error).message}`));
     }, intervalMs);
     console.log(`Reporting relay telemetry every ${intervalMs}ms`);
+  }
+
+  // Same non-owning-timer shape as --report-relay-telemetry-interval-ms immediately above (NomadNode
+  // itself owns no setInterval — see CLAUDE.md's own convention) — drives attemptExternalDeliveries()
+  // (external-delivery.ts) to retry the queue toward whichever external destinations are reachable
+  // right now. A no-op call (attemptExternalDeliveries() itself) when externalDeliveryAllowlist wasn't
+  // configured, so this flag is harmless (if pointless) to pass on a node not offering the role.
+  let externalDeliveryInterval: NodeJS.Timeout | undefined;
+  if (args["external-delivery-poll-interval-ms"] !== undefined) {
+    // Same validate-then-reparse shape as --report-relay-telemetry-interval-ms above, for the same
+    // reason (see that block's own comment): parsePositiveNumberFlag()'s return type is `number |
+    // undefined`, and setInterval() needs a plain `number` — re-parsing via Number() right after is
+    // cheap and avoids a non-null assertion, since the helper itself already exits the process before
+    // ever returning on an invalid value.
+    parsePositiveNumberFlag("external-delivery-poll-interval-ms", args["external-delivery-poll-interval-ms"]);
+    const intervalMs = Number(args["external-delivery-poll-interval-ms"]);
+    externalDeliveryInterval = setInterval(() => {
+      node.attemptExternalDeliveries().catch((err) => console.error(`External delivery attempt failed: ${(err as Error).message}`));
+    }, intervalMs);
+    console.log(`Attempting external delivery every ${intervalMs}ms`);
   }
 
   // Off by default (spec §59 web interface) — only started when explicitly requested, since it
@@ -348,6 +475,7 @@ async function main(): Promise<void> {
     shuttingDown = true;
     try {
       if (telemetryInterval) clearInterval(telemetryInterval);
+      if (externalDeliveryInterval) clearInterval(externalDeliveryInterval);
       if (webUi) await webUi.stop();
       if (mapTiles) {
         mapTiles.close();
