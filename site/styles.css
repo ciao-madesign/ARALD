@@ -236,6 +236,47 @@ img { max-width: 100%; display: block; }
 .cta-inner { max-width: 620px; margin: 0 auto; }
 .cta .hero-actions { justify-content: center; }
 
+/* ---------- Spec tables (contribute.html hardware BOMs) ---------- */
+.table-scroll { overflow-x: auto; margin-top: 1.2em; }
+.spec-table { width: 100%; border-collapse: collapse; font-size: 0.92em; min-width: 480px; }
+.spec-table th, .spec-table td { text-align: left; padding: 0.7em 0.9em; border-bottom: 1px solid var(--border); }
+.spec-table th { font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.75em; color: var(--muted); font-weight: 600; white-space: nowrap; }
+.spec-table td { color: var(--ink); }
+.spec-table td:last-child { color: var(--muted); }
+.spec-table tr:last-child td { border-bottom: none; }
+
+/* ---------- Hardware tiers (contribute.html) ---------- */
+.tier { padding: 1.8em 2em 2.2em; border: 1px solid var(--border); border-radius: 0.8em; background: var(--card); margin-top: 1.6em; }
+.tier-head { display: flex; align-items: center; gap: 1em; }
+.tier-head .device-icon { margin: 0; flex-shrink: 0; }
+.tier-head h3 { margin: 0; font-size: 1.3em; }
+.tier-desc { color: var(--muted); margin: 0.8em 0 0; max-width: 62ch; }
+
+/* ---------- Radio tech cards (reuses .device-card look, no icon) ---------- */
+.tech-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.4em; margin-top: 1.6em; }
+.tech-card { padding: 1.5em; border: 1px solid var(--border); border-radius: 0.7em; background: var(--card); }
+.tech-tag { font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.75em; color: var(--accent); display: block; margin-bottom: 0.6em; }
+.tech-card h3 { font-size: 1.05em; }
+.tech-card p { color: var(--muted); font-size: 0.9em; margin: 0; }
+.tech-card ul { margin: 0.6em 0 0; padding-left: 1.1em; color: var(--muted); font-size: 0.88em; }
+.tech-card li { margin-bottom: 0.3em; }
+
+@media (max-width: 900px) { .tech-grid { grid-template-columns: 1fr; } }
+
+/* ---------- Priority cards (contribute.html) ---------- */
+.priority-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.4em; margin-top: 1.6em; }
+.priority-card { padding: 1.5em; border: 1px solid var(--border); border-radius: 0.7em; background: var(--card); }
+.priority-num { display: block; font-family: var(--font-mono); color: var(--accent); font-size: 0.85em; margin-bottom: 0.6em; }
+.priority-card h3 { font-size: 1.05em; }
+.priority-card p { color: var(--muted); font-size: 0.9em; margin: 0; }
+
+@media (max-width: 780px) { .priority-grid { grid-template-columns: 1fr; } }
+
+/* ---------- Funding flow diagram (contribute.html) ---------- */
+.flow { display: flex; flex-direction: column; align-items: center; gap: 0.2em; margin: 2em auto 0; max-width: 420px; }
+.flow-step { background: var(--card); border: 1px solid var(--border); border-radius: 0.5em; padding: 0.75em 1.4em; font-weight: 700; text-align: center; width: 100%; }
+.flow-arrow { color: var(--accent); font-family: var(--font-mono); line-height: 1.2; }
+
 /* ---------- Footer ---------- */
 .site-footer { padding: 3em 0; border-top: 1px solid var(--border); }
 .site-footer-inner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1em; }

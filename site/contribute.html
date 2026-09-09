@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Contribute — ARALD</title>
+  <meta name="description" content="Two ways to help build ARALD: contribute code on GitHub, or help fund and build the hardware that turns the protocol into real, testable devices." />
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="wrap site-header-inner">
+      <a class="wordmark" href="index.html">ARALD<span class="dot">·</span>NET</a>
+      <nav class="site-nav" aria-label="Primary">
+        <a href="overview.html">Where it works</a>
+        <a href="how-it-works.html">How it works</a>
+        <a href="contribute.html" aria-current="page">Contribute</a>
+        <a class="nav-cta" href="https://github.com/ciao-madesign/ARALD" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+      <button class="nav-toggle" id="navToggle" aria-expanded="false" aria-controls="site-nav-mobile">
+        <span></span><span></span><span></span>
+        <span class="sr-only">Menu</span>
+      </button>
+    </div>
+    <nav class="site-nav-mobile" id="site-nav-mobile" aria-label="Primary, mobile">
+      <a href="overview.html">Where it works</a>
+      <a href="how-it-works.html">How it works</a>
+      <a href="contribute.html">Contribute</a>
+      <a href="https://github.com/ciao-madesign/ARALD" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="main">
+
+    <section class="page-banner">
+      <div class="wrap">
+        <p class="eyebrow">Get involved</p>
+        <h1>Build ARALD with us</h1>
+        <p class="page-banner-lede">ARALD is open and experimental. You can contribute code on GitHub, or help fund and build the hardware that turns the protocol into something you can hold in your hand.</p>
+      </div>
+    </section>
+
+    <!-- CODE -->
+    <section class="section" id="code" aria-labelledby="code-title">
+      <div class="wrap article-narrow">
+        <p class="section-eyebrow">Contribute code</p>
+        <h2 id="code-title">Everything is public, as it's built</h2>
+        <p>The network protocol, the mobile app, the hardware plans — all of it lives in one open repository, MIT licensed, with an automated test suite that has to stay green before anything merges. If you can read code, you can see exactly how ARALD works and where it still has gaps.</p>
+        <p>Issues and pull requests are welcome. The repository's own documentation is the starting point — it explains the structure, the conventions, and what's open to work on.</p>
+        <a class="btn btn-ghost" href="https://github.com/ciao-madesign/ARALD" target="_blank" rel="noopener">Explore the repository →</a>
+      </div>
+    </section>
+
+    <!-- HARDWARE INTRO -->
+    <section class="section hardware-intro" id="hardware" aria-labelledby="hardware-title">
+      <div class="wrap article-narrow">
+        <p class="section-eyebrow">Contribute hardware</p>
+        <h2 id="hardware-title">A platform to test, not a single radio to bet on</h2>
+        <p>ARALD isn't being built as a LoRa product with a network protocol bolted on. It's the other way around: the protocol — routing, store-and-forward, priorities, deduplication, identity, sync between intermittent nodes — is deliberately kept separate from whatever carries the bits.</p>
+        <p><strong>LoRa, Bluetooth Low Energy, and Wi-Fi</strong> are all part of the architecture. LoRa is the furthest along today — the first to reach real hardware prototyping — but BLE and Wi-Fi are just as much a part of where this is going, and will be tested against the same protocol.</p>
+        <p>The current hardware round exists to build a real platform to test that on — not to lock in a final product.</p>
+      </div>
+    </section>
+
+    <section class="section" style="padding-top: 0;">
+      <div class="wrap">
+        <div class="tech-grid">
+          <div class="tech-card">
+            <span class="tech-tag">LoRa</span>
+            <h3>Long range, low power</h3>
+            <p>The first transport reaching real prototype hardware. Best fit for sparse nodes far apart — a valley, a coastline, a disaster zone.</p>
+          </div>
+          <div class="tech-card">
+            <span class="tech-tag">Bluetooth Low Energy</span>
+            <h3>Proximity and phones</h3>
+            <p>Short range, but it's already in every smartphone — the natural way a phone becomes a relay without extra hardware.</p>
+          </div>
+          <div class="tech-card">
+            <span class="tech-tag">Wi-Fi</span>
+            <h3>Local bandwidth</h3>
+            <p>Shorter range than LoRa, but far more bandwidth — for larger transfers between nodes that are close together.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- HARDWARE TIERS -->
+    <section class="section" style="padding-top: 0;" aria-labelledby="tiers-title">
+      <div class="wrap">
+        <p class="section-eyebrow">The three tiers</p>
+        <h2 id="tiers-title">Same software, three sizes of hardware</h2>
+        <p class="section-lede">Each tier tests a different question. None of this is the final product — it's the platform we're using to find out what the final product should be.</p>
+
+        <div class="tier">
+          <div class="tier-head">
+            <div class="device-icon" data-icon="box" aria-hidden="true"></div>
+            <h3>ARALD Box — the main platform</h3>
+          </div>
+          <p class="tier-desc">An always-on computer running content, search, translation, AI and coordination services, paired with a dedicated radio module over USB. Built around the Radxa ROCK 3C (4 GB) — a cheaper alternative to the Orange Pi 4 Pro used as an earlier reference — quad-core ARM Cortex-A55, Gigabit Ethernet, Wi-Fi, Bluetooth, USB 3.0 and NVMe support: enough to run Docker, a database, the web UI and gateway services.</p>
+          <div class="table-scroll">
+            <table class="spec-table">
+              <thead><tr><th>Component</th><th>Indicative spec</th><th>Function</th></tr></thead>
+              <tbody>
+                <tr><td>SBC</td><td>Radxa ROCK 3C, 4 GB</td><td>Processing and ARALD services</td></tr>
+                <tr><td>Storage</td><td>NVMe, 128–256 GB</td><td>OS, Docker, data and services</td></tr>
+                <tr><td>Power</td><td>USB-C, 5 V / 3 A or higher</td><td>Power supply</td></tr>
+                <tr><td>Radio module</td><td>XIAO ESP32-S3 + Wio-SX1262</td><td>First LoRa transport</td></tr>
+                <tr><td>Antenna</td><td>EU868-compatible</td><td>LoRa communication</td></tr>
+                <tr><td>Cooling</td><td>Heatsink + fan</td><td>Continuous operation</td></tr>
+                <tr><td>Case</td><td>Ventilated</td><td>Protection, port access</td></tr>
+                <tr><td>Cables</td><td>USB-C / Ethernet</td><td>Connections</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="tier">
+          <div class="tier-head">
+            <div class="device-icon" data-icon="portable" aria-hidden="true"></div>
+            <h3>ARALD Portable — the same node on hardware you already own</h3>
+          </div>
+          <p class="tier-desc">Turns an ordinary x86-64 computer into an ARALD node — no dedicated machine required. The question it tests: can the same node run unchanged across very different host hardware, with only the radio bridge staying constant?</p>
+          <div class="table-scroll">
+            <table class="spec-table">
+              <thead><tr><th>Component</th><th>Indicative spec</th><th>Function</th></tr></thead>
+              <tbody>
+                <tr><td>Host computer</td><td>x86-64, 8 GB RAM or more</td><td>ARALD processing</td></tr>
+                <tr><td>External SSD</td><td>USB 3.x, ~250 GB</td><td>Environment and data</td></tr>
+                <tr><td>Radio module</td><td>XIAO ESP32-S3 + Wio-SX1262</td><td>First LoRa transport</td></tr>
+                <tr><td>Antenna</td><td>EU868-compatible</td><td>LoRa communication</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="tier">
+          <div class="tier-head">
+            <div class="device-icon" data-icon="card" aria-hidden="true"></div>
+            <h3>ARALD Card — the node you carry</h3>
+          </div>
+          <p class="tier-desc">The smallest ARALD device, meant to be carried directly by a person. Built on the Seeed Studio XIAO ESP32-S3 — dual-core, 8 MB flash, 8 MB PSRAM, and Wi-Fi + BLE already on board — paired with the Wio-SX1262 for LoRa. One board, three possible connectivity modes, no need to build a separate platform per radio.</p>
+          <div class="table-scroll">
+            <table class="spec-table">
+              <thead><tr><th>Component</th><th>Indicative spec</th><th>Function</th></tr></thead>
+              <tbody>
+                <tr><td>MCU</td><td>Seeed Studio XIAO ESP32-S3</td><td>Processing, BLE and Wi-Fi</td></tr>
+                <tr><td>Radio</td><td>Wio-SX1262</td><td>LoRa communication</td></tr>
+                <tr><td>Antenna</td><td>EU868-compatible</td><td>LoRa communication</td></tr>
+                <tr><td>Battery</td><td>Li-Po 1S, ~500 mAh, protected</td><td>Power</td></tr>
+                <tr><td>Button</td><td>Tactile</td><td>SOS</td></tr>
+                <tr><td>LED</td><td>Status LED</td><td>Device state</td></tr>
+                <tr><td>Case</td><td>3D printed PLA</td><td>Prototyping</td></tr>
+                <tr><td>USB</td><td>USB-C</td><td>Power / programming</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- WHY THREE KITS -->
+    <section class="section" aria-labelledby="why-kits-title">
+      <div class="wrap article-narrow">
+        <p class="section-eyebrow">Why three identical radio kits</p>
+        <h2 id="why-kits-title">One module, three roles</h2>
+        <p>The same XIAO ESP32-S3 + Wio-SX1262 kit is used three times: as the Card's own radio, as the Box's USB bridge, and as the Portable's USB bridge. That lets us test Card ↔ Box, Card ↔ Portable, Box ↔ Portable, and several nodes at once — with one hardware design to build and debug, not three.</p>
+        <p><strong>Buying these kits isn't a final bet on LoRa alone.</strong> It's the first radio link concrete enough to prototype today — BLE and Wi-Fi stay just as much a part of the architecture, and will get their own hardware rounds as they're tested.</p>
+      </div>
+    </section>
+
+    <!-- WHAT WE'RE TESTING -->
+    <section class="section" style="background: var(--bg-2);" aria-labelledby="testing-title">
+      <div class="wrap">
+        <p class="section-eyebrow">What we're testing</p>
+        <h2 id="testing-title">Not just "can two devices talk"</h2>
+        <p class="section-lede">The goal is to find out which technology fits which situation — not to decide in advance that one radio should cover every case.</p>
+        <div class="tech-grid">
+          <div class="tech-card">
+            <span class="tech-tag">LoRa</span>
+            <ul>
+              <li>Range</li>
+              <li>Reliability</li>
+              <li>Power draw</li>
+              <li>Behavior in mountain terrain</li>
+              <li>Talking to intermittent nodes</li>
+              <li>Store-and-forward over radio</li>
+            </ul>
+          </div>
+          <div class="tech-card">
+            <span class="tech-tag">Bluetooth Low Energy</span>
+            <ul>
+              <li>Card ↔ smartphone links</li>
+              <li>Node discovery</li>
+              <li>Pairing and setup</li>
+              <li>Small message exchange</li>
+              <li>Phones acting as relays</li>
+            </ul>
+          </div>
+          <div class="tech-card">
+            <span class="tech-tag">Wi-Fi</span>
+            <ul>
+              <li>High-speed local links</li>
+              <li>Nearby-node communication</li>
+              <li>Larger file transfers</li>
+              <li>Acting as a local network when available</li>
+            </ul>
+          </div>
+        </div>
+        <p style="margin-top: 1.6em; color: var(--muted);">The result decides what gets built next — this isn't a checklist to confirm, it's an open question.</p>
+      </div>
+    </section>
+
+    <!-- EQUIVALENTS -->
+    <section class="section" aria-labelledby="equiv-title">
+      <div class="wrap article-narrow">
+        <p class="section-eyebrow">Substitutions</p>
+        <h2 id="equiv-title">Most parts don't need to be exact</h2>
+        <p>None of the components above require a specific brand — an equivalent NVMe drive, USB SSD, Li-Po battery, EU868 antenna, USB-C power supply, case, or cooling solution is fine, as long as it meets the specs.</p>
+        <p>The one exception, for now, is the <strong>XIAO ESP32-S3 + Wio-SX1262</strong> pair — keeping it identical across all three tiers is what makes the cross-testing above possible. <a class="text-link" href="https://github.com/ciao-madesign/ARALD/issues/new" target="_blank" rel="noopener">Open an issue with the exact model or product link</a> before buying anything not on this list.</p>
+      </div>
+    </section>
+
+    <!-- PRIORITIES -->
+    <section class="section" style="background: var(--bg-2);" aria-labelledby="priorities-title">
+      <div class="wrap">
+        <p class="section-eyebrow">Where to start</p>
+        <h2 id="priorities-title">If you want to help, in this order</h2>
+        <div class="priority-grid">
+          <div class="priority-card">
+            <span class="priority-num">Priority 1</span>
+            <h3>Radio &amp; connectivity</h3>
+            <p>Three XIAO ESP32-S3 + Wio-SX1262 kits — the single most important thing to get real network testing started.</p>
+          </div>
+          <div class="priority-card">
+            <span class="priority-num">Priority 2</span>
+            <h3>ARALD Box</h3>
+            <p>ROCK 3C 4 GB, NVMe storage, power supply, cooling, case, cables.</p>
+          </div>
+          <div class="priority-card">
+            <span class="priority-num">Priority 3</span>
+            <h3>ARALD Card</h3>
+            <p>Li-Po battery, SOS button, status LED, case and prototyping materials.</p>
+          </div>
+          <div class="priority-card">
+            <span class="priority-num">Priority 4</span>
+            <h3>ARALD Portable</h3>
+            <p>USB 3.x SSD, and whatever's needed to connect the radio module.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- WHAT IT FUNDS -->
+    <section class="section" aria-labelledby="funds-title">
+      <div class="wrap article-narrow" style="text-align: center;">
+        <p class="section-eyebrow">What a contribution funds</p>
+        <h2 id="funds-title">A real platform, not a shopping list</h2>
+        <p>Every part on this page exists to answer one question: can these pieces actually talk to each other, without internet infrastructure, across the technologies that matter?</p>
+        <div class="flow">
+          <div class="flow-step">ARALD protocol</div>
+          <div class="flow-arrow">↓</div>
+          <div class="flow-step">different nodes</div>
+          <div class="flow-arrow">↓</div>
+          <div class="flow-step">LoRa / BLE / Wi-Fi</div>
+          <div class="flow-arrow">↓</div>
+          <div class="flow-step">store-and-forward</div>
+          <div class="flow-arrow">↓</div>
+          <div class="flow-step">communication without internet infrastructure</div>
+        </div>
+        <p class="status-honest" style="margin-top: 2em;">We're not buying the final product. We're building the platform that will tell us what the final product should be — the results decide what comes next.</p>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="section cta">
+      <div class="wrap cta-inner">
+        <h2>Want to help build this?</h2>
+        <p>Code on GitHub, or hardware to get real network testing started — either one moves the project forward.</p>
+        <div class="hero-actions">
+          <a class="btn btn-beacon" href="https://github.com/ciao-madesign/ARALD" target="_blank" rel="noopener">View on GitHub</a>
+          <a class="btn btn-ghost-dark" href="https://github.com/ciao-madesign/ARALD/issues/new" target="_blank" rel="noopener">Open an issue →</a>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap site-footer-inner">
+      <a class="wordmark small" href="index.html">ARALD<span class="dot">·</span>NET</a>
+      <p class="footer-note">Open source, MIT licensed. Not affiliated with Project N.O.M.A.D. or NomadNet — see the repository for the full attribution review.</p>
+      <a class="footer-link" href="https://github.com/ciao-madesign/ARALD" target="_blank" rel="noopener">github.com/ciao-madesign/ARALD</a>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
