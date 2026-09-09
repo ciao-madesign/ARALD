@@ -42,7 +42,8 @@ Every scenario/hero slot is filled — no CSS placeholders left:
 | `img/scenario-schools.jpg` | "Schools" |
 | `img/scenario-crisis.jpg` | "Temporary & crisis infrastructure" |
 | `img/community.jpg` | "An open project" section (index.html) |
-| `img/remote-connection.jpg` | Page banner on `how-it-works.html` |
+| `img/where-it-works.jpg` | Page banner on `overview.html` |
+| `img/mechanism.jpg` | Page banner on `how-it-works.html` |
 
 "Deserts" was considered and dropped — no photo, not pursued further (explicit decision).
 
