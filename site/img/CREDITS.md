@@ -18,7 +18,10 @@ All photos from [Unsplash](https://unsplash.com) (Unsplash License — free to u
 | `community.jpg` | Hayes | https://unsplash.com/photos/StrmusT8d9Y |
 | `where-it-works.jpg` | *(uploaded directly, photographer/link not provided)* | — |
 | `mechanism.jpg` | *(uploaded directly, photographer/link not provided)* | — |
+| `hardware.jpg` | ThisisEngineering | https://unsplash.com/photos/32PpagSzeGs |
 
 All scenario/hero photo slots are filled — no CSS placeholders left in `styles.css`. "Deserts" was dropped as a scenario (no photo, and not pursued further per explicit decision).
 
-`hero.jpg`, `where-it-works.jpg` and `mechanism.jpg` replace an earlier round of hero photos (a firefighters shot on the landing page implied ARALD replaces existing emergency services, which isn't the intent) — uploaded directly to the repo rather than sourced by Claude (this environment has no general internet access, so photo sourcing always goes through the project owner). Add the Unsplash photographer/link above if known, for attribution.
+`hero.jpg`, `where-it-works.jpg`, `mechanism.jpg` and `hardware.jpg` replace an earlier round of hero photos (a firefighters shot on the landing page implied ARALD replaces existing emergency services, which isn't the intent) — uploaded directly to the repo rather than sourced by Claude (this environment has no general internet access, so photo sourcing always goes through the project owner). Add the Unsplash photographer/link above if known, for attribution.
+
+`hardware.jpg`'s photographer/link above was read off Unsplash's own download filename convention (`<username>-<photo-id>-unsplash.jpg`), not independently verified against the live page (no internet access here) — double-check it if precise attribution matters.
