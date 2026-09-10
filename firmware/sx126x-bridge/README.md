@@ -76,6 +76,31 @@ d'errore) — se serve, correggo il programma.
    torna (chip non risposto, collegamento sbagliato, ecc.), il nodo lo segnala con un messaggio
    d'errore — copialo e riportamelo, mi aiuta a capire cosa correggere.
 
+## Checklist: cosa resta da fare quando avrai l'hardware in mano
+
+Tutto quello che segue non è ancora stato fatto — è la lista di cosa serve, in ordine, per passare da "codice scritto ma mai provato" a "funziona davvero". Nessun passo qui è già completato.
+
+1. **Installa Arduino IDE** sul tuo computer (sito ufficiale) + il supporto schede **ESP32** (Strumenti → Scheda → Gestore schede → cerca "esp32").
+2. **Collega fisicamente** la seconda XIAO ESP32-S3 al chip/modulo SX1262 (Wio-SX1262 pronto, oppure cablaggio a mano) — servono 6 fili: Chip Select, BUSY, RESET, e i tre SPI (clock, dati-in, dati-out).
+3. **Scrivi i 6 numeri di pin veri in `config.h`** al posto dei `-1` — obbligatorio, il programma si rifiuta di compilare finché non lo fai (vedi sopra).
+4. **Compila e carica** `sx126x-bridge.ino` su quella schedina. Qui arriva la **prima vera verifica del codice** — finora è stato controllato solo con un compilatore generico e intestazioni Arduino finte scritte da me, mai col vero Arduino IDE/toolchain ESP32. È possibile che il vero compilatore trovi qualcosa che io non ho potuto vedere da qui (es. una firma di funzione della libreria SPI di esp32-arduino-core leggermente diversa da come l'ho scritta a memoria) — se capita, dimmi l'errore esatto che mostra Arduino IDE, lo correggo.
+5. **Avvia un nodo ARALD reale** puntato a quella porta seriale:
+   ```
+   npm run dev -w node -- --id BOX1 --port 9001 --lora-serial-port /dev/ttyACM0 --lora-chip sx1262
+   ```
+   Se parte senza errori, vuol dire che il chip ha risposto correttamente al primo controllo (`GetStatus`) — il traduttore e il chip si parlano.
+6. **Ripeti i passi 2-5 su una seconda schedina** — per un vero test radio servono **almeno due dispositivi** con chip SX1262 che si parlano davvero via etere, non uno solo.
+7. **Prova uno scambio reale**: due nodi ARALD (uno per schedina) che si scambiano un messaggio/contenuto attraverso la mesh, con `--lora-chip sx1262` su entrambi — questa è la prima vera prova che l'intero percorso (host → traduttore → chip → aria → chip → traduttore → host) funziona da capo a fondo.
+
+**Se qualcosa non funziona**, alcuni sospetti già noti da controllare per primi (nell'ordine più probabile):
+- I 6 numeri di pin in `config.h` sono sbagliati rispetto al collegamento reale — il sospetto più probabile in assoluto.
+- I tempi di reset (`RESET_PULSE_LOW_MS`/`RESET_BUSY_TIMEOUT_MS` in `sx126x_spi.cpp`) sono valori prudenti scelti a tavolino, mai confermati contro un chip vero — se il nodo host segnala sempre "RESET failed", è il primo posto da guardare.
+- Porta seriale sbagliata, o velocità (baud rate) diversa da 115200 su un lato e non sull'altro.
+- Un guasto di cablaggio (es. un filo staccato) **non produce un errore netto** da questo firmware — te lo spiega la nota in `sx126x_spi.h`/`.cpp`: si manifesta come "il nodo sembra partire ma non manda/riceve mai nulla", non come un messaggio d'errore preciso. Utile saperlo per non cercare un errore che il programma non può dare.
+- `CHIP_BUFFER_SIZE = 256` (lato host, in `node/src/transports/sx126x-commands.ts`) è il valore pubblicato in ogni datasheet SX1261/62/68, ma non è stato possibile confermarlo contro le due fonti scaricate in questa sessione — se noti problemi solo con pacchetti grandi, è un sospetto secondario.
+
+**Quando tutto funziona**: dimmelo, con quello che hai osservato (anche solo "ha funzionato al primo colpo") — aggiorno `docs/security.md` (voce #73) con l'esito reale, al posto di "mai verificato contro hardware reale".
+
 ## Come sono fatti i file (per chi è curioso, non necessario per usarlo)
 
 - `bridge_protocol.h`/`.cpp` — il "vocabolario" di byte usato per parlare col computer via USB.
