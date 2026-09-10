@@ -1276,7 +1276,17 @@ function renderPeers(peers) {
         contactNameEl(p.nodeId, p.shortLabel),
         el("span", { className: "muted", textContent: timeAgo(p.connectedAt) }),
       ]),
-      el("div", { className: "tags" }, [el("span", { className: "tag", textContent: TRUST_LABELS[p.trustLevel] || p.trustLevel })]),
+      el(
+        "div",
+        { className: "tags" },
+        [el("span", { className: "tag", textContent: TRUST_LABELS[p.trustLevel] || p.trustLevel })].concat(
+          // deviceClass is entirely self-declared by the peer itself ("Node Capabilities", planned
+          // 10 settembre 2026 — display-only, never used to decide anything) — shown as a plain tag,
+          // same precedent already used for relay type/battery in renderRelays() below (self-declared
+          // but not visually flagged beyond a code comment).
+          p.deviceClass ? [el("span", { className: "tag", textContent: p.deviceClass })] : [],
+        ),
+      ),
     ]);
     li.dataset.peerId = p.nodeId;
     // canMessage lags a moment behind the connection itself (identity sync, not instant) — the

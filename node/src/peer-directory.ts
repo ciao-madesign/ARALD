@@ -57,6 +57,11 @@ export class PeerDirectory {
     return this.entries.get(nodeId)?.encryptionPublicKey;
   }
 
+  /** The node's self-declared device class (encryption.ts's `IdentityAnnouncement.deviceClass`), if it ever declared one — display-only, see that field's own doc comment. */
+  getDeviceClass(nodeId: string): string | undefined {
+    return this.entries.get(nodeId)?.deviceClass;
+  }
+
   has(nodeId: string): boolean {
     return this.entries.has(nodeId);
   }

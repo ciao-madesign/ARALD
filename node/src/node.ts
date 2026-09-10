@@ -18,8 +18,10 @@ import { TrustLevel, TrustManager, meetsTrustLevel, trustRank } from "./trust.js
 import { RelayPolicy, type RelayPolicyOptions } from "./relay-policy.js";
 import {
   EncryptionIdentity,
+  MAX_DEVICE_CLASS_LENGTH,
   decryptFromPeer,
   encryptForPeer,
+  isValidDeviceClass,
   signIdentityAnnouncement,
   verifyIdentityAnnouncement,
   type EncryptedPayload,
@@ -131,6 +133,35 @@ export interface NomadNodeOptions {
   relayPolicy?: RelayPolicyOptions;
   /** X25519 key pair for end-to-end encrypted private messages (spec §52). Generated automatically if omitted. */
   encryptionIdentity?: EncryptionIdentity;
+  /**
+   * "Node Capabilities" (docs/next-steps.md, planned with the user 10
+   * settembre 2026) — an optional, free-text label this node declares
+   * about itself (e.g. "Box", "Card", "Relay"), piggybacked on the same
+   * self-signed `IdentityAnnouncement` already used for the encryption key
+   * above (encryption.ts) and propagated the exact same way, mesh-wide.
+   * **Deliberately scoped to display-only**, an explicit decision made with
+   * the user before writing any code: this label is shown in `/api/peers`/
+   * `/api/status` and the mobile app's peers list, never consulted by
+   * routing, trust, or any other decision anywhere in this codebase — a
+   * node cannot attract traffic, elevate its own trust, or influence
+   * anything by declaring a class, only change what others *see* about it.
+   * Same "informational, never decisive" posture already applied to
+   * relay-registry.ts's self-declared `batteryPercent`/`operator`.
+   * Immutable for this node's lifetime once set here (never re-signed
+   * later), and — a real limitation of reusing `IdentityAnnouncement`,
+   * documented here rather than hidden — once a *peer's* announcement is
+   * recorded by `PeerDirectory.record()`, it can never be updated even if
+   * that peer later restarts with a different value (`PeerDirectory`'s own
+   * doc comment: "the first validly signed binding... is authoritative for
+   * that node's lifetime" — true for the encryption key since this
+   * prototype never rotates it, and now equally true for this label,
+   * accepted as a reasonable trade-off since a device's class changes far
+   * less often than its encryption key would if it ever did rotate).
+   * Throws in the constructor if provided but empty or longer than
+   * `MAX_DEVICE_CLASS_LENGTH` (encryption.ts) — same fail-fast posture as
+   * `emergencyBeaconKey`'s own length check further down in this interface.
+   */
+  deviceClass?: string;
   /** Max node ids tracked in the peer encryption-key directory at once (spec §57 resource limits). */
   maxPeerDirectoryEntries?: number;
   /** Max destinations tracked in the routing table at once (spec §57 resource limits). */
@@ -886,7 +917,10 @@ export class NomadNode extends EventEmitter {
       maxSize: options.maxPeerDirectoryEntries,
       trustRank: (nodeId) => trustRank(this.trust.get(nodeId)),
     });
-    this.ownAnnouncement = signIdentityAnnouncement(this.identity, this.encryptionIdentity);
+    if (options.deviceClass !== undefined && !isValidDeviceClass(options.deviceClass)) {
+      throw new Error(`deviceClass must be 1-${MAX_DEVICE_CLASS_LENGTH} characters`);
+    }
+    this.ownAnnouncement = signIdentityAnnouncement(this.identity, this.encryptionIdentity, options.deviceClass);
     // Same trust-aware eviction as remoteCatalog/peerDirectory above — a route's only claim to
     // trust is the trust level of the peer that announced it (routes carry no signature of their
     // own, unlike content/identity/service claims), so eviction must be weighted by that instead
@@ -952,6 +986,11 @@ export class NomadNode extends EventEmitter {
 
   get status(): "ONLINE" | "OFFLINE" {
     return this.started ? "ONLINE" : "OFFLINE";
+  }
+
+  /** This node's own self-declared device class (`NomadNodeOptions.deviceClass`), if any — see that option's own doc comment for the full "display-only" scope. */
+  get deviceClass(): string | undefined {
+    return this.ownAnnouncement.deviceClass;
   }
 
   /** Packets currently held for a destination that wasn't reachable yet (spec §30, milestone 12). */
@@ -3402,6 +3441,15 @@ export class NomadNode extends EventEmitter {
    */
   private acceptIdentityAnnouncement(announcement: IdentityAnnouncement | undefined | null): boolean {
     if (!announcement || announcement.nodeId === this.nodeId) return false; // malformed, or a claim about ourselves — never record either
+    // deviceClass is part of the signed payload (encryption.ts), so a valid signature only proves
+    // the announcing node really did sign whatever shape it sent — nothing stops a node (honest but
+    // buggy, or hostile) from self-signing a malformed deviceClass (wrong type off the wire, or an
+    // oversized string). The whole announcement is rejected here rather than just stripping the bad
+    // field, because stripping it would invalidate the signature for anyone this node re-shares it
+    // with (verifyIdentityAnnouncement() recomputes the signed payload from whatever fields the
+    // announcement currently carries) — same "reject the whole malformed claim" precedent already
+    // used for e.g. a Drop with a bad label (drops.ts's extractDropPayload()), not a novel policy.
+    if (announcement.deviceClass !== undefined && !isValidDeviceClass(announcement.deviceClass)) return false;
     if (!verifyIdentityAnnouncement(announcement)) return false; // unsigned or forged claim — never trust it
     if (!this.peerDirectory.record(announcement)) return false;
     this.trust.markVerified(announcement.nodeId);

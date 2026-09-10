@@ -229,6 +229,8 @@ interface StatusPayload {
   relaying: boolean;
   /** This node's mobile-pairing "network name" (`WebUiOptions.networkName`) — present only when `allowServiceCalls` is on, since that's the only time the concept of a pairing network exists at all. */
   networkName?: string;
+  /** This node's own self-declared device class (`node.deviceClass`, "Node Capabilities") — display-only, `undefined` if never declared. */
+  deviceClass?: string;
 }
 
 interface PairingInfo {
@@ -256,6 +258,8 @@ interface PeerEntry {
   lastSeen: number;
   /** Whether this peer's encryption key is already known (`peerDirectory`) — `sendPrivateMessage()`/the chat UI's "message" action needs this; identity sync can lag a moment behind the connection itself. */
   canMessage: boolean;
+  /** This peer's self-declared device class ("Node Capabilities", node.ts's `NomadNodeOptions.deviceClass` doc comment) — display-only, `undefined` if it never declared one or identity sync hasn't reached it yet (same lag as `canMessage`, same source). */
+  deviceClass?: string;
 }
 
 interface ServiceEntry {
@@ -337,6 +341,7 @@ function buildStatus(node: NomadNode, internetStatus: () => "ONLINE" | "OFFLINE"
     cachedContentPercent,
     relaying: node.canRelayNow(),
     networkName,
+    deviceClass: node.deviceClass,
   };
 }
 
@@ -352,6 +357,7 @@ function buildPeers(node: NomadNode): PeerEntry[] {
     connectedAt: peer.connectedAt,
     lastSeen: peer.lastSeen,
     canMessage: node.peerDirectory.has(peer.id),
+    deviceClass: node.peerDirectory.getDeviceClass(peer.id),
   }));
 }
 

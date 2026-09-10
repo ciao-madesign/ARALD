@@ -216,8 +216,41 @@ describe("WebUiServer (spec §59)", () => {
     expect(peers[0]).toMatchObject({ nodeId: other.nodeId, shortLabel: `NODE-${other.nodeId.slice(0, 8)}`, trustLevel: "VERIFIED", canMessage: true });
     expect(typeof peers[0].connectedAt).toBe("number");
     expect(typeof peers[0].lastSeen).toBe("number");
+    expect(peers[0].deviceClass).toBeUndefined(); // neither node declared one in this test
 
     await other.stop();
+  });
+
+  it("/api/peers surfaces a connected peer's self-declared device class once identity sync settles ('Node Capabilities')", async () => {
+    node = new NomadNode({ displayName: "N" });
+    const transport = new TcpTransport(node.nodeId, 0);
+    node.addTransport(transport);
+    await node.start();
+
+    const other = new NomadNode({ displayName: "Other", deviceClass: "Box" });
+    const otherTransport = new TcpTransport(other.nodeId, 0);
+    other.addTransport(otherTransport);
+    await other.start();
+    await other.connect({ host: "127.0.0.1", port: transport.port });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    webUi = new WebUiServer(node, { port: 0 });
+    await webUi.start();
+
+    const peers = await (await fetch(`${baseUrl()}/api/peers`)).json();
+    expect(peers).toHaveLength(1);
+    expect(peers[0].deviceClass).toBe("Box");
+
+    await other.stop();
+  });
+
+  it("/api/status reports this node's own self-declared device class ('Node Capabilities'), undefined when never declared", async () => {
+    node = new NomadNode({ displayName: "N", deviceClass: "Relay" });
+    webUi = new WebUiServer(node, { port: 0 });
+    await webUi.start();
+
+    const status = await (await fetch(`${baseUrl()}/api/status`)).json();
+    expect(status.deviceClass).toBe("Relay");
   });
 
   it("/api/services lists every known service, including unavailable ones, marking which are offered locally", async () => {

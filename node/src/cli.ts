@@ -9,6 +9,7 @@ import { LoraSerialSx1262Transport } from "./transports/lora-serial-sx1262.js";
 import { WebUiServer, generateNetworkPassword } from "./web-ui.js";
 import { MbtilesReader } from "./map-tiles.js";
 import { TrustLevel } from "./trust.js";
+import { MAX_DEVICE_CLASS_LENGTH } from "./encryption.js";
 import {
   MAX_EXTERNAL_DELIVERY_DESTINATION_ID_LENGTH,
   MAX_EXTERNAL_DELIVERY_LABEL_LENGTH,
@@ -172,6 +173,20 @@ async function main(): Promise<void> {
     args["max-external-delivery-payload-bytes"],
   );
 
+  // "Node Capabilities" (docs/next-steps.md, planned with the user 10 settembre 2026): a free-text
+  // label this node declares about itself ("Box", "Card", "Relay", ...), display-only everywhere it
+  // is used (node.ts's NomadNodeOptions.deviceClass doc comment has the full scope decision) — omit
+  // to declare nothing (default, unaffected nodes/clients see no change). `!== undefined` + explicit
+  // empty-string rejection, same pattern already used for --trust-admin/--lora-serial-port above.
+  let deviceClass: string | undefined;
+  if (args["device-class"] !== undefined) {
+    if (args["device-class"] === "" || args["device-class"].length > MAX_DEVICE_CLASS_LENGTH) {
+      console.error(`--device-class must be 1-${MAX_DEVICE_CLASS_LENGTH} characters, got: "${args["device-class"]}"`);
+      process.exit(1);
+    }
+    deviceClass = args["device-class"];
+  }
+
   const node = new NomadNode({
     displayName,
     relayPolicy: batteryPercent !== undefined ? { getResourceState: () => ({ batteryPercent }) } : undefined,
@@ -180,6 +195,7 @@ async function main(): Promise<void> {
     maxExternalDeliveryBytes,
     externalDeliveryTtlMs,
     maxExternalDeliveryPayloadBytes,
+    deviceClass,
   });
   node.addTransport(new TcpTransport(node.nodeId, port));
 
