@@ -309,7 +309,19 @@ async function main(): Promise<void> {
   // unlike SEEN/VERIFIED — an operator provisioning this relay must set it explicitly, out-of-band,
   // the same "provisioned once, by whoever sets up the mesh" model already used for
   // --report-relay-telemetry-interval-ms's counterpart on the Emergency Node side.
-  if (args["trust-admin"]) {
+  //
+  // `!== undefined` (not a truthy check) plus an explicit empty-string rejection — same fix already
+  // applied to --lora-serial-port and (see below) --report-relay-telemetry-interval-ms, flagged as
+  // still outstanding here by the review that made those two fixes (docs/security.md voce #67):
+  // `--trust-admin ""` (e.g. an unset shell variable interpolated into the flag in a provisioning
+  // script) would otherwise silently skip this whole block — combined with --allow-remote-reboot,
+  // this relay would then never accept a legitimate reboot command, with no diagnostic pointing at
+  // the cause.
+  if (args["trust-admin"] !== undefined) {
+    if (args["trust-admin"] === "") {
+      console.error("--trust-admin was given an empty value");
+      process.exit(1);
+    }
     node.trust.set(args["trust-admin"], TrustLevel.ADMIN);
     console.log(`Trusted as ADMIN (can send this relay commands, e.g. reboot): ${args["trust-admin"]}`);
   }
