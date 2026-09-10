@@ -2,11 +2,12 @@
 
 A static site — plain HTML/CSS/JS, no build step, no framework. Separate from the rest of the repository (like `mobile/`, `mirror-portal/`, etc.): not part of the root npm workspace.
 
-Three pages, kept deliberately separate so the landing page stays short and visual — deep-dive content lives one click away, not stacked on the homepage:
+Four pages, kept deliberately separate so the landing page stays short and visual — deep-dive content lives one click away, not stacked on the homepage:
 
 - `index.html` — the landing page: hero, a one-request example, the three primary scenarios (photo cards), a device strip, an "open project" section, status stats, CTA.
 - `overview.html` — "Where it works": the full gallery of all ten scenarios (the three primary ones plus seven more), each with a photo and a short description.
 - `how-it-works.html` — the mechanism (three steps), the full device family (five cards), and the honest "what's real today" status detail.
+- `contribute.html` — "Get involved": contributing code (GitHub, MIT license), and the hardware round (three device tiers with BOMs, why LoRa/BLE/Wi-Fi are all part of the architecture, contribution priorities, what a contribution funds).
 
 ## Preview locally
 
@@ -44,6 +45,7 @@ Every scenario/hero slot is filled — no CSS placeholders left:
 | `img/community.jpg` | "An open project" section (index.html) |
 | `img/where-it-works.jpg` | Page banner on `overview.html` |
 | `img/mechanism.jpg` | Page banner on `how-it-works.html` |
+| `img/hardware.jpg` | Page banner on `contribute.html` |
 
 "Deserts" was considered and dropped — no photo, not pursued further (explicit decision).
 
