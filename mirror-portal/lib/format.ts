@@ -19,8 +19,14 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function asFiniteNumber(value: unknown): number | undefined {
+/** Exported (unlike `asString` above) so `lib/db.ts` and every page under `app/` share this one definition instead of each keeping its own near-identical copy — found by review: this file, `lib/db.ts`, and `app/mappa/page.tsx` each had their own before this fix, risking a future correctness fix (e.g. rejecting a NaN-like string) applied to only one of the three. */
+export function asFiniteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/** `"13 set 2026, 07:51"`-style — the one display format every synced-timestamp column in this app uses (`app/page.tsx`, `app/mappa/page.tsx`, `app/admin/page.tsx` each had their own copy of this exact call before this fix). */
+export function formatDateTime(at: Date): string {
+  return at.toLocaleString("it-IT", { dateStyle: "medium", timeStyle: "short" });
 }
 
 /** A node's display name if the synced status snapshot has one, its raw id otherwise — mirrors `getContactName()`'s fallback-to-id pattern in `mobile/www/app.js`. */

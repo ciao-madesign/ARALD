@@ -75,6 +75,14 @@ Lato telefono (scan/connect/handshake verso una ARALD Clip/Cover, logica di prot
 
 Passata di design completa (icone SVG, gerarchia visiva, transizioni, accessibilità — voce #28), poi un rebrand "Waypoint" (#31), un affinamento con tipografia auto-ospitata/elevazione/animazioni (#50), e una passata UX per un pubblico generico e non tecnico (#48). Nessun restyling ulteriore in sospeso. Resta fuori portata in questo ambiente, invariato: la verifica su un telefono reale o un emulatore (nessun hardware/SDK Android disponibile).
 
+### Restyle "portale web" (richiesto in coda al restyle mobile, 10 settembre 2026) — primo pezzo fatto, secondo in coda
+
+Ordine concordato con l'utente: prima i due portali mai disegnati (mai una passata di design dedicata, a differenza dell'app mobile), poi eventualmente l'app mobile stessa (direzione ancora da discutere, l'utente non si è ancora espresso). Tra i due portali, prima il portale specchio esterno (`mirror-portal/`, il più "di rappresentanza"), poi il pannello locale del singolo nodo.
+
+**✅ `mirror-portal/` fatto, 11-13 settembre 2026 (`docs/security.md` voce #75, `docs/emergency-portal.md` sezione "Sesto pezzo realizzato")**: restyle della Home esistente + nuova schermata Mappa con Leaflet/OpenTopoMap. Pianificato con un canvas di bozzetti visivi confermato dall'utente prima del codice; quattro problemi reali trovati dalla revisione, tutti corretti.
+
+**In coda, non ancora iniziato**: `node/src/web-ui.ts` (il pannello di stato per-nodo, spec §59) — mai avuto una passata di design dedicata, stesso stato di partenza di `mirror-portal/` prima di questo pezzo. Nessuna sessione di planning fatta ancora per questo — da riprendere con lo stesso approccio (bozzetti visivi confermati prima del codice) quando l'utente darà l'ok a procedere.
+
 ## Cosa resta possibile in puro software, se si vuole andare oltre
 
 Le versioni **hardware/Docker reali** di BLE (Opzione A) e del gateway NOMAD (Opzione B) restano gli unici due candidati bloccati su prerequisiti esterni — le rispettive versioni simulate/mockate sono complete (vedi sopra). Un candidato reale emerso dalla revisione di una voce passata — **`ContentStore` senza limite di dimensione** — è stato risolto con una voce dedicata (`docs/security.md` voce #32, `BoundedFifoMap` con eviction pesata sulla fiducia).

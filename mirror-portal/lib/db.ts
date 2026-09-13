@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { asFiniteNumber } from "./format";
 
 /**
  * Read-only access to the `arald_portal` Postgres schema
@@ -87,10 +88,6 @@ export interface MirrorSnapshot {
  */
 export function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
-
-function asFiniteNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 /**

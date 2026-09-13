@@ -1,18 +1,14 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { getMirrorSnapshot, type MirrorSectionError, type MirrorSnapshot } from "../lib/db";
-import { beaconMessage, dropKind, formatCoords, nodeDisplayName, relayOnline, relayType } from "../lib/format";
-import { LogoutButton } from "./LogoutButton";
+import { beaconMessage, dropKind, formatCoords, formatDateTime, nodeDisplayName, relayOnline, relayType } from "../lib/format";
+import { PortalHeader } from "./PortalHeader";
 
 // Never statically cached — a mirror whose whole point is showing what arald-backend/sync.ts most
 // recently wrote would be actively misleading if Vercel served a stale build-time snapshot instead of
 // querying Postgres on every request.
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
-
-function formatSyncedAt(at: Date): string {
-  return at.toLocaleString("it-IT", { dateStyle: "medium", timeStyle: "short" });
-}
 
 /** The error message for one section, if `getMirrorSnapshot()` reported one — each panel below renders this instead of its list, so one section failing never hides the sections that loaded fine (`lib/db.ts`'s own doc comment on `MirrorSnapshot.errors`). */
 function sectionError(errors: MirrorSectionError[], section: MirrorSectionError["section"]): string | undefined {
@@ -49,140 +45,201 @@ export default async function HomePage(): Promise<JSX.Element> {
   const dropsError = sectionError(snapshot.errors, "drops");
 
   return (
-    <main>
-      <header>
-        <div className="row">
-          <h1>ARALD — Specchio Emergency Portal</h1>
-          <div className="header-account">
-            <span className="muted">
-              {session.user.email} · {session.user.role === "admin" ? "Admin ARALD" : "Operatore"}
-            </span>
-            {session.user.role === "admin" && <a href="/admin">Pannello Admin</a>}
-            <LogoutButton />
-          </div>
+    <>
+      <PortalHeader
+        userEmail={session.user.email ?? ""}
+        roleLabel={session.user.role === "admin" ? "Admin ARALD" : "Operatore"}
+        active="elenco"
+        isAdmin={session.user.role === "admin"}
+      />
+
+      <div className="notice">
+        <div className="notice-inner">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5f6e68" strokeWidth="1.8" style={{ marginTop: 1 }} aria-hidden="true">
+            <circle cx="12" cy="12" r="9" />
+            <line x1="12" y1="11" x2="12" y2="16" />
+            <circle cx="12" cy="8" r="0.6" fill="#5f6e68" stroke="none" />
+          </svg>
+          <span>
+            Vista di sola lettura, sincronizzata periodicamente da un ARALD Box (<code>arald-backend/sync.ts</code>). Il portale
+            operativo vero gira sul Box stesso via LAN — questo è solo uno specchio per la gestione ordinaria da remoto, mai il
+            punto da cui dipende l&rsquo;operatività sul posto.
+          </span>
         </div>
-        <p className="muted">
-          Vista di sola lettura, sincronizzata periodicamente da un ARALD Box (<code>arald-backend/sync.ts</code>). Il
-          portale operativo vero gira sul Box stesso via LAN — questo è solo uno specchio per la gestione ordinaria da
-          remoto, mai il punto da cui dipende l&rsquo;operatività sul posto.
-        </p>
-      </header>
+      </div>
 
       {configError && (
-        <div className="panel error">
-          <strong>Impossibile leggere i dati dello specchio.</strong>
-          <p>{configError}</p>
-        </div>
+        <main className="content">
+          <div className="content-inner">
+            <div className="panel error">
+              <strong>Impossibile leggere i dati dello specchio.</strong>
+              <p>{configError}</p>
+            </div>
+          </div>
+        </main>
       )}
 
       {!configError && (
-        <>
-          <section className="panel">
-            <h2>Nodi ({snapshot.nodes.length})</h2>
-            {nodesError ? (
-              <p className="empty">Impossibile caricare i nodi: {nodesError}</p>
-            ) : snapshot.nodes.length === 0 ? (
-              <p className="empty">Nessun nodo sincronizzato finora.</p>
-            ) : (
-              <ul>
-                {snapshot.nodes.map((n) => (
-                  <li key={n.nodeUrl}>
-                    <div className="row">
-                      <span>{nodeDisplayName(n.data, n.nodeId)}</span>
-                      <span className="muted">{n.nodeUrl}</span>
-                    </div>
-                    <div className="muted">Ultimo sync: {formatSyncedAt(n.syncedAt)}</div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
+        <main className="content">
+          <div className="content-inner">
+            <section className="panel sos-panel">
+              <div className="panel-head">
+                <span className="sos-badge">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.4" aria-hidden="true">
+                    <line x1="12" y1="7" x2="12" y2="13" />
+                    <circle cx="12" cy="17" r="0.9" fill="#fff" stroke="none" />
+                  </svg>
+                </span>
+                <span className="panel-title">SOS ricevuti</span>
+                <span className="panel-count">({snapshot.beacons.length})</span>
+              </div>
+              {beaconsError ? (
+                <p className="empty">Impossibile caricare i SOS: {beaconsError}</p>
+              ) : snapshot.beacons.length === 0 ? (
+                <p className="empty">Nessun SOS.</p>
+              ) : (
+                <ul className="row-list">
+                  {snapshot.beacons.map((b) => {
+                    const coords = formatCoords(b.data);
+                    return (
+                      <li key={b.beaconContentId} className="sos-row">
+                        <div className="row">
+                          <span className="row-text">{beaconMessage(b.data)}</span>
+                          <span className="tag sos">SOS</span>
+                        </div>
+                        <div className="row-meta mono">
+                          <span>via {b.nodeUrl}</span>
+                          {coords && (
+                            <>
+                              <span className="sep">·</span>
+                              <span>{coords}</span>
+                            </>
+                          )}
+                          <span className="sep">·</span>
+                          <span>{formatDateTime(b.syncedAt)}</span>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </section>
 
-          <section className="panel">
-            <h2>SOS ricevuti ({snapshot.beacons.length})</h2>
-            {beaconsError ? (
-              <p className="empty">Impossibile caricare i SOS: {beaconsError}</p>
-            ) : snapshot.beacons.length === 0 ? (
-              <p className="empty">Nessun SOS.</p>
-            ) : (
-              <ul>
-                {snapshot.beacons.map((b) => {
-                  const coords = formatCoords(b.data);
-                  return (
-                    <li key={b.beaconContentId}>
-                      <div className="row">
-                        <span>{beaconMessage(b.data)}</span>
-                        <span className="tag emergency">SOS</span>
-                      </div>
-                      <div className="muted">
-                        via {b.nodeUrl}
-                        {coords ? ` · ${coords}` : ""} · {formatSyncedAt(b.syncedAt)}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </section>
+            <div className="grid">
+              <section className="panel">
+                <div className="panel-head">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+                    <circle cx="6" cy="18" r="2.2" />
+                    <circle cx="18" cy="18" r="2.2" />
+                    <circle cx="12" cy="6" r="2.2" />
+                    <line x1="7.8" y1="16.7" x2="10.2" y2="7.8" />
+                    <line x1="16.2" y1="16.7" x2="13.8" y2="7.8" />
+                    <line x1="8.2" y1="18" x2="15.8" y2="18" />
+                  </svg>
+                  <span className="panel-title">Nodi</span>
+                  <span className="panel-count">({snapshot.nodes.length})</span>
+                </div>
+                {nodesError ? (
+                  <p className="empty">Impossibile caricare i nodi: {nodesError}</p>
+                ) : snapshot.nodes.length === 0 ? (
+                  <p className="empty">Nessun nodo sincronizzato finora.</p>
+                ) : (
+                  <ul className="row-list">
+                    {snapshot.nodes.map((n) => (
+                      <li key={n.nodeUrl}>
+                        <div className="row">
+                          <span className="row-text">{nodeDisplayName(n.data, n.nodeId)}</span>
+                          <span className="muted">{n.nodeUrl}</span>
+                        </div>
+                        <div className="row-meta mono">
+                          <span>ultimo sync {formatDateTime(n.syncedAt)}</span>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
 
-          <section className="panel">
-            <h2>HAZARD / INFO ({snapshot.drops.length})</h2>
-            {dropsError ? (
-              <p className="empty">Impossibile caricare i drop: {dropsError}</p>
-            ) : snapshot.drops.length === 0 ? (
-              <p className="empty">Nessun drop.</p>
-            ) : (
-              <ul>
-                {snapshot.drops.map((d) => {
-                  const kind = dropKind(d.data);
-                  const coords = formatCoords(d.data);
-                  return (
-                    <li key={d.dropId}>
-                      <div className="row">
-                        <span>{typeof d.data.text === "string" ? d.data.text : ""}</span>
-                        <span className={`tag ${kind}`}>{kind}</span>
-                      </div>
-                      <div className="muted">
-                        via {d.nodeUrl}
-                        {coords ? ` · ${coords}` : ""} · {formatSyncedAt(d.syncedAt)}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </section>
+              <section className="panel hazard-panel">
+                <div className="panel-head">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+                    <path d="M12 3 2 20h20z" />
+                    <line x1="12" y1="9" x2="12" y2="14" />
+                    <circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none" />
+                  </svg>
+                  <span className="panel-title">Hazard / Info</span>
+                  <span className="panel-count">({snapshot.drops.length})</span>
+                </div>
+                {dropsError ? (
+                  <p className="empty">Impossibile caricare i drop: {dropsError}</p>
+                ) : snapshot.drops.length === 0 ? (
+                  <p className="empty">Nessun drop.</p>
+                ) : (
+                  <ul className="row-list">
+                    {snapshot.drops.map((d) => {
+                      const kind = dropKind(d.data);
+                      const coords = formatCoords(d.data);
+                      return (
+                        <li key={d.dropId}>
+                          <div className="row">
+                            <span className="row-text">{typeof d.data.text === "string" ? d.data.text : ""}</span>
+                            <span className={`tag ${kind}`}>{kind}</span>
+                          </div>
+                          <div className="row-meta mono">
+                            {coords && <span>{coords}</span>}
+                            {coords && <span className="sep">·</span>}
+                            <span>{formatDateTime(d.syncedAt)}</span>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </section>
 
-          <section className="panel">
-            <h2>Relay ({snapshot.relays.length})</h2>
-            {relaysError ? (
-              <p className="empty">Impossibile caricare i relay: {relaysError}</p>
-            ) : snapshot.relays.length === 0 ? (
-              <p className="empty">Nessun relay registrato.</p>
-            ) : (
-              <ul>
-                {snapshot.relays.map((r) => {
-                  const online = relayOnline(r.data);
-                  const coords = formatCoords(r.data);
-                  return (
-                    <li key={r.relayId}>
-                      <div className="row">
-                        <span>
-                          {r.relayId} <span className="muted">({relayType(r.data)})</span>
-                        </span>
-                        <span className={`tag ${online ? "online" : "offline"}`}>{online ? "online" : "offline"}</span>
-                      </div>
-                      <div className="muted">
-                        {coords ?? "posizione sconosciuta"} · sync {formatSyncedAt(r.syncedAt)}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </section>
-        </>
+              <section className="panel relay-panel">
+                <div className="panel-head">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+                    <line x1="12" y1="21" x2="12" y2="10" />
+                    <path d="M8 10a4 4 0 0 1 8 0" />
+                    <path d="M5.5 10a6.5 6.5 0 0 1 13 0" />
+                    <circle cx="12" cy="10" r="1.3" fill="currentColor" stroke="none" />
+                  </svg>
+                  <span className="panel-title">Relay</span>
+                  <span className="panel-count">({snapshot.relays.length})</span>
+                </div>
+                {relaysError ? (
+                  <p className="empty">Impossibile caricare i relay: {relaysError}</p>
+                ) : snapshot.relays.length === 0 ? (
+                  <p className="empty">Nessun relay registrato.</p>
+                ) : (
+                  <ul className="row-list">
+                    {snapshot.relays.map((r) => {
+                      const online = relayOnline(r.data);
+                      const coords = formatCoords(r.data);
+                      return (
+                        <li key={r.relayId}>
+                          <div className="row">
+                            <span className="row-text">
+                              {r.relayId} <span className="muted">({relayType(r.data)})</span>
+                            </span>
+                            <span className={`tag ${online ? "online" : "offline"}`}>{online ? "online" : "offline"}</span>
+                          </div>
+                          <div className="row-meta mono">
+                            <span>{coords ?? "posizione sconosciuta"}</span>
+                            <span className="sep">·</span>
+                            <span>sync {formatDateTime(r.syncedAt)}</span>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </section>
+            </div>
+          </div>
+        </main>
       )}
-    </main>
+    </>
   );
 }
