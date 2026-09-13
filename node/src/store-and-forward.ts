@@ -1,5 +1,5 @@
 import { BoundedFifoMap } from "./bounded-map.js";
-import { Priority, PRIORITY_LEVEL_COUNT, type Packet } from "./packet.js";
+import { Priority, priorityRank, type Packet } from "./packet.js";
 
 export interface PendingDeliveryQueueOptions {
   /** How long a queued packet is worth retrying before it's dropped (wall-clock, independent of the packet's own hop TTL) — every priority except EMERGENCY, see `emergencyTtlMs`. */
@@ -167,22 +167,4 @@ export class PendingDeliveryQueue {
   get size(): number {
     return this.entries.size;
   }
-}
-
-/**
- * Clamps an untrusted `packet.priority` to a valid `Priority` level,
- * defaulting to the *lowest*-urgency one (`Priority.BULK`) for anything
- * malformed — same defensive posture, and the exact same reasoning, as
- * `PriorityQueue.enqueue()`'s clamp in `priority-queue.ts`: a relayed
- * packet's `priority` field was never validated by its original sender
- * (`decodePacket()` only validates the envelope, not the payload/other
- * fields — see `CLAUDE.md`'s "convenzioni consolidate"), so treating an
- * out-of-range value as automatically *most* urgent (which is what
- * `-entry.packet.priority` would do for a large negative or `NaN` input if
- * left unclamped) would be exactly backwards.
- */
-function priorityRank(priority: unknown): Priority {
-  return Number.isInteger(priority) && (priority as number) >= 0 && (priority as number) < PRIORITY_LEVEL_COUNT
-    ? (priority as Priority)
-    : Priority.BULK;
 }

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   EncryptionIdentity,
+  MAX_DEVICE_CLASS_LENGTH,
   decryptFromPeer,
   encryptForPeer,
   identityAnnouncementPayload,
+  isValidDeviceClass,
   signIdentityAnnouncement,
   verifyIdentityAnnouncement,
 } from "../../node/src/encryption.js";
@@ -114,5 +116,56 @@ describe("IdentityAnnouncement signing/verification", () => {
 
     expect(payloadA).toEqual(payloadB);
     expect(payloadA).not.toEqual(payloadC);
+  });
+});
+
+describe("IdentityAnnouncement deviceClass ('Node Capabilities', display-only)", () => {
+  it("omits deviceClass from the announcement and signs an identical payload to before this field existed, when not given", () => {
+    const identity = Identity.generate();
+    const encryptionIdentity = EncryptionIdentity.generate();
+
+    const announcement = signIdentityAnnouncement(identity, encryptionIdentity);
+
+    expect(announcement.deviceClass).toBeUndefined();
+    expect(Object.hasOwn(announcement, "deviceClass")).toBe(false); // not even present as an explicit `undefined` key — backward-compat signing payload depends on this
+    expect(identityAnnouncementPayload(announcement.nodeId, announcement.encryptionPublicKey, undefined)).toEqual(
+      identityAnnouncementPayload(announcement.nodeId, announcement.encryptionPublicKey),
+    );
+  });
+
+  it("includes and verifies a declared deviceClass", () => {
+    const identity = Identity.generate();
+    const encryptionIdentity = EncryptionIdentity.generate();
+
+    const announcement = signIdentityAnnouncement(identity, encryptionIdentity, "Box");
+
+    expect(announcement.deviceClass).toBe("Box");
+    expect(verifyIdentityAnnouncement(announcement)).toBe(true);
+  });
+
+  it("rejects an announcement whose deviceClass was tampered with after signing", () => {
+    const identity = Identity.generate();
+    const genuine = signIdentityAnnouncement(identity, EncryptionIdentity.generate(), "Box");
+    const tampered = { ...genuine, deviceClass: "Card" };
+
+    expect(verifyIdentityAnnouncement(tampered)).toBe(false);
+  });
+
+  it("rejects an announcement with a deviceClass appended that the original signature never covered", () => {
+    const identity = Identity.generate();
+    const withoutClass = signIdentityAnnouncement(identity, EncryptionIdentity.generate());
+    const smuggled = { ...withoutClass, deviceClass: "Box" };
+
+    expect(verifyIdentityAnnouncement(smuggled)).toBe(false);
+  });
+
+  it("isValidDeviceClass accepts a non-empty string within the length bound, rejects everything else", () => {
+    expect(isValidDeviceClass("Box")).toBe(true);
+    expect(isValidDeviceClass("x".repeat(MAX_DEVICE_CLASS_LENGTH))).toBe(true);
+    expect(isValidDeviceClass("")).toBe(false);
+    expect(isValidDeviceClass("x".repeat(MAX_DEVICE_CLASS_LENGTH + 1))).toBe(false);
+    expect(isValidDeviceClass(undefined)).toBe(false);
+    expect(isValidDeviceClass(42)).toBe(false);
+    expect(isValidDeviceClass(["Box"])).toBe(false);
   });
 });

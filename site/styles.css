@@ -1,4 +1,4 @@
-/* ARALD — public landing page
+/* ARALD — public landing + secondary pages
    Palette and cut-corner motif adapted from the "Waypoint" identity used in mobile/www/,
    lightened for a first-impression/marketing context: less app-chrome, more editorial
    whitespace, the cut corner reserved for exactly one element (the primary CTA). */
@@ -15,6 +15,7 @@
   --carbon: #14191c; --carbon-2: #1c2226;
   --shadow-sm: 0 1px 2px rgba(30, 35, 31, 0.08);
   --shadow-md: 0 6px 20px rgba(30, 35, 31, 0.10);
+  --shadow-lg: 0 16px 40px -10px rgba(20, 25, 20, 0.35);
   --shadow-glow: 0 10px 30px -8px rgba(201, 162, 39, 0.45);
   --font-display: "Fraunces", Georgia, serif;
   --font-body: "Overpass", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -28,6 +29,7 @@
     --accent: #e3b64c; --accent-2: #f2cf7a; --accent-soft: #2c2410; --accent-ink: #1c1204;
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
     --shadow-md: 0 6px 22px rgba(0, 0, 0, 0.45);
+    --shadow-lg: 0 20px 44px -10px rgba(0, 0, 0, 0.6);
     --shadow-glow: 0 10px 30px -8px rgba(227, 182, 76, 0.35);
   }
 }
@@ -57,6 +59,9 @@ img { max-width: 100%; display: block; }
 }
 .skip-link:focus { left: 0.5em; top: 0.5em; }
 
+.text-link { display: inline-block; font-weight: 700; color: var(--accent); text-decoration: none; border-bottom: 1.5px solid color-mix(in srgb, var(--accent) 40%, transparent); }
+.text-link:hover { border-bottom-color: var(--accent); }
+
 /* ---------- Buttons ---------- */
 .btn {
   display: inline-flex; align-items: center; gap: 0.5em; text-decoration: none;
@@ -71,6 +76,8 @@ img { max-width: 100%; display: block; }
 .btn-beacon:hover { transform: translateY(-1px); }
 .btn-ghost { background: transparent; color: var(--ink); border: 1.5px solid var(--border); }
 .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+.btn-ghost-dark { color: #fff; border-color: rgba(255,255,255,0.5); }
+.btn-ghost-dark:hover { border-color: #fff; color: #fff; background: rgba(255,255,255,0.1); }
 
 @media (prefers-reduced-motion: reduce) { .btn { transition: none; } .btn-beacon:hover { transform: none; } }
 
@@ -86,7 +93,7 @@ img { max-width: 100%; display: block; }
 .wordmark .dot { color: var(--accent); }
 .site-nav { display: flex; align-items: center; gap: 1.8em; font-weight: 600; font-size: 0.92em; }
 .site-nav a { text-decoration: none; opacity: 0.85; }
-.site-nav a:hover { opacity: 1; color: var(--accent); }
+.site-nav a:hover, .site-nav a[aria-current="page"] { opacity: 1; color: var(--accent); }
 .nav-cta { padding: 0.5em 1em; border: 1.5px solid var(--border); border-radius: 0.35em; opacity: 1 !important; }
 .nav-cta:hover { border-color: var(--accent); }
 .nav-toggle { display: none; flex-direction: column; gap: 4px; background: none; border: none; padding: 0.5em; cursor: pointer; }
@@ -100,31 +107,37 @@ img { max-width: 100%; display: block; }
   .site-nav-mobile.is-open { display: flex; }
 }
 
-/* ---------- Hero ---------- */
-.hero { position: relative; padding: 7em 0 6em; overflow: hidden; }
-.hero-bg { position: absolute; inset: 0; z-index: 0; }
-.hero-bg-photo {
+/* ---------- Hero (photo-driven) ---------- */
+.hero { position: relative; padding: 8em 0 6em; overflow: hidden; }
+.hero-photo { background-size: cover; background-position: center; }
+.hero-bg-scrim {
   position: absolute; inset: 0;
-  /* PLACEHOLDER — replace with a real photo: background-image: url("images/hero.jpg"); background-size: cover; background-position: center; */
-  background:
-    radial-gradient(circle at 15% 20%, transparent 0 68px, color-mix(in srgb, var(--accent) 10%, transparent) 69px 71px, transparent 72px),
-    radial-gradient(circle at 15% 20%, transparent 0 118px, color-mix(in srgb, var(--accent) 8%, transparent) 119px 121px, transparent 122px),
-    radial-gradient(circle at 82% 70%, transparent 0 90px, color-mix(in srgb, var(--muted) 18%, transparent) 91px 93px, transparent 94px),
-    radial-gradient(circle at 82% 70%, transparent 0 150px, color-mix(in srgb, var(--muted) 14%, transparent) 151px 153px, transparent 154px),
-    var(--bg-2);
-  background-size: cover;
+  background: linear-gradient(180deg, rgba(10, 14, 12, 0.35) 0%, rgba(10, 14, 12, 0.72) 70%, var(--carbon) 100%);
 }
-.hero-bg-scrim { position: absolute; inset: 0; background: linear-gradient(180deg, color-mix(in srgb, var(--bg) 55%, transparent), var(--bg) 92%); }
 .hero-inner { position: relative; z-index: 1; max-width: 760px; }
-.hero h1 { font-size: clamp(2.3em, 6vw, 3.6em); margin-bottom: 0.4em; }
-.hero-lede { font-size: 1.2em; color: var(--muted); max-width: 44ch; }
-.hero-actions { display: flex; flex-wrap: wrap; gap: 0.9em; margin: 1.6em 0 1em; }
-.hero-meta { font-family: var(--font-mono); font-size: 0.82em; color: var(--muted); }
+.hero h1 { font-size: clamp(2.3em, 6vw, 3.6em); margin-bottom: 0.4em; color: #fff; }
+.hero .eyebrow { color: var(--accent-2); }
+.hero-lede { font-size: 1.2em; color: #d8dcd3; max-width: 44ch; }
+.hero-actions { display: flex; flex-wrap: wrap; gap: 0.9em; margin: 1.6em 0 0; }
+
+/* ---------- Page banner (secondary pages) ---------- */
+.page-banner { position: relative; padding: 7em 0 4em; overflow: hidden; background: var(--bg-2); }
+.page-banner[style*="background-image"] { background-size: cover; background-position: center; }
+.page-banner-scrim { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(10,14,12,0.4) 0%, rgba(10,14,12,0.78) 65%, var(--carbon) 100%); }
+.page-banner .wrap { position: relative; z-index: 1; max-width: 720px; }
+.page-banner[style*="background-image"] h1,
+.page-banner[style*="background-image"] .eyebrow { color: #fff; }
+.page-banner[style*="background-image"] .page-banner-lede { color: #dfe3da; }
+.page-banner h1 { font-size: clamp(2em, 5vw, 2.8em); }
+.page-banner-lede { color: var(--muted); font-size: 1.1em; margin: 0; }
+
+/* ---------- Article (plain text sections on secondary pages) ---------- */
+.article-narrow { max-width: 66ch; }
+.article-narrow p { font-size: 1.05em; }
 
 /* ---------- Example ---------- */
 .example { background: var(--bg-2); }
 .example-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 3em; align-items: center; }
-.example-note { color: var(--muted); }
 .code-window { background: var(--carbon); border-radius: 0.6em; overflow: hidden; box-shadow: var(--shadow-md); }
 .code-window-bar { display: flex; gap: 0.4em; padding: 0.8em 1em; }
 .code-window-bar span { width: 10px; height: 10px; border-radius: 50%; background: color-mix(in srgb, white 25%, var(--carbon)); }
@@ -137,70 +150,74 @@ img { max-width: 100%; display: block; }
 @media (max-width: 780px) { .example-grid { grid-template-columns: 1fr; } }
 
 /* ---------- Steps (how it works) ---------- */
-.steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2.2em; margin-top: 2em; }
+.steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2.2em; }
 .step-num { font-family: var(--font-mono); color: var(--accent); font-size: 0.85em; margin-bottom: 0.6em; }
 .step h3 { font-size: 1.15em; }
 .step p { color: var(--muted); margin: 0; }
 
 @media (max-width: 780px) { .steps { grid-template-columns: 1fr; gap: 2em; } }
 
-/* ---------- Scenarios ---------- */
-.where { background: var(--bg-2); }
-.scenario-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.6em; margin-top: 1em; }
-.scenario-card { background: var(--card); border: 1px solid var(--border); border-radius: 0.7em; overflow: hidden; box-shadow: var(--shadow-sm); }
-.scenario-photo {
-  aspect-ratio: 4 / 3;
-  /* PLACEHOLDER per card — replace with a photo via data-placeholder-image on the parent, e.g.
-     background-image: url("images/scenario-alpine.jpg"); background-size: cover; background-position: center; */
-  background:
-    repeating-linear-gradient(135deg, color-mix(in srgb, var(--muted) 14%, transparent) 0 2px, transparent 2px 26px),
-    linear-gradient(160deg, color-mix(in srgb, var(--accent) 16%, var(--bg-2)), var(--bg-2));
+/* ---------- Pillar cards (landing, 3 primary scenarios) ---------- */
+.pillar-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.6em; margin-top: 1em; }
+.pillar-card {
+  display: block; text-decoration: none; color: inherit; background: var(--card);
+  border: 1px solid var(--border); border-radius: 0.8em; overflow: hidden;
+  box-shadow: var(--shadow-sm); transition: transform 200ms var(--ease), box-shadow 200ms var(--ease);
 }
-.scenario-body { padding: 1.3em; }
-.scenario-body h3 { font-size: 1.05em; margin-bottom: 0.3em; }
-.scenario-body p { color: var(--muted); font-size: 0.92em; margin: 0; }
+.pillar-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); }
+.pillar-photo { aspect-ratio: 5 / 4; background-size: cover; background-position: center; }
+.pillar-body { padding: 1.3em; }
+.pillar-body h3 { font-size: 1.1em; margin-bottom: 0.3em; }
+.pillar-body p { color: var(--muted); font-size: 0.92em; margin: 0; }
+.where-more { margin-top: 2em; color: var(--muted); }
 
-.scenario-more-label { margin-top: 2.4em; font-weight: 600; }
+@media (prefers-reduced-motion: reduce) { .pillar-card { transition: none; } .pillar-card:hover { transform: none; } }
+@media (max-width: 900px) { .pillar-grid { grid-template-columns: 1fr; } }
 
-.scenario-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1em; margin: 1em 0 1.4em; }
-.scenario-tile {
-  position: relative; margin: 0; aspect-ratio: 1 / 1; border-radius: 0.5em; overflow: hidden;
-  box-shadow: var(--shadow-sm);
-}
-.scenario-tile img { width: 100%; height: 100%; object-fit: cover; }
-.scenario-tile figcaption {
-  position: absolute; left: 0; right: 0; bottom: 0; padding: 0.7em 0.8em 0.6em;
-  font-size: 0.82em; font-weight: 700; color: #fff;
-  background: linear-gradient(0deg, rgba(10, 14, 10, 0.75), transparent);
-}
+/* ---------- Scenario gallery (overview.html, all 10) ---------- */
+.scenario-gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.4em; }
+.scenario-entry { background: var(--card); border: 1px solid var(--border); border-radius: 0.7em; overflow: hidden; box-shadow: var(--shadow-sm); }
+.scenario-entry-photo { aspect-ratio: 4 / 3; background-size: cover; background-position: center; }
+.scenario-entry.featured .scenario-entry-photo { aspect-ratio: 16 / 10; }
+.scenario-entry-body { padding: 1.1em 1.2em 1.3em; }
+.scenario-entry-body h3 { font-size: 1.02em; margin-bottom: 0.3em; }
+.scenario-entry.featured .scenario-entry-body h3 { font-size: 1.15em; }
+.scenario-entry-body p { color: var(--muted); font-size: 0.9em; margin: 0; }
 
-@media (max-width: 900px) { .scenario-tiles { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 900px) { .scenario-gallery { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 600px) { .scenario-gallery { grid-template-columns: 1fr; } }
 
-.scenario-chips { list-style: none; display: flex; flex-wrap: wrap; gap: 0.6em; padding: 0; margin: 0.8em 0 0; }
-.scenario-chips li {
-  font-size: 0.85em; padding: 0.45em 0.9em; border-radius: 999px; border: 1px solid var(--border);
-  background: var(--card); color: var(--muted);
-}
-
-@media (max-width: 900px) { .scenario-grid { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 620px) { .scenario-grid { grid-template-columns: 1fr; } }
-
-/* ---------- Devices ---------- */
-.device-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.4em; margin-top: 1.6em; }
+/* ---------- Devices: full cards (how-it-works.html) ---------- */
+.device-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.4em; margin-top: 1.6em; }
 .device-card { padding: 1.5em; border: 1px solid var(--border); border-radius: 0.7em; background: var(--card); }
 .device-icon { width: 2.4em; height: 2.4em; margin-bottom: 1em; border-radius: 0.5em; background: var(--accent-soft); position: relative; }
-.device-icon::after {
-  content: ""; position: absolute; inset: 0.6em; border: 2px solid var(--accent); border-radius: 0.2em;
-}
+.device-icon::after { content: ""; position: absolute; inset: 0.6em; border: 2px solid var(--accent); border-radius: 0.2em; }
 .device-icon[data-icon="relay"]::after { border-radius: 50%; }
 .device-icon[data-icon="box"]::after { border-radius: 0.1em; inset: 0.5em; }
 .device-icon[data-icon="portable"]::after { border-radius: 0.6em 0.6em 0.1em 0.1em; }
+.device-icon[data-icon="phone"]::after { inset: 0.55em 0.85em; border-radius: 0.35em; }
 .device-card h3 { font-size: 1.05em; }
 .device-card p { color: var(--muted); font-size: 0.9em; margin: 0; }
-.devices-note { margin-top: 2em; color: var(--muted); font-size: 0.92em; max-width: 60ch; }
 
 @media (max-width: 900px) { .device-grid { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 500px) { .device-grid { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .device-grid { grid-template-columns: 1fr; } }
+
+/* ---------- Devices: condensed strip (landing) ---------- */
+.devices-strip { background: var(--bg-2); }
+.device-row { display: flex; flex-wrap: wrap; gap: 1em; margin: 1.4em 0 1.4em; }
+.device-chip {
+  display: flex; align-items: center; gap: 0.7em; padding: 0.7em 1.1em;
+  background: var(--card); border: 1px solid var(--border); border-radius: 999px; font-weight: 600; font-size: 0.92em;
+}
+.device-chip .device-icon { width: 1.5em; height: 1.5em; margin: 0; }
+.device-chip .device-icon::after { inset: 0.35em; }
+
+/* ---------- Community / open project ---------- */
+.community-grid { display: grid; grid-template-columns: 1fr 1.2fr; gap: 2.5em; align-items: center; }
+.community-photo { aspect-ratio: 4 / 3; border-radius: 0.8em; background-size: cover; background-position: center; box-shadow: var(--shadow-md); }
+.community-text p { color: var(--muted); }
+
+@media (max-width: 780px) { .community-grid { grid-template-columns: 1fr; } .community-photo { order: -1; } }
 
 /* ---------- Status ---------- */
 .status-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 3em; align-items: start; }
@@ -218,6 +235,47 @@ img { max-width: 100%; display: block; }
 .cta p { color: #b7c0bb; }
 .cta-inner { max-width: 620px; margin: 0 auto; }
 .cta .hero-actions { justify-content: center; }
+
+/* ---------- Spec tables (contribute.html hardware BOMs) ---------- */
+.table-scroll { overflow-x: auto; margin-top: 1.2em; }
+.spec-table { width: 100%; border-collapse: collapse; font-size: 0.92em; min-width: 480px; }
+.spec-table th, .spec-table td { text-align: left; padding: 0.7em 0.9em; border-bottom: 1px solid var(--border); }
+.spec-table th { font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.75em; color: var(--muted); font-weight: 600; white-space: nowrap; }
+.spec-table td { color: var(--ink); }
+.spec-table td:last-child { color: var(--muted); }
+.spec-table tr:last-child td { border-bottom: none; }
+
+/* ---------- Hardware tiers (contribute.html) ---------- */
+.tier { padding: 1.8em 2em 2.2em; border: 1px solid var(--border); border-radius: 0.8em; background: var(--card); margin-top: 1.6em; }
+.tier-head { display: flex; align-items: center; gap: 1em; }
+.tier-head .device-icon { margin: 0; flex-shrink: 0; }
+.tier-head h3 { margin: 0; font-size: 1.3em; }
+.tier-desc { color: var(--muted); margin: 0.8em 0 0; max-width: 62ch; }
+
+/* ---------- Radio tech cards (reuses .device-card look, no icon) ---------- */
+.tech-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.4em; margin-top: 1.6em; }
+.tech-card { padding: 1.5em; border: 1px solid var(--border); border-radius: 0.7em; background: var(--card); }
+.tech-tag { font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.75em; color: var(--accent); display: block; margin-bottom: 0.6em; }
+.tech-card h3 { font-size: 1.05em; }
+.tech-card p { color: var(--muted); font-size: 0.9em; margin: 0; }
+.tech-card ul { margin: 0.6em 0 0; padding-left: 1.1em; color: var(--muted); font-size: 0.88em; }
+.tech-card li { margin-bottom: 0.3em; }
+
+@media (max-width: 900px) { .tech-grid { grid-template-columns: 1fr; } }
+
+/* ---------- Priority cards (contribute.html) ---------- */
+.priority-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.4em; margin-top: 1.6em; }
+.priority-card { padding: 1.5em; border: 1px solid var(--border); border-radius: 0.7em; background: var(--card); }
+.priority-num { display: block; font-family: var(--font-mono); color: var(--accent); font-size: 0.85em; margin-bottom: 0.6em; }
+.priority-card h3 { font-size: 1.05em; }
+.priority-card p { color: var(--muted); font-size: 0.9em; margin: 0; }
+
+@media (max-width: 780px) { .priority-grid { grid-template-columns: 1fr; } }
+
+/* ---------- Funding flow diagram (contribute.html) ---------- */
+.flow { display: flex; flex-direction: column; align-items: center; gap: 0.2em; margin: 2em auto 0; max-width: 420px; }
+.flow-step { background: var(--card); border: 1px solid var(--border); border-radius: 0.5em; padding: 0.75em 1.4em; font-weight: 700; text-align: center; width: 100%; }
+.flow-arrow { color: var(--accent); font-family: var(--font-mono); line-height: 1.2; }
 
 /* ---------- Footer ---------- */
 .site-footer { padding: 3em 0; border-top: 1px solid var(--border); }

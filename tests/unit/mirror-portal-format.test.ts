@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  asFiniteNumber,
   beaconMessage,
   dropKind,
   formatCoords,
+  formatDateTime,
   nodeDisplayName,
   relayOnline,
   relayType,
@@ -70,6 +72,34 @@ describe("mirror-portal/lib/format", () => {
       expect(relayOnline({ online: false })).toBe(false);
       expect(relayOnline({})).toBe(false);
       expect(relayOnline({ online: "true" })).toBe(false);
+    });
+  });
+
+  // Exported 11-13 settembre 2026 (docs/security.md voce #75) so lib/db.ts and every page under
+  // app/ share one definition each, instead of the three near-identical copies found by review.
+  describe("asFiniteNumber", () => {
+    it("returns the value for a finite number", () => {
+      expect(asFiniteNumber(45.83)).toBe(45.83);
+      expect(asFiniteNumber(0)).toBe(0);
+      expect(asFiniteNumber(-12.5)).toBe(-12.5);
+    });
+    it("returns undefined for anything that isn't a finite number", () => {
+      expect(asFiniteNumber(Number.NaN)).toBeUndefined();
+      expect(asFiniteNumber(Number.POSITIVE_INFINITY)).toBeUndefined();
+      expect(asFiniteNumber("45.83")).toBeUndefined();
+      expect(asFiniteNumber(null)).toBeUndefined();
+      expect(asFiniteNumber(undefined)).toBeUndefined();
+    });
+  });
+
+  describe("formatDateTime", () => {
+    it("formats a Date as an Italian medium date + short time string", () => {
+      const formatted = formatDateTime(new Date("2026-09-13T07:51:00Z"));
+      expect(typeof formatted).toBe("string");
+      expect(formatted.length).toBeGreaterThan(0);
+      // Exact rendering depends on the host's ICU data/timezone (same caveat app/admin/page.tsx's
+      // own doc comment already notes for this call) — only checking it round-trips as a non-empty
+      // string, not a specific locale-formatted value that could vary across environments.
     });
   });
 });

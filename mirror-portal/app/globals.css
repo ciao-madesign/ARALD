@@ -1,24 +1,35 @@
-/* Same palette/shape language as node/src/web-ui.ts's own status page — this mirror shows the same
-   kind of data (nodes/relays/SOS/drops) at a different scope (many nodes, not one), so it deliberately
-   looks like a sibling of that page rather than inventing a third visual identity alongside it and
-   mobile/www/'s "Waypoint". */
+/* Restyle 11-13 settembre 2026 (docs/security.md voce #75): direzione scelta col proprietario del
+   prodotto via un canvas di bozzetti (tre direzioni a confronto, poi una fusione delle due preferite)
+   — sobrio/istituzionale come prima, ma con un'intestazione a tinta piena, un pannello SOS molto più
+   marcato, e un colore d'accento diverso per ciascun tipo di pannello invece di un'unica tonalità
+   uniforme. Font: Public Sans (testo) + IBM Plex Mono (dati tecnici/coordinate/orari), caricati come
+   Google Fonts da app/layout.tsx — prima eccezione di questo file alla convenzione "solo CSS puro,
+   nessuna dipendenza esterna": un link a un foglio di stile, non una libreria, stesso genere di
+   eccezione già accettata altrove nel progetto quando serve davvero (vedi mobile/README.md per come
+   viene motivata una deroga simile). */
 :root {
   color-scheme: light dark;
-  --bg: #f4f6f5;
+  --bg: #f5f6f4;
   --card: #ffffff;
-  --border: #d9dfdc;
-  --ink: #16211e;
-  --muted: #5c6b66;
-  --accent: #1f7a68;
-  --accent-soft: #e2f1ed;
-  --emergency: #b3261e;
-  --emergency-soft: #fbe9e7;
-  --hazard: #a8631a;
-  --hazard-soft: #faeee0;
+  --border: #e0e4e1;
+  --ink: #172420;
+  --muted: #5f6e68;
+  --accent: #1c6b57;
+  --accent-dark: #123f33;
+  --accent-soft: #e5f2ee;
+  --sos: #b3261e;
+  --sos-dark: #7c1a15;
+  --sos-soft: #fceceb;
+  --hazard: #9a5b12;
+  --hazard-soft: #faf0df;
+  --info: #55605c;
+  --info-soft: #eef1ef;
   --good: #1f7a4a;
-  --good-soft: #e3f3e8;
-  --off: #8a938f;
-  --off-soft: #ecefed;
+  --good-soft: #e6f4ea;
+  --off: #5f6e68;
+  --off-soft: #eef0ee;
+  --relay: #3b5a78;
+  --relay-soft: #e6edf3;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -29,15 +40,21 @@
     --ink: #e7ece9;
     --muted: #93a19b;
     --accent: #4fbfa2;
+    --accent-dark: #2f8b71;
     --accent-soft: #163a32;
-    --emergency: #ff6b60;
-    --emergency-soft: #3a1614;
+    --sos: #ff6b60;
+    --sos-dark: #ffb3ac;
+    --sos-soft: #351715;
     --hazard: #e0a352;
     --hazard-soft: #3a2c14;
+    --info: #a7b3ad;
+    --info-soft: #202a26;
     --good: #4fbf7c;
     --good-soft: #163a24;
-    --off: #6b7671;
+    --off: #93a19b;
     --off-soft: #202a26;
+    --relay: #7fa3c4;
+    --relay-soft: #1c2a35;
   }
 }
 
@@ -47,16 +64,183 @@
 
 body {
   margin: 0;
-  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: "Public Sans", -apple-system, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--ink);
   line-height: 1.45;
 }
 
+.mono {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+a {
+  color: var(--accent);
+}
+
+a:hover {
+  color: var(--accent-dark);
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 0.55em 1.1em;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+input,
+select {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5em 0.7em;
+}
+
+/* ---- Shared header/tabs (PortalHeader.tsx) — used by the Home and Mappa screens; Login/Admin keep
+   their own simpler header, unchanged, out of scope for this restyle. ---- */
+header.top {
+  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-dark) 130%);
+  color: #fff;
+}
+
+.top-inner {
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: 16px 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-title {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.account {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.account-name {
+  font-size: 12.5px;
+  opacity: 0.92;
+  text-align: right;
+}
+
+.role-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.22);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  margin-left: 6px;
+}
+
+.btn-outline {
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  background: transparent;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+nav.tabs {
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+
+.tabs-inner {
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: 0 28px;
+  display: flex;
+  gap: 4px;
+}
+
+.tab {
+  padding: 12px 6px;
+  margin-bottom: -1px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+  text-decoration: none;
+}
+
+.tab:hover {
+  color: var(--ink);
+}
+
+.tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ---- Page-level layout ---- */
 main {
   max-width: 64em;
   margin: 0 auto;
   padding: 1.5em 1em 3em;
+}
+
+main.content {
+  max-width: none;
+  padding: 20px 28px 48px;
+}
+
+.content-inner {
+  max-width: 1140px;
+  margin: 0 auto;
+}
+
+.notice {
+  padding: 14px 28px 0;
+}
+
+.notice-inner {
+  max-width: 1140px;
+  margin: 0 auto;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 h1 {
@@ -78,33 +262,10 @@ h2 {
   font-size: 0.85em;
 }
 
-.panel {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 0.6em;
-  padding: 1em;
-  margin-bottom: 1em;
-}
-
-.panel.error {
-  border-color: var(--emergency);
-  background: var(--emergency-soft);
-}
-
-.panel ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.panel li {
-  padding: 0.6em 0;
-  border-top: 1px solid var(--border);
-}
-
-.panel li:first-child {
-  border-top: none;
-  padding-top: 0;
+.empty {
+  color: var(--muted);
+  font-style: italic;
+  padding: 0.4em 0;
 }
 
 .row {
@@ -114,41 +275,181 @@ h2 {
   gap: 0.6em;
 }
 
-.empty {
-  color: var(--muted);
-  font-style: italic;
-  padding: 0.4em 0;
+/* ---- Panels ---- */
+.panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 20px 8px;
+  margin-bottom: 20px;
+  border-left: 4px solid var(--accent);
 }
 
-.tag {
-  display: inline-flex;
+.panel.error {
+  border-color: var(--sos);
+  border-left-color: var(--sos);
+  background: var(--sos-soft);
+}
+
+.panel-head {
+  display: flex;
   align-items: center;
-  padding: 0.15em 0.6em;
-  border-radius: 999px;
-  font-size: 0.72em;
+  gap: 9px;
+  margin-bottom: 4px;
+}
+
+.panel-head svg {
+  flex: none;
+  color: var(--accent);
+}
+
+.panel-title {
+  font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.06em;
+  color: var(--ink);
 }
 
-.tag.emergency {
-  background: var(--emergency-soft);
-  color: var(--emergency);
+.panel-count {
+  font-size: 12px;
+  color: var(--muted);
 }
 
-.tag.hazard {
-  background: var(--hazard-soft);
+.panel.hazard-panel {
+  border-left-color: var(--hazard);
+}
+
+.panel.hazard-panel .panel-head svg {
   color: var(--hazard);
 }
 
+.panel.relay-panel {
+  border-left-color: var(--relay);
+}
+
+.panel.relay-panel .panel-head svg {
+  color: var(--relay);
+}
+
+.sos-panel {
+  border: 1px solid var(--sos);
+  border-left: 6px solid var(--sos);
+  background: var(--sos-soft);
+  box-shadow: 0 8px 22px -12px rgba(179, 38, 30, 0.45);
+  padding-top: 18px;
+}
+
+.sos-panel .panel-title {
+  color: var(--sos-dark);
+  font-size: 13px;
+}
+
+.sos-panel .panel-head svg {
+  color: var(--sos);
+}
+
+.sos-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: var(--sos);
+  flex: none;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+}
+
+@media (max-width: 56em) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---- Panel row lists ---- */
+.row-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.row-list li {
+  padding: 13px 0;
+  border-top: 1px solid var(--border);
+}
+
+.sos-panel .row-list li {
+  border-top-color: rgba(179, 38, 30, 0.18);
+}
+
+.row-list li:first-child {
+  border-top: none;
+}
+
+.row-text {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.sos-row .row-text {
+  font-size: 15.5px;
+  font-weight: 700;
+  color: var(--sos-dark);
+}
+
+.row-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.row-meta .sep {
+  color: var(--border);
+}
+
+/* ---- Tags ---- */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  flex: none;
+}
+
+.tag.sos,
+.tag.emergency {
+  background: var(--sos);
+  color: #fff;
+}
+
+.tag.hazard {
+  background: var(--hazard);
+  color: #fff;
+}
+
 .tag.info {
-  background: var(--off-soft);
-  color: var(--off);
+  background: var(--info-soft);
+  color: var(--info);
 }
 
 .tag.online {
-  background: var(--good-soft);
-  color: var(--good);
+  background: var(--good);
+  color: #fff;
 }
 
 .tag.offline {
@@ -156,54 +457,7 @@ h2 {
   color: var(--off);
 }
 
-a {
-  color: var(--accent);
-}
-
-button,
-input,
-select {
-  font: inherit;
-  color: inherit;
-}
-
-button {
-  background: var(--accent);
-  color: #fff;
-  border: none;
-  border-radius: 0.4em;
-  padding: 0.55em 1.1em;
-  cursor: pointer;
-}
-
-button:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-input,
-select {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 0.4em;
-  padding: 0.5em 0.7em;
-}
-
-/* header's own .row: title on the left, account info + admin link + logout on the right */
-.header-account {
-  display: flex;
-  align-items: center;
-  gap: 0.9em;
-}
-
-.logout-button {
-  background: transparent;
-  color: var(--muted);
-  border: 1px solid var(--border);
-}
-
-/* Login page — deliberately its own small layout, not app/globals.css's <main> grid of panels: a
-   single centered card, since there is nothing else on this page. */
+/* ---- Login page — its own small centered layout, not the panel grid above. ---- */
 .login-main {
   min-height: 100vh;
   display: flex;
@@ -215,6 +469,7 @@ select {
 .login-panel {
   width: 100%;
   max-width: 24em;
+  border-left-color: var(--accent);
 }
 
 .login-form {
@@ -233,13 +488,12 @@ select {
 }
 
 .login-error {
-  color: var(--emergency);
+  color: var(--sos);
   margin: 0;
   font-size: 0.85em;
 }
 
-/* Admin panel's three write forms — same label/input stacking as .login-form, its own class only so
-   the two can diverge later without one accidentally affecting the other. */
+/* Admin panel's write forms — same label/input stacking as .login-form. */
 .admin-form {
   display: flex;
   flex-direction: column;
@@ -252,4 +506,198 @@ select {
   gap: 0.3em;
   font-size: 0.85em;
   color: var(--muted);
+}
+
+/* ---- Map pins (mappa/LeafletMap.tsx) — plain divIcon markup, styled globally here since Leaflet
+   injects it straight into the page DOM, same as any other element. Colors mirror the tag palette
+   above so a pin and its matching list row always read as "the same thing". ---- */
+.map-pin {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+}
+
+.map-pin-head {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #fff;
+  box-shadow: 0 3px 8px rgba(15, 30, 25, 0.28);
+}
+
+.map-pin-stem {
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  margin-top: -2px;
+}
+
+.map-pin.emergency .map-pin-head {
+  background: var(--sos);
+}
+
+.map-pin.emergency .map-pin-stem {
+  border-top: 7px solid var(--sos);
+}
+
+.map-pin.hazard .map-pin-head {
+  background: var(--hazard);
+}
+
+.map-pin.hazard .map-pin-stem {
+  border-top: 7px solid var(--hazard);
+}
+
+.map-pin.info .map-pin-head {
+  background: var(--info);
+}
+
+.map-pin.info .map-pin-stem {
+  border-top: 7px solid var(--info);
+}
+
+.map-pin.relay-on .map-pin-head {
+  background: var(--relay);
+}
+
+.map-pin.relay-on .map-pin-stem {
+  border-top: 7px solid var(--relay);
+}
+
+.map-pin.relay-off .map-pin-head {
+  background: #fff;
+  border-color: var(--relay);
+}
+
+.map-pin.relay-off .map-pin-stem {
+  border-top: 7px solid var(--relay);
+  opacity: 0.5;
+}
+
+.map-pin.sos .map-pin-head {
+  width: 32px;
+  height: 32px;
+  background: var(--sos);
+  box-shadow: 0 4px 10px rgba(124, 26, 21, 0.4);
+}
+
+.map-pin.sos .map-pin-stem {
+  border-left-width: 6px;
+  border-right-width: 6px;
+  border-top: 8px solid var(--sos);
+}
+
+.map-pin.sos .map-pin-pulse {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--sos);
+  opacity: 0.45;
+  animation: map-pin-pulse 2.2s ease-out infinite;
+}
+
+@keyframes map-pin-pulse {
+  0% {
+    transform: translateX(-50%) scale(1);
+    opacity: 0.45;
+  }
+  100% {
+    transform: translateX(-50%) scale(2.2);
+    opacity: 0;
+  }
+}
+
+/* Leaflet's own popup chrome, restyled to match the panel/tag language instead of its default look. */
+.leaflet-popup-content-wrapper {
+  background: var(--card);
+  color: var(--ink);
+  border-radius: 8px;
+  font-family: "Public Sans", -apple-system, "Segoe UI", sans-serif;
+}
+
+.leaflet-popup-tip {
+  background: var(--card);
+}
+
+.map-popup-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.map-popup-meta {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.map-legend {
+  position: absolute;
+  left: 12px;
+  bottom: 24px;
+  z-index: 1000;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  box-shadow: 0 10px 24px -14px rgba(0, 0, 0, 0.35);
+  font-size: 12.5px;
+}
+
+.map-legend-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.map-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  color: var(--ink);
+}
+
+.map-legend-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex: none;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.map-container {
+  position: relative;
+  height: calc(100vh - 170px);
+  min-height: 420px;
+  border-top: 1px solid var(--border);
+}
+
+.map-container .leaflet-container {
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+  font-family: "Public Sans", -apple-system, "Segoe UI", sans-serif;
+}
+
+.map-loading,
+.map-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--muted);
+  font-size: 13px;
 }

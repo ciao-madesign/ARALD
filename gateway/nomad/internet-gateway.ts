@@ -3,7 +3,7 @@ import { BoundedFifoMap } from "../../node/src/bounded-map.js";
 import { trustRank } from "../../node/src/trust.js";
 import { parseFeed, MAX_FEED_BYTES } from "./rss-feed.js";
 import { fetchTextBounded } from "./fetch-bounded.js";
-import { isPubliclyRoutableUrl } from "./url-safety.js";
+import { isPubliclyRoutableUrl } from "../../node/src/url-safety.js";
 
 /** Bounds `rateLimitState`/`globalRateLimitState` — this gateway's own tracked-peer state (spec §57), same reasoning `NewsGateway.publishedById` documents: a hostile/rotating set of caller node ids must not grow this map forever. */
 const MAX_TRACKED_RATE_LIMIT_PEERS = 4096;

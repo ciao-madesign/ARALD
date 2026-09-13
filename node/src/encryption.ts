@@ -88,25 +88,55 @@ export function decryptFromPeer(sharedKey: Buffer, payload: EncryptedPayload): B
 export interface IdentityAnnouncement {
   nodeId: string;
   encryptionPublicKey: string;
+  /**
+   * Optional, free-text device class the node declares about itself (e.g.
+   * "Box", "Card", "Relay") — "Node Capabilities", scoped down explicitly
+   * with the user (10 settembre 2026, docs/next-steps.md) to exactly this:
+   * a self-declared label, propagated mesh-wide the same way the
+   * encryption key above already is, **display-only** — never consulted
+   * by routing, trust, or any other decision in this codebase. Piggybacked
+   * on this struct rather than a new message type specifically so it
+   * inherits the same signature (a node can declare its own class, never
+   * fabricate someone else's) and the same mesh-wide propagation, for
+   * free. `undefined` when the node that produced this announcement never
+   * declared one (the common case, and the only case before this field
+   * existed — omitted, not an empty string, so `JSON.stringify` drops it
+   * entirely from the signed payload and older/newer nodes that never set
+   * it sign and verify byte-for-byte identically to before this field was
+   * added).
+   */
+  deviceClass?: string;
   signature: string;
 }
 
-export function identityAnnouncementPayload(nodeId: string, encryptionPublicKey: string): Buffer {
-  return Buffer.from(JSON.stringify({ nodeId, encryptionPublicKey }));
+/** Bounds `IdentityAnnouncement.deviceClass` (spec §57-style resource limit for a self-declared free-text field) — same order of magnitude as `MAX_RELAY_OPERATOR_LENGTH`/`MAX_NODE_APPEND_LABEL_LENGTH`, a one-line label, not chat-body-length text. */
+export const MAX_DEVICE_CLASS_LENGTH = 100;
+
+/** Whether `value` is a well-formed `deviceClass` (non-empty string, within `MAX_DEVICE_CLASS_LENGTH`). Used both to validate a *local* declaration (node.ts's constructor, fail fast) and a *received* one (node.ts's `acceptIdentityAnnouncement()`, fail closed on the whole announcement — see that method's own doc comment for why a malformed-but-validly-signed field can't just be stripped after the fact). */
+export function isValidDeviceClass(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= MAX_DEVICE_CLASS_LENGTH;
 }
 
-export function signIdentityAnnouncement(identity: Identity, encryptionIdentity: EncryptionIdentity): IdentityAnnouncement {
+export function identityAnnouncementPayload(nodeId: string, encryptionPublicKey: string, deviceClass?: string): Buffer {
+  return Buffer.from(JSON.stringify({ nodeId, encryptionPublicKey, deviceClass }));
+}
+
+export function signIdentityAnnouncement(
+  identity: Identity,
+  encryptionIdentity: EncryptionIdentity,
+  deviceClass?: string,
+): IdentityAnnouncement {
   const nodeId = identity.nodeId;
   const encryptionPublicKey = encryptionIdentity.publicKeyHex;
-  const signature = identity.sign(identityAnnouncementPayload(nodeId, encryptionPublicKey)).toString("hex");
-  return { nodeId, encryptionPublicKey, signature };
+  const signature = identity.sign(identityAnnouncementPayload(nodeId, encryptionPublicKey, deviceClass)).toString("hex");
+  return deviceClass !== undefined ? { nodeId, encryptionPublicKey, deviceClass, signature } : { nodeId, encryptionPublicKey, signature };
 }
 
 export function verifyIdentityAnnouncement(announcement: IdentityAnnouncement): boolean {
   try {
     return Identity.verifyWithNodeId(
       announcement.nodeId,
-      identityAnnouncementPayload(announcement.nodeId, announcement.encryptionPublicKey),
+      identityAnnouncementPayload(announcement.nodeId, announcement.encryptionPublicKey, announcement.deviceClass),
       Buffer.from(announcement.signature, "hex"),
     );
   } catch {

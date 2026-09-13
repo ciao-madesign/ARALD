@@ -61,6 +61,18 @@ describe("PeerDirectory", () => {
     expect(directory.has(throwaway2.nodeId)).toBe(true);
   });
 
+  it("getDeviceClass returns the recorded announcement's self-declared device class, undefined when it never declared one", () => {
+    const directory = new PeerDirectory();
+    const withClass = signIdentityAnnouncement(Identity.generate(), EncryptionIdentity.generate(), "Box");
+    const withoutClass = makeAnnouncement();
+    directory.record(withClass);
+    directory.record(withoutClass);
+
+    expect(directory.getDeviceClass(withClass.nodeId)).toBe("Box");
+    expect(directory.getDeviceClass(withoutClass.nodeId)).toBeUndefined();
+    expect(directory.getDeviceClass("unknown-node-id")).toBeUndefined();
+  });
+
   it("lists every recorded announcement", () => {
     const directory = new PeerDirectory();
     const a = makeAnnouncement();

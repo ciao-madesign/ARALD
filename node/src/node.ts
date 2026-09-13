@@ -18,8 +18,10 @@ import { TrustLevel, TrustManager, meetsTrustLevel, trustRank } from "./trust.js
 import { RelayPolicy, type RelayPolicyOptions } from "./relay-policy.js";
 import {
   EncryptionIdentity,
+  MAX_DEVICE_CLASS_LENGTH,
   decryptFromPeer,
   encryptForPeer,
+  isValidDeviceClass,
   signIdentityAnnouncement,
   verifyIdentityAnnouncement,
   type EncryptedPayload,
@@ -73,6 +75,22 @@ import { RoutingTable } from "./routing-table.js";
 import { ServiceDirectory } from "./service-directory.js";
 import { serviceSigningPayload, verifyServiceAnnouncement, type ServiceAnnouncement, type ServiceHandler } from "./service.js";
 import type { PeerAddress, Transport } from "./transport.js";
+import {
+  ExternalDeliveryDirectory,
+  ExternalDeliveryQueue,
+  EXTERNAL_DELIVERY_DIRECTORY_CONTENT_NAME,
+  MAX_EXTERNAL_DELIVERY_DESTINATION_ID_LENGTH,
+  attemptExternalDeliveryPost,
+  computeExternalDeliveryAuthProof,
+  extractExternalDeliveryDirectoryPayload,
+  extractExternalDeliveryPayload,
+  sealExternalDelivery,
+  verifyExternalDeliveryAuthProof,
+  type ExternalDeliveryAllowlist,
+  type ExternalDeliveryDirectoryEntry,
+  type ExternalDeliveryDirectoryPayload,
+  type ExternalDeliveryPayload,
+} from "./external-delivery.js";
 
 export interface NomadNodeOptions {
   displayName?: string;
@@ -115,6 +133,35 @@ export interface NomadNodeOptions {
   relayPolicy?: RelayPolicyOptions;
   /** X25519 key pair for end-to-end encrypted private messages (spec §52). Generated automatically if omitted. */
   encryptionIdentity?: EncryptionIdentity;
+  /**
+   * "Node Capabilities" (docs/next-steps.md, planned with the user 10
+   * settembre 2026) — an optional, free-text label this node declares
+   * about itself (e.g. "Box", "Card", "Relay"), piggybacked on the same
+   * self-signed `IdentityAnnouncement` already used for the encryption key
+   * above (encryption.ts) and propagated the exact same way, mesh-wide.
+   * **Deliberately scoped to display-only**, an explicit decision made with
+   * the user before writing any code: this label is shown in `/api/peers`/
+   * `/api/status` and the mobile app's peers list, never consulted by
+   * routing, trust, or any other decision anywhere in this codebase — a
+   * node cannot attract traffic, elevate its own trust, or influence
+   * anything by declaring a class, only change what others *see* about it.
+   * Same "informational, never decisive" posture already applied to
+   * relay-registry.ts's self-declared `batteryPercent`/`operator`.
+   * Immutable for this node's lifetime once set here (never re-signed
+   * later), and — a real limitation of reusing `IdentityAnnouncement`,
+   * documented here rather than hidden — once a *peer's* announcement is
+   * recorded by `PeerDirectory.record()`, it can never be updated even if
+   * that peer later restarts with a different value (`PeerDirectory`'s own
+   * doc comment: "the first validly signed binding... is authoritative for
+   * that node's lifetime" — true for the encryption key since this
+   * prototype never rotates it, and now equally true for this label,
+   * accepted as a reasonable trade-off since a device's class changes far
+   * less often than its encryption key would if it ever did rotate).
+   * Throws in the constructor if provided but empty or longer than
+   * `MAX_DEVICE_CLASS_LENGTH` (encryption.ts) — same fail-fast posture as
+   * `emergencyBeaconKey`'s own length check further down in this interface.
+   */
+  deviceClass?: string;
   /** Max node ids tracked in the peer encryption-key directory at once (spec §57 resource limits). */
   maxPeerDirectoryEntries?: number;
   /** Max destinations tracked in the routing table at once (spec §57 resource limits). */
@@ -203,6 +250,31 @@ export interface NomadNodeOptions {
    * Throws in the constructor if set but not exactly 32 bytes.
    */
   emergencyBeaconKey?: Buffer;
+  /**
+   * Consegna esterna differita (`docs/service-catalog.md`, "Servizio
+   * pianificato, non ancora costruito" alla stesura di questo commento —
+   * ora costruito) — quando presente, questo nodo offre il ruolo di
+   * "BOX": accetta `EXTERNAL_DELIVERY` indirizzati a sé (`handleExternalDelivery()`),
+   * verificando `destinationId` (e, se configurata, la password —
+   * `verifyExternalDeliveryAuthProof()`) contro questa mappa **privata**,
+   * mai propagata così com'è. Assente (default) = ruolo non attivo: un
+   * `EXTERNAL_DELIVERY` ricevuto viene scartato in silenzio, stesso
+   * trattamento di un `destinationId` sconosciuto. Provisioning
+   * out-of-band da parte dell'operatore (`node/src/cli.ts`'s
+   * `--external-delivery-destinations <path.json>`), stesso modello già
+   * usato per `emergencyBeaconKey`/`--trust-admin`.
+   */
+  externalDeliveryAllowlist?: ExternalDeliveryAllowlist;
+  /** Max entry nella coda di consegna esterna in attesa (`externalDeliveryQueue`) — spec §57 resource limits, ma bounded anche sui byte totali, vedi sotto (le entry qui variano molto in dimensione, a differenza di un pacchetto ordinario). */
+  maxExternalDeliveryEntries?: number;
+  /** Tetto sui byte totali (ciphertext, non il file originale in chiaro) tenuti in `externalDeliveryQueue` contemporaneamente — punto di partenza conservativo (default 50 MB), da tarare sulle specifiche hardware reali del BOX. */
+  maxExternalDeliveryBytes?: number;
+  /** Quanto a lungo un invio resta in coda prima di essere scartato se la consegna verso l'esterno continua a fallire (default 24h) — "best-effort, nessun ack", coerente con la decisione esplicita dell'utente su questo pezzo. */
+  externalDeliveryTtlMs?: number;
+  /** Tetto sulla dimensione (byte grezzi, prima della codifica hex) del ciphertext di un singolo invio — un invio oltre questo limite viene rifiutato subito, mai troncato in silenzio (default 1 000 000, stesso ordine di `DEFAULT_MAX_RESPONSE_BYTES` in `internet-gateway.ts`). */
+  maxExternalDeliveryPayloadBytes?: number;
+  /** Max publisher distinti (BOX) tracciati in `externalDeliveryDirectory` at once (spec §57 resource limits). */
+  maxExternalDeliveryDirectoryPublishers?: number;
 }
 
 interface ContentWaiter {
@@ -238,6 +310,9 @@ const MAX_CONCURRENT_DROP_FETCHES = 16;
 
 /** Same purpose and reasoning as `MAX_CONCURRENT_DROP_FETCHES` immediately above, for `considerEmergencyBeacon()`'s reactive fetches — its own independent budget. */
 const MAX_CONCURRENT_BEACON_FETCHES = 16;
+
+/** Same purpose and reasoning as `MAX_CONCURRENT_DROP_FETCHES` immediately above, for `considerExternalDeliveryDirectory()`'s reactive fetches — its own independent budget, not shared with any other `consider*()`, so a burst of one content kind can never starve another (the same principle this constant's own siblings already document). */
+const MAX_CONCURRENT_EXTERNAL_DELIVERY_DIRECTORY_FETCHES = 16;
 
 /**
  * Bounds how many elevated-priority drops (`kind: "hazard"` or `"emergency"`,
@@ -335,6 +410,9 @@ const ELEVATED_NODE_APPEND_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 /** Default/maximum lifetime for a Node Append (`NomadNode.appendToNode()`) — same bounds as `publishDrop()`'s own (`DEFAULT_DROP_TTL_MS`/`MAX_DROP_TTL_MS`), kept as separate constants rather than shared ones so either can be retuned independently later without the two features silently moving together. */
 const DEFAULT_NODE_APPEND_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_NODE_APPEND_TTL_MS = 72 * 60 * 60 * 1000;
+
+/** Default cap on a single "Consegna esterna differita" submission's raw ciphertext size — same order of magnitude as `DEFAULT_MAX_RESPONSE_BYTES` in `gateway/nomad/internet-gateway.ts`, a reasonable starting point for a report/file, never a hard requirement. */
+const DEFAULT_MAX_EXTERNAL_DELIVERY_PAYLOAD_BYTES = 1_000_000;
 
 /**
  * Same reasoning as `MAX_ELEVATED_NODE_APPENDS_PER_WINDOW`, applied to
@@ -697,6 +775,27 @@ export class NomadNode extends EventEmitter {
    */
   readonly nodeAppends: NodeAppends;
 
+  /**
+   * Directory pubblica delle destinazioni di "Consegna esterna differita"
+   * apprese dalla mesh (`docs/service-catalog.md`) — costruita interamente
+   * da `content://` già verificato (`EXTERNAL_DELIVERY_DIRECTORY_CONTENT_NAME`,
+   * `considerExternalDeliveryDirectory()`), mai propagata/firmata a sé.
+   * Esposta senza gate via `web-ui.ts`'s `GET /api/external-delivery-destinations`
+   * — stesso trattamento sempre-pubblico di `drops`/`nodeAppends`: non
+   * contiene mai l'URL di consegna reale né una password, solo etichette/
+   * chiavi pubbliche pensate per popolare un menu a tendina lato client.
+   */
+  readonly externalDeliveryDirectory: ExternalDeliveryDirectory;
+  /**
+   * Coda di invii "Consegna esterna differita" arrivati su questo nodo e
+   * ancora in attesa di consegna reale verso l'esterno — popolata da
+   * `handleExternalDelivery()` solo quando `externalDeliveryAllowlist` è
+   * configurata (questo nodo offre il ruolo di BOX), mai esposta via HTTP
+   * (a differenza di `drops`/`nodeAppends`, contiene solo ciphertext opaco
+   * a questo stesso nodo — nulla da mostrare a un lettore comunque).
+   */
+  readonly externalDeliveryQueue: ExternalDeliveryQueue;
+
   private readonly defaultTtl: number;
   private readonly contentRequestTimeoutMs: number;
   private readonly contentProviderTimeoutMs: number;
@@ -704,6 +803,19 @@ export class NomadNode extends EventEmitter {
   private readonly minTrustForNodeAppend: TrustLevel;
   private readonly minTrustForRelayCommand: TrustLevel;
   private readonly emergencyBeaconKey: Buffer | undefined;
+  private readonly externalDeliveryAllowlist: ExternalDeliveryAllowlist | undefined;
+  /**
+   * Public (unlike every other per-instance cap in this list) so
+   * `web-ui.ts`'s `POST /api/external-delivery` can size its own HTTP
+   * body-read limit to match this node's actual configured cap (base64
+   * encoding + JSON overhead need headroom beyond the raw byte count) —
+   * `sendExternalDelivery()` re-validates it independently regardless, this
+   * only avoids the HTTP layer rejecting a body the mesh layer would have
+   * accepted, or accepting one it's certain to reject anyway.
+   */
+  readonly maxExternalDeliveryPayloadBytes: number;
+  /** Reentrancy guard for `attemptExternalDeliveries()` — see that method's own doc comment for why an overlapping `setInterval` tick must never run a second pass concurrently. */
+  private externalDeliveryAttemptInFlight = false;
   private readonly seenCache = new SeenCache();
   private readonly requesterAssembler: ChunkAssembler;
   private readonly relayAssembler: ChunkAssembler;
@@ -741,6 +853,8 @@ export class NomadNode extends EventEmitter {
   private readonly pendingDropFetches = new Set<string>();
   /** Same purpose as `pendingDropFetches`, for `considerEmergencyBeacon()` — bounds concurrency to `MAX_CONCURRENT_BEACON_FETCHES`. */
   private readonly pendingBeaconFetches = new Set<string>();
+  /** Same purpose as `pendingDropFetches`, for `considerExternalDeliveryDirectory()` — its own independent budget, bounds concurrency to `MAX_CONCURRENT_EXTERNAL_DELIVERY_DIRECTORY_FETCHES`. */
+  private readonly pendingExternalDeliveryDirectoryFetches = new Set<string>();
   /** Sliding-window state for `MAX_ELEVATED_DROPS_PER_WINDOW` (see its own doc comment) — `publishDrop({ kind: "hazard" | "emergency" })` checks and updates this before publishing. */
   private elevatedDropWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
   /** Sliding-window state for `MAX_EMERGENCY_BEACON_PER_WINDOW` (see its own doc comment) — `sendEmergencyBeacon()` checks and updates this before publishing. */
@@ -803,7 +917,10 @@ export class NomadNode extends EventEmitter {
       maxSize: options.maxPeerDirectoryEntries,
       trustRank: (nodeId) => trustRank(this.trust.get(nodeId)),
     });
-    this.ownAnnouncement = signIdentityAnnouncement(this.identity, this.encryptionIdentity);
+    if (options.deviceClass !== undefined && !isValidDeviceClass(options.deviceClass)) {
+      throw new Error(`deviceClass must be 1-${MAX_DEVICE_CLASS_LENGTH} characters`);
+    }
+    this.ownAnnouncement = signIdentityAnnouncement(this.identity, this.encryptionIdentity, options.deviceClass);
     // Same trust-aware eviction as remoteCatalog/peerDirectory above — a route's only claim to
     // trust is the trust level of the peer that announced it (routes carry no signature of their
     // own, unlike content/identity/service claims), so eviction must be weighted by that instead
@@ -853,6 +970,14 @@ export class NomadNode extends EventEmitter {
       throw new Error("NomadNode: emergencyBeaconKey must be exactly 32 bytes (AES-256-GCM)");
     }
     this.emergencyBeaconKey = options.emergencyBeaconKey;
+    this.externalDeliveryAllowlist = options.externalDeliveryAllowlist;
+    this.maxExternalDeliveryPayloadBytes = options.maxExternalDeliveryPayloadBytes ?? DEFAULT_MAX_EXTERNAL_DELIVERY_PAYLOAD_BYTES;
+    this.externalDeliveryDirectory = new ExternalDeliveryDirectory({ maxPublishers: options.maxExternalDeliveryDirectoryPublishers });
+    this.externalDeliveryQueue = new ExternalDeliveryQueue({
+      maxEntries: options.maxExternalDeliveryEntries,
+      maxTotalBytes: options.maxExternalDeliveryBytes,
+      ttlMs: options.externalDeliveryTtlMs,
+    });
   }
 
   get nodeId(): string {
@@ -861,6 +986,11 @@ export class NomadNode extends EventEmitter {
 
   get status(): "ONLINE" | "OFFLINE" {
     return this.started ? "ONLINE" : "OFFLINE";
+  }
+
+  /** This node's own self-declared device class (`NomadNodeOptions.deviceClass`), if any — see that option's own doc comment for the full "display-only" scope. */
+  get deviceClass(): string | undefined {
+    return this.ownAnnouncement.deviceClass;
   }
 
   /** Packets currently held for a destination that wasn't reachable yet (spec §30, milestone 12). */
@@ -1272,6 +1402,247 @@ export class NomadNode extends EventEmitter {
     const append: NodeAppend = { ...payload, appendId, author: senderId };
     this.nodeAppends.record(append);
     this.emit("node-append:received", append);
+  }
+
+  /**
+   * Sends a "Consegna esterna differita" (`docs/service-catalog.md`,
+   * `external-delivery.ts`) submission toward `boxNodeId` — a node
+   * (typically a Box/Portable) that has been configured with an
+   * `externalDeliveryAllowlist` and will hold `data` until real Internet
+   * connectivity lets it forward the sealed bytes on to `destinationId`.
+   *
+   * Deliberately does **not** reuse `sendPrivateMessage()`, unlike
+   * `appendToNode()`/`sendRelayCommand()`: those two are genuinely mesh-
+   * private, decrypted by `boxNodeId` itself on arrival. Here `boxNodeId`
+   * is only ever a courier — it must be able to read `destinationId`/
+   * `authProof` in the clear (to decide whether to queue it at all) but
+   * must *never* be able to decrypt `data`, which is sealed here directly
+   * to `destinationPublicKeyHex` (`sealExternalDelivery()`, a fresh
+   * ephemeral X25519 keypair per call — see that function's own doc
+   * comment for why not this node's long-term mesh encryption identity).
+   * So the packet itself carries the ciphertext already opaque to every
+   * mesh hop including the final one, built directly via `originate()` +
+   * `floodExcept()` — same low-level primitives `sendPrivateMessage()`
+   * itself is built on, just without its extra mesh-level encryption layer
+   * on top (which would be redundant here and would force `boxNodeId` to
+   * decrypt just to reach an already-encrypted-again payload).
+   *
+   * `options.password`, if provided, is hashed into `authProof`
+   * (`computeExternalDeliveryAuthProof()`) *here*, at this call — the raw
+   * password itself never enters a `Packet` (docs/service-catalog.md's
+   * design: the password stays confined to this single, already-trusted
+   * hop). Throws if `destinationId` or `data` exceed their configured caps
+   * — same "fail loudly before anything is sent" posture as
+   * `appendToNode()`'s own validation.
+   */
+  sendExternalDelivery(
+    boxNodeId: string,
+    destinationId: string,
+    destinationPublicKeyHex: string,
+    data: Buffer,
+    options: { password?: string; priority?: Priority } = {},
+  ): string {
+    if (destinationId.length === 0 || destinationId.length > MAX_EXTERNAL_DELIVERY_DESTINATION_ID_LENGTH) {
+      throw new Error(`external delivery destinationId must be 1-${MAX_EXTERNAL_DELIVERY_DESTINATION_ID_LENGTH} characters`);
+    }
+    if (data.length === 0 || data.length > this.maxExternalDeliveryPayloadBytes) {
+      throw new Error(`external delivery payload must be 1-${this.maxExternalDeliveryPayloadBytes} bytes`);
+    }
+    const sealed = sealExternalDelivery(destinationPublicKeyHex, data);
+    const authProof =
+      options.password !== undefined
+        ? computeExternalDeliveryAuthProof(options.password, destinationId, sealed.nonce, sealed.ciphertext, sealed.authTag)
+        : undefined;
+    const payload: ExternalDeliveryPayload = {
+      destinationId,
+      senderEphemeralPublicKey: sealed.senderEphemeralPublicKey,
+      nonce: sealed.nonce,
+      ciphertext: sealed.ciphertext,
+      authTag: sealed.authTag,
+      authProof,
+      submittedAt: Date.now(),
+    };
+    const packet = this.originate<ExternalDeliveryPayload>(MessageType.EXTERNAL_DELIVERY, payload, {
+      destination: boxNodeId,
+      priority: options.priority ?? Priority.CONTENT,
+    });
+    void this.floodExcept(packet);
+    return packet.id;
+  }
+
+  /**
+   * Accepts (or silently rejects) an external-delivery submission addressed
+   * to this node — called from the packet dispatch with the raw,
+   * not-yet-validated payload. No-op if this node hasn't been configured
+   * with an `externalDeliveryAllowlist` (the role is off) — mirrors every
+   * other opt-in role in this class (`considerRelayCommand()`,
+   * `registerAsLocationRegistry()`, ...).
+   *
+   * Validates the payload shape first (`extractExternalDeliveryPayload()`,
+   * capped to `maxExternalDeliveryPayloadBytes * 2` hex chars — hex
+   * doubles the raw byte count), then looks `destinationId` up in the
+   * **private** allowlist (never the public `externalDeliveryDirectory` —
+   * that one only ever carries `{label, publicKeyHex, requiresPassword}`,
+   * never a routable URL or a password, by design). An unknown
+   * `destinationId` is silently dropped, same defensive posture as an
+   * insufficiently-trusted `considerNodeAppend()` sender — no ack channel
+   * exists for `EXTERNAL_DELIVERY` to report rejection through.
+   *
+   * If the matched destination configured a `password`,
+   * `verifyExternalDeliveryAuthProof()` must also pass before this queues
+   * anything — a missing or wrong `authProof` is rejected exactly like an
+   * unknown `destinationId`, before the entry ever reaches
+   * `externalDeliveryQueue` (never accepted-then-discarded).
+   */
+  private handleExternalDelivery(packet: Packet<ExternalDeliveryPayload>): void {
+    if (!this.externalDeliveryAllowlist) return;
+    const payload = extractExternalDeliveryPayload(packet.payload, this.maxExternalDeliveryPayloadBytes * 2);
+    if (!payload) return;
+    const destination = this.externalDeliveryAllowlist.get(payload.destinationId);
+    if (!destination) return;
+    if (!verifyExternalDeliveryAuthProof(payload.authProof, destination.password, payload.destinationId, payload.nonce, payload.ciphertext, payload.authTag)) {
+      this.emit("external-delivery:rejected", payload.destinationId);
+      return;
+    }
+    this.externalDeliveryQueue.enqueue({
+      packetId: packet.id,
+      destinationId: payload.destinationId,
+      url: destination.url,
+      senderEphemeralPublicKey: payload.senderEphemeralPublicKey,
+      nonce: payload.nonce,
+      ciphertext: payload.ciphertext,
+      authTag: payload.authTag,
+      submittedAt: payload.submittedAt,
+      sizeBytes: Buffer.byteLength(payload.ciphertext, "hex"),
+      priority: packet.priority,
+    });
+    this.emit("external-delivery:queued", packet.id);
+  }
+
+  /**
+   * Publishes this node's `externalDeliveryAllowlist` as a public
+   * `content://` directory (`EXTERNAL_DELIVERY_DIRECTORY_CONTENT_NAME`) —
+   * `{destinationId, label, publicKeyHex, requiresPassword}` per entry,
+   * **never** `url`/`password` (those stay in the private allowlist,
+   * read only by `handleExternalDelivery()`/`attemptExternalDeliveries()`
+   * on this same process). No-op if `externalDeliveryAllowlist` isn't
+   * configured. Same explicit-opt-in-action shape as
+   * `registerAsLocationRegistry()`/`registerAsRelayRegistry()` — never
+   * called automatically from the constructor or `start()`; `cli.ts` calls
+   * it once, after `start()`, when `--external-delivery-destinations` was
+   * given. Re-publishing on a config change is out of scope for this first
+   * cut (a restart with an updated file is sufficient — see the plan's own
+   * "Cosa NON fare").
+   *
+   * Records into this node's own `externalDeliveryDirectory` immediately —
+   * same reasoning as `publishChannelMessage()`'s own doc comment on this
+   * exact pattern: a locally-originated `CONTENT_ANNOUNCE` never loops back
+   * to its own sender's `handleContentAnnounce()`, so without this a BOX
+   * would never see its own directory in `GET /api/external-delivery-destinations`
+   * until some other peer echoed it back via catalog sync.
+   */
+  publishExternalDeliveryDirectory(): void {
+    if (!this.externalDeliveryAllowlist) return;
+    const destinations: ExternalDeliveryDirectoryEntry[] = Array.from(this.externalDeliveryAllowlist.values()).map((d) => ({
+      destinationId: d.destinationId,
+      label: d.label,
+      publicKeyHex: d.publicKeyHex,
+      requiresPassword: d.password !== undefined,
+    }));
+    const payload: ExternalDeliveryDirectoryPayload = { destinations, createdAt: Date.now() };
+    this.publishContent(EXTERNAL_DELIVERY_DIRECTORY_CONTENT_NAME, "application/json", Buffer.from(JSON.stringify(payload), "utf8"), {
+      announce: true,
+      priority: Priority.CONTENT,
+    });
+    this.externalDeliveryDirectory.record(this.nodeId, payload);
+  }
+
+  /**
+   * Same shape and reasoning as `considerDrop()`/`considerEmergencyBeacon()`
+   * — fires when a newly-learned piece of content's name matches
+   * `EXTERNAL_DELIVERY_DIRECTORY_CONTENT_NAME` exactly. Bounded to
+   * `MAX_CONCURRENT_EXTERNAL_DELIVERY_DIRECTORY_FETCHES` in flight, its own
+   * independent budget (see that constant's own doc comment for why it is
+   * never shared with `considerDrop()`'s/`considerChannelMessage()`'s).
+   *
+   * No `fromPeerId`/`receivedFrom` tracking here, unlike `considerDrop()`:
+   * a directory publication isn't a single-hop "Observation" of an event —
+   * it's a standing catalog entry, recorded per-`publisherId` by
+   * `ExternalDeliveryDirectory.record()` regardless of which peer relayed
+   * this particular copy.
+   */
+  private considerExternalDeliveryDirectory(metadata: ContentMetadata): void {
+    if (metadata.name !== EXTERNAL_DELIVERY_DIRECTORY_CONTENT_NAME) return;
+    const publisherId = metadata.publisherId;
+    if (!publisherId) return;
+    const { contentId } = metadata;
+    if (
+      this.pendingExternalDeliveryDirectoryFetches.has(contentId) ||
+      this.pendingExternalDeliveryDirectoryFetches.size >= MAX_CONCURRENT_EXTERNAL_DELIVERY_DIRECTORY_FETCHES
+    ) {
+      return;
+    }
+    this.pendingExternalDeliveryDirectoryFetches.add(contentId);
+    this.getContent(contentId, { timeoutMs: this.contentRequestTimeoutMs })
+      .then((data) => {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(data.toString("utf8"));
+        } catch {
+          return; // malformed — never trust content shape just because the signature verified
+        }
+        const payload = extractExternalDeliveryDirectoryPayload(parsed);
+        if (!payload) return;
+        this.externalDeliveryDirectory.record(publisherId, payload);
+      })
+      .catch(() => {})
+      .finally(() => this.pendingExternalDeliveryDirectoryFetches.delete(contentId));
+  }
+
+  /**
+   * Drives `externalDeliveryQueue` toward delivery — meant to be called
+   * periodically by an external timer (`cli.ts`'s
+   * `--external-delivery-poll-interval-ms`), same pattern already
+   * established for `reportRelayTelemetry()`: this class owns no
+   * `setInterval` of its own (see `CLAUDE.md`'s own convention on this).
+   * No-op if `externalDeliveryAllowlist` isn't configured (the role is
+   * off, so the queue is guaranteed empty anyway).
+   *
+   * Sequential, not parallel, on purpose: these are outbound requests to a
+   * handful of admin-configured external servers, not a burst against the
+   * mesh — nothing here needs the concurrency `considerDrop()`-style
+   * bounded-`Set` fan-out exists for. A failed attempt (`attemptExternalDeliveryPost()`
+   * returning `false`) leaves the entry queued for the next tick, exactly
+   * the "best-effort, no ack" posture already documented on
+   * `ExternalDeliveryQueue` itself.
+   *
+   * Reentrancy-guarded (`externalDeliveryAttemptInFlight`, found by
+   * code-review): `cli.ts` drives this off a bare `setInterval` that never
+   * awaits the previous call, so a slow/unreachable destination
+   * (`attemptExternalDeliveryPost()`'s own 10s default timeout, times
+   * however many entries are due) can easily still be running when the
+   * next tick fires. Without this guard, two overlapping calls would both
+   * see the same still-queued entries (an entry is only `remove()`d
+   * *after* a successful POST) and could each independently POST the same
+   * file to the external organization's server — a real double-delivery in
+   * a feature explicitly designed to be best-effort but single-delivery,
+   * not a merely theoretical race.
+   */
+  async attemptExternalDeliveries(): Promise<void> {
+    if (!this.externalDeliveryAllowlist || this.externalDeliveryAttemptInFlight) return;
+    this.externalDeliveryAttemptInFlight = true;
+    try {
+      const entries = this.externalDeliveryQueue.entriesDueForAttempt();
+      for (const entry of entries) {
+        const delivered = await attemptExternalDeliveryPost(entry);
+        if (delivered) {
+          this.externalDeliveryQueue.remove(entry.packetId);
+          this.emit("external-delivery:delivered", entry.packetId);
+        }
+      }
+    } finally {
+      this.externalDeliveryAttemptInFlight = false;
+    }
   }
 
   /**
@@ -2514,6 +2885,10 @@ export class NomadNode extends EventEmitter {
         this.handleGroupMessage(packet as Packet<GroupMessagePacketPayload>);
         break;
 
+      case MessageType.EXTERNAL_DELIVERY:
+        this.handleExternalDelivery(packet as Packet<ExternalDeliveryPayload>);
+        break;
+
       default:
         break;
     }
@@ -2810,6 +3185,7 @@ export class NomadNode extends EventEmitter {
       this.considerChannelMessage(accepted);
       this.considerDrop(accepted, fromPeerId);
       this.considerEmergencyBeacon(accepted, fromPeerId);
+      this.considerExternalDeliveryDirectory(accepted);
     }
   }
 
@@ -2832,6 +3208,7 @@ export class NomadNode extends EventEmitter {
         this.considerChannelMessage(result);
         this.considerDrop(result, fromPeerId);
         this.considerEmergencyBeacon(result, fromPeerId);
+        this.considerExternalDeliveryDirectory(result);
       }
     }
     if (accepted.length > 0) this.emit("catalog-sync", accepted);
@@ -3064,6 +3441,15 @@ export class NomadNode extends EventEmitter {
    */
   private acceptIdentityAnnouncement(announcement: IdentityAnnouncement | undefined | null): boolean {
     if (!announcement || announcement.nodeId === this.nodeId) return false; // malformed, or a claim about ourselves — never record either
+    // deviceClass is part of the signed payload (encryption.ts), so a valid signature only proves
+    // the announcing node really did sign whatever shape it sent — nothing stops a node (honest but
+    // buggy, or hostile) from self-signing a malformed deviceClass (wrong type off the wire, or an
+    // oversized string). The whole announcement is rejected here rather than just stripping the bad
+    // field, because stripping it would invalidate the signature for anyone this node re-shares it
+    // with (verifyIdentityAnnouncement() recomputes the signed payload from whatever fields the
+    // announcement currently carries) — same "reject the whole malformed claim" precedent already
+    // used for e.g. a Drop with a bad label (drops.ts's extractDropPayload()), not a novel policy.
+    if (announcement.deviceClass !== undefined && !isValidDeviceClass(announcement.deviceClass)) return false;
     if (!verifyIdentityAnnouncement(announcement)) return false; // unsigned or forged claim — never trust it
     if (!this.peerDirectory.record(announcement)) return false;
     this.trust.markVerified(announcement.nodeId);
