@@ -1712,7 +1712,14 @@ function updateExternalDeliveryPasswordVisibility() {
 }
 document.getElementById("send-external-delivery-destination").addEventListener("change", updateExternalDeliveryPasswordVisibility);
 
-/** Reads a `File` into a base64 string (no `data:...;base64,` prefix) for `POST /api/external-delivery`'s `dataBase64` field — no multipart upload exists anywhere in this codebase (`CLAUDE.md`, "niente di nuovo senza necessità reale"), same JSON-body convention every other write on this page already uses. */
+/**
+ * Reads a `File` or `Blob` into a base64 string (no `data:...;base64,` prefix) for `POST
+ * /api/external-delivery`'s `dataBase64` field — no multipart upload exists anywhere in this
+ * codebase (`CLAUDE.md`, "niente di nuovo senza necessità reale"), same JSON-body convention every
+ * other write on this page already uses. Also the encoding path for a typed text message (see the
+ * submit handler below): wrapping it in `new Blob([text], {type: "text/plain"})` reuses this exact,
+ * already-tested reader instead of a second UTF-8-to-base64 implementation.
+ */
 function readFileAsBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1731,18 +1738,30 @@ document.getElementById("send-external-delivery-form").addEventListener("submit"
   event.preventDefault();
   const select = document.getElementById("send-external-delivery-destination");
   const passwordInput = document.getElementById("send-external-delivery-password");
+  const textInput = document.getElementById("send-external-delivery-text");
   const fileInput = document.getElementById("send-external-delivery-file");
   const status = document.getElementById("send-external-delivery-status");
   const destinationId = select.value;
   const destination = knownExternalDeliveryDestinations.find((d) => d.destinationId === destinationId);
+  const text = textInput.value.trim();
   const file = fileInput.files[0];
-  if (!destination || !file) return;
+  if (!destination) return; // <select required> already stops this at the browser level
+  // A typed message wins over an attached file when both are present, rather than silently picking
+  // one or sending both — simplest rule for a form with two ways to provide the same "data" field.
+  if (!text && !file) {
+    // Neither field has a browser-native `required` (each is optional on its own — either one
+    // suffices), so unlike a missing destination this has no built-in feedback: say so explicitly
+    // instead of the button silently doing nothing (gap found by code review).
+    status.classList.add("error");
+    status.textContent = "Scrivi un messaggio o scegli un file da inviare.";
+    return;
+  }
   const submit = event.target.querySelector("button[type=submit]");
   setSendExternalDeliveryBusy(submit, true);
   status.classList.remove("error");
   status.textContent = "Invio in corso...";
   try {
-    const dataBase64 = await readFileAsBase64(file);
+    const dataBase64 = text ? await readFileAsBase64(new Blob([text], { type: "text/plain" })) : await readFileAsBase64(file);
     await sendExternalDelivery({
       boxNodeId: destination.boxNodeId,
       destinationId: destination.destinationId,
@@ -1750,13 +1769,16 @@ document.getElementById("send-external-delivery-form").addEventListener("submit"
       dataBase64,
       password: passwordInput.hidden ? undefined : passwordInput.value,
     });
+    textInput.value = "";
     fileInput.value = "";
     passwordInput.value = "";
     select.value = "";
     updateExternalDeliveryPasswordVisibility();
-    status.textContent = "File inviato — verrà consegnato non appena la destinazione sarà raggiungibile.";
+    status.textContent = text
+      ? "Messaggio inviato — verrà consegnato non appena la destinazione sarà raggiungibile."
+      : "File inviato — verrà consegnato non appena la destinazione sarà raggiungibile.";
     vibrate(10);
-    showToast("File inviato per la consegna", "cloud");
+    showToast(text ? "Messaggio inviato per la consegna" : "File inviato per la consegna", "cloud");
   } catch (err) {
     if (err.status === 401) {
       handlePasswordRejected();

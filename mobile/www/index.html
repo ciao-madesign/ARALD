@@ -300,14 +300,15 @@
             <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-cloud"></use></svg> Invia a un'organizzazione</h2>
             <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
           </div>
-          <p class="hint">Manda un file a una destinazione esterna (es. la sede di un'organizzazione) — resta in coda su un nodo con accesso a Internet finché non riesce a consegnarlo, cifrato per la sola destinazione scelta.</p>
+          <p class="hint">Manda un messaggio di testo o un file a una destinazione esterna (es. la sede di un'organizzazione, o un contatto WhatsApp) — resta in coda su un nodo con accesso a Internet finché non riesce a consegnarlo, cifrato per la sola destinazione scelta.</p>
         </summary>
         <form id="send-external-delivery-form">
           <select id="send-external-delivery-destination" required>
             <option value="" disabled selected>Scegli una destinazione...</option>
           </select>
           <input id="send-external-delivery-password" type="password" placeholder="Password del canale" autocomplete="off" hidden>
-          <input id="send-external-delivery-file" type="file" required>
+          <textarea id="send-external-delivery-text" placeholder="Scrivi un messaggio..." rows="3"></textarea>
+          <input id="send-external-delivery-file" type="file">
           <button type="submit">Invia</button>
           <p id="send-external-delivery-status" class="muted" role="status" aria-live="polite"></p>
         </form>

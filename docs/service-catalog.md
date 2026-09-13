@@ -80,7 +80,9 @@ Costruito il 9 settembre 2026 (`docs/security.md` voce #70) — un operatore sul
 5. **Storage in attesa sul BOX**: `ExternalDeliveryQueue`, bounded su due assi (conteggio *e* byte totali — le entry variano molto in dimensione), eviction priority-weighted, TTL assoluto (default 100 entry / 50 MB / 24h, tarabile via flag CLI).
 6. **Consegna best-effort, nessun ack** — un ciclo periodico (`--external-delivery-poll-interval-ms`) tenta una `POST` HTTP verso la destinazione quando Internet torna disponibile; un tentativo fallito lascia l'entry in coda per il turno successivo, fino al TTL.
 
-**UI mobile**: pannello "Invia a un'organizzazione" (`mobile/www/`, vedi `mobile/README.md`) — tendina delle sole etichette note, campo password mostrato solo se richiesto, un file, un bottone "Invia". Deliberatamente minimale, non una passata di design.
+**UI mobile**: pannello "Invia a un'organizzazione" (`mobile/www/`, vedi `mobile/README.md`) — tendina delle sole etichette note, campo password mostrato solo se richiesto, un messaggio di testo o un file, un bottone "Invia". Deliberatamente minimale, non una passata di design.
+
+**Primo esempio concreto di destinazione — un relay verso WhatsApp** (`docs/security.md` voce #76, 13 settembre 2026): `whatsapp-relay/`, un piccolo servizio indipendente (fuori dalla mesh, fuori dal workspace npm) che un operatore fa girare sul proprio server sempre connesso — riceve la busta E2E-cifrata dal Box, la decifra con la propria chiave privata, e invia il testo in chiaro a un contatto WhatsApp fisso via WhatsApp Business Cloud API. Nessuna modifica al protocollo mesh: il payload che la mesh trasporta è già byte opachi, "WhatsApp" è solo una scelta di cosa gira sul server ricevente. Generalizza allo stesso schema qualunque altro servizio esterno puntuale (email, un post su un canale, un upload) — vedi `docs/security.md` voce #76 per il dettaglio tecnico completo, incluse le due cose verificate solo con conoscenza di addestramento e non con accesso reale a Meta (forma dell'API, limite di lunghezza messaggio).
 
 ## Pacchetti per caso d'uso
 

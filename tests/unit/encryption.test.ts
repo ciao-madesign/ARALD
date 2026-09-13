@@ -30,6 +30,34 @@ describe("EncryptionIdentity", () => {
 
     expect(a.sharedKeyWith(b.publicKeyHex)).not.toEqual(a.sharedKeyWith(c.publicKeyHex));
   });
+
+  it("fromRawKeys() reconstructs an identity that derives the same shared key as the original (persistence round-trip)", () => {
+    const original = EncryptionIdentity.generate();
+    const peer = EncryptionIdentity.generate();
+
+    const reconstructed = EncryptionIdentity.fromRawKeys(Buffer.from(original.publicKeyHex, "hex"), original.exportRawPrivateKey());
+
+    expect(reconstructed.publicKeyHex).toBe(original.publicKeyHex);
+    expect(reconstructed.sharedKeyWith(peer.publicKeyHex)).toEqual(original.sharedKeyWith(peer.publicKeyHex));
+    expect(peer.sharedKeyWith(reconstructed.publicKeyHex)).toEqual(peer.sharedKeyWith(original.publicKeyHex));
+  });
+
+  it("fromRawKeys() rejects a publicKeyRaw that doesn't correspond to privateKeyRaw, instead of silently reconstructing a wrong-but-functional identity", () => {
+    const a = EncryptionIdentity.generate();
+    const b = EncryptionIdentity.generate();
+
+    expect(() => EncryptionIdentity.fromRawKeys(Buffer.from(b.publicKeyHex, "hex"), a.exportRawPrivateKey())).toThrow(
+      /does not match/,
+    );
+  });
+
+  it("exportRawPrivateKey() returns the raw 32-byte X25519 scalar, distinct per identity", () => {
+    const a = EncryptionIdentity.generate();
+    const b = EncryptionIdentity.generate();
+
+    expect(a.exportRawPrivateKey()).toHaveLength(32);
+    expect(a.exportRawPrivateKey()).not.toEqual(b.exportRawPrivateKey());
+  });
 });
 
 describe("encryptForPeer / decryptFromPeer", () => {

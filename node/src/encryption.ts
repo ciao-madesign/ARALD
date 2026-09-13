@@ -2,6 +2,7 @@ import {
   createCipheriv,
   createDecipheriv,
   createHash,
+  createPrivateKey,
   createPublicKey,
   diffieHellman,
   generateKeyPairSync,
@@ -41,6 +42,45 @@ export class EncryptionIdentity {
 
   static publicKeyFromHex(hex: string): KeyObject {
     return createPublicKey({ key: { kty: "OKP", crv: "X25519", x: Buffer.from(hex, "hex").toString("base64url") }, format: "jwk" });
+  }
+
+  /**
+   * Reconstructs an identity from raw key material persisted elsewhere — same reasoning and JWK
+   * shape as `Identity.fromRawKeys()` (identity.ts) for the Ed25519 node identity, just for X25519.
+   * Needed by a "consegna esterna differita" destination outside the mesh (`external-delivery.ts`):
+   * that identity has to survive its own process restarts, which `generate()` alone can't support
+   * (its key pair is never exposed for persistence). Round-tripped against Node's own `x25519`
+   * key generation in this session (generate → export raw d/x → reconstruct → compare a
+   * `diffieHellman()` result against the original), not merely assumed to work like Ed25519's.
+   *
+   * **Verifies `publicKeyRaw` actually corresponds to `privateKeyRaw`** — found necessary by code
+   * review, empirically confirmed in this session: Node's X25519 key derivation from a JWK with both
+   * `x` and `d` silently ignores a mismatched `x` and derives the *real* public key from `d` alone
+   * (mathematically trivial for X25519 — no ambiguity to resolve, so Node doesn't bother checking).
+   * Without this guard, a corrupted or hand-edited persisted key pair (e.g. a `publicKeyHex` copied
+   * from a different destination's file than its `privateKeyHex`) would be accepted silently: this
+   * identity would still work internally (its `sharedKeyWith()` always uses the real key derived from
+   * `d`), but its advertised `publicKeyHex` would be wrong — every peer who encrypts to that
+   * (wrong) public key produces a shared secret this identity can never reproduce, so every future
+   * delivery to it fails decryption permanently, with no clearer error than "wrong key" at the point
+   * of use. Failing loudly here, once, at load time, beats that.
+   */
+  static fromRawKeys(publicKeyRaw: Buffer, privateKeyRaw: Buffer): EncryptionIdentity {
+    const x = publicKeyRaw.toString("base64url");
+    const publicKey = createPublicKey({ key: { kty: "OKP", crv: "X25519", x }, format: "jwk" });
+    const privateKey = createPrivateKey({ key: { kty: "OKP", crv: "X25519", x, d: privateKeyRaw.toString("base64url") }, format: "jwk" });
+    const actualPublicKey = createPublicKey(privateKey);
+    const actualX = (actualPublicKey.export({ format: "jwk" }) as { x: string }).x;
+    if (actualX !== x) {
+      throw new Error("EncryptionIdentity.fromRawKeys(): publicKeyRaw does not match privateKeyRaw");
+    }
+    return EncryptionIdentity.fromKeyObjects(publicKey, privateKey);
+  }
+
+  /** `fromRawKeys()`'s counterpart, for persisting a freshly `generate()`d identity — mirrors `Identity.exportRawPrivateKey()`. */
+  exportRawPrivateKey(): Buffer {
+    const jwk = this.privateKey.export({ format: "jwk" }) as { d: string };
+    return Buffer.from(jwk.d, "base64url");
   }
 
   /**
