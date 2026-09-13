@@ -25,7 +25,7 @@ Il piano d'insieme originario (milestone 0-20 + i follow-up post-audit) è compl
 | Cosa cerchi | Dove vive |
 |---|---|
 | Stato delle milestone 0-20, cosa resta bloccato e su cosa | [`docs/roadmap.md`](docs/roadmap.md) |
-| Storia feature-per-feature: cosa è stato costruito, perché, bug trovati dalla revisione (voci numerate #1-69+) | [`docs/security.md`](docs/security.md) |
+| Storia feature-per-feature: cosa è stato costruito, perché, bug trovati dalla revisione (voci numerate #1-79+) | [`docs/security.md`](docs/security.md) |
 | Candidati aperti/non ancora pianificati | [`docs/next-steps.md`](docs/next-steps.md) |
 | Ecosistema ARALD Card (Beacon/Relay Mode), Fixed Relay, Relay Registry | [`docs/beacon.md`](docs/beacon.md) |
 | Metodo di progettazione hardware/RF orientato alla conformità (PCB, antenna, Technical File, Design Freeze, roadmap M0-M9) | [`docs/compliance.md`](docs/compliance.md) |
@@ -81,7 +81,7 @@ nomad-net/
 ├─ local-portal/    dashboard operativa servita via LAN dal Box (Emergency Portal) — vedi docs/emergency-portal.md
 ├─ mirror-portal/   frontend Next.js sullo specchio Postgres, in produzione su Vercel — vedi docs/emergency-portal.md
 ├─ firmware/        firmware embedded Arduino/C++ per microcontrollori reali (es. sx126x-bridge/, il bridge seriale↔SPI per il chip radio SX1262) — vedi docs/security.md voce #73
-├─ whatsapp-relay/  destinazione "consegna esterna differita" verso WhatsApp — servizio indipendente fuori dalla mesh, non nel workspace npm, come gateway/nomad/ — vedi docs/security.md voce #76
+├─ whatsapp-relay/  destinazione "consegna esterna differita" verso WhatsApp — servizio indipendente fuori dalla mesh, non nel workspace npm, come gateway/nomad/ — vedi docs/security.md voce #79
 └─ protocol/        segnaposto definizioni di protocollo condivise — non contiene codice reale
 ```
 
@@ -108,7 +108,7 @@ L'app mobile (`mobile/www/`, JS/TS vanilla senza framework) è un client verso u
 - `trust.ts` — `TrustLevel`/`TrustManager` (spec §54).
 - `rate-limit.ts` — `RateLimiter`, budget di pacchetti per peer/finestra; `windows` è una `BoundedFifoMap` — un mittente broadcast con identità usa-e-getta rotanti farebbe altrimenti crescere la mappa senza limite.
 - `relay-policy.ts` — relay `off`/`always`/`when-charging`/`battery-above`. `getCurrentResourceState()` espone lo stesso stato self-dichiarato anche a `NomadNode.reportRelayTelemetry()` — un solo posto dove configurare "qual è la mia batteria".
-- `encryption.ts` — E2E per messaggi privati (X25519 + AES-256-GCM), `IdentityAnnouncement`. `EncryptionIdentity.fromRawKeys()`/`exportRawPrivateKey()` (voce #76) — persistenza di un'identità X25519 fuori dal ciclo di vita di un `NomadNode` (es. una destinazione "consegna esterna differita" che deve sopravvivere ai propri riavvii), stessa forma JWK di `Identity.fromRawKeys()` in `identity.ts`.
+- `encryption.ts` — E2E per messaggi privati (X25519 + AES-256-GCM), `IdentityAnnouncement`. `EncryptionIdentity.fromRawKeys()`/`exportRawPrivateKey()` (voce #79) — persistenza di un'identità X25519 fuori dal ciclo di vita di un `NomadNode` (es. una destinazione "consegna esterna differita" che deve sopravvivere ai propri riavvii), stessa forma JWK di `Identity.fromRawKeys()` in `identity.ts`.
 - `peer-directory.ts` — propagazione delle chiavi di cifratura tra peer.
 - `message-history.ts` — `MessageHistory`, cronologia locale 1:1 (mai firmata/propagata), bounded. Esporta `MAX_MESSAGE_TEXT_LENGTH`, il limite canonico riusato anche da `web-ui.ts`/`public-channels.ts`.
 - `public-channels.ts` — `PublicChannels`, canali pubblici non cifrati sopra `content://` (convenzione nome `chat:<canale>`), bounded con eviction pesata sul **massimo** tra le fiducie degli autori visti nel canale.
@@ -133,7 +133,7 @@ L'app mobile (`mobile/www/`, JS/TS vanilla senza framework) è un client verso u
 
 `nomad-hub/` (non nel workspace npm, non nemmeno `gateway/nomad/` — importa solo `loopback-http-server.ts`/`bounded-map.ts` da `node/src/`, mai `NomadNode`): `docker-client.ts` (`DockerClient`, client HTTP-su-Unix-Domain-Socket verso la Docker Engine API, nessuna dipendenza `dockerode`), `fake-docker-server.ts` (stand-in per test/demo), `capability-manager.ts` (`getHardwareProfile()` via `node:os`/`node:fs`, deliberatamente indipendente da Docker — `gpu`/`npu`/`bluetooth`/`usb3` sempre `null`, mai indovinati), `management-server.ts` (`ManagementServer`, password di gestione propria separata da quella di rete della mesh, mai esposta via HTTP), `cli.ts` (`npm run hub`, default Docker reale, `--fake-docker` opt-in per demo/test).
 
-`whatsapp-relay/` (non nel workspace npm, come `gateway/nomad/` — vedi `docs/security.md` voce #76, `whatsapp-relay/README.md`): `keypair.ts` (`loadOrCreateDestinationKeypair()`, persistenza X25519 su file), `whatsapp-client.ts` (`sendWhatsAppText()`, forma della WhatsApp Business Cloud API **ricostruita da conoscenza di addestramento, non verificata contro Meta in questo ambiente**), `fake-whatsapp-cloud-server.ts` (stand-in per test/demo), `server.ts` (`WhatsAppRelayServer` — riceve la busta E2E-cifrata dal Box via HTTP, la decifra, invia il testo a WhatsApp; deduplica i retry con una `BoundedFifoMap` delle consegne già riuscite), `cli.ts` (`npm run whatsapp-relay -- --config <file.json>`, `--fake-whatsapp` opt-in per demo/test).
+`whatsapp-relay/` (non nel workspace npm, come `gateway/nomad/` — vedi `docs/security.md` voce #79, `whatsapp-relay/README.md`): `keypair.ts` (`loadOrCreateDestinationKeypair()`, persistenza X25519 su file), `whatsapp-client.ts` (`sendWhatsAppText()`, forma della WhatsApp Business Cloud API **ricostruita da conoscenza di addestramento, non verificata contro Meta in questo ambiente**), `fake-whatsapp-cloud-server.ts` (stand-in per test/demo), `server.ts` (`WhatsAppRelayServer` — riceve la busta E2E-cifrata dal Box via HTTP, la decifra, invia il testo a WhatsApp; deduplica i retry con una `BoundedFifoMap` delle consegne già riuscite), `cli.ts` (`npm run whatsapp-relay -- --config <file.json>`, `--fake-whatsapp` opt-in per demo/test).
 
 ## Convenzioni consolidate (da rispettare per coerenza, non da riscoprire)
 

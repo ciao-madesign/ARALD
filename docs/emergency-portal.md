@@ -1,6 +1,6 @@
 # Emergency Portal — architettura del portale web (proposta)
 
-**Stato**: documentazione di riferimento/pianificazione per l'insieme della proposta, **con cinque pezzi concreti realizzati** (`arald-backend/` → `local-portal/` → sincronizzazione periodica → `mirror-portal/` in produzione su Vercel → schema multi-tenant/autenticazione operatori, 8 settembre 2026 — vedi "Quinto pezzo realizzato" in fondo). Resta un solo pezzo a livello di proposta, nessuna decisione presa: il canale di comando Box↔specchio per le scritture da remoto.
+**Stato**: documentazione di riferimento/pianificazione per l'insieme della proposta, **con sette pezzi concreti realizzati** (`arald-backend/` → `local-portal/` → sincronizzazione periodica → `mirror-portal/` in produzione su Vercel → schema multi-tenant/autenticazione operatori → restyle+Mappa → `AUTH_SECRET`/primo Admin, 13 settembre 2026 — vedi "Settimo pezzo realizzato" in fondo). L'autenticazione del pannello Admin è ora **operativa in produzione**, non solo pronta. Resta un solo pezzo a livello di proposta, nessuna decisione presa: il canale di comando Box↔specchio per le scritture da remoto.
 
 ## Nota terminologica: "ARALD" — risolta
 
@@ -211,11 +211,18 @@ Pianificato con l'utente prima del codice, in linguaggio semplice: perché serve
 
 **Fuori scope, deliberatamente**: login e pannello Admin non hanno ricevuto la stessa passata di design (nessun bozzetto le copriva) — ereditano solo i token di colore/font aggiornati, nessun cambio strutturale.
 
+## Settimo pezzo realizzato — `AUTH_SECRET` impostato e primo Admin creato (13 settembre 2026)
+
+I due passi pratici lasciati aperti dal quinto pezzo (sotto, "Prossimo passo" originale) sono stati completati, chiudendo il gap che teneva l'autenticazione del pannello Admin non operativa in produzione nonostante il codice fosse pronto da giorni.
+
+**Diagnosi, non supposizione**: l'utente ha segnalato "prima mi dice credenziali errate e poi Server error — problema di configurazione" dopo il primo tentativo di login. Invece di assumere una causa, i log runtime reali di Vercel (`get_runtime_errors`) sono stati letti direttamente: `[auth][error] MissingSecret: Please define a 'secret'` su `/api/auth/[...nextauth]` — `AUTH_SECRET` (richiesta da Auth.js v5, `next-auth@5.0.0-beta.32`, letta automaticamente da `process.env` in `auth.ts`) non era mai stata impostata su Vercel, unico motivo di entrambi i sintomi (senza secret, Auth.js non può firmare una sessione JWT nemmeno con credenziali corrette).
+
+**Impostato dall'utente su Vercel** (Project Settings → Environment Variables, ambiente Production): `AUTH_SECRET` con un valore generato per l'occasione (`crypto.randomBytes(33).toString("base64")`, equivalente a `npx auth secret`/`openssl rand -base64 33` già raccomandati qui sotto), seguito da un redeploy. Verificato dopo, non solo dichiarato dall'utente: `get_runtime_errors` sul nuovo deployment non mostra più `MissingSecret`, e `get_runtime_logs` conferma `POST /api/auth/callback/credentials 200` seguito da navigazione riuscita (`GET /` e `GET /mappa`, entrambi 200) — login reale, non solo "l'errore non compare più".
+
+**Primo Admin creato senza sbloccare la connessione diretta a Neon** (che resta bloccata dalla policy di rete di questa sandbox, riverificata attivamente in questa stessa sessione: 403 esplicito su `console.neon.tech`, connessione chiusa a metà sull'host Postgres — non uno stato cambiato rispetto a quanto già documentato nel primo pezzo). `npm run create-admin` non può girare da qui per lo stesso motivo. **Bypass legittimo, stesso già usato per il provisioning dello schema**: gli strumenti MCP di Neon girano lato server, fuori da questa restrizione. Replicata manualmente la logica esatta di `scripts/create-admin.ts`/`lib/auth-db.ts::createUser()` — hash scrypt calcolato in locale con `node:crypto` (stesso formato `salt:hash` esadecimale di `lib/password.ts`, nessuna rete richiesta per il calcolo), poi due `INSERT` (su `users` e `audit_logs`, con `action: "user_created"`/`actor_user_id: null` — la stessa firma di bootstrap che lascerebbe lo script originale) eseguiti via `mcp__Neon__run_sql`. **Unica differenza reale dallo script**: i due `INSERT` sono girati come chiamate separate invece che in un'unica transazione — lo strumento Neon MCP usa prepared statement e rifiuta più comandi (`BEGIN`/`COMMIT` inclusi) in una sola chiamata; accettabile qui perché la tabella `users` era vuota e senza scritture concorrenti possibili durante l'operazione. Verificato, non assunto: l'hash memorizzato è stato ricalcolato in locale con la password reale e confrontato byte per byte contro `verifyPassword()` (`timingSafeEqual` → `true`) prima di considerare l'operazione conclusa — poi confermato dal login riuscito sopra.
+
+Con questo, l'intero quinto pezzo (schema multi-tenant + autenticazione) è **operativo in produzione**, non solo "codice pronto in attesa di due passi manuali".
+
 ## Prossimo passo
 
-Il quinto pezzo è completo, testato e verificato dal vivo — restano due azioni pratiche lato utente prima che l'autenticazione sia operativa in produzione, nessun lavoro di codice necessario:
-
-1. **Impostare `AUTH_SECRET` su Vercel** (Project Settings → Environment Variables, stesso posto di `DATABASE_URL`) — genera un valore con `npx auth secret` o `openssl rand -base64 33`, mai un valore a piacere.
-2. **Creare il primo Admin** eseguendo `npm run create-admin -- --email ... --password ...` da una macchina che raggiunge Neon (con `DATABASE_URL` impostata), oppure chiedendo a una sessione futura di farlo tramite gli strumenti Neon direttamente (serve email/password scelti dall'utente).
-
-Dopo questi due passi, resta da pianificare esplicitamente con l'utente, nessuna decisione presa qui: **canale di comando Box↔specchio** per le scritture da remoto — il pezzo più delicato della proposta originale, ora finalmente sbloccato dall'esistenza di un operatore remoto autenticato.
+Resta da pianificare esplicitamente con l'utente, nessuna decisione presa qui: **canale di comando Box↔specchio** per le scritture da remoto — il pezzo più delicato della proposta originale, ora finalmente sbloccato dall'esistenza di un operatore remoto autenticato e operativo.

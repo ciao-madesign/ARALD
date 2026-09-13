@@ -412,40 +412,71 @@ const PAGE_HTML = `<!doctype html>
 <title>ARALD</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
+  /* Restyle 13 settembre 2026 (docs/security.md voce #76): stessa identità visiva appena approvata
+     per mirror-portal/ (stessi valori esatti di colore, stesso linguaggio di forma) — le due pagine
+     sono "sorelle" per scelta architetturale dichiarata da tempo (vedi mirror-portal/app/globals.css,
+     riga 1-4). Deliberatamente SENZA la tipografia Google Fonts usata lì: questa pagina gira in
+     locale sul Box, che può non avere mai accesso a Internet (il punto centrale di ARALD) — stack di
+     sistema qui, stessa scelta già presa per l'app mobile ("font auto-ospitati... per funzionare
+     offline", mobile/README.md) applicata nel modo più semplice possibile: niente da scaricare.
+  */
   :root {
     color-scheme: light dark;
-    --bg: #f4f6f5; --card: #ffffff; --border: #d9dfdc; --ink: #16211e; --muted: #5c6b66;
-    --accent: #1f7a68; --accent-soft: #e2f1ed;
-    --good: #1f7a4a; --good-soft: #e3f3e8;
-    --warn: #a8631a; --warn-soft: #faeee0;
-    --off: #8a938f; --off-soft: #ecefed;
+    --bg: #f5f6f4; --card: #ffffff; --border: #e0e4e1; --ink: #172420; --muted: #5f6e68;
+    --accent: #1c6b57; --accent-dark: #123f33; --accent-soft: #e5f2ee;
+    --good: #1f7a4a; --good-soft: #e6f4ea;
+    --warn: #9a5b12; --warn-soft: #faf0df;
+    --off: #5f6e68; --off-soft: #eef0ee;
+    /* Fixed, deliberately NOT overridden in the dark media query below — found by review: the header
+       bar's white text needs a consistently dark fill to read well, but --accent/--accent-dark are
+       themselves flipped LIGHT in dark mode (correct for their other job, small accents/links/icons
+       on a dark page background) — using them for the header gradient in both themes left dark mode
+       at ~2.2-2.8:1 contrast, well under WCAG AA. This brand bar stays visually the same dark teal in
+       both themes instead (a colored header doesn't have to invert with the rest of the page). */
+    --header-from: #1c6b57;
+    --header-to: #123f33;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #101614; --card: #182220; --border: #2b3733; --ink: #e7ece9; --muted: #93a19b;
-      --accent: #4fbfa2; --accent-soft: #163a32;
+      --accent: #4fbfa2; --accent-dark: #2f8b71; --accent-soft: #163a32;
       --good: #4fbf7c; --good-soft: #163a24;
       --warn: #e0a352; --warn-soft: #3a2c14;
-      --off: #6b7671; --off-soft: #202a26;
+      --off: #93a19b; --off-soft: #202a26;
     }
   }
   * { box-sizing: border-box; }
   body {
     font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
     background: var(--bg); color: var(--ink);
-    max-width: 64em; margin: 0 auto; padding: 1.5em 1em 3em;
+    margin: 0;
     line-height: 1.45;
   }
   .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
-  header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 0.5em; margin-bottom: 1.2em; }
+  header {
+    background: linear-gradient(180deg, var(--header-from) 0%, var(--header-to) 130%);
+    color: #fff;
+    padding: 1em;
+  }
+  .header-inner {
+    max-width: 64em; margin: 0 auto;
+    display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 0.5em;
+  }
+  .page-inner { max-width: 64em; margin: 0 auto; padding: 1.2em 1em 3em; }
   h1 { margin: 0; font-size: 1.4em; letter-spacing: 0.02em; }
   h2 { margin: 0 0 0.7em; font-size: 1em; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
-  #node-label { font-size: 0.85em; color: var(--muted); }
+  #node-label { font-size: 0.85em; opacity: 0.85; }
   .pill { display: inline-flex; align-items: center; gap: 0.4em; padding: 0.25em 0.7em; border-radius: 999px; font-size: 0.82em; font-weight: 600; }
   .pill.good { background: var(--good-soft); color: var(--good); }
   .pill.warn { background: var(--warn-soft); color: var(--warn); }
   .pill.off { background: var(--off-soft); color: var(--off); }
   .dot { width: 0.55em; height: 0.55em; border-radius: 50%; background: currentColor; flex: none; }
+  /* Inside the colored header bar, the soft light-on-light pill above would lose all contrast — a
+     translucent-white treatment instead, dot color still carrying the good/off distinction (mirrors
+     mirror-portal/app/globals.css's own .role-pill, adapted here for a status dot instead of text). */
+  header .pill { background: rgba(255, 255, 255, 0.18); color: #fff; }
+  header .pill.good .dot { background: #8fe0bd; }
+  header .pill.off .dot { background: #f2b3ab; }
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(9.5em, 1fr)); gap: 0.7em; margin-bottom: 1.4em; }
   .stat { background: var(--card); border: 1px solid var(--border); border-radius: 0.6em; padding: 0.8em 1em; }
   .stat .v { font-size: 1.5em; font-weight: 700; }
@@ -465,23 +496,33 @@ const PAGE_HTML = `<!doctype html>
   .empty { color: var(--muted); font-style: italic; padding: 0.4em 0; }
   #search-input { width: 100%; font: inherit; padding: 0.55em 0.7em; border-radius: 0.5em; border: 1px solid var(--border); background: var(--bg); color: var(--ink); margin-bottom: 0.8em; }
   #content-panel { margin-bottom: 1em; }
-  #pairing-panel { margin-bottom: 1em; border-color: var(--accent); }
+  #pairing-panel { margin-bottom: 1em; border-color: var(--accent); border-left: 4px solid var(--accent); }
   #pairing-panel .pairing-body { display: flex; gap: 1.4em; flex-wrap: wrap; align-items: flex-start; }
   #pairing-panel .pairing-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11em, 1fr)); gap: 1em; flex: 1; min-width: 12em; }
   #pairing-panel .k { font-size: 0.78em; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.25em; }
   #pairing-panel .v { font-size: 1.35em; font-weight: 700; font-family: ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.02em; }
   #pairing-panel p { margin: 0.8em 0 0; font-size: 0.85em; color: var(--muted); }
   #pairing-qr { width: 9em; height: 9em; border-radius: 0.5em; background: #fff; padding: 0.5em; flex: none; }
+  @media (max-width: 26em) {
+    /* Narrow phones only — the connected-pill's own text ("Connesso"/"Non connesso") wraps
+       awkwardly next to the h1 at very small widths without this, since header's flex-wrap alone
+       still tries to fit both on one line before giving up. */
+    .header-inner { flex-direction: column; align-items: flex-start; }
+  }
 </style>
 </head>
 <body>
 <header>
-  <div>
-    <h1>ARALD</h1>
-    <div id="node-label" class="mono"></div>
+  <div class="header-inner">
+    <div>
+      <h1>ARALD</h1>
+      <div id="node-label" class="mono"></div>
+    </div>
+    <span id="connected-pill" class="pill off"><span class="dot"></span><span>...</span></span>
   </div>
-  <span id="connected-pill" class="pill off"><span class="dot"></span><span>...</span></span>
 </header>
+
+<div class="page-inner">
 
 <div id="stats" class="stats"></div>
 
@@ -521,6 +562,8 @@ const PAGE_HTML = `<!doctype html>
   </form>
   <ul id="content"></ul>
 </section>
+
+</div>
 
 <script>
 function timeAgo(ms) {

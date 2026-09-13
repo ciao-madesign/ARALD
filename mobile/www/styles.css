@@ -1,13 +1,19 @@
 /* Palette "Waypoint" (docs/security.md voce #31): pietra/inchiostro per struttura, ambra-faro come
-   unico colore d'azione — usato con parsimonia, mai come tinta diffusa — e blu segnale per tutto
-   ciò che è "disponibile/connesso" (focus, link, icone di stato, servizi non ancora aperti). Vedi
-   il Field Guide (Artifact) per il sistema completo: la stessa distinzione beacon-vs-signal vale
-   qui, non solo nel documento di brand. */
+   unico colore d'azione — usato con parsimonia, mai come tinta diffusa — e segnale verde per tutto
+   ciò che è "disponibile/connesso" (focus, link, icone di stato, servizi non ancora aperti). Il verde
+   (voce #77) è lo stesso --accent primario dei due portali (mirror-portal, pannello per-nodo) —
+   era blu fino alla voce #77, cambiato per condividere il "colore della rete" tra le tre superfici
+   ARALD senza toccare la grammatica beacon-vs-signal. Vedi il Field Guide (Artifact) per il sistema
+   completo: la stessa distinzione beacon-vs-signal vale qui, non solo nel documento di brand. */
 :root {
   color-scheme: light dark;
   --bg: #eef0e3; --card: #ffffff; --border: #c9cdbc; --ink: #1e231f; --muted: #5f6656;
   --accent: #c9a227; --accent-2: #e7b74a; --accent-soft: #f1e6be; --accent-ink: #241505;
-  --signal: #35607c; --signal-soft: #d9e6ec; --signal-ink: #eaf3f8;
+  /* Verde ARALD (voce #77): stesso token che nei due portali fa da colore primario, qui riusato
+     solo per --signal ("disponibile/connesso") — mai per --accent, che resta il faro ambra riservato
+     all'unica azione che conta ora. Le tre superfici condividono così il "colore della rete" senza
+     toccare la grammatica beacon-vs-signal di Waypoint. */
+  --signal: #1c6b57; --signal-soft: #e5f2ee; --signal-ink: #f4fbf8;
   --good: #3f5636; --good-soft: #dee7d6;
   --warn: #8f5518; --warn-soft: #f2dec4;
   --bad: #8e2e1c; --bad-soft: #f3d9d0;
@@ -28,7 +34,7 @@
        blu-carbone più freddo al posto di un marrone caldo (voce #50). */
     --bg: #10151a; --card: #1a2329; --border: #2b363c; --ink: #edeae0; --muted: #93a099;
     --accent: #e3b64c; --accent-2: #f2cf7a; --accent-soft: #35290f; --accent-ink: #1c1204;
-    --signal: #7fb3d1; --signal-soft: #1e323d; --signal-ink: #08161c;
+    --signal: #4fbfa2; --signal-soft: #163a32; --signal-ink: #062018;
     --good: #7fa36e; --good-soft: #26331f;
     --warn: #e0954b; --warn-soft: #3a2814;
     --bad: #e06a4c; --bad-soft: #3a1f17;
