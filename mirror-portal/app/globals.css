@@ -30,6 +30,16 @@
   --off-soft: #eef0ee;
   --relay: #3b5a78;
   --relay-soft: #e6edf3;
+  /* Fixed, deliberately NOT overridden in the dark media query below — found by review (13 settembre
+     2026, docs/security.md voce #76, while carrying this same header treatment into web-ui.ts): the
+     header bar's white text needs a consistently dark fill, but --accent/--accent-dark are themselves
+     flipped LIGHT in dark mode (correct for their other job, small accents/links/icons on a dark page
+     background) — reusing them for the header gradient in both themes left dark mode at roughly
+     2.2-2.8:1 contrast, well under WCAG AA (4.5:1 for this size/weight of text). This brand bar stays
+     visually the same dark teal in both themes instead — a colored header doesn't have to invert with
+     the rest of the page. */
+  --header-from: #1c6b57;
+  --header-to: #123f33;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -114,7 +124,7 @@ select {
 /* ---- Shared header/tabs (PortalHeader.tsx) — used by the Home and Mappa screens; Login/Admin keep
    their own simpler header, unchanged, out of scope for this restyle. ---- */
 header.top {
-  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-dark) 130%);
+  background: linear-gradient(180deg, var(--header-from) 0%, var(--header-to) 130%);
   color: #fff;
 }
 

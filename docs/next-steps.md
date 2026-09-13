@@ -81,7 +81,9 @@ Ordine concordato con l'utente: prima i due portali mai disegnati (mai una passa
 
 **✅ `mirror-portal/` fatto, 11-13 settembre 2026 (`docs/security.md` voce #75, `docs/emergency-portal.md` sezione "Sesto pezzo realizzato")**: restyle della Home esistente + nuova schermata Mappa con Leaflet/OpenTopoMap. Pianificato con un canvas di bozzetti visivi confermato dall'utente prima del codice; quattro problemi reali trovati dalla revisione, tutti corretti.
 
-**In coda, non ancora iniziato**: `node/src/web-ui.ts` (il pannello di stato per-nodo, spec §59) — mai avuto una passata di design dedicata, stesso stato di partenza di `mirror-portal/` prima di questo pezzo. Nessuna sessione di planning fatta ancora per questo — da riprendere con lo stesso approccio (bozzetti visivi confermati prima del codice) quando l'utente darà l'ok a procedere.
+**✅ `node/src/web-ui.ts` fatto, 13 settembre 2026 (`docs/security.md` voce #76)**: stessa identità visiva riusata direttamente (confermato dall'utente, nessun nuovo canvas di bozzetti necessario) — con font di sistema invece di Google Fonts, dato che questa pagina gira in locale sul Box, che può non avere mai accesso a Internet. Trovato e corretto dalla revisione un bug di contrasto in tema scuro presente **anche** in `mirror-portal/` già pushato (voce #75) — corretto in entrambi i posti.
+
+**Con questo, il piano "restyle portale web" è completo per entrambe le superfici mai disegnate prima.** Resta annotato ma non pianificato: un futuro restyling dell'app mobile (l'utente ha detto di volerne riparlare, nessuna direzione ancora data — vedi "Debito di design della UI mobile" sopra).
 
 ## Cosa resta possibile in puro software, se si vuole andare oltre
 
