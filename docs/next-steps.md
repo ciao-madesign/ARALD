@@ -73,17 +73,19 @@ Lato telefono (scan/connect/handshake verso una ARALD Clip/Cover, logica di prot
 
 ### Debito di design della UI mobile — ✅ affrontato, con affinamenti successivi
 
-Passata di design completa (icone SVG, gerarchia visiva, transizioni, accessibilità — voce #28), poi un rebrand "Waypoint" (#31), un affinamento con tipografia auto-ospitata/elevazione/animazioni (#50), e una passata UX per un pubblico generico e non tecnico (#48). Nessun restyling ulteriore in sospeso. Resta fuori portata in questo ambiente, invariato: la verifica su un telefono reale o un emulatore (nessun hardware/SDK Android disponibile).
+Passata di design completa (icone SVG, gerarchia visiva, transizioni, accessibilità — voce #28), poi un rebrand "Waypoint" (#31), un affinamento con tipografia auto-ospitata/elevazione/animazioni (#50), una passata UX per un pubblico generico e non tecnico (#48), e infine un mix cromatico con la palette verde dei portali, "Segnale verde" (#77, vedi sotto). Nessun restyling ulteriore in sospeso. Resta fuori portata in questo ambiente, invariato: la verifica su un telefono reale o un emulatore (nessun hardware/SDK Android disponibile).
 
-### Restyle "portale web" (richiesto in coda al restyle mobile, 10 settembre 2026) — primo pezzo fatto, secondo in coda
+### Restyle "portale web/mobile" (richiesto in coda al restyle mobile, 10 settembre 2026) — ✅ completo per tutte e tre le superfici
 
-Ordine concordato con l'utente: prima i due portali mai disegnati (mai una passata di design dedicata, a differenza dell'app mobile), poi eventualmente l'app mobile stessa (direzione ancora da discutere, l'utente non si è ancora espresso). Tra i due portali, prima il portale specchio esterno (`mirror-portal/`, il più "di rappresentanza"), poi il pannello locale del singolo nodo.
+Ordine concordato con l'utente: prima i due portali mai disegnati (mai una passata di design dedicata, a differenza dell'app mobile), poi l'app mobile stessa. Tra i due portali, prima il portale specchio esterno (`mirror-portal/`, il più "di rappresentanza"), poi il pannello locale del singolo nodo, poi l'app mobile.
 
 **✅ `mirror-portal/` fatto, 11-13 settembre 2026 (`docs/security.md` voce #75, `docs/emergency-portal.md` sezione "Sesto pezzo realizzato")**: restyle della Home esistente + nuova schermata Mappa con Leaflet/OpenTopoMap. Pianificato con un canvas di bozzetti visivi confermato dall'utente prima del codice; quattro problemi reali trovati dalla revisione, tutti corretti.
 
 **✅ `node/src/web-ui.ts` fatto, 13 settembre 2026 (`docs/security.md` voce #76)**: stessa identità visiva riusata direttamente (confermato dall'utente, nessun nuovo canvas di bozzetti necessario) — con font di sistema invece di Google Fonts, dato che questa pagina gira in locale sul Box, che può non avere mai accesso a Internet. Trovato e corretto dalla revisione un bug di contrasto in tema scuro presente **anche** in `mirror-portal/` già pushato (voce #75) — corretto in entrambi i posti.
 
-**Con questo, il piano "restyle portale web" è completo per entrambe le superfici mai disegnate prima.** Resta annotato ma non pianificato: un futuro restyling dell'app mobile (l'utente ha detto di volerne riparlare, nessuna direzione ancora data — vedi "Debito di design della UI mobile" sopra).
+**✅ App mobile fatta, 13 settembre 2026 (`docs/security.md` voce #77)**: a differenza dei due portali, qui non un restyling da zero — l'app aveva già l'identità "Waypoint" matura. Pianificato con una canvas di due varianti ("Segnale verde" minimale vs "Header ARALD" più deciso); l'utente ha scelto la prima. Il token `--signal` ("disponibile/connesso") diventa lo stesso verde ARALD di `--accent` nei due portali, byte per byte identico in entrambi i temi; l'ambra-faro (`--accent` di Waypoint, riservata a SOS/chiamata attiva) resta intatta. Revisione dedicata: nessun problema reale nella modifica, un bug preesistente non correlato segnalato ma non corretto (`var(--line)`/`var(--surface)` non definiti in `.sos-panel`/`.ble-relay-activity`).
+
+**Con questo, il piano "restyle portale web/mobile" è completo per tutte e tre le superfici** (`mirror-portal/`, pannello per-nodo, app mobile).
 
 ## Cosa resta possibile in puro software, se si vuole andare oltre
 
