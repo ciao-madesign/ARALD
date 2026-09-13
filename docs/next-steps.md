@@ -290,5 +290,5 @@ Il 13 settembre 2026, in una discussione sulla valutazione di hardware low-cost 
 - **Driver host-side** (voce #71, 9 settembre): `node/src/transports/sx126x-commands.ts`, `sx126x-bridge-protocol.ts`, `lora-serial-sx1262.ts` (nuovo `Transport`, non un adattamento del driver SX127x — SX126x parla SPI a comandi/opcode con handshaking sul pin BUSY, un modello diverso dalla lettura/scrittura diretta di registri di SX127x), fake device dedicato, wiring `cli.ts` (`--lora-chip sx127x|sx1262`, `--lora-tx-power-dbm`).
 - **Firmware embedded del bridge** (voce #73, 10 settembre): `firmware/sx126x-bridge/` (Arduino/C++, cartella nuova fuori dal workspace npm) — il codice che gira sul microcontrollore-bridge (una seconda XIAO ESP32-S3) per tradurre i comandi seriali in transazioni SPI reali verso il chip SX1262. Scritto e controllato per quanto possibile in questo ambiente, **mai caricato né provato su hardware vero** — checklist completa dei passi rimasti in `firmware/sx126x-bridge/README.md`, lavoro dell'utente.
 
-Vedi `docs/deployment.md`, sezione "LoRa unificato su SX1262", per il lato hardware/BOM di questa stessa decisione.
+Vedi `docs/deployment.md`, paragrafo "LoRa unificato su SX1262" (sotto "ARALD Box e PORTABLE"), per il lato hardware/BOM di questa stessa decisione.
 
