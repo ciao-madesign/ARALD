@@ -1,6 +1,6 @@
 # Emergency Portal — architettura del portale web (proposta)
 
-**Stato**: documentazione di riferimento/pianificazione per l'insieme della proposta, **con otto pezzi concreti realizzati** (`arald-backend/` → `local-portal/` → sincronizzazione periodica → `mirror-portal/` in produzione su Vercel → schema multi-tenant/autenticazione operatori → restyle+Mappa → `AUTH_SECRET`/primo Admin → "Pezzo 0" del canale di comando (visibilità stato Box), 15 settembre 2026 — vedi "Ottavo pezzo realizzato" in fondo). L'autenticazione del pannello Admin è ora **operativa in produzione**, non solo pronta. Il **canale di comando Box↔specchio** è ora un piano pianificato a più pezzi (tre decisioni raccolte esplicitamente con l'utente — vedi "Canale di comando: piano pianificato" più sotto), di cui solo il primo pezzo (visibilità) è realizzato.
+**Stato**: documentazione di riferimento/pianificazione per l'insieme della proposta, **con nove pezzi concreti realizzati** (`arald-backend/` → `local-portal/` → sincronizzazione periodica → `mirror-portal/` in produzione su Vercel → schema multi-tenant/autenticazione operatori → restyle+Mappa → `AUTH_SECRET`/primo Admin → "Pezzo 0" del canale di comando (visibilità stato Box) → "Pezzo 1" del canale di comando (infrastruttura comandi da remoto + Drop/Hazard), 15 settembre 2026 — vedi "Ottavo pezzo realizzato"/"Nono pezzo realizzato" in fondo). L'autenticazione del pannello Admin è ora **operativa in produzione**, non solo pronta. Il **canale di comando Box↔specchio** è un piano pianificato a più pezzi (tre decisioni raccolte esplicitamente con l'utente — vedi "Canale di comando: piano pianificato" più sotto), di cui i primi due pezzi (visibilità, comandi Drop/Hazard) sono realizzati; restano Node Append, consegna esterna differita, riavvio Fixed Relay (Pezzi 2-4).
 
 ## Nota terminologica: "ARALD" — risolta
 
@@ -237,12 +237,12 @@ Il pezzo più delicato della proposta originale, sbloccato dall'esistenza di un 
 
 **Ordine di esecuzione concordato**, dal rischio più basso al più alto:
 - **Pezzo 0 — Visibilità stato Box** ✅ fatto, vedi "Ottavo pezzo realizzato" sotto.
-- **Pezzo 1 — Infrastruttura comandi da remoto + Drop/Hazard**: il candidato tecnicamente più semplice per validare l'intera nuova pipeline (identità per-operatore, coda comandi, nuova capacità sul Box) — `publishDrop()` riusa `contentSigningPayload()`, già una funzione pura riusabile fuori da `NomadNode`.
+- **Pezzo 1 — Infrastruttura comandi da remoto + Drop/Hazard** ✅ fatto, vedi "Nono pezzo realizzato" sotto.
 - **Pezzo 2 — Node Append da remoto**: più delicato, oggi passa da `sendPrivateMessage()` (cifratura ECDH 1:1), non un content firmato — da capire/adattare come "chi ha cifrato" diventa verificabile senza spostare chiavi private sul Box.
 - **Pezzo 3 — Consegna esterna differita da remoto**: schema crittografico proprio (X25519 effimero + AES-GCM), probabile riuso parziale del pattern del Pezzo 1.
 - **Pezzo 4 — Riavvio remoto, solo Fixed Relay**: riusa l'infrastruttura del Pezzo 1 + il filtro `type: "fixed"` + la documentazione dell'opt-out già esistente.
 
-Nessuno dei pezzi 1-4 è ancora implementato — stesso workflow a doppio check di ogni voce precedente, un pezzo alla volta con ok esplicito dell'utente tra un pezzo e l'altro.
+Pezzi 2-4 non ancora implementati — stesso workflow a doppio check di ogni voce precedente, un pezzo alla volta con ok esplicito dell'utente tra un pezzo e l'altro.
 
 ## Ottavo pezzo realizzato — "Pezzo 0": pannello "Stato rete" nella Home (15 settembre 2026)
 
@@ -253,3 +253,19 @@ Visibilità dello stato dei Box connessi, richiesta esplicitamente dall'utente c
 **Due bug reali trovati dalla revisione dedicata, entrambi bloccanti per la feature stessa**: il criterio di abbinamento batteria↔Box era strutturalmente sbagliato (matchava per `nodeUrl` invece che per identità crittografica `relayId === nodeId`, rompendosi in ogni scenario di registro relay condiviso tra più Box — scoperto leggendo `docs/beacon.md`); `extractRelayRow()` non catturava affatto `batteryPercent` da `/api/relays`, quindi la feature "batteria" non avrebbe mai funzionato a prescindere dal primo fix. Dettaglio tecnico completo, incluso il ragionamento della revisione, in `docs/security.md` voce #80.
 
 Verificato dal vivo in browser (Playwright, dati finti in una copia scratch mai committata) con uno scenario esplicito di registro condiviso, per confermare che il fix della revisione funziona davvero end-to-end. `npx tsc --noEmit`/`npm run build` puliti, suite completa (1207 test) ripetuta 3 volte senza flakiness.
+
+## Nono pezzo realizzato — "Pezzo 1": infrastruttura comandi da remoto + Drop/Hazard (15 settembre 2026)
+
+Prima azione realizzata delle tre decisioni raccolte con l'utente (vedi sopra): un operatore autenticato sul portale può comporre un Drop/Hazard destinato a un Box specifico, firmato con l'identità mesh dedicata di *quell'operatore* — mai il Box che firma per suo conto. Valida l'intera nuova pipeline (identità per-operatore, coda comandi, nuova capacità sul Box) sul candidato tecnicamente più semplice, prima di affrontare Node Append (Pezzo 2) o consegna esterna differita (Pezzo 3).
+
+**Nuova capacità lato Box**: `NomadNode.ingestSignedContent()` (`node/src/node.ts`) — a differenza di `publishDrop()`/`appendToNode()`/`sendExternalDelivery()`, che firmano sempre con `this.identity`, questo metodo non firma mai nulla: verifica indipendentemente una firma già presente (`contentStore.putVerified()`) e tratta il content-item come se fosse appena arrivato da un peer, `considerDrop()` incluso — così `this.drops` registra l'operatore, mai il Box, come `author`. Esposto via `POST /api/ingest-signed-content` (`node/src/web-ui.ts`, dietro password di rete, opt-in `--allow-remote-content-ingest` in `cli.ts`).
+
+**Crittografia lato portale, deliberatamente duplicata mai importata**: `mirror-portal/lib/mesh-signing.ts` reimplementa `MeshIdentity`/`contentSigningPayload()`/`computeContentId()`/`signDrop()` — mai un `import` da `node/src/*` (progetto Vercel separato, fuori dal workspace npm). Cross-verificato in `tests/unit/mirror-portal-mesh-signing.test.ts` contro le funzioni reali di `node/src/identity.ts`/`content.ts`/`drops.ts`. La chiave privata mesh di ogni operatore vive cifrata sul server del portale (`mesh-key-encryption.ts`, AES-256-GCM con `MESH_IDENTITY_ENCRYPTION_KEY` — variabile dedicata, mai `AUTH_SECRET`), generata lazy al primo comando (`mesh-identity-store.ts`, `SELECT ... FOR UPDATE` per evitare due identità concorrenti dello stesso operatore).
+
+**Autorizzazione e coda**: `POST /api/commands/drops` (qualunque operatore autenticato con accesso all'organizzazione del nodo target, `requireSession()`+`getNodeOrganization()`) firma e accoda in una nuova tabella Postgres `remote_commands`; `arald-backend/command-poller.ts` la interroga a ogni tick di `sync.ts` esistente e consegna al Box.
+
+**Tre bug reali trovati dalla revisione dedicata, tutti corretti** (dettaglio tecnico completo, incluso il ragionamento della revisione, in `docs/security.md` voce #81): `ingestSignedContent()` bypassava rate limiting/budget elevato e si fidava della `priority` non firmata del body HTTP invece che del `kind` firmato del Drop; `command-poller.ts` ritentava per sempre fallimenti permanenti (400/413) e non aveva un meccanismo di rinuncia per comandi bloccati, rischiando di affamare la coda; `RemoteDropForm.tsx` non gestiva un fallimento di trasporto del `fetch`, lasciando il pulsante disabilitato per sempre.
+
+Verificato dal vivo end-to-end (Postgres locale reale, `NomadNode` reale, copia scratch di `mirror-portal` mai committata, login/form/consegna via Playwright): il Drop appare sul Box con `author` = l'identità mesh dell'*operatore*, non del Box. `npx tsc --noEmit`/`npm run build` puliti (`node/`, `mirror-portal/`, check ad-hoc per `arald-backend/`); suite completa (1260 test) ripetuta più volte senza flakiness reale (un singolo timeout isolato, diagnosticato come contesa di risorse dell'infrastruttura di test dal vivo ancora in esecuzione, sparito dopo averla fermata).
+
+**Fuori scope, deliberatamente**: Node Append da remoto (Pezzo 2), consegna esterna differita da remoto (Pezzo 3), riavvio Fixed Relay da remoto (Pezzo 4).

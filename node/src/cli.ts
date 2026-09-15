@@ -405,12 +405,19 @@ async function main(): Promise<void> {
     // (docs/beacon.md, the Emergency Node view), see WebUiOptions.exposeEmergencyBeacons's own doc
     // comment for why there is no write side to gate: a SOS only ever arrives from the mesh.
     const exposeEmergencyBeacons = args["expose-emergency-beacons"] === "true";
+    // Opt-in, gates POST /api/ingest-signed-content — "Pezzo 1" del canale di comando Box↔specchio
+    // (docs/emergency-portal.md, WebUiOptions.allowRemoteContentIngest's own doc comment). The
+    // caller (arald-backend's command poller) still needs a valid signature on every submission
+    // regardless of this flag — this only decides whether the *attempt* is possible on this Box at
+    // all, same posture as --expose-relay-registry.
+    const allowRemoteContentIngest = args["allow-remote-content-ingest"] === "true";
     // A dedicated location-registry node (docs/next-steps.md Opzione J) needs the same
     // networkName/networkPassword pairing mechanism as any other mobile-facing node — just handed
     // out separately to trusted operators only, never to guests, which is exactly what makes it a
     // *different* node's password rather than a new access-control mechanism of its own. Same
     // reasoning extends to a relay-registry/Emergency Node.
-    const needsNetworkPassword = allowServiceCalls || exposeLocationRegistry || exposeRelayRegistry || exposeEmergencyBeacons;
+    const needsNetworkPassword =
+      allowServiceCalls || exposeLocationRegistry || exposeRelayRegistry || exposeEmergencyBeacons || allowRemoteContentIngest;
     // Generated fresh every run, printed/shown once, never persisted — the mobile client (Opzione H,
     // docs/next-steps.md) is expected to be paired by re-entering this each time the node restarts,
     // the same "out of band, by the operator" trust model as a Wi-Fi router's own password.
@@ -441,6 +448,7 @@ async function main(): Promise<void> {
       exposeLocationRegistry,
       exposeRelayRegistry,
       exposeEmergencyBeacons,
+      allowRemoteContentIngest,
       networkName,
       networkPassword,
       publicHost: args["public-host"],
@@ -471,6 +479,9 @@ async function main(): Promise<void> {
     }
     if (exposeEmergencyBeacons) {
       console.log(`Emergency beacon sightings exposed: GET /api/emergency-beacons (stessa password di rete)`);
+    }
+    if (allowRemoteContentIngest) {
+      console.log(`Canale di comando dal portale abilitato: POST /api/ingest-signed-content (stessa password di rete)`);
     }
     if (mapTiles) {
       console.log(`Map tiles exposed: GET /api/map-info, GET /api/map-tiles/:z/:x/:y (non autenticati — non dati sensibili)`);

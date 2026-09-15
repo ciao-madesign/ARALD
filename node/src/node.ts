@@ -337,6 +337,12 @@ const MAX_CONCURRENT_EXTERNAL_DELIVERY_DIRECTORY_FETCHES = 16;
  * concern (a caller pushing this node's own priority above the mesh-wide
  * default `Priority.CONTENT` repeatedly), and a caller could otherwise
  * double its effective flood budget by alternating kinds.
+ *
+ * Also consumed by `ingestSignedContent()` (found by review, `docs/security.md`
+ * voce #81 — it originally bypassed this entirely) via the same
+ * `tryConsumeElevatedDropBudget()` helper: a remote portal operator's
+ * signed elevated-kind drop shares this Box's own node-wide budget with a
+ * locally-originated one, not a separate allowance.
  */
 const MAX_ELEVATED_DROPS_PER_WINDOW = 3;
 const ELEVATED_DROP_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
@@ -361,9 +367,34 @@ function dropKindPriority(kind: DropKind): Priority {
   }
 }
 
-/** Default/maximum lifetime for a drop (`NomadNode.publishDrop()`) — a drop is a notice tied to a moment, never a permanent fixture like a channel, so unlike `publishContent()` in general it always carries a `ttlMs`, capped so a caller can shorten it but never make it outlive this. */
-const DEFAULT_DROP_TTL_MS = 24 * 60 * 60 * 1000;
-const MAX_DROP_TTL_MS = 72 * 60 * 60 * 1000;
+/**
+ * Default/maximum lifetime for a drop (`NomadNode.publishDrop()`) — a drop is a notice tied to a
+ * moment, never a permanent fixture like a channel, so unlike `publishContent()` in general it
+ * always carries a `ttlMs`, capped so a caller can shorten it but never make it outlive this.
+ * Exported (found by review, `docs/security.md`): `mirror-portal/lib/mesh-signing.ts` deliberately
+ * vendors its own copy of this same value rather than importing across the Vercel-build boundary
+ * (see that file's own doc comment) — exporting this lets a test cross-check the two constants
+ * against each other directly, instead of the only synchronization being a doc comment that a
+ * future change here could silently stop matching.
+ */
+export const DEFAULT_DROP_TTL_MS = 24 * 60 * 60 * 1000;
+/** Same reasoning/export as `DEFAULT_DROP_TTL_MS` immediately above. */
+export const MAX_DROP_TTL_MS = 72 * 60 * 60 * 1000;
+
+/**
+ * Result of `NomadNode.ingestSignedContent()` — a plain boolean isn't enough because callers
+ * (`web-ui.ts`'s HTTP endpoint, `arald-backend`'s command poller one layer further out,
+ * `docs/security.md` voce #81) need to tell a genuinely forged/corrupt submission apart from one
+ * that was merely throttled, and react very differently to each:
+ * - `"accepted"` — stored and, if requested, announced/recorded as a Drop.
+ * - `"rate-limited"` — the per-identity packet budget (`this.rateLimiter`) or the node-wide
+ *   elevated-drop budget (`tryConsumeElevatedDropBudget()`) was exhausted; the submission itself
+ *   was never even checked. Worth resubmitting later — maps to HTTP 429, a *deferred* outcome for
+ *   the command poller, never `failed`.
+ * - `"rejected"` — the signature/hash didn't verify, or the content was already expired. Retrying
+ *   the exact same bytes will never succeed — maps to HTTP 422, a *terminal* outcome.
+ */
+export type IngestSignedContentResult = "accepted" | "rate-limited" | "rejected";
 
 /**
  * Same reasoning as `MAX_ELEVATED_DROPS_PER_WINDOW` immediately above — this
@@ -1131,6 +1162,105 @@ export class NomadNode extends EventEmitter {
   }
 
   /**
+   * Accepts a piece of content already signed by some *other* identity —
+   * unlike `publishContent()`, which always signs as `this.identity`, this
+   * never signs anything. "Pezzo 1" of the canale di comando Box↔specchio
+   * (`docs/emergency-portal.md`): a mirror-portal operator has their own
+   * dedicated Ed25519 identity (never the Box's own), signs a Drop
+   * server-side, and this Box only ever republishes the already-complete
+   * signed object — exactly as if it had just arrived from a mesh peer.
+   *
+   * The Box never has to trust the caller for the signature itself:
+   * `contentStore.putVerified()` independently re-verifies it against
+   * `metadata.publisherId`'s own public key, the same check any peer's
+   * `CONTENT_COMPLETE` goes through — a caller of this method (an
+   * authenticated HTTP endpoint, `web-ui.ts`) only ever gates *whether* to
+   * attempt the call at all, never *trusts* what's inside it. Never throws;
+   * returns an `IngestSignedContentResult` (see its own doc comment) so a
+   * caller can tell a genuinely forged/corrupt submission (`"rejected"` —
+   * never worth retrying) apart from one that was merely throttled
+   * (`"rate-limited"` — worth retrying later, found necessary by review
+   * alongside the budget checks themselves, `docs/security.md` voce #81:
+   * collapsing both into one boolean would have left `web-ui.ts` no way to
+   * map them to different HTTP statuses, and `arald-backend`'s command
+   * poller no way to tell "give up on this command" apart from "try again
+   * next tick").
+   *
+   * Reuses `considerDrop()` unconditionally (a no-op for anything whose
+   * `name` isn't `DROP_CONTENT_NAME`) so a remotely-ingested Drop's
+   * bookkeeping (`this.drops`) stays byte-for-byte the same as one learned
+   * from the mesh — `author` becomes the *operator's* node id
+   * (`metadata.publisherId`), never this Box's own, and `receivedFrom` is
+   * `undefined` (not relayed through an intermediate peer — the operator's
+   * own signature is the first hop this Box ever sees it at).
+   *
+   * Two gaps found by review (`docs/security.md` voce #81), both closed
+   * here rather than left to the HTTP layer (`web-ui.ts`), so they apply to
+   * every caller of this method, not just the one endpoint:
+   *
+   * 1. Unlike content arriving from a real mesh peer — always checked
+   *    against `this.rateLimiter.allow(fromPeerId)` before a packet ever
+   *    reaches a handler (see the dispatch above `handleContentAnnounce()`)
+   *    — this HTTP-originated path had no packet-rate budget at all, so an
+   *    authenticated caller (the shared network password, or a compromised
+   *    portal operator credential) could call it in an unbounded tight
+   *    loop. Keying on the *claimed* `publisherId` is safe specifically
+   *    because it's independently re-verified by `putVerified()` right
+   *    below: a lie about `publisherId` fails verification (so it can
+   *    never be used to dodge or borrow someone else's budget), and the
+   *    truth is exactly the identity meant to be throttled.
+   * 2. A Drop's announced priority was taken directly from the *caller-
+   *    supplied, unsigned* `options.priority` — never checked against the
+   *    Drop's own signed `kind`, unlike `publishDrop()`, which always
+   *    derives it via `dropKindPriority()`. That let a caller sign a
+   *    routine `"info"` drop but request `Priority.EMERGENCY` in the HTTP
+   *    body, monopolizing the highest-priority LoRa queue bucket with
+   *    content that was never actually emergency-severity — and let a
+   *    `"hazard"`/`"emergency"` drop bypass `MAX_ELEVATED_DROPS_PER_WINDOW`
+   *    entirely (that budget is only ever consumed by `publishDrop()`).
+   *    Fixed by deriving the priority from the parsed payload's own `kind`
+   *    whenever `metadata.name` is `DROP_CONTENT_NAME` (ignoring
+   *    `options.priority` in that case) and running it through the same
+   *    `tryConsumeElevatedDropBudget()` `publishDrop()` uses — checked
+   *    *before* `putVerified()` stores anything, using the cheap
+   *    `verifyContentSignature()`/`computeContentId()` pre-check below
+   *    (same split `acceptCatalogEntry()` already uses), so an unsigned or
+   *    forged submission can never burn through the budget on its own. A
+   *    malformed/non-drop-shaped payload falls through unchanged to the
+   *    pre-existing behavior (`options.priority` respected) — `considerDrop()`
+   *    independently no-ops for it either way.
+   */
+  ingestSignedContent(metadata: ContentMetadata, data: Buffer, options: { announce?: boolean; priority?: Priority } = {}): IngestSignedContentResult {
+    if (metadata.publisherId && !this.rateLimiter.allow(metadata.publisherId)) return "rate-limited";
+
+    // Cheap pre-verification (same checks `contentStore.putVerified()` makes internally) *before*
+    // the elevated-drop budget below is ever touched — see this method's own doc comment, point 2.
+    if (computeContentId(data) !== metadata.contentId || !verifyContentSignature(metadata)) return "rejected";
+    if (metadata.expiresAt !== undefined && metadata.expiresAt <= Date.now()) return "rejected";
+
+    let priority = options.priority ?? Priority.CONTENT;
+    if (metadata.name === DROP_CONTENT_NAME) {
+      let dropPayload: DropPayload | undefined;
+      try {
+        dropPayload = extractDropPayload(JSON.parse(data.toString("utf8")));
+      } catch {
+        dropPayload = undefined; // malformed JSON — considerDrop() below independently no-ops for this too
+      }
+      if (dropPayload) {
+        if (dropPayload.kind !== "info" && !this.tryConsumeElevatedDropBudget()) return "rate-limited";
+        priority = dropKindPriority(dropPayload.kind);
+      }
+    }
+
+    if (!this.contentStore.putVerified(metadata, data)) return "rejected"; // re-verifies; the real store
+    if (options.announce) {
+      void this.floodExcept(this.buildContentAnnouncePacket(metadata, priority));
+    }
+    if (metadata.publisherId) this.considerDrop(metadata, metadata.publisherId);
+    return "accepted";
+  }
+
+  /**
    * Builds (but does not send) a `CONTENT_ANNOUNCE` packet for `metadata` —
    * extracted out of `publishContent()`'s own `options.announce` branch so
    * `sendEmergencyBeacon()` can reuse the *exact same packet object* (same
@@ -1691,6 +1821,27 @@ export class NomadNode extends EventEmitter {
   }
 
   /**
+   * Attempts to consume one unit of `MAX_ELEVATED_DROPS_PER_WINDOW`'s shared, node-wide budget for
+   * an elevated-severity (`"hazard"`/`"emergency"`) drop — resetting the window first if it has
+   * rolled over. Returns `false` (nothing consumed) instead of throwing, so both `publishDrop()`
+   * (which turns that into a thrown error, its own "fail loudly" contract for a locally-originated
+   * drop) and `ingestSignedContent()` (which turns it into a plain `false` return, its own "never
+   * throws" contract for a remotely-ingested one — `docs/security.md` voce #81, found by review)
+   * can share the exact same counter: the physical LoRa channel this protects doesn't care whether
+   * the flood would have come from this Box's own operator or a remote portal operator's signed
+   * submission, only how many elevated-priority announces this Box originates in the window.
+   */
+  private tryConsumeElevatedDropBudget(): boolean {
+    const now = Date.now();
+    if (now - this.elevatedDropWindow.windowStart >= ELEVATED_DROP_RATE_LIMIT_WINDOW_MS) {
+      this.elevatedDropWindow = { windowStart: now, count: 0 };
+    }
+    if (this.elevatedDropWindow.count >= MAX_ELEVATED_DROPS_PER_WINDOW) return false;
+    this.elevatedDropWindow.count++;
+    return true;
+  }
+
+  /**
    * Publishes a drop — a location-tagged public notice (`docs/next-steps.md`,
    * concept credited to BitChat's mesh-local `BoardManager`, Unlicense/public
    * domain — see `drops.ts`'s own doc comment for the full mapping onto
@@ -1744,15 +1895,8 @@ export class NomadNode extends EventEmitter {
     if (drop.expiresInMs !== undefined && (!Number.isFinite(drop.expiresInMs) || drop.expiresInMs <= 0)) {
       throw new Error("publishDrop: 'expiresInMs' must be a finite positive number");
     }
-    if (drop.kind !== "info") {
-      const now = Date.now();
-      if (now - this.elevatedDropWindow.windowStart >= ELEVATED_DROP_RATE_LIMIT_WINDOW_MS) {
-        this.elevatedDropWindow = { windowStart: now, count: 0 };
-      }
-      if (this.elevatedDropWindow.count >= MAX_ELEVATED_DROPS_PER_WINDOW) {
-        throw new Error("publishDrop: too many high-priority drops, try again later");
-      }
-      this.elevatedDropWindow.count++;
+    if (drop.kind !== "info" && !this.tryConsumeElevatedDropBudget()) {
+      throw new Error("publishDrop: too many high-priority drops, try again later");
     }
     const ttlMs = Math.min(drop.expiresInMs ?? DEFAULT_DROP_TTL_MS, MAX_DROP_TTL_MS);
     const timestamp = Date.now();

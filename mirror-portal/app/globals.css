@@ -114,11 +114,42 @@ button:disabled {
 }
 
 input,
-select {
+select,
+textarea {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 0.5em 0.7em;
+  font: inherit;
+  color: inherit;
+}
+
+textarea {
+  resize: vertical;
+}
+
+/* ---- Remote drop form (RemoteDropForm.tsx, canale di comando "Pezzo 1") — a <details> disclosure
+   per node row, collapsed by default so it never adds visual weight to the Nodi list until an
+   operator actually wants it. ---- */
+.remote-drop-form {
+  margin-top: 0.6em;
+}
+
+.remote-drop-form summary {
+  cursor: pointer;
+  font-size: 0.85em;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.remote-drop-form .admin-form {
+  margin-top: 0.7em;
+}
+
+.remote-drop-queued {
+  color: var(--good);
+  margin: 0;
+  font-size: 0.85em;
 }
 
 /* ---- Shared header/tabs (PortalHeader.tsx) — used by the Home and Mappa screens; Login/Admin keep

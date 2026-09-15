@@ -11,6 +11,7 @@ import { raceTimeout } from "./async-timeout.js";
 import type { MbtilesReader } from "./map-tiles.js";
 import { BoundedFifoMap } from "./bounded-map.js";
 import { extractRelayRegistration } from "./relay-registry.js";
+import { priorityRank } from "./packet.js";
 
 export interface WebUiOptions {
   /** Port to listen on; 0 (default) lets the OS assign one — useful in tests, mirrors TcpTransport's own `port` convention. */
@@ -165,6 +166,23 @@ export interface WebUiOptions {
    * no metered-bandwidth concern to gate against with a password either.
    */
   mapTiles?: MbtilesReader;
+  /**
+   * Enables `POST /api/ingest-signed-content` — "Pezzo 1" del canale di
+   * comando Box↔specchio (`docs/emergency-portal.md`): accetta un
+   * content-item già firmato da un'identità mesh non locale (l'identità
+   * dedicata di un operatore del portale, mai quella del Box) e lo
+   * inietta nella mesh (`NomadNode.ingestSignedContent()`) esattamente
+   * come se fosse appena arrivato da un peer. Off by default and gated on
+   * `networkPassword`, same shape as `exposeRelayRegistry`/
+   * `exposeEmergencyBeacons` — a genuinely new mesh-state-changing
+   * capability, not something the ordinary guest-facing gateway offers
+   * just by being paired. `arald-backend`'s command poller is the only
+   * intended caller, but the endpoint itself has no way to know that —
+   * the signature verification inside `ingestSignedContent()` is what
+   * actually keeps a caller from injecting a forged claim, this flag only
+   * gates whether the *attempt* is even possible on this deployment.
+   */
+  allowRemoteContentIngest?: boolean;
 }
 
 const WILDCARD_OR_LOOPBACK_HOSTS = new Set(["0.0.0.0", "127.0.0.1", "localhost", "::", "::1"]);
@@ -387,6 +405,40 @@ function contentEntryFor(node: NomadNode, metadata: ContentMetadata): ContentEnt
     size: metadata.size,
     availableLocally,
     availableThrough,
+  };
+}
+
+/**
+ * Defensively parses an untrusted `metadata` field of `POST /api/ingest-
+ * signed-content`'s body into a `ContentMetadata` — same posture as every
+ * other network/HTTP-sourced payload in this codebase (`CLAUDE.md`,
+ * "Convenzioni consolidate": never trust the shape just because the type
+ * looked right). `publisherId`/`signature` are required here (unlike
+ * `ContentMetadata`'s own type, where both are optional for the
+ * locally-trusted `put()` path) — this endpoint only ever exists to accept
+ * *signed* content, so an entry missing either is rejected before it ever
+ * reaches `ingestSignedContent()`'s real signature check.
+ */
+function extractIngestMetadata(raw: unknown): ContentMetadata | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.contentId !== "string" || r.contentId.length === 0) return undefined;
+  if (typeof r.name !== "string" || r.name.length === 0) return undefined;
+  if (typeof r.mimeType !== "string" || r.mimeType.length === 0) return undefined;
+  if (typeof r.size !== "number" || !Number.isFinite(r.size) || r.size < 0) return undefined;
+  if (typeof r.createdAt !== "number" || !Number.isFinite(r.createdAt)) return undefined;
+  if (typeof r.publisherId !== "string" || r.publisherId.length === 0) return undefined;
+  if (typeof r.signature !== "string" || r.signature.length === 0) return undefined;
+  if (r.expiresAt !== undefined && (typeof r.expiresAt !== "number" || !Number.isFinite(r.expiresAt))) return undefined;
+  return {
+    contentId: r.contentId,
+    name: r.name,
+    mimeType: r.mimeType,
+    size: r.size,
+    createdAt: r.createdAt,
+    publisherId: r.publisherId,
+    signature: r.signature,
+    expiresAt: r.expiresAt as number | undefined,
   };
 }
 
@@ -782,6 +834,7 @@ export class WebUiServer {
   private readonly exposeLocationRegistry: boolean;
   private readonly exposeRelayRegistry: boolean;
   private readonly exposeEmergencyBeacons: boolean;
+  private readonly allowRemoteContentIngest: boolean;
   private readonly networkName: string | undefined;
   private readonly networkPassword: string | undefined;
   private readonly publicHost: string | undefined;
@@ -812,6 +865,10 @@ export class WebUiServer {
     this.exposeEmergencyBeacons = options.exposeEmergencyBeacons ?? false;
     if (this.exposeEmergencyBeacons && !options.networkPassword) {
       throw new Error("WebUiServer: exposeEmergencyBeacons requires a networkPassword");
+    }
+    this.allowRemoteContentIngest = options.allowRemoteContentIngest ?? false;
+    if (this.allowRemoteContentIngest && !options.networkPassword) {
+      throw new Error("WebUiServer: allowRemoteContentIngest requires a networkPassword");
     }
     this.mapTiles = options.mapTiles;
     const boundHost = options.host ?? "127.0.0.1";
@@ -910,6 +967,10 @@ export class WebUiServer {
       }
       if (url.pathname === "/api/external-delivery") {
         void this.handleSendExternalDelivery(req, res);
+        return;
+      }
+      if (url.pathname === "/api/ingest-signed-content") {
+        void this.handleIngestSignedContent(req, res);
         return;
       }
       res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
@@ -1450,6 +1511,95 @@ export class WebUiServer {
       const message = (err as Error).message;
       sendJson(res, message.includes("too many high-priority drops") ? 429 : 400, { error: message });
     }
+  }
+
+  /**
+   * `POST /api/ingest-signed-content` — "Pezzo 1" del canale di comando
+   * Box↔specchio (`docs/emergency-portal.md`, `docs/security.md` voce
+   * #81). Body `{ metadata: ContentMetadata, data: <base64>, priority?:
+   * number }`. Gated on `allowRemoteContentIngest` (404 when off — same
+   * "not registered, not offered" posture as every other opt-in endpoint
+   * here) **and** the network password, same shape as `POST /api/drops`.
+   *
+   * This endpoint's own auth only answers "is this caller even allowed to
+   * attempt an ingest on this deployment" — it never decides whether the
+   * *content itself* is legitimate. That's `NomadNode.ingestSignedContent()`'s
+   * job (independent Ed25519 verification against `metadata.publisherId`,
+   * never this caller's identity), whose `IngestSignedContentResult` maps
+   * onto three genuinely different statuses (found necessary by review
+   * alongside that method's own new rate-limit/elevated-drop-budget checks,
+   * `docs/security.md` voce #81 — a plain boolean couldn't carry this
+   * distinction): `"accepted"` → 200, `"rejected"` → 422 ("the submission
+   * itself doesn't verify" — terminal, never worth retrying), `"rate-
+   * limited"` → 429 (worth retrying later). These mean genuinely different
+   * things to `arald-backend`'s command poller: 401 means its own network
+   * password is stale, 422 means one specific queued command is
+   * corrupt/forged and should be marked failed, and 429 means this Box's
+   * own per-identity or elevated-drop budget is temporarily exhausted and
+   * the command should be retried, not given up on.
+   */
+  private async handleIngestSignedContent(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.allowRemoteContentIngest || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+
+    let raw: Buffer;
+    try {
+      raw = await readRequestBody(req, MAX_MESSAGE_BODY_BYTES, MAX_CALL_BODY_READ_MS);
+    } catch (err) {
+      if (res.writableEnded || res.destroyed) return;
+      if (err instanceof BodyTooLargeError) {
+        sendJson(res, 413, { error: "request body too large" });
+      } else if (err instanceof Error && err.message.includes("timed out")) {
+        sendJson(res, 408, { error: "timed out waiting for the request body" });
+      } else {
+        sendJson(res, 400, { error: "failed to read request body" });
+      }
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = raw.length === 0 ? {} : JSON.parse(raw.toString("utf8"));
+    } catch {
+      sendJson(res, 400, { error: "malformed JSON body" });
+      return;
+    }
+
+    const body = parsed as { metadata?: unknown; data?: unknown; priority?: unknown } | null;
+    const metadata = extractIngestMetadata(body?.metadata);
+    if (!metadata) {
+      sendJson(res, 400, { error: "'metadata' is missing or malformed" });
+      return;
+    }
+    if (typeof body?.data !== "string") {
+      sendJson(res, 400, { error: "'data' must be a base64-encoded string" });
+      return;
+    }
+    // Buffer.from(..., "base64") never throws (Node's decoder silently skips invalid characters
+    // instead of raising) — found by review: a try/catch here was dead code that could never fire,
+    // giving a false impression that malformed base64 was being explicitly rejected. A garbage
+    // input just decodes to different-than-intended bytes, which fail `ingestSignedContent()`'s own
+    // hash/signature check below (422) — the same posture `handleSendExternalDelivery()`'s own
+    // `dataBase64` handling already documents further down in this file.
+    const data = Buffer.from(body.data, "base64");
+
+    const result = this.node.ingestSignedContent(metadata, data, { announce: true, priority: priorityRank(body.priority) });
+    if (result === "rate-limited") {
+      sendJson(res, 429, { error: "too many requests for this identity, or this Box's elevated-drop budget is exhausted — try again later" });
+      return;
+    }
+    if (result === "rejected") {
+      sendJson(res, 422, { error: "content did not verify (bad signature, hash mismatch, or already expired)" });
+      return;
+    }
+    sendJson(res, 200, { contentId: metadata.contentId });
   }
 
   /**

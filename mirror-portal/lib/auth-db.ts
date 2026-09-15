@@ -230,6 +230,13 @@ export async function createUser(
   }, pool);
 }
 
+/** The organization a single `nodeUrl` is assigned to, or `undefined` if it isn't assigned to any (or was never seen). Used to authorize a remote command (`app/api/commands/*`) against the target Box before queuing anything. */
+export async function getNodeOrganization(nodeUrl: string): Promise<string | undefined> {
+  const db = getPool();
+  const res = await db.query(`SELECT organization_id FROM nodes WHERE node_url = $1`, [nodeUrl]);
+  return res.rows[0]?.organization_id;
+}
+
 export async function listAssignedNodes(): Promise<NodeAssignment[]> {
   const db = getPool();
   const res = await db.query(

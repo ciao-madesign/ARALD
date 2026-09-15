@@ -4,6 +4,7 @@ import { getMirrorSnapshot, type MirrorSectionError, type MirrorSnapshot } from 
 import { beaconMessage, dropKind, formatCoords, formatDateTime, relayOnline, relayType } from "../lib/format";
 import { summarizeFleet } from "../lib/node-status";
 import { PortalHeader } from "./PortalHeader";
+import { RemoteDropForm } from "./RemoteDropForm";
 
 // Never statically cached — a mirror whose whole point is showing what arald-backend/sync.ts most
 // recently wrote would be actively misleading if Vercel served a stale build-time snapshot instead of
@@ -183,6 +184,7 @@ export default async function HomePage(): Promise<JSX.Element> {
                               <span className="row-text">{topAlert.text}</span>
                             </div>
                           )}
+                          <RemoteDropForm nodeUrl={n.nodeUrl} />
                         </li>
                       );
                     })}

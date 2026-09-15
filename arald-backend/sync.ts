@@ -2,6 +2,7 @@ import { Pool } from "pg";
 import { fetchNodeSnapshot } from "./node-client.js";
 import { syncSnapshotToPostgres } from "./postgres-sync.js";
 import { runPeriodicSync } from "./periodic.js";
+import { pollAndDeliverCommands } from "./command-poller.js";
 
 /**
  * Reads one already-running ARALD node's local mesh state
@@ -55,6 +56,14 @@ async function syncOnce(pool: Pool, nodeUrl: string, networkPassword: string | u
   if (snapshot.skipped.length > 0) {
     console.log("Skipped:");
     for (const reason of snapshot.skipped) console.log(`  - ${reason}`);
+  }
+
+  // Box→specchio sync above, specchio→Box command delivery here — same tick, same process, no
+  // separate script to operate (Pezzo 1 del canale di comando, docs/emergency-portal.md). A no-op
+  // (all-zero summary) when networkPassword is unset, same posture as the /api/relays skip above.
+  const commands = await pollAndDeliverCommands(pool, nodeUrl, networkPassword);
+  if (commands.delivered > 0 || commands.failed > 0 || commands.deferred > 0) {
+    console.log(`Comandi dal portale: ${commands.delivered} consegnati, ${commands.failed} falliti, ${commands.deferred} rimandati al prossimo giro.`);
   }
 }
 
