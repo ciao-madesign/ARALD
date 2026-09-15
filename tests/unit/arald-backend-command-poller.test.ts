@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { pollAndDeliverCommands } from "../../arald-backend/command-poller.js";
 
 /**
- * `arald-backend/command-poller.ts` (Pezzo 1 del canale di comando,
- * docs/security.md voce #81) — la metà Box→specchio del nuovo flusso: un
+ * `arald-backend/command-poller.ts` (Pezzo 1/2 del canale di comando,
+ * docs/security.md voci #81/#82) — la metà Box→specchio del nuovo flusso: un
  * fake `pg.Pool` (stesso pattern di `arald-backend-postgres-sync.test.ts`)
  * registra le query invece di parlare a un Postgres reale, `fetch` è
  * stubbato per simulare le risposte del nodo. La proprietà da verificare:
@@ -15,7 +15,10 @@ import { pollAndDeliverCommands } from "../../arald-backend/command-poller.js";
  * risolversi da solo, A MENO che il comando non sia bloccato in coda da
  * più di `MAX_COMMAND_AGE_BEFORE_GIVING_UP_MS` (24h), nel qual caso viene
  * comunque marcato `failed` per non affamare i comandi più recenti dietro
- * di lui in coda (stessa voce di revisione).
+ * di lui in coda (stessa voce di revisione). La maggior parte dei test qui
+ * usa `kind: "drop"` (il default di `fakePool()` quando omesso, per non
+ * toccare le fixture già scritte per Pezzo 1) — il gruppo dedicato in fondo
+ * verifica il routing `kind: "node-append"` aggiunto per Pezzo 2 (voce #82).
  */
 
 interface Call {
@@ -23,14 +26,14 @@ interface Call {
   params: unknown[];
 }
 
-function fakePool(pendingRows: { id: string; metadata: unknown; data: string; priority: number; created_at?: Date }[]) {
+function fakePool(pendingRows: { id: string; kind?: string; metadata: unknown; data: string; priority: number; created_at?: Date }[]) {
   const calls: Call[] = [];
   const pool = {
     async query(text: string, params: unknown[] = []) {
       calls.push({ text, params });
-      if (text.includes("SELECT id, metadata, data, priority")) {
+      if (text.includes("SELECT id, kind, metadata, data, priority")) {
         // created_at defaults to "just now" — same shape node-postgres itself returns (a JS Date).
-        return { rows: pendingRows.map((r) => ({ ...r, created_at: r.created_at ?? new Date() })) };
+        return { rows: pendingRows.map((r) => ({ ...r, kind: r.kind ?? "drop", created_at: r.created_at ?? new Date() })) };
       }
       return { rows: [] };
     },
@@ -222,5 +225,62 @@ describe("arald-backend command-poller pollAndDeliverCommands", () => {
     expect(summary).toEqual({ delivered: 1, failed: 1, deferred: 0 });
     expect(calls.find((c) => c.text.includes("status = 'delivered'"))?.params).toEqual(["ok"]);
     expect(calls.find((c) => c.text.includes("status = 'failed'"))?.params).toEqual(["bad", "bad signature"]);
+  });
+
+  /**
+   * "Pezzo 2" del canale di comando (`docs/security.md` voce #82): un comando `kind: "node-append"`
+   * va a un endpoint diverso, con un body diverso — l'intera busta firmata (`metadata`) invece di
+   * `{metadata, data, priority}`. Stesso mapping status→esito di `kind: "drop"`, verificato qui solo
+   * per il routing (endpoint/body), non ri-testando l'intera matrice terminale/differito già coperta
+   * sopra per `"drop"` — la logica di classificazione status non dipende da `kind`.
+   */
+  describe("routing for kind: 'node-append'", () => {
+    it("posts the whole 'metadata' object (the signed submission) to /api/ingest-node-append, not /api/ingest-signed-content", async () => {
+      const signedSubmission = { text: "nota", kind: "info", timestamp: 1, expiresAt: 2, targetNodeId: "box1", publisherId: "op1", signature: "abcd" };
+      const { pool, calls } = fakePool([{ id: "na1", kind: "node-append", metadata: signedSubmission, data: "", priority: 4 }]);
+      const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+        expect(url).toBe("http://node.example/api/ingest-node-append");
+        expect(JSON.parse(init.body as string)).toEqual(signedSubmission);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const summary = await pollAndDeliverCommands(pool, "http://node.example", "pw");
+
+      expect(summary).toEqual({ delivered: 1, failed: 0, deferred: 0 });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("marks a node-append command failed (terminal) on a 422, same as a drop", async () => {
+      const { pool, calls } = fakePool([{ id: "na1", kind: "node-append", metadata: { targetNodeId: "wrong-box" }, data: "", priority: 4 }]);
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "wrong target node" }), { status: 422 })));
+
+      const summary = await pollAndDeliverCommands(pool, "http://node.example", "pw");
+
+      expect(summary).toEqual({ delivered: 0, failed: 1, deferred: 0 });
+      const update = calls.find((c) => c.text.includes("status = 'failed'"));
+      expect(update?.params).toEqual(["na1", "wrong target node"]);
+    });
+
+    it("processes a 'drop' and a 'node-append' command in the same tick, each hitting its own endpoint", async () => {
+      const { pool, calls } = fakePool([
+        { id: "drop1", kind: "drop", metadata: { contentId: "x" }, data: "AA==", priority: 4 },
+        { id: "na1", kind: "node-append", metadata: { text: "nota" }, data: "", priority: 4 },
+      ]);
+      const hitPaths: string[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) => {
+          hitPaths.push(new URL(url).pathname);
+          return new Response(JSON.stringify({}), { status: 200 });
+        }),
+      );
+
+      const summary = await pollAndDeliverCommands(pool, "http://node.example", "pw");
+
+      expect(summary).toEqual({ delivered: 2, failed: 0, deferred: 0 });
+      expect(hitPaths.sort()).toEqual(["/api/ingest-node-append", "/api/ingest-signed-content"]);
+      expect(calls.filter((c) => c.text.includes("status = 'delivered'"))).toHaveLength(2);
+    });
   });
 });

@@ -237,6 +237,22 @@ export async function getNodeOrganization(nodeUrl: string): Promise<string | und
   return res.rows[0]?.organization_id;
 }
 
+/**
+ * This `nodeUrl`'s own cryptographic mesh identity (`nodeId`), from its most recent synced status
+ * snapshot — or `undefined` if this Box has never synced yet. Used by `POST /api/commands/node-
+ * appends` ("Pezzo 2", `docs/security.md` voce #82) to bind a signed Node Append to the one Box it's
+ * meant for (`SignableNodeAppendFields.targetNodeId`, `mesh-signing.ts`), same `SELECT ... ORDER BY
+ * synced_at DESC LIMIT 1` pattern `queryLatestNodeStatus()` (`db.ts`) already uses, narrowed to a
+ * single `nodeUrl` instead of every node — deliberately re-derived server-side from the portal's own
+ * freshest sync rather than trusted from the client's page state, which could be stale (a second open
+ * tab, a Box re-provisioned with a new identity since the page was loaded).
+ */
+export async function getLatestNodeId(nodeUrl: string): Promise<string | undefined> {
+  const db = getPool();
+  const res = await db.query(`SELECT node_id FROM node_status_snapshots WHERE node_url = $1 ORDER BY synced_at DESC LIMIT 1`, [nodeUrl]);
+  return res.rows[0]?.node_id;
+}
+
 export async function listAssignedNodes(): Promise<NodeAssignment[]> {
   const db = getPool();
   const res = await db.query(

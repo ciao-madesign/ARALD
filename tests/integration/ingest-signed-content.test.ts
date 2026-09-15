@@ -300,4 +300,54 @@ describe("NomadNode.ingestSignedContent (Pezzo 1, canale di comando)", () => {
     expect(results.slice(0, 3)).toEqual(["accepted", "accepted", "accepted"]);
     expect(results[3]).toBe("rate-limited");
   });
+
+  /**
+   * Regression trovata dalla revisione di "Pezzo 2" (`docs/security.md` voce #82), applicabile
+   * anche a `ingestSignedContent()` (Pezzo 1): prima del fix, il rate limiter usato qui
+   * (`this.rateLimiter.allow(metadata.publisherId)`) era la STESSA istanza/keyspace di
+   * `handlePacket()`'s own `this.rateLimiter.allow(fromPeerId)` per i peer mesh reali connessi. Un
+   * chiamante HTTP che conoscesse la password di rete poteva quindi dichiarare `publisherId` uguale
+   * al `nodeId` di un vero peer connesso e bruciarne il budget con submission mai verificate —
+   * niente firma valida richiesta, dato che il controllo del rate limiter avviene PRIMA della
+   * verifica. Corretto con `this.ingestRateLimiter`, un'istanza separata mai condivisa con il
+   * traffico dei peer reali.
+   */
+  it("ingesting garbage claiming a real connected peer's nodeId as publisherId never burns that peer's OWN packet budget", async () => {
+    const box = makeNode("Box");
+    nodes.push(box.node);
+    await box.node.start();
+
+    const realPeerId = "7".repeat(64);
+    const socket: Socket = createConnection({ host: "127.0.0.1", port: box.transport.port });
+    await new Promise<void>((resolve, reject) => {
+      socket.once("connect", () => resolve());
+      socket.once("error", reject);
+    });
+    socket.write(encodePacket(createPacket({ type: MessageType.HELLO, source: realPeerId, payload: {} })));
+    await waitFor(() => box.node.peers.has(realPeerId));
+
+    let exceeded = 0;
+    box.node.on("rate-limit:exceeded", (peerId: string) => {
+      if (peerId === realPeerId) exceeded++;
+    });
+
+    // 250 garbage ingest submissions, all falsely claiming publisherId = realPeerId — well past
+    // DEFAULT_MAX_PACKETS_PER_WINDOW (200/1s) if this were still sharing the real peer's own budget.
+    const operator = Identity.generate();
+    for (let i = 0; i < 250; i++) {
+      const data = Buffer.from(`garbage ${i}`, "utf8");
+      const metadata = signContent(operator, `bulletin-${i}`, "text/plain", data);
+      box.node.ingestSignedContent({ ...metadata, publisherId: realPeerId }, data); // signature now invalid for this publisherId — expected to reject, not the point of this test
+    }
+
+    // The real peer's own actual wire traffic must be completely unaffected: send pings well within
+    // its real budget and confirm none are dropped as rate-limited.
+    for (let i = 0; i < 20; i++) {
+      socket.write(encodePacket(createPacket({ type: MessageType.PING, source: realPeerId, payload: {} })));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    expect(exceeded).toBe(0);
+    socket.destroy();
+  });
 });

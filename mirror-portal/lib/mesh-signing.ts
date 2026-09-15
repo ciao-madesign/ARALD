@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createPrivateKey, createPublicKey, generateKeyPairSync, sign as cryptoSign, type KeyObject } from "node:crypto";
 
 /**
- * Pure mesh-signing primitives for the canale di comando (Pezzo 1,
+ * Pure mesh-signing primitives for the canale di comando (Pezzo 1/2,
  * `docs/emergency-portal.md`) — deliberately DUPLICATED from
  * `node/src/identity.ts`/`content.ts`/`drops.ts`, never imported from
  * there. `mirror-portal/` is a separate Vercel project (its own
@@ -169,4 +169,78 @@ export function signDrop(identity: MeshIdentity, drop: { text: string; lat: numb
     data,
     priority: dropKindPriority(drop.kind),
   };
+}
+
+// ---- mirrors node/src/node-appends.ts + node.ts's Node Append TTL bounds ----
+// "Pezzo 2" del canale di comando Box↔specchio (docs/emergency-portal.md, docs/security.md voce
+// #82). Deliberately its own small signing scheme, not contentSigningPayload()/SignedDrop above —
+// see node/src/node-appends.ts's own doc comment for why a Node Append never goes through
+// ContentMetadata (it would become content://-discoverable by any mesh peer, contradicting its
+// whole "deposited at one node, never re-propagated" point).
+
+/** Mirrors `MAX_NODE_APPEND_LABEL_LENGTH` (`node/src/node-appends.ts`) — kept as its own constant rather than imported, same reasoning that file's own comment gives for not importing `MAX_DROP_LABEL_LENGTH` either. */
+export const MAX_NODE_APPEND_LABEL_LENGTH = 100;
+
+export interface SignableNodeAppendFields {
+  text: string;
+  label?: string;
+  kind: DropKind;
+  timestamp: number;
+  expiresAt: number;
+  /** The one Box this signature is bound to — part of what's signed, not just the HTTP envelope (see node-appends.ts's own doc comment for why). */
+  targetNodeId: string;
+  publisherId: string;
+}
+
+/** Field order must match `node/src/node-appends.ts`'s `nodeAppendSigningPayload()` exactly — verified byte-for-byte in `tests/unit/mirror-portal-mesh-signing.test.ts`. */
+export function nodeAppendSigningPayload(fields: SignableNodeAppendFields): Buffer {
+  return Buffer.from(
+    JSON.stringify({
+      text: fields.text,
+      label: fields.label,
+      kind: fields.kind,
+      timestamp: fields.timestamp,
+      expiresAt: fields.expiresAt,
+      targetNodeId: fields.targetNodeId,
+      publisherId: fields.publisherId,
+    }),
+  );
+}
+
+export interface SignedNodeAppend extends SignableNodeAppendFields {
+  signature: string;
+}
+
+// 24h/72h — mirror node.ts's own DEFAULT_NODE_APPEND_TTL_MS/MAX_NODE_APPEND_TTL_MS. Exported for the
+// same cross-check reason DEFAULT_DROP_TTL_MS/MAX_DROP_TTL_MS are (see that pair's own comment) —
+// tests/unit/mirror-portal-mesh-signing.test.ts asserts both pairs match node.ts's real constants.
+export const DEFAULT_NODE_APPEND_TTL_MS = 24 * 60 * 60 * 1000;
+export const MAX_NODE_APPEND_TTL_MS = 72 * 60 * 60 * 1000;
+
+/**
+ * Builds and signs a Node Append exactly as `NomadNode.appendToNode()`
+ * would for a real mesh send, but for the remote-ingest path
+ * (`NomadNode.ingestSignedNodeAppend()`, "Pezzo 2") instead of the mesh's
+ * own `PRIVATE_MESSAGE` channel — no ECDH/encryption identity needed here,
+ * only the same Ed25519 `MeshIdentity` already custodied for `signDrop()`.
+ */
+export function signNodeAppend(
+  identity: MeshIdentity,
+  append: { text: string; label?: string; kind: DropKind; expiresInMs?: number; targetNodeId: string },
+): SignedNodeAppend {
+  const ttlMs = Math.min(append.expiresInMs ?? DEFAULT_NODE_APPEND_TTL_MS, MAX_NODE_APPEND_TTL_MS);
+  const timestamp = Date.now();
+  const expiresAt = timestamp + ttlMs;
+  const publisherId = identity.nodeId;
+  const fields: SignableNodeAppendFields = {
+    text: append.text,
+    label: append.label,
+    kind: append.kind,
+    timestamp,
+    expiresAt,
+    targetNodeId: append.targetNodeId,
+    publisherId,
+  };
+  const signature = identity.sign(nodeAppendSigningPayload(fields)).toString("hex");
+  return { ...fields, signature };
 }

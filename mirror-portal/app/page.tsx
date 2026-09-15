@@ -5,6 +5,7 @@ import { beaconMessage, dropKind, formatCoords, formatDateTime, relayOnline, rel
 import { summarizeFleet } from "../lib/node-status";
 import { PortalHeader } from "./PortalHeader";
 import { RemoteDropForm } from "./RemoteDropForm";
+import { RemoteNodeAppendForm } from "./RemoteNodeAppendForm";
 
 // Never statically cached — a mirror whose whole point is showing what arald-backend/sync.ts most
 // recently wrote would be actively misleading if Vercel served a stale build-time snapshot instead of
@@ -185,6 +186,7 @@ export default async function HomePage(): Promise<JSX.Element> {
                             </div>
                           )}
                           <RemoteDropForm nodeUrl={n.nodeUrl} />
+                          <RemoteNodeAppendForm nodeUrl={n.nodeUrl} />
                         </li>
                       );
                     })}

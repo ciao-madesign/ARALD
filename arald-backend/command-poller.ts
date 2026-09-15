@@ -1,14 +1,22 @@
 import type { Pool } from "pg";
 
 /**
- * The Box→specchio half of the canale di comando (Pezzo 1,
+ * The Box→specchio half of the canale di comando (Pezzo 1/2,
  * `docs/emergency-portal.md`): polls `remote_commands` for entries queued
- * for THIS Box's own `node_url` and delivers each one to
- * `POST /api/ingest-signed-content` on the node this script already talks
- * to (`node-client.ts`'s own `nodeUrl`) — the Box pulls, the specchio
- * never pushes, same "no public IP" reasoning as every other Box↔specchio
- * direction in this project. Runs alongside the existing sync tick
- * (`sync.ts`), not a separate process — one Box, one script to operate.
+ * for THIS Box's own `node_url` and delivers each one to the node this
+ * script already talks to (`node-client.ts`'s own `nodeUrl`) — the Box
+ * pulls, the specchio never pushes, same "no public IP" reasoning as every
+ * other Box↔specchio direction in this project. Runs alongside the
+ * existing sync tick (`sync.ts`), not a separate process — one Box, one
+ * script to operate.
+ *
+ * `remote_commands.kind` (always set explicitly on insert — see
+ * `mirror-portal/app/api/commands/*`) picks the ingest endpoint and body
+ * shape: `'drop'` posts `{metadata, data, priority}` to `POST
+ * /api/ingest-signed-content` ("Pezzo 1"), `'node-append'` posts the whole
+ * signed submission object (stored as-is in `metadata`, `data` unused —
+ * a Node Append has no separate binary blob) to `POST
+ * /api/ingest-node-append` ("Pezzo 2", `docs/security.md` voce #82).
  */
 
 const FETCH_TIMEOUT_MS = 10_000;
@@ -29,6 +37,8 @@ const MAX_COMMAND_AGE_BEFORE_GIVING_UP_MS = 24 * 60 * 60 * 1000;
 
 interface PendingCommand {
   id: string;
+  /** `'drop'` or `'node-append'` — see this module's own doc comment for how each maps onto an endpoint/body shape. */
+  kind: string;
   metadata: unknown;
   data: string;
   priority: number;
@@ -44,10 +54,10 @@ export interface CommandPollSummary {
 
 async function fetchPendingCommands(pool: Pool, nodeUrl: string): Promise<PendingCommand[]> {
   const res = await pool.query(
-    `SELECT id, metadata, data, priority, created_at FROM remote_commands WHERE node_url = $1 AND status = 'pending' ORDER BY created_at ASC LIMIT $2`,
+    `SELECT id, kind, metadata, data, priority, created_at FROM remote_commands WHERE node_url = $1 AND status = 'pending' ORDER BY created_at ASC LIMIT $2`,
     [nodeUrl, MAX_COMMANDS_PER_TICK],
   );
-  return res.rows.map((r) => ({ id: r.id, metadata: r.metadata, data: r.data, priority: r.priority, createdAt: new Date(r.created_at) }));
+  return res.rows.map((r) => ({ id: r.id, kind: r.kind, metadata: r.metadata, data: r.data, priority: r.priority, createdAt: new Date(r.created_at) }));
 }
 
 async function markDelivered(pool: Pool, id: string): Promise<void> {
@@ -56,6 +66,14 @@ async function markDelivered(pool: Pool, id: string): Promise<void> {
 
 async function markFailed(pool: Pool, id: string, error: string): Promise<void> {
   await pool.query(`UPDATE remote_commands SET status = 'failed', error = $2 WHERE id = $1`, [id, error]);
+}
+
+/** The ingest endpoint path + request body for one command's `kind` — see this module's own top doc comment for the two shapes. */
+function ingestRequest(command: PendingCommand): { path: string; body: unknown } {
+  if (command.kind === "node-append") {
+    return { path: "/api/ingest-node-append", body: command.metadata };
+  }
+  return { path: "/api/ingest-signed-content", body: { metadata: command.metadata, data: command.data, priority: command.priority } };
 }
 
 /**
@@ -71,19 +89,20 @@ async function postCommand(nodeUrl: string, networkPassword: string, command: Pe
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(`${nodeUrl.replace(/\/$/, "")}/api/ingest-signed-content`, {
+    const { path, body: requestBody } = ingestRequest(command);
+    const res = await fetch(`${nodeUrl.replace(/\/$/, "")}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${networkPassword}` },
-      body: JSON.stringify({ metadata: command.metadata, data: command.data, priority: command.priority }),
+      body: JSON.stringify(requestBody),
       signal: controller.signal,
     });
-    let body: unknown;
+    let responseBody: unknown;
     try {
-      body = await res.json();
+      responseBody = await res.json();
     } catch {
-      body = undefined;
+      responseBody = undefined;
     }
-    return { status: res.status, body };
+    return { status: res.status, body: responseBody };
   } catch {
     return undefined; // transport failure — leave pending, retry next tick
   } finally {
@@ -106,8 +125,8 @@ function isTerminallyRejected(status: number): boolean {
  * change on retry, so leaving them `deferred` retried them forever) are
  * *terminal* outcomes — delivered or failed, never retried — while every
  * other status (401 stale password, 404 feature not enabled on this Box,
- * 408 a one-off timeout, a transient 5xx, 429 the Box's own elevated-drop/
- * rate-limit budget) is left `pending` for the next tick, since those
+ * 408 a one-off timeout, a transient 5xx, 429 the Box's own per-identity or
+ * elevated-drop/elevated-node-append budget) is left `pending` for the next tick, since those
  * describe a problem with reaching/using the endpoint right now, not with
  * the specific command — *unless* the command has been sitting `pending`
  * for longer than `MAX_COMMAND_AGE_BEFORE_GIVING_UP_MS`, in which case it

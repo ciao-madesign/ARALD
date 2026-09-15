@@ -5,9 +5,12 @@ import {
   contentSigningPayload,
   signDrop,
   dropKindPriority,
+  signNodeAppend,
   DROP_CONTENT_NAME,
   DEFAULT_DROP_TTL_MS,
   MAX_DROP_TTL_MS,
+  DEFAULT_NODE_APPEND_TTL_MS,
+  MAX_NODE_APPEND_TTL_MS,
 } from "../../mirror-portal/lib/mesh-signing.js";
 // Real mesh implementations, imported ONLY here (never from mirror-portal's own production code —
 // see mesh-signing.ts's own doc comment for why) specifically to prove the vendored copy is
@@ -15,8 +18,14 @@ import {
 import { Identity } from "../../node/src/identity.js";
 import { verifyContentSignature, computeContentId as realComputeContentId } from "../../node/src/content.js";
 import { extractDropPayload } from "../../node/src/drops.js";
+import { verifySignedNodeAppendSubmission } from "../../node/src/node-appends.js";
 import { Priority } from "../../node/src/packet.js";
-import { DEFAULT_DROP_TTL_MS as REAL_DEFAULT_DROP_TTL_MS, MAX_DROP_TTL_MS as REAL_MAX_DROP_TTL_MS } from "../../node/src/node.js";
+import {
+  DEFAULT_DROP_TTL_MS as REAL_DEFAULT_DROP_TTL_MS,
+  MAX_DROP_TTL_MS as REAL_MAX_DROP_TTL_MS,
+  DEFAULT_NODE_APPEND_TTL_MS as REAL_DEFAULT_NODE_APPEND_TTL_MS,
+  MAX_NODE_APPEND_TTL_MS as REAL_MAX_NODE_APPEND_TTL_MS,
+} from "../../node/src/node.js";
 
 /**
  * `mirror-portal/lib/mesh-signing.ts` — vendored/duplicated crypto (not
@@ -110,5 +119,43 @@ describe("mirror-portal lib/mesh-signing (cross-verified against node/src/*)", (
   it("DEFAULT_DROP_TTL_MS/MAX_DROP_TTL_MS match node.ts's own real, currently-effective constants exactly", () => {
     expect(DEFAULT_DROP_TTL_MS).toBe(REAL_DEFAULT_DROP_TTL_MS);
     expect(MAX_DROP_TTL_MS).toBe(REAL_MAX_DROP_TTL_MS);
+  });
+
+  /**
+   * `signNodeAppend()` — "Pezzo 2" del canale di comando (`docs/security.md` voce #82). Same
+   * cross-verification discipline as `signDrop()` above: every assertion checks the vendored
+   * output against the REAL `node/src/node-appends.ts`'s `verifySignedNodeAppendSubmission()`,
+   * never just this module's own logic.
+   */
+  it("signNodeAppend() produces a submission the real verifySignedNodeAppendSubmission() accepts", () => {
+    const identity = MeshIdentity.generate();
+    const signed = signNodeAppend(identity, { text: "materiale da recuperare", kind: "hazard", targetNodeId: "box-1" });
+
+    const verified = verifySignedNodeAppendSubmission(signed);
+    expect(verified).toBeDefined();
+    expect(verified?.publisherId).toBe(identity.nodeId);
+    expect(verified?.targetNodeId).toBe("box-1");
+    expect(verified?.kind).toBe("hazard");
+  });
+
+  it("signNodeAppend() rejects (via the real verifier) a submission tampered after signing", () => {
+    const identity = MeshIdentity.generate();
+    const signed = signNodeAppend(identity, { text: "originale", kind: "info", targetNodeId: "box-1" });
+
+    expect(verifySignedNodeAppendSubmission({ ...signed, text: "testo diverso" })).toBeUndefined();
+    expect(verifySignedNodeAppendSubmission({ ...signed, targetNodeId: "box-2" })).toBeUndefined();
+  });
+
+  it("signNodeAppend() clamps expiresInMs to the same 72h max as node.ts's own MAX_NODE_APPEND_TTL_MS", () => {
+    const identity = MeshIdentity.generate();
+    const signed = signNodeAppend(identity, { text: "x", kind: "info", targetNodeId: "box-1", expiresInMs: 999 * 60 * 60 * 1000 });
+    const maxExpected = Date.now() + 72 * 60 * 60 * 1000;
+    expect(signed.expiresAt).toBeLessThanOrEqual(maxExpected + 1000);
+    expect(signed.expiresAt).toBeGreaterThan(Date.now() + 71 * 60 * 60 * 1000);
+  });
+
+  it("DEFAULT_NODE_APPEND_TTL_MS/MAX_NODE_APPEND_TTL_MS match node.ts's own real, currently-effective constants exactly", () => {
+    expect(DEFAULT_NODE_APPEND_TTL_MS).toBe(REAL_DEFAULT_NODE_APPEND_TTL_MS);
+    expect(MAX_NODE_APPEND_TTL_MS).toBe(REAL_MAX_NODE_APPEND_TTL_MS);
   });
 });

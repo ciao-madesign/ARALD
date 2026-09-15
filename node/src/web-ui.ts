@@ -183,6 +183,21 @@ export interface WebUiOptions {
    * gates whether the *attempt* is even possible on this deployment.
    */
   allowRemoteContentIngest?: boolean;
+  /**
+   * Enables `POST /api/ingest-node-append` — "Pezzo 2" del canale di
+   * comando Box↔specchio (`docs/emergency-portal.md`, `docs/security.md`
+   * voce #82): accetta un Node Append firmato da un'identità mesh non
+   * locale (la stessa identità per-operatore già custodita dal portale per
+   * "Pezzo 1", mai una nuova) e lo registra localmente
+   * (`NomadNode.ingestSignedNodeAppend()`) — mai propagato oltre, stessa
+   * postura "single-node deposit" di ogni Node Append. Indipendente da
+   * `allowRemoteContentIngest`: un operatore del Box può abilitare l'uno
+   * senza l'altro, stessa filosofia di opt-in granulare già usata per
+   * `exposeRelayRegistry`/`exposeEmergencyBeacons`. Off by default, gated
+   * on `networkPassword` (stessa validazione in costruzione di
+   * `allowRemoteContentIngest`).
+   */
+  allowRemoteNodeAppendIngest?: boolean;
 }
 
 const WILDCARD_OR_LOOPBACK_HOSTS = new Set(["0.0.0.0", "127.0.0.1", "localhost", "::", "::1"]);
@@ -835,6 +850,7 @@ export class WebUiServer {
   private readonly exposeRelayRegistry: boolean;
   private readonly exposeEmergencyBeacons: boolean;
   private readonly allowRemoteContentIngest: boolean;
+  private readonly allowRemoteNodeAppendIngest: boolean;
   private readonly networkName: string | undefined;
   private readonly networkPassword: string | undefined;
   private readonly publicHost: string | undefined;
@@ -869,6 +885,10 @@ export class WebUiServer {
     this.allowRemoteContentIngest = options.allowRemoteContentIngest ?? false;
     if (this.allowRemoteContentIngest && !options.networkPassword) {
       throw new Error("WebUiServer: allowRemoteContentIngest requires a networkPassword");
+    }
+    this.allowRemoteNodeAppendIngest = options.allowRemoteNodeAppendIngest ?? false;
+    if (this.allowRemoteNodeAppendIngest && !options.networkPassword) {
+      throw new Error("WebUiServer: allowRemoteNodeAppendIngest requires a networkPassword");
     }
     this.mapTiles = options.mapTiles;
     const boundHost = options.host ?? "127.0.0.1";
@@ -971,6 +991,10 @@ export class WebUiServer {
       }
       if (url.pathname === "/api/ingest-signed-content") {
         void this.handleIngestSignedContent(req, res);
+        return;
+      }
+      if (url.pathname === "/api/ingest-node-append") {
+        void this.handleIngestNodeAppend(req, res);
         return;
       }
       res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
@@ -1600,6 +1624,82 @@ export class WebUiServer {
       return;
     }
     sendJson(res, 200, { contentId: metadata.contentId });
+  }
+
+  /**
+   * `POST /api/ingest-node-append` — "Pezzo 2" del canale di comando
+   * Box↔specchio (`docs/emergency-portal.md`, `docs/security.md` voce
+   * #82). Body `{ text, label?, kind?, timestamp, expiresAt, targetNodeId,
+   * publisherId, signature }` — the exact shape
+   * `NomadNode.ingestSignedNodeAppend()` verifies (see that method's own
+   * doc comment for why a signature, not `ContentMetadata`/base64 data
+   * like `POST /api/ingest-signed-content`, is the right shape here).
+   * Gated on `allowRemoteNodeAppendIngest` (404 when off) **and** the
+   * network password, same posture as every other opt-in endpoint here —
+   * this endpoint's own auth only answers "is this caller even allowed to
+   * attempt an ingest on this deployment", never whether the submission
+   * itself is legitimate. Status mapping identical to
+   * `handleIngestSignedContent()`, for the same reason (the command poller
+   * makes the same accept/give-up/retry decision either way): `"accepted"`
+   * → 200, `"rejected"` → 422 (terminal), `"rate-limited"` → 429
+   * (deferred).
+   */
+  private async handleIngestNodeAppend(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.allowRemoteNodeAppendIngest || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+
+    let raw: Buffer;
+    try {
+      raw = await readRequestBody(req, MAX_MESSAGE_BODY_BYTES, MAX_CALL_BODY_READ_MS);
+    } catch (err) {
+      if (res.writableEnded || res.destroyed) return;
+      if (err instanceof BodyTooLargeError) {
+        sendJson(res, 413, { error: "request body too large" });
+      } else if (err instanceof Error && err.message.includes("timed out")) {
+        sendJson(res, 408, { error: "timed out waiting for the request body" });
+      } else {
+        sendJson(res, 400, { error: "failed to read request body" });
+      }
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = raw.length === 0 ? {} : JSON.parse(raw.toString("utf8"));
+    } catch {
+      sendJson(res, 400, { error: "malformed JSON body" });
+      return;
+    }
+
+    // Only a coarse HTTP-layer shape check here (is this even a plain object at all — an array
+    // passes typeof === "object" too, so it's excluded explicitly) — the rest of the shape
+    // (types/lengths/required fields) plus the signature itself are `ingestSignedNodeAppend()`'s
+    // job, same split `handleIngestSignedContent()` uses for `data`/`ContentMetadata`. Unlike that
+    // endpoint, there's no separate binary blob or HTTP-specific decoding step here (a Node Append's
+    // `text` is already small, bounded by `MAX_MESSAGE_TEXT_LENGTH`), so one combined verification
+    // step in `node.ts` is enough — no `extract*()` pre-pass needed in this class.
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      sendJson(res, 400, { error: "request body must be a JSON object" });
+      return;
+    }
+
+    const result = this.node.ingestSignedNodeAppend(parsed);
+    if (result === "rate-limited") {
+      sendJson(res, 429, { error: "too many requests for this identity, or this Box's elevated-node-append budget is exhausted — try again later" });
+      return;
+    }
+    if (result === "rejected") {
+      sendJson(res, 422, { error: "submission did not verify (bad signature, wrong target node, or already expired)" });
+      return;
+    }
+    sendJson(res, 200, { accepted: true });
   }
 
   /**

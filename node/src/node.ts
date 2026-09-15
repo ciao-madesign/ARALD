@@ -70,7 +70,14 @@ import {
   type EmergencyBeaconSighting,
 } from "./emergency-beacon.js";
 import type { BeaconBroadcastTransport } from "./transports/beacon-broadcast.js";
-import { NodeAppends, extractNodeAppendPayload, MAX_NODE_APPEND_LABEL_LENGTH, type NodeAppend, type NodeAppendPayload } from "./node-appends.js";
+import {
+  NodeAppends,
+  extractNodeAppendPayload,
+  verifySignedNodeAppendSubmission,
+  MAX_NODE_APPEND_LABEL_LENGTH,
+  type NodeAppend,
+  type NodeAppendPayload,
+} from "./node-appends.js";
 import { RoutingTable } from "./routing-table.js";
 import { ServiceDirectory } from "./service-directory.js";
 import { serviceSigningPayload, verifyServiceAnnouncement, type ServiceAnnouncement, type ServiceHandler } from "./service.js";
@@ -382,17 +389,25 @@ export const DEFAULT_DROP_TTL_MS = 24 * 60 * 60 * 1000;
 export const MAX_DROP_TTL_MS = 72 * 60 * 60 * 1000;
 
 /**
- * Result of `NomadNode.ingestSignedContent()` — a plain boolean isn't enough because callers
- * (`web-ui.ts`'s HTTP endpoint, `arald-backend`'s command poller one layer further out,
- * `docs/security.md` voce #81) need to tell a genuinely forged/corrupt submission apart from one
+ * Result of `NomadNode.ingestSignedContent()` **and** `ingestSignedNodeAppend()`
+ * ("Pezzo 2", `docs/security.md` voce #82 — reused as-is rather than declaring a
+ * second near-identical type, since both feed the exact same `arald-backend`
+ * command poller, which needs to make the exact same accept/give-up/retry
+ * distinction for either kind of remote command). A plain boolean isn't enough
+ * because callers (`web-ui.ts`'s HTTP endpoints, the command poller one layer
+ * further out) need to tell a genuinely forged/corrupt submission apart from one
  * that was merely throttled, and react very differently to each:
- * - `"accepted"` — stored and, if requested, announced/recorded as a Drop.
- * - `"rate-limited"` — the per-identity packet budget (`this.rateLimiter`) or the node-wide
- *   elevated-drop budget (`tryConsumeElevatedDropBudget()`) was exhausted; the submission itself
- *   was never even checked. Worth resubmitting later — maps to HTTP 429, a *deferred* outcome for
- *   the command poller, never `failed`.
- * - `"rejected"` — the signature/hash didn't verify, or the content was already expired. Retrying
- *   the exact same bytes will never succeed — maps to HTTP 422, a *terminal* outcome.
+ * - `"accepted"` — stored and, if requested, announced/recorded as a Drop (or,
+ *   for a Node Append, recorded into `this.nodeAppends`).
+ * - `"rate-limited"` — the per-identity packet budget (`this.rateLimiter`) or the
+ *   relevant node-wide elevated budget (`tryConsumeElevatedDropBudget()` /
+ *   `tryConsumeElevatedNodeAppendBudget()`) was exhausted; the submission itself
+ *   was never even checked. Worth resubmitting later — maps to HTTP 429, a
+ *   *deferred* outcome for the command poller, never `failed`.
+ * - `"rejected"` — the signature/hash didn't verify, the content was already
+ *   expired, or (Node Append only) it was signed for a different target node.
+ *   Retrying the exact same bytes will never succeed — maps to HTTP 422, a
+ *   *terminal* outcome.
  */
 export type IngestSignedContentResult = "accepted" | "rate-limited" | "rejected";
 
@@ -438,9 +453,41 @@ const MAX_BEACON_TTL_MS = 72 * 60 * 60 * 1000;
 const MAX_ELEVATED_NODE_APPENDS_PER_WINDOW = 3;
 const ELEVATED_NODE_APPEND_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 
-/** Default/maximum lifetime for a Node Append (`NomadNode.appendToNode()`) — same bounds as `publishDrop()`'s own (`DEFAULT_DROP_TTL_MS`/`MAX_DROP_TTL_MS`), kept as separate constants rather than shared ones so either can be retuned independently later without the two features silently moving together. */
-const DEFAULT_NODE_APPEND_TTL_MS = 24 * 60 * 60 * 1000;
-const MAX_NODE_APPEND_TTL_MS = 72 * 60 * 60 * 1000;
+/**
+ * Node-wide budget for **every** `ingestSignedNodeAppend()` submission, regardless of `kind` —
+ * found necessary by review ("Pezzo 2" del canale di comando, `docs/security.md` voce #82),
+ * distinct from `MAX_ELEVATED_NODE_APPENDS_PER_WINDOW` above (which only gates `"hazard"`/
+ * `"emergency"` and is shared with the mesh path via `appendToNode()`). The per-identity
+ * `ingestRateLimiter` budget alone doesn't stop this: an HTTP caller who merely knows this Box's
+ * network password (the same shared secret handed out for ordinary mobile pairing — not proof of
+ * being a vetted portal operator, see `ingestSignedNodeAppend()`'s own doc comment) can
+ * self-generate any number of *distinct* Ed25519 identities, each submitting only once, so a
+ * per-identity budget never engages. `NodeAppends`' trust-ranked eviction (`trustRank` passed to
+ * its constructor below) already makes it *harder* for a burst of never-vetted HTTP identities to
+ * evict a genuinely mesh-sourced, ≥`minTrustForNodeAppend`-gated entry (see that class's own doc
+ * comment for the known tie-break limitation this doesn't fully close) — but without *some*
+ * node-wide throttle, a burst of throwaway identities could still rapidly evict each other (and
+ * any earlier, legitimate operator-composed submission, which starts at the same "never
+ * independently vetted" trust rank).
+ * This budget bounds how fast that can happen to a controlled trickle instead of "hundreds within
+ * seconds" — generous enough for real portal usage (several notes per Box in a normal session),
+ * far too slow to meaningfully exhaust `NodeAppends`' bounded store before an operator would notice.
+ */
+const MAX_HTTP_INGESTED_NODE_APPENDS_PER_WINDOW = 20;
+const HTTP_INGESTED_NODE_APPEND_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
+
+/**
+ * Default/maximum lifetime for a Node Append (`NomadNode.appendToNode()`) — same bounds as
+ * `publishDrop()`'s own (`DEFAULT_DROP_TTL_MS`/`MAX_DROP_TTL_MS`), kept as separate constants rather
+ * than shared ones so either can be retuned independently later without the two features silently
+ * moving together. Exported (same reasoning/precedent as `DEFAULT_DROP_TTL_MS`/`MAX_DROP_TTL_MS`
+ * above, "Pezzo 2" del canale di comando, `docs/security.md` voce #82): `mirror-portal/lib/
+ * mesh-signing.ts` vendors its own copy for `signNodeAppend()`, and a test cross-checks the two
+ * directly instead of relying on a doc comment alone to catch drift.
+ */
+export const DEFAULT_NODE_APPEND_TTL_MS = 24 * 60 * 60 * 1000;
+/** Same reasoning/export as `DEFAULT_NODE_APPEND_TTL_MS` immediately above. */
+export const MAX_NODE_APPEND_TTL_MS = 72 * 60 * 60 * 1000;
 
 /** Default cap on a single "Consegna esterna differita" submission's raw ciphertext size — same order of magnitude as `DEFAULT_MAX_RESPONSE_BYTES` in `gateway/nomad/internet-gateway.ts`, a reasonable starting point for a report/file, never a hard requirement. */
 const DEFAULT_MAX_EXTERNAL_DELIVERY_PAYLOAD_BYTES = 1_000_000;
@@ -868,6 +915,22 @@ export class NomadNode extends EventEmitter {
   private readonly pendingContentRequests = new Map<string, PendingContentEntry>();
   private readonly pendingDeliveries: PendingDeliveryQueue;
   private readonly rateLimiter: RateLimiter;
+  /**
+   * Separate `RateLimiter` instance for `ingestSignedContent()`/`ingestSignedNodeAppend()` — found
+   * by review ("Pezzo 2" del canale di comando, `docs/security.md` voce #82), applying equally to
+   * `ingestSignedContent()` (Pezzo 1): both used to key `this.rateLimiter.allow()` on the HTTP
+   * caller's *claimed* `publisherId`, sharing the exact same keyspace `handlePacket()` uses for
+   * `fromPeerId` — a real, currently-connected transport peer's own packet budget. An HTTP caller
+   * who already knows this Box's network password (the same shared secret handed out for ordinary
+   * mobile pairing, not proof of being a vetted identity) could claim `publisherId` equal to a real
+   * connected peer's `nodeId` and burn that peer's window with garbage that never even verifies —
+   * `this.rateLimiter.allow()` runs before signature verification (safe for *that caller's own*
+   * budget, since a lie about identity fails verification below regardless, but not safe for a
+   * *third party's* shared window when both paths use the same map). A separate instance closes
+   * this cross-path collision entirely: an HTTP-ingest claim can never share a bucket with a real
+   * transport peer's own traffic, regardless of what identity it claims.
+   */
+  private readonly ingestRateLimiter: RateLimiter;
   private readonly relayPolicy: RelayPolicy;
   /** Services this node itself offers (spec §35), registered via `registerService()` — never network-fed, so unlike `services` this needs no bound. */
   private readonly localServices = new Map<string, { announcement: ServiceAnnouncement; handler: ServiceHandler }>();
@@ -892,6 +955,8 @@ export class NomadNode extends EventEmitter {
   private emergencyBeaconWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
   /** Sliding-window state for `MAX_ELEVATED_NODE_APPENDS_PER_WINDOW` (see its own doc comment) — `appendToNode({ kind: "hazard" | "emergency" })` checks and updates this before sending. */
   private elevatedNodeAppendWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
+  /** Sliding-window state for `MAX_HTTP_INGESTED_NODE_APPENDS_PER_WINDOW` (see its own doc comment) — `ingestSignedNodeAppend()` checks and updates this for every accepted submission, regardless of `kind`. */
+  private httpIngestedNodeAppendWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
   /** Sliding-window state for `MAX_RELAY_COMMANDS_PER_WINDOW` (see its own doc comment) — `sendRelayCommand()` checks and updates this before sending. */
   private relayCommandWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
   /** Replay protection for `considerRelayCommand()` (see its own doc comment) — the timestamp of the last *accepted* relay command from each sender, keyed by that sender's node id. Deliberately unbounded: an entry only exists for a sender that already cleared `minTrustForRelayCommand` (ADMIN by default), a small, operator-curated set. */
@@ -939,6 +1004,13 @@ export class NomadNode extends EventEmitter {
       trustRank: (publisherId) => trustRank(this.trust.get(publisherId)),
     });
     this.rateLimiter = new RateLimiter({
+      maxPacketsPerWindow: options.maxPacketsPerWindow,
+      windowMs: options.rateLimitWindowMs,
+    });
+    // Same tuning as this.rateLimiter above, but its own instance/keyspace — see that field's own
+    // doc comment for why sharing one instance between real transport peers and HTTP-ingest claims
+    // was a cross-path DoS vector.
+    this.ingestRateLimiter = new RateLimiter({
       maxPacketsPerWindow: options.maxPacketsPerWindow,
       windowMs: options.rateLimitWindowMs,
     });
@@ -994,7 +1066,10 @@ export class NomadNode extends EventEmitter {
     });
     this.relayRegistry = new RelayRegistry({ maxRelays: options.maxRelays });
     this.emergencyBeacons = new EmergencyBeacons({ maxBeacons: options.maxEmergencyBeacons });
-    this.nodeAppends = new NodeAppends({ maxNodeAppends: options.maxNodeAppends });
+    // trustRank wired (found by review, "Pezzo 2", docs/security.md voce #82): NodeAppends' own
+    // doc comment above explains why plain FIFO stopped being safe once ingestSignedNodeAppend()
+    // started recording entries without passing minTrustForNodeAppend's gate first.
+    this.nodeAppends = new NodeAppends({ maxNodeAppends: options.maxNodeAppends, trustRank: (author) => trustRank(this.trust.get(author)) });
     this.minTrustForNodeAppend = options.minTrustForNodeAppend ?? TrustLevel.VERIFIED;
     this.minTrustForRelayCommand = options.minTrustForRelayCommand ?? TrustLevel.ADMIN;
     if (options.emergencyBeaconKey !== undefined && options.emergencyBeaconKey.length !== 32) {
@@ -1204,11 +1279,19 @@ export class NomadNode extends EventEmitter {
    *    — this HTTP-originated path had no packet-rate budget at all, so an
    *    authenticated caller (the shared network password, or a compromised
    *    portal operator credential) could call it in an unbounded tight
-   *    loop. Keying on the *claimed* `publisherId` is safe specifically
-   *    because it's independently re-verified by `putVerified()` right
-   *    below: a lie about `publisherId` fails verification (so it can
-   *    never be used to dodge or borrow someone else's budget), and the
-   *    truth is exactly the identity meant to be throttled.
+   *    loop. Keying on the *claimed* `publisherId` is safe for the
+   *    *caller's own* budget specifically because it's independently
+   *    re-verified by `putVerified()` right below: a lie about
+   *    `publisherId` fails verification, so it can never be used to dodge
+   *    or borrow someone else's budget *on the caller's side*. It is
+   *    checked against `this.ingestRateLimiter`, a **separate instance**
+   *    from `this.rateLimiter` — found necessary by a later review pass
+   *    ("Pezzo 2", `docs/security.md` voce #82): keying the *same* shared
+   *    instance used for real connected transport peers would have let a
+   *    caller who merely claims a real peer's `nodeId` burn that peer's
+   *    actual packet budget with garbage that never verifies, a one-way
+   *    DoS this method's own verification can't catch because the
+   *    rate-limit check necessarily happens *before* verification.
    * 2. A Drop's announced priority was taken directly from the *caller-
    *    supplied, unsigned* `options.priority` — never checked against the
    *    Drop's own signed `kind`, unlike `publishDrop()`, which always
@@ -1231,7 +1314,7 @@ export class NomadNode extends EventEmitter {
    *    independently no-ops for it either way.
    */
   ingestSignedContent(metadata: ContentMetadata, data: Buffer, options: { announce?: boolean; priority?: Priority } = {}): IngestSignedContentResult {
-    if (metadata.publisherId && !this.rateLimiter.allow(metadata.publisherId)) return "rate-limited";
+    if (metadata.publisherId && !this.ingestRateLimiter.allow(metadata.publisherId)) return "rate-limited";
 
     // Cheap pre-verification (same checks `contentStore.putVerified()` makes internally) *before*
     // the elevated-drop budget below is ever touched — see this method's own doc comment, point 2.
@@ -1257,6 +1340,134 @@ export class NomadNode extends EventEmitter {
       void this.floodExcept(this.buildContentAnnouncePacket(metadata, priority));
     }
     if (metadata.publisherId) this.considerDrop(metadata, metadata.publisherId);
+    return "accepted";
+  }
+
+  /**
+   * Accepts a Node Append signed by some *other* identity and addressed
+   * (via `submission.targetNodeId`, part of what's signed) at *this* node —
+   * "Pezzo 2" del canale di comando Box↔specchio (`docs/emergency-portal.md`,
+   * `docs/security.md` voce #82), the remote-delivery counterpart of
+   * `appendToNode()` the same way `ingestSignedContent()` is for
+   * `publishDrop()`. Unlike a real mesh-originated append
+   * (`handlePrivateMessage()` → `considerNodeAppend()`), this never arrives
+   * through `PRIVATE_MESSAGE`'s ECDH channel at all — it's an ordinary
+   * authenticated HTTP submission (`web-ui.ts`'s `POST
+   * /api/ingest-node-append`) carrying its own Ed25519 signature instead
+   * (`verifySignedNodeAppendSubmission()`, `node-appends.ts` — see that
+   * module's own doc comment for why a signature, not a new encryption
+   * channel, is the right replacement here: this delivery path has no
+   * intermediate mesh couriers to keep the content secret *from* in the
+   * first place, and `GET /api/node-appends` is already unauthenticated —
+   * see that handler's own comment — so nothing about visibility once it
+   * lands actually changes).
+   *
+   * Deliberately does **not** consult `this.trust`/`minTrustForNodeAppend`
+   * the way `considerNodeAppend()` (the real-mesh path) does. That gate
+   * exists to stop an arbitrary, never-vetted mesh peer from depositing
+   * content here — and a caller of *this* method is, precisely, exactly
+   * that kind of never-vetted identity as far as this Box's own
+   * `TrustManager` is concerned (`this.trust.get(publisherId)` returns
+   * `UNKNOWN` for an operator's fresh mesh identity the first time it's
+   * ever used, same as a genuine attacker's throwaway one). **Corrected by
+   * review** (`docs/security.md` voce #82): the original reasoning here
+   * claimed the network password was "a strictly narrower gate" than
+   * `minTrustForNodeAppend` — it is not. `networkPassword` is the same
+   * shared secret handed out for ordinary mobile pairing (`web-ui.ts`), not
+   * proof of being a vetted portal operator, and the mirror-portal's own
+   * per-organization authorization happens entirely *before* this Box ever
+   * sees the request — nothing here can tell "an authorized operator's
+   * submission" apart from "anyone who learned the network password,
+   * signing with a fresh throwaway identity". The "Fiducia" decision made
+   * with the user (`docs/emergency-portal.md`, "trust for a portal operator
+   * is automatic from their portal role") was never actually wired end to
+   * end — no mechanism here maps a portal role onto a mesh `TrustLevel` yet;
+   * that remains a real, open gap, not something this method closes.
+   *
+   * What actually protects `this.nodeAppends` from that gap today is
+   * eviction-time, not admission-time: `NodeAppends` ranks eviction by the
+   * live trust of an entry's `author` (`trustRank` wiring in the
+   * constructor, `node-appends.ts`'s own doc comment) — so a flood of
+   * self-generated identities submitted through this method can never
+   * evict a genuinely mesh-vetted (`>= minTrustForNodeAppend`) entry, only
+   * other equally-unvetted HTTP-ingested ones — plus
+   * `tryConsumeHttpIngestedNodeAppendBudget()` below, which throttles how
+   * fast *any* number of distinct identities can be admitted through this
+   * channel at all. Together these bound the damage without requiring the
+   * still-missing "portal role → mesh trust" pipeline; closing that gap
+   * properly is future scope, not this piece's.
+   *
+   * Never throws; returns the same `IngestSignedContentResult` union
+   * `ingestSignedContent()` does (`"accepted"` → 200, `"rejected"` → 422
+   * terminal, `"rate-limited"` → 429 worth retrying) — reused as-is rather
+   * than declaring a near-identical type for this method, since
+   * `arald-backend`'s command poller needs to make the exact same
+   * accept/give-up/retry distinction here it already makes for Drop
+   * ingestion.
+   *
+   * Budget ordering mirrors `ingestSignedContent()`'s own fix (`docs/security.md`
+   * voce #81, applied proactively here from the start): the per-identity
+   * rate limiter (`this.ingestRateLimiter`, a **separate instance** from
+   * `this.rateLimiter` — see that field's own doc comment for why sharing
+   * one with real transport peers was itself a cross-path DoS vector found
+   * by review here) is checked first on the *claimed* `publisherId` — safe
+   * before verification, since a lie about it fails the signature check
+   * below regardless, so it can only ever burn the liar's own claimed
+   * identity's budget. Then signature/target/expiry are verified, and only
+   * *then* are the two node-wide budgets consumed — **in a specific order,
+   * itself found necessary by a second review pass**: the HTTP-ingest
+   * budget (`tryConsumeHttpIngestedNodeAppendBudget()`, this endpoint's own
+   * generous, dedicated resource, unconditional) is consumed *before*
+   * `tryConsumeElevatedNodeAppendBudget()` (`kind !== "info"` only, shared
+   * cross-path with `appendToNode()`'s own real mesh emergency traffic).
+   * Checked the other way around, a submission already doomed to fail the
+   * HTTP-ingest budget would still have irrevocably burned a slot of the
+   * scarcer *shared* one first — this ordering guarantees the shared
+   * budget is only ever touched by a submission that would otherwise have
+   * gone on to succeed, so a caller who never has any real mesh trust
+   * can't cheaply exhaust it and deny a genuine operator's real emergency
+   * Node Append sent via the actual mesh. Verified/expired-checked first,
+   * so a forged or already-expired submission can never burn through
+   * either budget. `MAX_ELEVATED_NODE_APPENDS_PER_WINDOW` is already
+   * dedicated to Node Append specifically (never shared with drops), so
+   * unlike `ingestSignedContent()` (whose elevated-budget gate is scoped
+   * to `DROP_CONTENT_NAME` only, flagged as a future-scope gap for exactly
+   * this kind of reuse — voce #81, point "Fuori scope") this method needs
+   * no extra gating on that front.
+   */
+  ingestSignedNodeAppend(submission: unknown): IngestSignedContentResult {
+    const candidate = submission as { publisherId?: unknown } | null;
+    if (candidate && typeof candidate.publisherId === "string" && !this.ingestRateLimiter.allow(candidate.publisherId)) {
+      return "rate-limited";
+    }
+
+    const verified = verifySignedNodeAppendSubmission(submission);
+    if (!verified) return "rejected";
+    if (verified.targetNodeId !== this.nodeId) return "rejected";
+    if (verified.expiresAt <= Date.now()) return "rejected";
+
+    // Order matters (found by a second review pass, docs/security.md voce #82): the node-wide
+    // HTTP-ingest budget (this endpoint's own, generous, dedicated resource) is checked *before*
+    // the shared elevated-node-append budget (scarce, cross-path with appendToNode()'s real mesh
+    // emergency traffic) — reversed, a submission already doomed to fail the HTTP-ingest check
+    // would still have irrevocably burned a slot of the shared, scarcer budget for nothing. This
+    // ordering means the shared budget is only ever touched by a submission that would otherwise
+    // have gone on to succeed.
+    if (!this.tryConsumeHttpIngestedNodeAppendBudget()) return "rate-limited";
+    if (verified.kind !== "info" && !this.tryConsumeElevatedNodeAppendBudget()) return "rate-limited";
+
+    const append: NodeAppend = {
+      type: "node-append",
+      text: verified.text,
+      label: verified.label,
+      kind: verified.kind,
+      timestamp: verified.timestamp,
+      expiresAt: verified.expiresAt,
+      appendId: verified.signature,
+      author: verified.publisherId,
+    };
+    this.nodeAppends.record(append);
+    this.emit("node-append:received", append);
     return "accepted";
   }
 
@@ -1488,15 +1699,8 @@ export class NomadNode extends EventEmitter {
     if (!this.peerDirectory.getKey(targetNodeId)) {
       throw new Error(`cannot send private message: encryption key for ${targetNodeId} is not yet known`);
     }
-    if (kind !== "info") {
-      const now = Date.now();
-      if (now - this.elevatedNodeAppendWindow.windowStart >= ELEVATED_NODE_APPEND_RATE_LIMIT_WINDOW_MS) {
-        this.elevatedNodeAppendWindow = { windowStart: now, count: 0 };
-      }
-      if (this.elevatedNodeAppendWindow.count >= MAX_ELEVATED_NODE_APPENDS_PER_WINDOW) {
-        throw new Error("appendToNode: too many high-priority node appends, try again later");
-      }
-      this.elevatedNodeAppendWindow.count++;
+    if (kind !== "info" && !this.tryConsumeElevatedNodeAppendBudget()) {
+      throw new Error("appendToNode: too many high-priority node appends, try again later");
     }
     const timestamp = Date.now();
     const ttlMs = Math.min(append.expiresInMs ?? DEFAULT_NODE_APPEND_TTL_MS, MAX_NODE_APPEND_TTL_MS);
@@ -1838,6 +2042,45 @@ export class NomadNode extends EventEmitter {
     }
     if (this.elevatedDropWindow.count >= MAX_ELEVATED_DROPS_PER_WINDOW) return false;
     this.elevatedDropWindow.count++;
+    return true;
+  }
+
+  /**
+   * Same shape as `tryConsumeElevatedDropBudget()` immediately above, for
+   * `MAX_ELEVATED_NODE_APPENDS_PER_WINDOW` instead — extracted out of
+   * `appendToNode()`'s own inline block ("Pezzo 2" del canale di comando,
+   * `docs/security.md` voce #82) so `ingestSignedNodeAppend()` can share the
+   * exact same counter, for the same reason `ingestSignedContent()` shares
+   * `tryConsumeElevatedDropBudget()` with `publishDrop()`: the mesh-wide
+   * flood risk this budget protects against doesn't care whether the
+   * elevated-severity append originated from this Box's own paired client or
+   * a remote portal operator's signed submission.
+   */
+  private tryConsumeElevatedNodeAppendBudget(): boolean {
+    const now = Date.now();
+    if (now - this.elevatedNodeAppendWindow.windowStart >= ELEVATED_NODE_APPEND_RATE_LIMIT_WINDOW_MS) {
+      this.elevatedNodeAppendWindow = { windowStart: now, count: 0 };
+    }
+    if (this.elevatedNodeAppendWindow.count >= MAX_ELEVATED_NODE_APPENDS_PER_WINDOW) return false;
+    this.elevatedNodeAppendWindow.count++;
+    return true;
+  }
+
+  /**
+   * Same shape, for `MAX_HTTP_INGESTED_NODE_APPENDS_PER_WINDOW` (see that constant's own doc
+   * comment) — unlike `tryConsumeElevatedNodeAppendBudget()` above, consulted for **every**
+   * `ingestSignedNodeAppend()` submission regardless of `kind`, never shared with the mesh path
+   * (`appendToNode()`/`considerNodeAppend()` never call this): the risk it guards against is
+   * specific to the HTTP channel (many distinct, never-vetted identities each submitting once),
+   * not something a real mesh peer's own traffic could trigger.
+   */
+  private tryConsumeHttpIngestedNodeAppendBudget(): boolean {
+    const now = Date.now();
+    if (now - this.httpIngestedNodeAppendWindow.windowStart >= HTTP_INGESTED_NODE_APPEND_RATE_LIMIT_WINDOW_MS) {
+      this.httpIngestedNodeAppendWindow = { windowStart: now, count: 0 };
+    }
+    if (this.httpIngestedNodeAppendWindow.count >= MAX_HTTP_INGESTED_NODE_APPENDS_PER_WINDOW) return false;
+    this.httpIngestedNodeAppendWindow.count++;
     return true;
   }
 

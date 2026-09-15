@@ -411,13 +411,24 @@ async function main(): Promise<void> {
     // regardless of this flag — this only decides whether the *attempt* is possible on this Box at
     // all, same posture as --expose-relay-registry.
     const allowRemoteContentIngest = args["allow-remote-content-ingest"] === "true";
+    // Opt-in, gates POST /api/ingest-node-append — "Pezzo 2" del canale di comando Box↔specchio
+    // (docs/emergency-portal.md, WebUiOptions.allowRemoteNodeAppendIngest's own doc comment).
+    // Independent from --allow-remote-content-ingest above: an operator can enable Drop injection
+    // without Node Append injection, or vice versa, same granular opt-in philosophy as
+    // --expose-relay-registry/--expose-emergency-beacons.
+    const allowRemoteNodeAppendIngest = args["allow-remote-node-append-ingest"] === "true";
     // A dedicated location-registry node (docs/next-steps.md Opzione J) needs the same
     // networkName/networkPassword pairing mechanism as any other mobile-facing node — just handed
     // out separately to trusted operators only, never to guests, which is exactly what makes it a
     // *different* node's password rather than a new access-control mechanism of its own. Same
     // reasoning extends to a relay-registry/Emergency Node.
     const needsNetworkPassword =
-      allowServiceCalls || exposeLocationRegistry || exposeRelayRegistry || exposeEmergencyBeacons || allowRemoteContentIngest;
+      allowServiceCalls ||
+      exposeLocationRegistry ||
+      exposeRelayRegistry ||
+      exposeEmergencyBeacons ||
+      allowRemoteContentIngest ||
+      allowRemoteNodeAppendIngest;
     // Generated fresh every run, printed/shown once, never persisted — the mobile client (Opzione H,
     // docs/next-steps.md) is expected to be paired by re-entering this each time the node restarts,
     // the same "out of band, by the operator" trust model as a Wi-Fi router's own password.
@@ -449,6 +460,7 @@ async function main(): Promise<void> {
       exposeRelayRegistry,
       exposeEmergencyBeacons,
       allowRemoteContentIngest,
+      allowRemoteNodeAppendIngest,
       networkName,
       networkPassword,
       publicHost: args["public-host"],
@@ -482,6 +494,9 @@ async function main(): Promise<void> {
     }
     if (allowRemoteContentIngest) {
       console.log(`Canale di comando dal portale abilitato: POST /api/ingest-signed-content (stessa password di rete)`);
+    }
+    if (allowRemoteNodeAppendIngest) {
+      console.log(`Canale di comando dal portale abilitato: POST /api/ingest-node-append (stessa password di rete)`);
     }
     if (mapTiles) {
       console.log(`Map tiles exposed: GET /api/map-info, GET /api/map-tiles/:z/:x/:y (non autenticati — non dati sensibili)`);
