@@ -3,7 +3,7 @@ import { syncSnapshotToPostgres, type SyncClient } from "../../arald-backend/pos
 import type { NodeSnapshot } from "../../arald-backend/node-client.js";
 
 function emptySnapshot(): NodeSnapshot {
-  return { status: undefined, relays: [], emergencyBeacons: [], drops: [], nodeAppends: [], skipped: [] };
+  return { status: undefined, services: [], relays: [], emergencyBeacons: [], drops: [], nodeAppends: [], skipped: [] };
 }
 
 function fakeClient(): SyncClient & { calls: { text: string; params: unknown[] }[] } {
@@ -23,13 +23,24 @@ describe("syncSnapshotToPostgres", () => {
     const summary = await syncSnapshotToPostgres(client, "http://node.example", emptySnapshot());
 
     expect(client.calls).toHaveLength(0);
-    expect(summary).toEqual({ relays: 0, emergencyBeacons: 0, drops: 0, nodeAppends: 0, statusSnapshot: false });
+    expect(summary).toEqual({ relays: 0, emergencyBeacons: 0, drops: 0, nodeAppends: 0, services: 0, statusSnapshot: false });
   });
 
   it("upserts one row per relay/beacon/drop/append, and inserts one status snapshot", async () => {
     const client = fakeClient();
     const snapshot: NodeSnapshot = {
-      status: { nodeId: "N1", displayName: "Rifugio", connected: true, peers: 2, relaying: true },
+      status: {
+        nodeId: "N1",
+        displayName: "Rifugio",
+        connected: true,
+        internet: "OFFLINE",
+        localNetwork: "ONLINE",
+        peers: 2,
+        relaying: true,
+        servicesCount: 1,
+        cachedContentPercent: 40,
+      },
+      services: [{ serviceId: "ai", version: "1", capabilities: ["prompt"], providerId: "N1", isLocal: true, availability: true }],
       relays: [{ relayId: "R1", type: "fixed", lat: 45.1, lon: 9.2, online: true }],
       emergencyBeacons: [{ beaconContentId: "B1", deviceId: "D1", timestamp: 1000 }],
       drops: [{ dropId: "DR1", author: "A1", text: "attenzione", lat: 45.1, lon: 9.2, kind: "hazard", timestamp: 1500 }],
@@ -39,7 +50,7 @@ describe("syncSnapshotToPostgres", () => {
 
     const summary = await syncSnapshotToPostgres(client, "http://node.example", snapshot);
 
-    expect(summary).toEqual({ relays: 1, emergencyBeacons: 1, drops: 1, nodeAppends: 1, statusSnapshot: true });
+    expect(summary).toEqual({ relays: 1, emergencyBeacons: 1, drops: 1, nodeAppends: 1, services: 1, statusSnapshot: true });
     expect(client.calls).toHaveLength(5);
 
     const relayCall = client.calls.find((c) => c.text.includes("INTO relays"));
@@ -51,6 +62,13 @@ describe("syncSnapshotToPostgres", () => {
     const statusCall = client.calls.find((c) => c.text.includes("INTO node_status_snapshots"));
     expect(statusCall?.text).not.toContain("ON CONFLICT");
     expect(statusCall?.params[1]).toBe("N1");
+    // services rides inside the same jsonb blob as the rest of the status (postgres-sync.ts's own
+    // doc comment) — no fifth table, so this is the only place that merge is observable.
+    expect(JSON.parse(statusCall!.params[2] as string)).toMatchObject({
+      nodeId: "N1",
+      cachedContentPercent: 40,
+      services: [{ serviceId: "ai", isLocal: true, availability: true }],
+    });
   });
 
   it("never inserts a status snapshot when the node's /api/status was unreachable/malformed", async () => {

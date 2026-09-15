@@ -18,6 +18,8 @@ export interface SyncSummary {
   emergencyBeacons: number;
   drops: number;
   nodeAppends: number;
+  /** Count only, same as `StatusRow.servicesCount` — the list itself lives inside the status snapshot's `data`, not a count this summary needs to duplicate a second way. */
+  services: number;
   statusSnapshot: boolean;
 }
 
@@ -89,10 +91,13 @@ export async function syncSnapshotToPostgres(client: SyncClient, nodeUrl: string
 
   let statusSnapshot = false;
   if (snapshot.status) {
+    // services rides inside the same row as the rest of the status — both are a "what does this
+    // node look like right now" fact with no identity of their own to upsert against (unlike
+    // relays/beacons/drops/appends above), so one merged blob instead of a fifth table.
     await client.query(`INSERT INTO node_status_snapshots (node_url, node_id, data, synced_at) VALUES ($1, $2, $3, now())`, [
       nodeUrl,
       snapshot.status.nodeId,
-      JSON.stringify(snapshot.status),
+      JSON.stringify({ ...snapshot.status, services: snapshot.services }),
     ]);
     statusSnapshot = true;
   }
@@ -102,6 +107,7 @@ export async function syncSnapshotToPostgres(client: SyncClient, nodeUrl: string
     emergencyBeacons: snapshot.emergencyBeacons.length,
     drops: snapshot.drops.length,
     nodeAppends: snapshot.nodeAppends.length,
+    services: snapshot.services.length,
     statusSnapshot,
   };
 }

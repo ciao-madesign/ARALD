@@ -1,6 +1,6 @@
 # Emergency Portal — architettura del portale web (proposta)
 
-**Stato**: documentazione di riferimento/pianificazione per l'insieme della proposta, **con sette pezzi concreti realizzati** (`arald-backend/` → `local-portal/` → sincronizzazione periodica → `mirror-portal/` in produzione su Vercel → schema multi-tenant/autenticazione operatori → restyle+Mappa → `AUTH_SECRET`/primo Admin, 13 settembre 2026 — vedi "Settimo pezzo realizzato" in fondo). L'autenticazione del pannello Admin è ora **operativa in produzione**, non solo pronta. Resta un solo pezzo a livello di proposta, nessuna decisione presa: il canale di comando Box↔specchio per le scritture da remoto.
+**Stato**: documentazione di riferimento/pianificazione per l'insieme della proposta, **con otto pezzi concreti realizzati** (`arald-backend/` → `local-portal/` → sincronizzazione periodica → `mirror-portal/` in produzione su Vercel → schema multi-tenant/autenticazione operatori → restyle+Mappa → `AUTH_SECRET`/primo Admin → "Pezzo 0" del canale di comando (visibilità stato Box), 15 settembre 2026 — vedi "Ottavo pezzo realizzato" in fondo). L'autenticazione del pannello Admin è ora **operativa in produzione**, non solo pronta. Il **canale di comando Box↔specchio** è ora un piano pianificato a più pezzi (tre decisioni raccolte esplicitamente con l'utente — vedi "Canale di comando: piano pianificato" più sotto), di cui solo il primo pezzo (visibilità) è realizzato.
 
 ## Nota terminologica: "ARALD" — risolta
 
@@ -223,6 +223,33 @@ I due passi pratici lasciati aperti dal quinto pezzo (sotto, "Prossimo passo" or
 
 Con questo, l'intero quinto pezzo (schema multi-tenant + autenticazione) è **operativo in produzione**, non solo "codice pronto in attesa di due passi manuali".
 
-## Prossimo passo
+## Canale di comando Box↔specchio — piano pianificato, un pezzo alla volta (15 settembre 2026)
 
-Resta da pianificare esplicitamente con l'utente, nessuna decisione presa qui: **canale di comando Box↔specchio** per le scritture da remoto — il pezzo più delicato della proposta originale, ora finalmente sbloccato dall'esistenza di un operatore remoto autenticato e operativo.
+Il pezzo più delicato della proposta originale, sbloccato dall'esistenza di un operatore remoto autenticato e operativo (settimo pezzo sopra). Pianificato con l'utente attraverso tre domande dirette, una alla volta, prima di scrivere codice:
+
+1. **Ambito delle azioni da remoto**: scelto l'ambito ampio — Node Append, drop/hazard, consegna esterna differita, più (aggiunta esplicita dell'utente) il riavvio remoto dei **soli** Fixed Relay/Box, mai Mobile Relay/Card.
+2. **Identità crittografica**: scelto che ogni operatore ha una propria identità mesh dedicata (chiave privata custodita dal server del portale, cifrata a riposo) — un Node Append inviato da un operatore risulta firmato da *quell'operatore*, non dal Box che lo esegue per suo conto. Comporta un costo di sicurezza reale e accettato consapevolmente: il portale custodisce materiale crittografico mesh-side, un precedente nuovo per questo progetto (mai fatto finora per nessun'altra identità mesh).
+3. **Fiducia**: scelta automatica dal ruolo portale — il ruolo assegnato nel pannello Admin (Admin/Operatore) diventa direttamente il `TrustLevel` mesh (Admin→ADMIN, Operatore→VERIFIED) per l'identità di quell'operatore, nessuna approvazione separata sul campo.
+
+**Vincolo tecnico reale, verificato leggendo il codice prima di pianificare**: `publishDrop()`/`appendToNode()`/`sendExternalDelivery()` (`node/src/node.ts`) firmano oggi sempre con l'identità del `NomadNode` chiamante (`this.identity`) — nessuno dei tre accetta un'identità esplicita "presa in prestito". Per far sì che un'azione risulti davvero firmata dall'operatore (decisione 2 sopra) serve una nuova capacità lato Box, mai esistita finora: accettare un content-item già firmato da un'identità non locale e trattarlo come se fosse arrivato da un peer (annuncio/propagazione inclusi) — non solo collegare pezzi esistenti.
+
+**Il riavvio remoto per Fixed Relay riusa meccanismi già esistenti più del previsto**: `RelayStaticFields.type: "fixed" | "mobile"` (`node/src/relay-registry.ts`) già distingue esattamente Box/Fixed Relay da Card/Mobile Relay — filtrare il comando su `type === "fixed"` non richiede nuova tassonomia. L'opt-out per i Box supervisionati quotidianamente da un umano (richiesta esplicita dell'utente) **esiste già**: `cli.ts`'s `--allow-remote-reboot` è un flag locale al processo — se l'operatore fisico del Box non lo passa all'avvio, il dispositivo rifiuta localmente qualunque comando di riavvio remoto indipendentemente da chi lo manda o quanto è fidato (due opt-in indipendenti già documentati, "Convenzioni consolidate" in `CLAUDE.md`). Nessun nuovo meccanismo da costruire per questo, solo da collegare al nuovo pannello del portale.
+
+**Ordine di esecuzione concordato**, dal rischio più basso al più alto:
+- **Pezzo 0 — Visibilità stato Box** ✅ fatto, vedi "Ottavo pezzo realizzato" sotto.
+- **Pezzo 1 — Infrastruttura comandi da remoto + Drop/Hazard**: il candidato tecnicamente più semplice per validare l'intera nuova pipeline (identità per-operatore, coda comandi, nuova capacità sul Box) — `publishDrop()` riusa `contentSigningPayload()`, già una funzione pura riusabile fuori da `NomadNode`.
+- **Pezzo 2 — Node Append da remoto**: più delicato, oggi passa da `sendPrivateMessage()` (cifratura ECDH 1:1), non un content firmato — da capire/adattare come "chi ha cifrato" diventa verificabile senza spostare chiavi private sul Box.
+- **Pezzo 3 — Consegna esterna differita da remoto**: schema crittografico proprio (X25519 effimero + AES-GCM), probabile riuso parziale del pattern del Pezzo 1.
+- **Pezzo 4 — Riavvio remoto, solo Fixed Relay**: riusa l'infrastruttura del Pezzo 1 + il filtro `type: "fixed"` + la documentazione dell'opt-out già esistente.
+
+Nessuno dei pezzi 1-4 è ancora implementato — stesso workflow a doppio check di ogni voce precedente, un pezzo alla volta con ok esplicito dell'utente tra un pezzo e l'altro.
+
+## Ottavo pezzo realizzato — "Pezzo 0": pannello "Stato rete" nella Home (15 settembre 2026)
+
+Visibilità dello stato dei Box connessi, richiesta esplicitamente dall'utente con la propria definizione di "avviso": SOS o drop hazard/emergency ricevuti da quel Box, da individuare a colpo d'occhio. Nessuna scrittura dal portale verso il Box — solo lettura, stesso principio "Box → specchio, mai il contrario" di sempre.
+
+**Realizzato**: `arald-backend/node-client.ts`/`postgres-sync.ts`/`sync.ts` (sync di `internet`/`localNetwork`/`servicesCount`/`cachedContentPercent`, nuovo fetch di `GET /api/services`, tutto unito nello stesso blob `node_status_snapshots` — nessuna nuova tabella), `mirror-portal/lib/node-status.ts` (nuovo, funzione pura `summarizeFleet()` — nessuna nuova query SQL, rigrupppa dati che il portale già recupera), `mirror-portal/app/page.tsx` (pannello "Nodi" esistente esteso con connessione/batteria/servizi/badge avvisi).
+
+**Due bug reali trovati dalla revisione dedicata, entrambi bloccanti per la feature stessa**: il criterio di abbinamento batteria↔Box era strutturalmente sbagliato (matchava per `nodeUrl` invece che per identità crittografica `relayId === nodeId`, rompendosi in ogni scenario di registro relay condiviso tra più Box — scoperto leggendo `docs/beacon.md`); `extractRelayRow()` non catturava affatto `batteryPercent` da `/api/relays`, quindi la feature "batteria" non avrebbe mai funzionato a prescindere dal primo fix. Dettaglio tecnico completo, incluso il ragionamento della revisione, in `docs/security.md` voce #80.
+
+Verificato dal vivo in browser (Playwright, dati finti in una copia scratch mai committata) con uno scenario esplicito di registro condiviso, per confermare che il fix della revisione funziona davvero end-to-end. `npx tsc --noEmit`/`npm run build` puliti, suite completa (1207 test) ripetuta 3 volte senza flakiness.

@@ -53,6 +53,7 @@ describe("arald-backend sync (docs/emergency-portal.md)", () => {
     await webUi.start();
 
     node.registerRelay({ relayId: "RELAY-1", type: "fixed", lat: 45.8, lon: 7.6 });
+    node.registerService("kiwix-search", "1", ["search"], async () => ({}));
     node.sendEmergencyBeacon({ message: "aiuto", lat: 45.8, lon: 7.6 });
     node.publishDrop({ text: "sentiero chiuso", lat: 45.8, lon: 7.6, kind: "hazard" });
     node.nodeAppends.record({
@@ -67,7 +68,17 @@ describe("arald-backend sync (docs/emergency-portal.md)", () => {
     const snapshot = await fetchNodeSnapshot({ nodeUrl: baseUrl(), networkPassword: "s3cret-test-password" });
 
     expect(snapshot.skipped).toEqual([]);
-    expect(snapshot.status).toMatchObject({ nodeId: node.nodeId, connected: true });
+    expect(snapshot.status).toMatchObject({
+      nodeId: node.nodeId,
+      connected: true,
+      internet: expect.stringMatching(/^(ONLINE|OFFLINE)$/),
+      localNetwork: "ONLINE",
+      servicesCount: expect.any(Number),
+      cachedContentPercent: expect.any(Number),
+    });
+    expect(snapshot.services).toEqual([
+      { serviceId: "kiwix-search", version: "1", capabilities: ["search"], providerId: node.nodeId, isLocal: true, availability: true },
+    ]);
     expect(snapshot.relays).toEqual([{ relayId: "RELAY-1", type: "fixed", lat: 45.8, lon: 7.6, online: false }]);
     expect(snapshot.emergencyBeacons).toHaveLength(1);
     expect(snapshot.emergencyBeacons[0]).toMatchObject({ deviceId: node.nodeId, message: "aiuto" });
@@ -77,7 +88,7 @@ describe("arald-backend sync (docs/emergency-portal.md)", () => {
 
     const client = fakeClient();
     const summary = await syncSnapshotToPostgres(client, baseUrl(), snapshot);
-    expect(summary).toEqual({ relays: 1, emergencyBeacons: 1, drops: 1, nodeAppends: 1, statusSnapshot: true });
+    expect(summary).toEqual({ relays: 1, emergencyBeacons: 1, drops: 1, nodeAppends: 1, services: 1, statusSnapshot: true });
     expect(client.calls).toBe(5); // one upsert per relay/beacon/drop/append + one status insert
   });
 

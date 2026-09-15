@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { getMirrorSnapshot, type MirrorSectionError, type MirrorSnapshot } from "../lib/db";
-import { beaconMessage, dropKind, formatCoords, formatDateTime, nodeDisplayName, relayOnline, relayType } from "../lib/format";
+import { beaconMessage, dropKind, formatCoords, formatDateTime, relayOnline, relayType } from "../lib/format";
+import { summarizeFleet } from "../lib/node-status";
 import { PortalHeader } from "./PortalHeader";
 
 // Never statically cached — a mirror whose whole point is showing what arald-backend/sync.ts most
@@ -43,6 +44,13 @@ export default async function HomePage(): Promise<JSX.Element> {
   const relaysError = sectionError(snapshot.errors, "relays");
   const beaconsError = sectionError(snapshot.errors, "beacons");
   const dropsError = sectionError(snapshot.errors, "drops");
+
+  // Re-groups data the four queries above already fetched (voce #80) — no new Postgres query, see
+  // lib/node-status.ts's own doc comment for why. Rendered even when relaysError/beaconsError/
+  // dropsError are set: a Box's own connection/services still matter on their own, and
+  // summarizeFleet() degrades an empty relays/drops/beacons array to "nothing extra to show" rather
+  // than throwing, same posture as every other section on this page.
+  const fleet = summarizeFleet(snapshot.nodes, snapshot.relays, snapshot.drops, snapshot.beacons);
 
   return (
     <>
@@ -145,17 +153,39 @@ export default async function HomePage(): Promise<JSX.Element> {
                   <p className="empty">Nessun nodo sincronizzato finora.</p>
                 ) : (
                   <ul className="row-list">
-                    {snapshot.nodes.map((n) => (
-                      <li key={n.nodeUrl}>
-                        <div className="row">
-                          <span className="row-text">{nodeDisplayName(n.data, n.nodeId)}</span>
-                          <span className="muted">{n.nodeUrl}</span>
-                        </div>
-                        <div className="row-meta mono">
-                          <span>ultimo sync {formatDateTime(n.syncedAt)}</span>
-                        </div>
-                      </li>
-                    ))}
+                    {snapshot.nodes.map((n, i) => {
+                      const f = fleet[i];
+                      const topAlert = f.alerts[0];
+                      return (
+                        <li key={n.nodeUrl}>
+                          <div className="row">
+                            <span className="row-text">{f.displayName}</span>
+                            <span className={`tag ${f.connected ? "online" : "offline"}`}>{f.connected ? "online" : "offline"}</span>
+                          </div>
+                          <div className="row-meta mono">
+                            <span className="muted">{n.nodeUrl}</span>
+                            <span className="sep">·</span>
+                            <span>ultimo sync {formatDateTime(n.syncedAt)}</span>
+                            {f.batteryPercent !== undefined && (
+                              <>
+                                <span className="sep">·</span>
+                                <span>batteria {f.batteryPercent}%</span>
+                              </>
+                            )}
+                            <span className="sep">·</span>
+                            <span>{f.services.length} servizi</span>
+                          </div>
+                          {topAlert && (
+                            <div className="row-meta">
+                              <span className={`tag ${topAlert.kind}`}>
+                                {f.alerts.length} avviso{f.alerts.length > 1 ? "i" : ""}
+                              </span>
+                              <span className="row-text">{topAlert.text}</span>
+                            </div>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </section>
