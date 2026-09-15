@@ -152,6 +152,13 @@ textarea {
   font-size: 0.85em;
 }
 
+/* ---- Remote relay command form (RemoteRelayCommandForm.tsx, canale di comando "Pezzo 4") — a
+   plain button, no disclosure: a reboot has no parameters to fill in, the confirm() dialog
+   inside the component is the only extra step before it's sent. ---- */
+.remote-relay-command-form {
+  margin-top: 0.6em;
+}
+
 /* ---- Shared header/tabs (PortalHeader.tsx) — used by the Home and Mappa screens; Login/Admin keep
    their own simpler header, unchanged, out of scope for this restyle. ---- */
 header.top {

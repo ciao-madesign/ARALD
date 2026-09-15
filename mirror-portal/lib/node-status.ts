@@ -62,6 +62,16 @@ export interface NodeFleetStatus {
    */
   batteryPercent?: number;
   relayOnline?: boolean;
+  /**
+   * `true` exactly when the same `ownRelays.length === 1` match above found a `"fixed"` registry
+   * entry for this node — the one signal `RemoteRelayCommandForm` (Pezzo 4, "riavvio remoto Fixed
+   * Relay", `docs/security.md` voce #83) gates its own visibility on, per the user's own original
+   * request ("solo verso i relay fissi, mai Mobile Relay/Card"). Deliberately its own boolean field
+   * rather than inferring "fixed" from `batteryPercent`/`relayOnline` being defined — those two can
+   * independently be `undefined` for a genuine fixed relay (e.g. `online` missing from its own
+   * telemetry) without that meaning "not a fixed relay".
+   */
+  isFixedRelay: boolean;
   /** Most recent hazard/emergency drops and SOS beacons attributed to this node's `nodeUrl`, newest first — the "avviso" an operator needs to see at a glance, per the piece's own brief. Bounded by whatever `getMirrorSnapshot()` already capped `drops`/`beacons` to (`RECENT_LIST_LIMIT`), not re-capped here. */
   alerts: NodeAlert[];
 }
@@ -117,6 +127,7 @@ export function summarizeFleet(nodes: NodeStatusRow[], relays: RelayRow[], drops
       services: extractServices(node.data),
       batteryPercent: battery,
       relayOnline: online,
+      isFixedRelay: ownRelays.length === 1,
       alerts,
     };
   });

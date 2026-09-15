@@ -6,6 +6,7 @@ import {
   signDrop,
   dropKindPriority,
   signNodeAppend,
+  signRelayCommand,
   DROP_CONTENT_NAME,
   DEFAULT_DROP_TTL_MS,
   MAX_DROP_TTL_MS,
@@ -19,6 +20,7 @@ import { Identity } from "../../node/src/identity.js";
 import { verifyContentSignature, computeContentId as realComputeContentId } from "../../node/src/content.js";
 import { extractDropPayload } from "../../node/src/drops.js";
 import { verifySignedNodeAppendSubmission } from "../../node/src/node-appends.js";
+import { verifySignedRelayCommandSubmission } from "../../node/src/relay-registry.js";
 import { Priority } from "../../node/src/packet.js";
 import {
   DEFAULT_DROP_TTL_MS as REAL_DEFAULT_DROP_TTL_MS,
@@ -157,5 +159,39 @@ describe("mirror-portal lib/mesh-signing (cross-verified against node/src/*)", (
   it("DEFAULT_NODE_APPEND_TTL_MS/MAX_NODE_APPEND_TTL_MS match node.ts's own real, currently-effective constants exactly", () => {
     expect(DEFAULT_NODE_APPEND_TTL_MS).toBe(REAL_DEFAULT_NODE_APPEND_TTL_MS);
     expect(MAX_NODE_APPEND_TTL_MS).toBe(REAL_MAX_NODE_APPEND_TTL_MS);
+  });
+
+  /**
+   * `signRelayCommand()` — "Pezzo 4" del canale di comando (`docs/security.md` voce #83). Stessa
+   * disciplina di cross-verifica: ogni assert controlla l'output vendored contro la REALE
+   * `node/src/relay-registry.ts`'s `verifySignedRelayCommandSubmission()`.
+   */
+  it("signRelayCommand() produces a submission the real verifySignedRelayCommandSubmission() accepts", () => {
+    const identity = MeshIdentity.generate();
+    const signed = signRelayCommand(identity, "box-1");
+
+    const verified = verifySignedRelayCommandSubmission(signed);
+    expect(verified).toBeDefined();
+    expect(verified?.publisherId).toBe(identity.nodeId);
+    expect(verified?.targetNodeId).toBe("box-1");
+    expect(verified?.command).toBe("reboot");
+  });
+
+  it("signRelayCommand() rejects (via the real verifier) a submission tampered after signing", () => {
+    const identity = MeshIdentity.generate();
+    const signed = signRelayCommand(identity, "box-1");
+
+    expect(verifySignedRelayCommandSubmission({ ...signed, targetNodeId: "box-2" })).toBeUndefined();
+    expect(verifySignedRelayCommandSubmission({ ...signed, timestamp: signed.timestamp + 1 })).toBeUndefined();
+  });
+
+  it("signRelayCommand() always uses Date.now() for timestamp, never a caller-supplied value — same replay-protection discipline as sendRelayCommand()", () => {
+    const identity = MeshIdentity.generate();
+    const before = Date.now();
+    const signed = signRelayCommand(identity, "box-1");
+    const after = Date.now();
+
+    expect(signed.timestamp).toBeGreaterThanOrEqual(before);
+    expect(signed.timestamp).toBeLessThanOrEqual(after);
   });
 });

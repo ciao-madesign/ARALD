@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { pollAndDeliverCommands } from "../../arald-backend/command-poller.js";
 
 /**
- * `arald-backend/command-poller.ts` (Pezzo 1/2 del canale di comando,
- * docs/security.md voci #81/#82) — la metà Box→specchio del nuovo flusso: un
+ * `arald-backend/command-poller.ts` (Pezzo 1/2/4 del canale di comando,
+ * docs/security.md voci #81/#82/#83) — la metà Box→specchio del nuovo flusso: un
  * fake `pg.Pool` (stesso pattern di `arald-backend-postgres-sync.test.ts`)
  * registra le query invece di parlare a un Postgres reale, `fetch` è
  * stubbato per simulare le risposte del nodo. La proprietà da verificare:
@@ -17,8 +17,9 @@ import { pollAndDeliverCommands } from "../../arald-backend/command-poller.js";
  * comunque marcato `failed` per non affamare i comandi più recenti dietro
  * di lui in coda (stessa voce di revisione). La maggior parte dei test qui
  * usa `kind: "drop"` (il default di `fakePool()` quando omesso, per non
- * toccare le fixture già scritte per Pezzo 1) — il gruppo dedicato in fondo
- * verifica il routing `kind: "node-append"` aggiunto per Pezzo 2 (voce #82).
+ * toccare le fixture già scritte per Pezzo 1) — i due gruppi dedicati in
+ * fondo verificano il routing `kind: "node-append"` (Pezzo 2, voce #82) e
+ * `kind: "relay-command"` (Pezzo 4, voce #83).
  */
 
 interface Call {
@@ -281,6 +282,71 @@ describe("arald-backend command-poller pollAndDeliverCommands", () => {
       expect(summary).toEqual({ delivered: 2, failed: 0, deferred: 0 });
       expect(hitPaths.sort()).toEqual(["/api/ingest-node-append", "/api/ingest-signed-content"]);
       expect(calls.filter((c) => c.text.includes("status = 'delivered'"))).toHaveLength(2);
+    });
+  });
+
+  /**
+   * "Pezzo 4" del canale di comando (`docs/security.md` voce #83): un comando `kind: "relay-command"`
+   * va a un terzo endpoint, stessa forma di `"node-append"` (l'intera busta firmata come body).
+   */
+  describe("routing for kind: 'relay-command'", () => {
+    it("posts the whole 'metadata' object (the signed submission) to /api/ingest-relay-command", async () => {
+      const signedSubmission = { command: "reboot", timestamp: 1, targetNodeId: "box1", publisherId: "op1", signature: "abcd" };
+      const { pool, calls } = fakePool([{ id: "rc1", kind: "relay-command", metadata: signedSubmission, data: "", priority: 2 }]);
+      const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+        expect(url).toBe("http://node.example/api/ingest-relay-command");
+        expect(JSON.parse(init.body as string)).toEqual(signedSubmission);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const summary = await pollAndDeliverCommands(pool, "http://node.example", "pw");
+
+      expect(summary).toEqual({ delivered: 1, failed: 0, deferred: 0 });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("marks a relay-command failed (terminal) on a 422 — a replay or bad signature, never worth retrying", async () => {
+      const { pool, calls } = fakePool([{ id: "rc1", kind: "relay-command", metadata: { targetNodeId: "wrong-box" }, data: "", priority: 2 }]);
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "wrong target node" }), { status: 422 })));
+
+      const summary = await pollAndDeliverCommands(pool, "http://node.example", "pw");
+
+      expect(summary).toEqual({ delivered: 0, failed: 1, deferred: 0 });
+      const update = calls.find((c) => c.text.includes("status = 'failed'"));
+      expect(update?.params).toEqual(["rc1", "wrong target node"]);
+    });
+
+    it("leaves a relay-command pending (deferred) on a 429 — this Box's own relay-command budget is temporarily exhausted", async () => {
+      const { pool, calls } = fakePool([{ id: "rc1", kind: "relay-command", metadata: {}, data: "", priority: 2 }]);
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "too many requests" }), { status: 429 })));
+
+      const summary = await pollAndDeliverCommands(pool, "http://node.example", "pw");
+
+      expect(summary).toEqual({ delivered: 0, failed: 0, deferred: 1 });
+      expect(calls.filter((c) => c.text.includes("UPDATE"))).toHaveLength(0);
+    });
+
+    it("processes all three kinds ('drop', 'node-append', 'relay-command') in the same tick, each hitting its own endpoint", async () => {
+      const { pool, calls } = fakePool([
+        { id: "drop1", kind: "drop", metadata: { contentId: "x" }, data: "AA==", priority: 4 },
+        { id: "na1", kind: "node-append", metadata: { text: "nota" }, data: "", priority: 4 },
+        { id: "rc1", kind: "relay-command", metadata: { command: "reboot" }, data: "", priority: 2 },
+      ]);
+      const hitPaths: string[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) => {
+          hitPaths.push(new URL(url).pathname);
+          return new Response(JSON.stringify({}), { status: 200 });
+        }),
+      );
+
+      const summary = await pollAndDeliverCommands(pool, "http://node.example", "pw");
+
+      expect(summary).toEqual({ delivered: 3, failed: 0, deferred: 0 });
+      expect(hitPaths.sort()).toEqual(["/api/ingest-node-append", "/api/ingest-relay-command", "/api/ingest-signed-content"]);
+      expect(calls.filter((c) => c.text.includes("status = 'delivered'"))).toHaveLength(3);
     });
   });
 });

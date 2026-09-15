@@ -11,6 +11,7 @@ import {
   type ContentMetadata,
 } from "./content.js";
 import { RemoteCatalog } from "./catalog.js";
+import { BoundedFifoMap } from "./bounded-map.js";
 import { SeenCache, decideForward } from "./routing.js";
 import { PendingDeliveryQueue } from "./store-and-forward.js";
 import { RateLimiter } from "./rate-limit.js";
@@ -55,6 +56,7 @@ import {
   RelayRegistry,
   extractRelayTelemetry,
   extractRelayCommand,
+  verifySignedRelayCommandSubmission,
   type RelayEntry,
   type RelayStaticFields,
   type RelayTelemetryPayload,
@@ -389,25 +391,30 @@ export const DEFAULT_DROP_TTL_MS = 24 * 60 * 60 * 1000;
 export const MAX_DROP_TTL_MS = 72 * 60 * 60 * 1000;
 
 /**
- * Result of `NomadNode.ingestSignedContent()` **and** `ingestSignedNodeAppend()`
- * ("Pezzo 2", `docs/security.md` voce #82 — reused as-is rather than declaring a
- * second near-identical type, since both feed the exact same `arald-backend`
+ * Result of `NomadNode.ingestSignedContent()`, `ingestSignedNodeAppend()`
+ * ("Pezzo 2", `docs/security.md` voce #82), **and** `ingestSignedRelayCommand()`
+ * ("Pezzo 4", voce #83) — reused as-is rather than declaring a third
+ * near-identical type, since all three feed the exact same `arald-backend`
  * command poller, which needs to make the exact same accept/give-up/retry
- * distinction for either kind of remote command). A plain boolean isn't enough
+ * distinction for any kind of remote command. A plain boolean isn't enough
  * because callers (`web-ui.ts`'s HTTP endpoints, the command poller one layer
  * further out) need to tell a genuinely forged/corrupt submission apart from one
  * that was merely throttled, and react very differently to each:
- * - `"accepted"` — stored and, if requested, announced/recorded as a Drop (or,
- *   for a Node Append, recorded into `this.nodeAppends`).
- * - `"rate-limited"` — the per-identity packet budget (`this.rateLimiter`) or the
- *   relevant node-wide elevated budget (`tryConsumeElevatedDropBudget()` /
- *   `tryConsumeElevatedNodeAppendBudget()`) was exhausted; the submission itself
- *   was never even checked. Worth resubmitting later — maps to HTTP 429, a
- *   *deferred* outcome for the command poller, never `failed`.
+ * - `"accepted"` — stored and, if requested, announced/recorded as a Drop, or
+ *   recorded into `this.nodeAppends` (Node Append), or emitted as
+ *   `"relay:reboot-requested"` (relay command).
+ * - `"rate-limited"` — the per-identity packet budget (`this.ingestRateLimiter`)
+ *   or the relevant node-wide budget (`tryConsumeElevatedDropBudget()` /
+ *   `tryConsumeElevatedNodeAppendBudget()` / `tryConsumeHttpIngestedNodeAppendBudget()`
+ *   / `tryConsumeHttpIngestedRelayCommandBudget()`) was exhausted; the
+ *   submission itself was never even checked. Worth resubmitting later —
+ *   maps to HTTP 429, a *deferred* outcome for the command poller, never
+ *   `failed`.
  * - `"rejected"` — the signature/hash didn't verify, the content was already
- *   expired, or (Node Append only) it was signed for a different target node.
- *   Retrying the exact same bytes will never succeed — maps to HTTP 422, a
- *   *terminal* outcome.
+ *   expired, it was signed for a different target node (Node Append/relay
+ *   command), or it's a replay of an already-accepted relay command. Retrying
+ *   the exact same bytes will never succeed — maps to HTTP 422, a *terminal*
+ *   outcome.
  */
 export type IngestSignedContentResult = "accepted" | "rate-limited" | "rejected";
 
@@ -506,6 +513,31 @@ const DEFAULT_MAX_EXTERNAL_DELIVERY_PAYLOAD_BYTES = 1_000_000;
  */
 const MAX_RELAY_COMMANDS_PER_WINDOW = 3;
 const RELAY_COMMAND_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
+
+/**
+ * Node-wide budget for `ingestSignedRelayCommand()` — "Pezzo 4" del canale
+ * di comando Box↔specchio (`docs/emergency-portal.md`, `docs/security.md`
+ * voce #83). `MAX_RELAY_COMMANDS_PER_WINDOW` above is the *sender's own
+ * outgoing* budget (`sendRelayCommand()`, checked on the node originating a
+ * command) — irrelevant here, since `ingestSignedRelayCommand()` runs on
+ * the *receiving* Box, which has no equivalent receiving-side budget today
+ * because it normally relies on `minTrustForRelayCommand` (ADMIN, a small
+ * operator-curated set) as its real defense against volume.
+ * `ingestSignedRelayCommand()` deliberately doesn't consult that gate (see
+ * its own doc comment for why — the same "Fiducia" decision reused from
+ * Pezzo 1/2, applied here to the single most sensitive payload in this
+ * codebase), so this budget is the only volume defense left on this path —
+ * kept deliberately small, smaller even than a routine drop/append budget,
+ * because a false-positive here doesn't just add a spurious entry, it takes
+ * the Box offline (subject to `--allow-remote-reboot` also being set, the
+ * final, always-local, always-independent safety valve — see that flag's
+ * own doc comment in `cli.ts`).
+ */
+const MAX_HTTP_INGESTED_RELAY_COMMANDS_PER_WINDOW = 3;
+const HTTP_INGESTED_RELAY_COMMAND_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
+
+/** Cap on `lastAcceptedRelayCommandAt` (constructor) — see that field's own doc comment for why it's no longer safe to leave unbounded. */
+const MAX_TRACKED_RELAY_COMMAND_SENDERS = 256;
 
 /** Defaults for `sendEmergencyBeacon()`'s broadcast repetition (see its own doc comment for why this is "repeat the same signed packet on a timer", not a real ACK-based retry). */
 const DEFAULT_BEACON_BROADCAST_REPEAT_COUNT = 5;
@@ -957,10 +989,28 @@ export class NomadNode extends EventEmitter {
   private elevatedNodeAppendWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
   /** Sliding-window state for `MAX_HTTP_INGESTED_NODE_APPENDS_PER_WINDOW` (see its own doc comment) — `ingestSignedNodeAppend()` checks and updates this for every accepted submission, regardless of `kind`. */
   private httpIngestedNodeAppendWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
+  /** Sliding-window state for `MAX_HTTP_INGESTED_RELAY_COMMANDS_PER_WINDOW` (see its own doc comment) — `ingestSignedRelayCommand()` checks and updates this for every accepted submission. */
+  private httpIngestedRelayCommandWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
   /** Sliding-window state for `MAX_RELAY_COMMANDS_PER_WINDOW` (see its own doc comment) — `sendRelayCommand()` checks and updates this before sending. */
   private relayCommandWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
-  /** Replay protection for `considerRelayCommand()` (see its own doc comment) — the timestamp of the last *accepted* relay command from each sender, keyed by that sender's node id. Deliberately unbounded: an entry only exists for a sender that already cleared `minTrustForRelayCommand` (ADMIN by default), a small, operator-curated set. */
-  private readonly lastAcceptedRelayCommandAt = new Map<string, number>();
+  /**
+   * Replay protection for `considerRelayCommand()`/`ingestSignedRelayCommand()`
+   * (see their own doc comments) — the timestamp of the last *accepted*
+   * relay command from each sender, keyed by that sender's node id. **No
+   * longer unconditionally safe to leave unbounded** ("Pezzo 4" del canale
+   * di comando, `docs/security.md` voce #83, found necessary proactively —
+   * same lesson `NodeAppends`' own `trustRank` fix already taught, "Pezzo 2",
+   * voce #82): an entry used to only ever exist for a sender that already
+   * cleared `minTrustForRelayCommand` (ADMIN by default), a small,
+   * operator-curated set — true no longer, since `ingestSignedRelayCommand()`
+   * deliberately does *not* consult `this.trust` (see that method's own doc
+   * comment for why). `trustRank` (constructor, same wiring `ContentStore`/
+   * `NodeAppends` already use) means a lower-trust entry is evicted first if
+   * this ever fills up — bounding memory growth from a flood of throwaway
+   * HTTP-ingested identities without needing to touch the admission
+   * decision itself.
+   */
+  private readonly lastAcceptedRelayCommandAt: BoundedFifoMap<string, number>;
   /** Monotonic counter backing `sendRelayCommand()`'s own timestamps (see that method's own comment) — guarantees every command this node sends is strictly newer than the last, even across two calls landing in the same `Date.now()` millisecond. */
   private lastSentRelayCommandTimestamp = 0;
   /**
@@ -1070,6 +1120,12 @@ export class NomadNode extends EventEmitter {
     // doc comment above explains why plain FIFO stopped being safe once ingestSignedNodeAppend()
     // started recording entries without passing minTrustForNodeAppend's gate first.
     this.nodeAppends = new NodeAppends({ maxNodeAppends: options.maxNodeAppends, trustRank: (author) => trustRank(this.trust.get(author)) });
+    // trustRank wired for the same reason (Pezzo 4, docs/security.md voce #83): see this field's
+    // own doc comment for why plain unbounded storage stopped being safe.
+    this.lastAcceptedRelayCommandAt = new BoundedFifoMap({
+      maxSize: MAX_TRACKED_RELAY_COMMAND_SENDERS,
+      evictionScore: (senderId) => trustRank(this.trust.get(senderId)),
+    });
     this.minTrustForNodeAppend = options.minTrustForNodeAppend ?? TrustLevel.VERIFIED;
     this.minTrustForRelayCommand = options.minTrustForRelayCommand ?? TrustLevel.ADMIN;
     if (options.emergencyBeaconKey !== undefined && options.emergencyBeaconKey.length !== 32) {
@@ -1468,6 +1524,78 @@ export class NomadNode extends EventEmitter {
     };
     this.nodeAppends.record(append);
     this.emit("node-append:received", append);
+    return "accepted";
+  }
+
+  /**
+   * Accepts a relay reboot command signed by some *other* identity and
+   * addressed (via `submission.targetNodeId`, part of what's signed) at
+   * *this* node — "Pezzo 4" del canale di comando Box↔specchio
+   * (`docs/emergency-portal.md`, `docs/security.md` voce #83), the
+   * remote-delivery counterpart of `sendRelayCommand()` the same way
+   * `ingestSignedNodeAppend()` is for `appendToNode()`. Same reasoning as
+   * that method for why a bespoke Ed25519 signature (`verifySignedRelayCommandSubmission()`,
+   * `relay-registry.ts`), not a new encryption channel, is the right shape
+   * for a command with no intermediate mesh couriers to keep secret from.
+   *
+   * **Deliberately does not consult `this.trust`/`minTrustForRelayCommand`**
+   * — same "Fiducia" decision already reused for `ingestSignedNodeAppend()`
+   * (`docs/emergency-portal.md`, "Canale di comando Box↔specchio — piano
+   * pianificato": trust for a portal operator is automatic from their
+   * portal role), applied here to `RelayCommandPayload`, **the single most
+   * sensitive payload in this codebase** (that type's own doc comment,
+   * `relay-registry.ts`) — a successful call here causes the receiving
+   * process to shut down. This was discussed explicitly with the user
+   * before writing this method (not assumed): the alternative — a real
+   * per-Box ADMIN allowlist provisioned out of band, closing the gap
+   * `ingestSignedNodeAppend()`'s own doc comment already flags as open —
+   * was offered and declined in favor of reusing this same channel, for
+   * consistency and speed. What actually bounds the risk of that choice,
+   * layered on top of the ordinary network-password + portal-side
+   * per-organization authorization every ingest endpoint already has:
+   * - `verifySignedRelayCommandSubmission()` still requires a real Ed25519
+   *   signature — a caller can't forge a submission for an identity whose
+   *   private key it doesn't hold (mirror-portal's own custodied operator
+   *   key), even though this method doesn't check *how much* that
+   *   identity is independently trusted by this specific Box.
+   * - `MAX_HTTP_INGESTED_RELAY_COMMANDS_PER_WINDOW` (see its own doc
+   *   comment) — deliberately smaller than the other ingest paths'
+   *   budgets, given the severity of what accepting a submission does.
+   * - Replay protection shared with the real mesh path
+   *   (`lastAcceptedRelayCommandAt`, see `considerRelayCommand()`'s own
+   *   doc comment) — a captured, resubmitted signed command is a no-op,
+   *   never a second reboot.
+   * - **`--allow-remote-reboot`** (`cli.ts`) — the decisive, independent,
+   *   always-local safety valve this whole design leans on: regardless of
+   *   what this method accepts, the physical Box operator retains full
+   *   local control over whether an accepted command ever causes an
+   *   actual `shutdown()` at all. A Box operator who judges this channel
+   *   too weak for their deployment simply never sets that flag.
+   *
+   * Never throws; returns the same `IngestSignedContentResult` union the
+   * other two ingest methods do, for the same reason (the command poller
+   * needs the identical accept/give-up/retry distinction here). On
+   * `"accepted"`, only emits `"relay:reboot-requested"` — same posture as
+   * `considerRelayCommand()`, never calls `process.exit()`/`shutdown()`
+   * itself.
+   */
+  ingestSignedRelayCommand(submission: unknown): IngestSignedContentResult {
+    const candidate = submission as { publisherId?: unknown } | null;
+    if (candidate && typeof candidate.publisherId === "string" && !this.ingestRateLimiter.allow(candidate.publisherId)) {
+      return "rate-limited";
+    }
+
+    const verified = verifySignedRelayCommandSubmission(submission);
+    if (!verified) return "rejected";
+    if (verified.targetNodeId !== this.nodeId) return "rejected";
+
+    const lastAccepted = this.lastAcceptedRelayCommandAt.get(verified.publisherId);
+    if (lastAccepted !== undefined && verified.timestamp <= lastAccepted) return "rejected"; // replay of a prior submission, never a legitimate new command
+
+    if (!this.tryConsumeHttpIngestedRelayCommandBudget()) return "rate-limited";
+
+    this.lastAcceptedRelayCommandAt.set(verified.publisherId, verified.timestamp);
+    this.emit("relay:reboot-requested", verified.publisherId);
     return "accepted";
   }
 
@@ -2081,6 +2209,23 @@ export class NomadNode extends EventEmitter {
     }
     if (this.httpIngestedNodeAppendWindow.count >= MAX_HTTP_INGESTED_NODE_APPENDS_PER_WINDOW) return false;
     this.httpIngestedNodeAppendWindow.count++;
+    return true;
+  }
+
+  /**
+   * Same shape, for `MAX_HTTP_INGESTED_RELAY_COMMANDS_PER_WINDOW` (see that constant's own doc
+   * comment) — "Pezzo 4" del canale di comando, `docs/security.md` voce #83. Never shared with
+   * `MAX_RELAY_COMMANDS_PER_WINDOW`/`relayCommandWindow` (`sendRelayCommand()`'s own *outgoing*
+   * budget, checked on the sending node, not the receiving one) — this is the receiving Box's own,
+   * the only volume defense `ingestSignedRelayCommand()` has left given it doesn't consult trust.
+   */
+  private tryConsumeHttpIngestedRelayCommandBudget(): boolean {
+    const now = Date.now();
+    if (now - this.httpIngestedRelayCommandWindow.windowStart >= HTTP_INGESTED_RELAY_COMMAND_RATE_LIMIT_WINDOW_MS) {
+      this.httpIngestedRelayCommandWindow = { windowStart: now, count: 0 };
+    }
+    if (this.httpIngestedRelayCommandWindow.count >= MAX_HTTP_INGESTED_RELAY_COMMANDS_PER_WINDOW) return false;
+    this.httpIngestedRelayCommandWindow.count++;
     return true;
   }
 
@@ -2739,10 +2884,18 @@ export class NomadNode extends EventEmitter {
    * command's timestamp from the same `senderId` — a genuine resend uses a
    * fresh `Date.now()` (`sendRelayCommand()` never lets a caller supply
    * one), so this only ever blocks a literal replay of prior wire bytes,
-   * never a legitimate new command. `lastAcceptedRelayCommandAt` is safe to
-   * leave unbounded: it only ever gains an entry once `senderId` has
-   * already cleared the `minTrustForRelayCommand` gate above (`ADMIN` by
-   * default), a small, operator-curated set, not an attacker-controlled one.
+   * never a legitimate new command. `lastAcceptedRelayCommandAt` used to be
+   * safe left unbounded on the reasoning that an entry only ever existed
+   * for a sender that already cleared the `minTrustForRelayCommand` gate
+   * above — no longer true now that `ingestSignedRelayCommand()` also
+   * writes into this same map without that gate (see its own doc comment
+   * for why); it's bounded with `trustRank`-based eviction instead (see
+   * this field's own doc comment, "Pezzo 4", `docs/security.md` voce #83).
+   * Shared, not duplicated, between the two paths: whether a given
+   * `senderId`'s last-accepted timestamp came from a real mesh
+   * `PRIVATE_MESSAGE` or an HTTP-ingested submission, it's the same
+   * logical fact about that one identity, so both paths must observe and
+   * update the same state to actually prevent a replay across the two.
    */
   private considerRelayCommand(senderId: string, command: RelayCommandPayload | undefined): void {
     if (!command) return;

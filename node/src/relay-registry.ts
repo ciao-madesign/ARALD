@@ -1,4 +1,5 @@
 import { BoundedFifoMap } from "./bounded-map.js";
+import { Identity } from "./identity.js";
 
 /** Free-text operator/organization label — bounded so an authenticated but careless caller can't stuff an unbounded string into a small registry. Same order of magnitude as other short free-text fields in this codebase (not `MAX_MESSAGE_TEXT_LENGTH`, which is for chat bodies, not a one-line label). */
 export const MAX_RELAY_OPERATOR_LENGTH = 200;
@@ -142,6 +143,68 @@ export function extractRelayCommand(payload: unknown): RelayCommandPayload | und
   if (p.command !== "reboot") return undefined;
   if (typeof p.timestamp !== "number" || !Number.isFinite(p.timestamp)) return undefined;
   return { type: "relay-command", command: p.command, timestamp: p.timestamp };
+}
+
+/**
+ * Signable fields for a relay command submitted *not* through the mesh's own
+ * `PRIVATE_MESSAGE` channel, but through the "canale di comando Box↔specchio"
+ * — "Pezzo 4" (`docs/emergency-portal.md`, `docs/security.md` voce #83).
+ * Same reasoning `node-appends.ts`'s own `SignableNodeAppendFields` already
+ * documents for why a bespoke Ed25519 signature, not a new encryption
+ * channel, is the right shape for a remote-ingested command: this delivery
+ * path has no intermediate mesh couriers to keep the command secret *from*.
+ *
+ * `targetNodeId` is part of what gets signed, not just the HTTP envelope —
+ * same anti-replay-across-Boxes binding `SignableNodeAppendFields` already
+ * uses, more important here than anywhere else in this codebase given what
+ * accepting this payload causes (`RelayCommandPayload`'s own doc comment:
+ * "the single most sensitive payload in this codebase").
+ */
+export interface SignableRelayCommandFields {
+  command: "reboot";
+  timestamp: number;
+  targetNodeId: string;
+  publisherId: string;
+}
+
+export function relayCommandSigningPayload(fields: SignableRelayCommandFields): Buffer {
+  return Buffer.from(
+    JSON.stringify({
+      command: fields.command,
+      timestamp: fields.timestamp,
+      targetNodeId: fields.targetNodeId,
+      publisherId: fields.publisherId,
+    }),
+  );
+}
+
+/** A `SignableRelayCommandFields` plus the Ed25519 signature (hex) over `relayCommandSigningPayload()`, by `publisherId`. */
+export interface SignedRelayCommandSubmission extends SignableRelayCommandFields {
+  signature: string;
+}
+
+/**
+ * Validates shape and signature together (same combined style as
+ * `verifySignedNodeAppendSubmission()`, `node-appends.ts`) — returns
+ * `undefined` for anything malformed or with an invalid/mismatched
+ * signature, never throws.
+ */
+export function verifySignedRelayCommandSubmission(payload: unknown): SignedRelayCommandSubmission | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+  const p = payload as Record<string, unknown>;
+  if (p.command !== "reboot") return undefined;
+  if (typeof p.timestamp !== "number" || !Number.isFinite(p.timestamp)) return undefined;
+  if (typeof p.targetNodeId !== "string" || p.targetNodeId.length === 0) return undefined;
+  if (typeof p.publisherId !== "string" || p.publisherId.length === 0) return undefined;
+  if (typeof p.signature !== "string") return undefined;
+  const fields: SignableRelayCommandFields = { command: p.command, timestamp: p.timestamp, targetNodeId: p.targetNodeId, publisherId: p.publisherId };
+  try {
+    if (!Identity.verifyWithNodeId(p.publisherId, relayCommandSigningPayload(fields), Buffer.from(p.signature, "hex"))) return undefined;
+  } catch {
+    // Malformed signature hex, or a publisherId that doesn't parse as an Ed25519 public key — never trust it.
+    return undefined;
+  }
+  return { ...fields, signature: p.signature };
 }
 
 /**

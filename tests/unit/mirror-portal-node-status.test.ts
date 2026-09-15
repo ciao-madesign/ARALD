@@ -72,6 +72,37 @@ describe("mirror-portal lib/node-status summarizeFleet", () => {
     expect(rows[0].relayOnline).toBe(true);
   });
 
+  /**
+   * `isFixedRelay` (Pezzo 4, `docs/security.md` voce #83) — il segnale su cui `page.tsx` decide se
+   * mostrare `RemoteRelayCommandForm` (mai per una Card/Mobile Relay, richiesta esplicita
+   * dell'utente). Stesso match `relayId === nodeId` + `type === "fixed"` già usato per
+   * batteria/online sopra, ma un campo booleano indipendente: `batteryPercent`/`relayOnline`
+   * possono essere `undefined` anche per un fixed relay genuino (es. `online` mancante dalla sua
+   * stessa telemetria) senza che questo significhi "non è un fixed relay".
+   */
+  it("isFixedRelay is true only for a single matching 'fixed' relay entry, independent of whether battery/online are themselves present", () => {
+    const relays: RelayRow[] = [{ relayId: "N1", nodeUrl: "http://a", data: { type: "fixed" }, syncedAt: new Date() }];
+    const rows = summarizeFleet([node("http://a", { nodeId: "N1", connected: true })], relays, [], []);
+    expect(rows[0].isFixedRelay).toBe(true);
+    expect(rows[0].batteryPercent).toBeUndefined(); // no batteryPercent in data, yet still a fixed relay
+  });
+
+  it("isFixedRelay is false for a 'mobile' relay, no relay entry at all, or an ambiguous double-match", () => {
+    const noRelay = summarizeFleet([node("http://a", { nodeId: "N1", connected: true })], [], [], []);
+    expect(noRelay[0].isFixedRelay).toBe(false);
+
+    const mobile: RelayRow[] = [{ relayId: "N1", nodeUrl: "http://a", data: { type: "mobile" }, syncedAt: new Date() }];
+    const mobileRows = summarizeFleet([node("http://a", { nodeId: "N1", connected: true })], mobile, [], []);
+    expect(mobileRows[0].isFixedRelay).toBe(false);
+
+    const ambiguous: RelayRow[] = [
+      { relayId: "N1", nodeUrl: "http://a", data: { type: "fixed" }, syncedAt: new Date() },
+      { relayId: "N1", nodeUrl: "http://b", data: { type: "fixed" }, syncedAt: new Date() },
+    ];
+    const ambiguousRows = summarizeFleet([node("http://a", { nodeId: "N1", connected: true })], ambiguous, [], []);
+    expect(ambiguousRows[0].isFixedRelay).toBe(false);
+  });
+
   it("keeps only isLocal services, dropping gossiped/remote entries and malformed ones", () => {
     const rows = summarizeFleet(
       [

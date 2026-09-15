@@ -6,6 +6,7 @@ import { summarizeFleet } from "../lib/node-status";
 import { PortalHeader } from "./PortalHeader";
 import { RemoteDropForm } from "./RemoteDropForm";
 import { RemoteNodeAppendForm } from "./RemoteNodeAppendForm";
+import { RemoteRelayCommandForm } from "./RemoteRelayCommandForm";
 
 // Never statically cached — a mirror whose whole point is showing what arald-backend/sync.ts most
 // recently wrote would be actively misleading if Vercel served a stale build-time snapshot instead of
@@ -187,6 +188,10 @@ export default async function HomePage(): Promise<JSX.Element> {
                           )}
                           <RemoteDropForm nodeUrl={n.nodeUrl} />
                           <RemoteNodeAppendForm nodeUrl={n.nodeUrl} />
+                          {/* Solo Fixed Relay (mai Mobile Relay/Card, richiesta esplicita dell'utente) e solo Admin
+                              (route.ts stesso lo impone comunque — nascosto qui solo per non mostrare a un Operatore
+                              un bottone che fallirebbe sempre con 403). */}
+                          {f.isFixedRelay && session.user.role === "admin" && <RemoteRelayCommandForm nodeUrl={n.nodeUrl} />}
                         </li>
                       );
                     })}

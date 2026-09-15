@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createPrivateKey, createPublicKey, generateKeyPairSync, sign as cryptoSign, type KeyObject } from "node:crypto";
 
 /**
- * Pure mesh-signing primitives for the canale di comando (Pezzo 1/2,
+ * Pure mesh-signing primitives for the canale di comando (Pezzo 1/2/4,
  * `docs/emergency-portal.md`) — deliberately DUPLICATED from
  * `node/src/identity.ts`/`content.ts`/`drops.ts`, never imported from
  * there. `mirror-portal/` is a separate Vercel project (its own
@@ -242,5 +242,58 @@ export function signNodeAppend(
     publisherId,
   };
   const signature = identity.sign(nodeAppendSigningPayload(fields)).toString("hex");
+  return { ...fields, signature };
+}
+
+// ---- mirrors node/src/relay-registry.ts's relay-command signing scheme ----
+// "Pezzo 4" del canale di comando Box↔specchio (docs/emergency-portal.md, docs/security.md voce
+// #83) — riavvio remoto di un Fixed Relay. Stessa identità mesh già custodita per Pezzo 1/2,
+// nessuna nuova chiave. Vedi node/src/node.ts's ingestSignedRelayCommand() e
+// node/src/relay-registry.ts's RelayCommandPayload per il ragionamento completo su questo
+// comando — deliberatamente il payload più sensibile del codebase, e deliberatamente su questo
+// stesso canale meno vagliato della fiducia mesh ordinaria (decisione discussa esplicitamente
+// con l'utente, non presunta).
+
+export interface SignableRelayCommandFields {
+  command: "reboot";
+  timestamp: number;
+  targetNodeId: string;
+  publisherId: string;
+}
+
+/** Field order must match `node/src/relay-registry.ts`'s `relayCommandSigningPayload()` exactly. */
+export function relayCommandSigningPayload(fields: SignableRelayCommandFields): Buffer {
+  return Buffer.from(
+    JSON.stringify({
+      command: fields.command,
+      timestamp: fields.timestamp,
+      targetNodeId: fields.targetNodeId,
+      publisherId: fields.publisherId,
+    }),
+  );
+}
+
+export interface SignedRelayCommand extends SignableRelayCommandFields {
+  signature: string;
+}
+
+/**
+ * Builds and signs a "reboot" relay command exactly as `NomadNode.sendRelayCommand()`
+ * would for a real mesh send, but for the remote-ingest path
+ * (`NomadNode.ingestSignedRelayCommand()`, "Pezzo 4") — no ECDH/encryption
+ * identity needed, only the same Ed25519 `MeshIdentity` already custodied
+ * for `signDrop()`/`signNodeAppend()`. `timestamp` doubles as this
+ * submission's own replay-protection value (`ingestSignedRelayCommand()`'s
+ * own doc comment) — always `Date.now()` at signing time, never
+ * caller-supplied, same discipline `sendRelayCommand()` itself follows.
+ */
+export function signRelayCommand(identity: MeshIdentity, targetNodeId: string): SignedRelayCommand {
+  const fields: SignableRelayCommandFields = {
+    command: "reboot",
+    timestamp: Date.now(),
+    targetNodeId,
+    publisherId: identity.nodeId,
+  };
+  const signature = identity.sign(relayCommandSigningPayload(fields)).toString("hex");
   return { ...fields, signature };
 }

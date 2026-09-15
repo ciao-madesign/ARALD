@@ -417,6 +417,12 @@ async function main(): Promise<void> {
     // without Node Append injection, or vice versa, same granular opt-in philosophy as
     // --expose-relay-registry/--expose-emergency-beacons.
     const allowRemoteNodeAppendIngest = args["allow-remote-node-append-ingest"] === "true";
+    // Opt-in, gates POST /api/ingest-relay-command — "Pezzo 4" del canale di comando Box↔specchio
+    // (docs/emergency-portal.md, WebUiOptions.allowRemoteRelayCommandIngest's own doc comment).
+    // Independent from the other two ingest flags. Gates only whether a signed reboot submission is
+    // *accepted* into this process — --allow-remote-reboot below is the separate, decisive local
+    // opt-in for whether an accepted one actually causes a shutdown() at all.
+    const allowRemoteRelayCommandIngest = args["allow-remote-relay-command-ingest"] === "true";
     // A dedicated location-registry node (docs/next-steps.md Opzione J) needs the same
     // networkName/networkPassword pairing mechanism as any other mobile-facing node — just handed
     // out separately to trusted operators only, never to guests, which is exactly what makes it a
@@ -428,7 +434,8 @@ async function main(): Promise<void> {
       exposeRelayRegistry ||
       exposeEmergencyBeacons ||
       allowRemoteContentIngest ||
-      allowRemoteNodeAppendIngest;
+      allowRemoteNodeAppendIngest ||
+      allowRemoteRelayCommandIngest;
     // Generated fresh every run, printed/shown once, never persisted — the mobile client (Opzione H,
     // docs/next-steps.md) is expected to be paired by re-entering this each time the node restarts,
     // the same "out of band, by the operator" trust model as a Wi-Fi router's own password.
@@ -461,6 +468,7 @@ async function main(): Promise<void> {
       exposeEmergencyBeacons,
       allowRemoteContentIngest,
       allowRemoteNodeAppendIngest,
+      allowRemoteRelayCommandIngest,
       networkName,
       networkPassword,
       publicHost: args["public-host"],
@@ -497,6 +505,12 @@ async function main(): Promise<void> {
     }
     if (allowRemoteNodeAppendIngest) {
       console.log(`Canale di comando dal portale abilitato: POST /api/ingest-node-append (stessa password di rete)`);
+    }
+    if (allowRemoteRelayCommandIngest) {
+      console.log(`Canale di comando dal portale abilitato: POST /api/ingest-relay-command (stessa password di rete)`);
+      if (args["allow-remote-reboot"] !== "true") {
+        console.log(`  Nota: --allow-remote-reboot non è impostato — un comando accettato non causerà comunque alcun riavvio su questo processo.`);
+      }
     }
     if (mapTiles) {
       console.log(`Map tiles exposed: GET /api/map-info, GET /api/map-tiles/:z/:x/:y (non autenticati — non dati sensibili)`);
@@ -557,7 +571,13 @@ async function main(): Promise<void> {
       console.log(`[RELAY] reboot requested by ${senderId} — shutting down for the process supervisor to restart`);
       void shutdown();
     });
-    console.log("Remote reboot enabled — only a node trusted at TrustLevel.ADMIN (see --trust-admin) can trigger it");
+    console.log("Remote reboot enabled — via mesh, solo un nodo con fiducia TrustLevel.ADMIN (vedi --trust-admin) può innescarlo");
+    // Corrected (Pezzo 4, docs/security.md voce #83): unlike the mesh path above,
+    // ingestSignedRelayCommand() deliberately does NOT check trust — the portale command channel's
+    // own network-password + per-organization authorization is this specific path's only gate.
+    if (args["allow-remote-relay-command-ingest"] === "true") {
+      console.log("Remote reboot enabled — via portale, qualunque identità con una firma valida e la password di rete può innescarlo (nessun controllo di fiducia mesh su questo canale, vedi docs/security.md voce #83)");
+    }
   }
 }
 

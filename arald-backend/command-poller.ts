@@ -1,7 +1,7 @@
 import type { Pool } from "pg";
 
 /**
- * The Box→specchio half of the canale di comando (Pezzo 1/2,
+ * The Box→specchio half of the canale di comando (Pezzo 1/2/4,
  * `docs/emergency-portal.md`): polls `remote_commands` for entries queued
  * for THIS Box's own `node_url` and delivers each one to the node this
  * script already talks to (`node-client.ts`'s own `nodeUrl`) — the Box
@@ -13,10 +13,11 @@ import type { Pool } from "pg";
  * `remote_commands.kind` (always set explicitly on insert — see
  * `mirror-portal/app/api/commands/*`) picks the ingest endpoint and body
  * shape: `'drop'` posts `{metadata, data, priority}` to `POST
- * /api/ingest-signed-content` ("Pezzo 1"), `'node-append'` posts the whole
- * signed submission object (stored as-is in `metadata`, `data` unused —
- * a Node Append has no separate binary blob) to `POST
- * /api/ingest-node-append` ("Pezzo 2", `docs/security.md` voce #82).
+ * /api/ingest-signed-content` ("Pezzo 1"), `'node-append'` and
+ * `'relay-command'` both post the whole signed submission object (stored
+ * as-is in `metadata`, `data` unused — neither has a separate binary blob)
+ * to `POST /api/ingest-node-append` / `POST /api/ingest-relay-command`
+ * respectively ("Pezzo 2"/"Pezzo 4", `docs/security.md` voci #82/#83).
  */
 
 const FETCH_TIMEOUT_MS = 10_000;
@@ -72,6 +73,9 @@ async function markFailed(pool: Pool, id: string, error: string): Promise<void> 
 function ingestRequest(command: PendingCommand): { path: string; body: unknown } {
   if (command.kind === "node-append") {
     return { path: "/api/ingest-node-append", body: command.metadata };
+  }
+  if (command.kind === "relay-command") {
+    return { path: "/api/ingest-relay-command", body: command.metadata };
   }
   return { path: "/api/ingest-signed-content", body: { metadata: command.metadata, data: command.data, priority: command.priority } };
 }

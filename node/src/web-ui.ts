@@ -198,6 +198,23 @@ export interface WebUiOptions {
    * `allowRemoteContentIngest`).
    */
   allowRemoteNodeAppendIngest?: boolean;
+  /**
+   * Enables `POST /api/ingest-relay-command` — "Pezzo 4" del canale di
+   * comando Box↔specchio (`docs/emergency-portal.md`, `docs/security.md`
+   * voce #83): accetta un comando di riavvio relay firmato da un'identità
+   * mesh non locale e lo inoltra a `NomadNode.ingestSignedRelayCommand()`.
+   * Off by default, gated on `networkPassword` (stessa validazione degli
+   * altri due opt-in di ingest), indipendente da entrambi — un Box può
+   * abilitare qualunque combinazione. **Il vero interruttore decisivo resta
+   * `--allow-remote-reboot`** (`cli.ts`): questo flag da solo decide
+   * solo se il Box *ascolta* un comando firmato in arrivo dal portale,
+   * mai se lo esegue — vedi `NomadNode.ingestSignedRelayCommand()`'s own
+   * doc comment per il ragionamento completo su questo canale
+   * (deliberatamente meno vagliato di quanto la fiducia mesh richiederebbe
+   * di norma per questo comando, una decisione discussa esplicitamente
+   * con l'utente).
+   */
+  allowRemoteRelayCommandIngest?: boolean;
 }
 
 const WILDCARD_OR_LOOPBACK_HOSTS = new Set(["0.0.0.0", "127.0.0.1", "localhost", "::", "::1"]);
@@ -851,6 +868,7 @@ export class WebUiServer {
   private readonly exposeEmergencyBeacons: boolean;
   private readonly allowRemoteContentIngest: boolean;
   private readonly allowRemoteNodeAppendIngest: boolean;
+  private readonly allowRemoteRelayCommandIngest: boolean;
   private readonly networkName: string | undefined;
   private readonly networkPassword: string | undefined;
   private readonly publicHost: string | undefined;
@@ -889,6 +907,10 @@ export class WebUiServer {
     this.allowRemoteNodeAppendIngest = options.allowRemoteNodeAppendIngest ?? false;
     if (this.allowRemoteNodeAppendIngest && !options.networkPassword) {
       throw new Error("WebUiServer: allowRemoteNodeAppendIngest requires a networkPassword");
+    }
+    this.allowRemoteRelayCommandIngest = options.allowRemoteRelayCommandIngest ?? false;
+    if (this.allowRemoteRelayCommandIngest && !options.networkPassword) {
+      throw new Error("WebUiServer: allowRemoteRelayCommandIngest requires a networkPassword");
     }
     this.mapTiles = options.mapTiles;
     const boundHost = options.host ?? "127.0.0.1";
@@ -995,6 +1017,10 @@ export class WebUiServer {
       }
       if (url.pathname === "/api/ingest-node-append") {
         void this.handleIngestNodeAppend(req, res);
+        return;
+      }
+      if (url.pathname === "/api/ingest-relay-command") {
+        void this.handleIngestRelayCommand(req, res);
         return;
       }
       res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
@@ -1697,6 +1723,73 @@ export class WebUiServer {
     }
     if (result === "rejected") {
       sendJson(res, 422, { error: "submission did not verify (bad signature, wrong target node, or already expired)" });
+      return;
+    }
+    sendJson(res, 200, { accepted: true });
+  }
+
+  /**
+   * `POST /api/ingest-relay-command` — "Pezzo 4" del canale di comando
+   * Box↔specchio (`docs/emergency-portal.md`, `docs/security.md` voce
+   * #83). Body `{ command, timestamp, targetNodeId, publisherId,
+   * signature }` — the exact shape `NomadNode.ingestSignedRelayCommand()`
+   * verifies. Gated on `allowRemoteRelayCommandIngest` (404 when off)
+   * **and** the network password, same posture as every other opt-in
+   * endpoint here — but this one gates the single most sensitive action
+   * this class exposes (see `ingestSignedRelayCommand()`'s own doc
+   * comment for the full reasoning and the real safety valve,
+   * `--allow-remote-reboot`, which is independent of this flag entirely).
+   * Status mapping identical to the other two ingest endpoints: `"accepted"`
+   * → 200, `"rejected"` → 422 (terminal), `"rate-limited"` → 429 (deferred).
+   */
+  private async handleIngestRelayCommand(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.allowRemoteRelayCommandIngest || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+
+    let raw: Buffer;
+    try {
+      raw = await readRequestBody(req, MAX_MESSAGE_BODY_BYTES, MAX_CALL_BODY_READ_MS);
+    } catch (err) {
+      if (res.writableEnded || res.destroyed) return;
+      if (err instanceof BodyTooLargeError) {
+        sendJson(res, 413, { error: "request body too large" });
+      } else if (err instanceof Error && err.message.includes("timed out")) {
+        sendJson(res, 408, { error: "timed out waiting for the request body" });
+      } else {
+        sendJson(res, 400, { error: "failed to read request body" });
+      }
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = raw.length === 0 ? {} : JSON.parse(raw.toString("utf8"));
+    } catch {
+      sendJson(res, 400, { error: "malformed JSON body" });
+      return;
+    }
+
+    // Same coarse HTTP-layer shape check as handleIngestNodeAppend() — the rest of the shape plus
+    // the signature itself are ingestSignedRelayCommand()'s job.
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      sendJson(res, 400, { error: "request body must be a JSON object" });
+      return;
+    }
+
+    const result = this.node.ingestSignedRelayCommand(parsed);
+    if (result === "rate-limited") {
+      sendJson(res, 429, { error: "too many requests for this identity, or this Box's relay-command budget is exhausted — try again later" });
+      return;
+    }
+    if (result === "rejected") {
+      sendJson(res, 422, { error: "submission did not verify (bad signature, wrong target node, or a replay of a prior command)" });
       return;
     }
     sendJson(res, 200, { accepted: true });
