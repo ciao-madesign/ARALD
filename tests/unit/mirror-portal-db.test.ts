@@ -101,6 +101,7 @@ describe("mirror-portal/lib/db", () => {
         relays: await settled(Promise.resolve([])),
         beacons: await settled(Promise.resolve([])),
         drops: await settled(Promise.resolve([])),
+        destinations: await settled(Promise.resolve([])),
       });
 
       expect(snapshot.nodes).toHaveLength(1);
@@ -117,6 +118,7 @@ describe("mirror-portal/lib/db", () => {
         relays: await settled(Promise.reject(relayFailure)),
         beacons: await settled(Promise.resolve([{ beaconContentId: "B1", nodeUrl: "n", data: {}, syncedAt: new Date() }])),
         drops: await settled(Promise.resolve([])),
+        destinations: await settled(Promise.resolve([])),
       });
 
       expect(snapshot.nodes).toHaveLength(1);
@@ -131,6 +133,7 @@ describe("mirror-portal/lib/db", () => {
         relays: await settled(Promise.reject(new Error("relays down"))),
         beacons: await settled(Promise.resolve([])),
         drops: await settled(Promise.resolve([])),
+        destinations: await settled(Promise.resolve([])),
       });
 
       expect(snapshot.errors).toEqual([

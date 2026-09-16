@@ -1,4 +1,4 @@
-import type { BeaconRow, DropRow, NodeStatusRow, RelayRow } from "./db";
+import type { BeaconRow, DestinationRow, DropRow, NodeStatusRow, RelayRow } from "./db";
 import { asFiniteNumber, dropKind } from "./format";
 
 /**
@@ -74,6 +74,20 @@ export interface NodeFleetStatus {
   isFixedRelay: boolean;
   /** Most recent hazard/emergency drops and SOS beacons attributed to this node's `nodeUrl`, newest first — the "avviso" an operator needs to see at a glance, per the piece's own brief. Bounded by whatever `getMirrorSnapshot()` already capped `drops`/`beacons` to (`RECENT_LIST_LIMIT`), not re-capped here. */
   alerts: NodeAlert[];
+  /**
+   * "Consegna esterna differita" destinations this exact Box owns and offers, password-less only —
+   * "Pezzo 3" del canale di comando (`docs/security.md` voce #84). Filtered on `boxNodeId === nodeId`
+   * (same identity-match reasoning `isFixedRelay` above already gives for `ownRelays`, not `nodeUrl`:
+   * a single Box's own synced directory can carry entries mesh-propagated from *other* Boxes too,
+   * `ExternalDeliveryDirectory`'s own doc comment) **and** `requiresPassword === false` — v1 scope,
+   * decided explicitly with the user: a password-protected destination is simply never offered here,
+   * not merely hidden behind a client-side check (`RemoteExternalDeliveryForm` never even receives
+   * one to try). `publicKeyHex` is deliberately not exposed here — the API route re-derives it itself
+   * server-side (`getExternalDeliveryDestination()`, `lib/auth-db.ts`) rather than trusting anything
+   * this client-rendered list carries, same "server-side re-check" discipline `isFixedRelay` already
+   * established for Pezzo 4.
+   */
+  externalDeliveryDestinations: Array<{ destinationId: string; label: string }>;
 }
 
 function extractServiceSummary(raw: unknown): ServiceSummary | undefined {
@@ -94,9 +108,21 @@ function asOnlineState(value: unknown): "ONLINE" | "OFFLINE" | undefined {
   return value === "ONLINE" || value === "OFFLINE" ? value : undefined;
 }
 
-export function summarizeFleet(nodes: NodeStatusRow[], relays: RelayRow[], drops: DropRow[], beacons: BeaconRow[]): NodeFleetStatus[] {
+export function summarizeFleet(
+  nodes: NodeStatusRow[],
+  relays: RelayRow[],
+  drops: DropRow[],
+  beacons: BeaconRow[],
+  destinations: DestinationRow[] = [],
+): NodeFleetStatus[] {
   return nodes.map((node) => {
     const ownRelays = relays.filter((r) => r.relayId === node.nodeId && r.data.type === "fixed");
+    const externalDeliveryDestinations = destinations
+      .filter((d) => d.boxNodeId === node.nodeId && d.data.requiresPassword === false)
+      .map((d) => ({
+        destinationId: d.destinationId,
+        label: typeof d.data.label === "string" && d.data.label.length > 0 ? d.data.label : d.destinationId,
+      }));
     const battery = ownRelays.length === 1 ? asFiniteNumber(ownRelays[0].data.batteryPercent) : undefined;
     const online = ownRelays.length === 1 && typeof ownRelays[0].data.online === "boolean" ? (ownRelays[0].data.online as boolean) : undefined;
 
@@ -129,6 +155,7 @@ export function summarizeFleet(nodes: NodeStatusRow[], relays: RelayRow[], drops
       relayOnline: online,
       isFixedRelay: ownRelays.length === 1,
       alerts,
+      externalDeliveryDestinations,
     };
   });
 }

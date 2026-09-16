@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { summarizeFleet } from "../../mirror-portal/lib/node-status.js";
-import type { BeaconRow, DropRow, NodeStatusRow, RelayRow } from "../../mirror-portal/lib/db.js";
+import type { BeaconRow, DestinationRow, DropRow, NodeStatusRow, RelayRow } from "../../mirror-portal/lib/db.js";
 
 /**
  * `mirror-portal/lib/node-status.ts` (docs/security.md voce #80 — "Pezzo 0"
@@ -157,5 +157,43 @@ describe("mirror-portal lib/node-status summarizeFleet", () => {
     const beacons: BeaconRow[] = [{ beaconContentId: "b1", nodeUrl: "http://a", data: { timestamp: 1000 }, syncedAt: new Date() }];
     const rows = summarizeFleet([node("http://a", { connected: true })], [], [], beacons);
     expect(rows[0].alerts).toEqual([{ kind: "sos", text: "(nessun messaggio)", timestamp: 1000 }]);
+  });
+
+  /**
+   * `externalDeliveryDestinations` — "Pezzo 3" del canale di comando (`docs/security.md` voce #84).
+   * Stesso match `boxNodeId === nodeId` (identità reale, mai `nodeUrl`) già usato per
+   * `isFixedRelay`/battery sopra — una singola directory sincronizzata da un Box può contenere
+   * destinazioni propagate via mesh da un *altro* Box (`ExternalDeliveryDirectory`'s own doc
+   * comment), quindi il match deve restare sull'identità, non sull'endpoint di sync. Scope v1
+   * (deciso esplicitamente con l'utente): solo destinazioni senza password.
+   */
+  function destination(boxNodeId: string, data: Record<string, unknown>): DestinationRow {
+    return { destinationId: (data.destinationId as string) ?? "HQ", boxNodeId, nodeUrl: "http://a", data, syncedAt: new Date() };
+  }
+
+  it("includes only this exact Box's own password-less destinations, matched by boxNodeId === nodeId", () => {
+    const destinations: DestinationRow[] = [
+      destination("N1", { destinationId: "HQ", label: "Headquarter", requiresPassword: false }),
+      destination("OTHER-BOX", { destinationId: "ONG", label: "Centro Operativo", requiresPassword: false }), // propagated from a different Box — must not appear here
+    ];
+    const rows = summarizeFleet([node("http://a", { nodeId: "N1", connected: true })], [], [], [], destinations);
+    expect(rows[0].externalDeliveryDestinations).toEqual([{ destinationId: "HQ", label: "Headquarter" }]);
+  });
+
+  it("excludes a password-protected destination entirely — v1 scope, never offered even as a hidden option", () => {
+    const destinations: DestinationRow[] = [destination("N1", { destinationId: "ONG", label: "Centro Operativo", requiresPassword: true })];
+    const rows = summarizeFleet([node("http://a", { nodeId: "N1", connected: true })], [], [], [], destinations);
+    expect(rows[0].externalDeliveryDestinations).toEqual([]);
+  });
+
+  it("falls back to destinationId as the label when data.label is missing/malformed", () => {
+    const destinations: DestinationRow[] = [destination("N1", { destinationId: "HQ", requiresPassword: false })];
+    const rows = summarizeFleet([node("http://a", { nodeId: "N1", connected: true })], [], [], [], destinations);
+    expect(rows[0].externalDeliveryDestinations).toEqual([{ destinationId: "HQ", label: "HQ" }]);
+  });
+
+  it("defaults to an empty list when no destinations argument is given at all", () => {
+    const rows = summarizeFleet([node("http://a", { nodeId: "N1", connected: true })], [], [], []);
+    expect(rows[0].externalDeliveryDestinations).toEqual([]);
   });
 });

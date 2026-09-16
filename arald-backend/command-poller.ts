@@ -13,11 +13,13 @@ import type { Pool } from "pg";
  * `remote_commands.kind` (always set explicitly on insert — see
  * `mirror-portal/app/api/commands/*`) picks the ingest endpoint and body
  * shape: `'drop'` posts `{metadata, data, priority}` to `POST
- * /api/ingest-signed-content` ("Pezzo 1"), `'node-append'` and
- * `'relay-command'` both post the whole signed submission object (stored
- * as-is in `metadata`, `data` unused — neither has a separate binary blob)
- * to `POST /api/ingest-node-append` / `POST /api/ingest-relay-command`
- * respectively ("Pezzo 2"/"Pezzo 4", `docs/security.md` voci #82/#83).
+ * /api/ingest-signed-content` ("Pezzo 1"), `'node-append'`, `'relay-command'`,
+ * and `'external-delivery'` each post the whole submission object (stored
+ * as-is in `metadata`, `data` unused — none of the three has a separate
+ * binary blob outside `metadata`, `external-delivery`'s own ciphertext
+ * included) to `POST /api/ingest-node-append` / `POST /api/ingest-relay-command`
+ * / `POST /api/ingest-external-delivery` respectively ("Pezzo 2"/"Pezzo
+ * 4"/"Pezzo 3", `docs/security.md` voci #82/#83/#84).
  */
 
 const FETCH_TIMEOUT_MS = 10_000;
@@ -76,6 +78,9 @@ function ingestRequest(command: PendingCommand): { path: string; body: unknown }
   }
   if (command.kind === "relay-command") {
     return { path: "/api/ingest-relay-command", body: command.metadata };
+  }
+  if (command.kind === "external-delivery") {
+    return { path: "/api/ingest-external-delivery", body: command.metadata };
   }
   return { path: "/api/ingest-signed-content", body: { metadata: command.metadata, data: command.data, priority: command.priority } };
 }

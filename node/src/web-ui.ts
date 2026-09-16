@@ -215,6 +215,21 @@ export interface WebUiOptions {
    * con l'utente).
    */
   allowRemoteRelayCommandIngest?: boolean;
+  /**
+   * Enables `POST /api/ingest-external-delivery` — "Pezzo 3" del canale di
+   * comando Box↔specchio (`docs/emergency-portal.md`, `docs/security.md`
+   * voce #84): accetta una "Consegna esterna differita" già sigillata
+   * composta dal portale (`mirror-portal/lib/mesh-signing.ts`'s
+   * `sealExternalDeliveryForPortal()`) e la inoltra a
+   * `NomadNode.ingestExternalDelivery()`. A differenza degli altri tre
+   * ingest, questo canale non porta alcuna firma Ed25519 — vedi quel
+   * metodo's own doc comment per il perché: il percorso mesh reale
+   * (`handleExternalDelivery()`) non controlla mai l'identità del mittente
+   * nemmeno lì, solo `destinationId`/password per-destinazione. Off by
+   * default, gated on `networkPassword` (stessa validazione degli altri
+   * ingest opt-in), indipendente dagli altri tre.
+   */
+  allowRemoteExternalDeliveryIngest?: boolean;
 }
 
 const WILDCARD_OR_LOOPBACK_HOSTS = new Set(["0.0.0.0", "127.0.0.1", "localhost", "::", "::1"]);
@@ -869,6 +884,7 @@ export class WebUiServer {
   private readonly allowRemoteContentIngest: boolean;
   private readonly allowRemoteNodeAppendIngest: boolean;
   private readonly allowRemoteRelayCommandIngest: boolean;
+  private readonly allowRemoteExternalDeliveryIngest: boolean;
   private readonly networkName: string | undefined;
   private readonly networkPassword: string | undefined;
   private readonly publicHost: string | undefined;
@@ -911,6 +927,10 @@ export class WebUiServer {
     this.allowRemoteRelayCommandIngest = options.allowRemoteRelayCommandIngest ?? false;
     if (this.allowRemoteRelayCommandIngest && !options.networkPassword) {
       throw new Error("WebUiServer: allowRemoteRelayCommandIngest requires a networkPassword");
+    }
+    this.allowRemoteExternalDeliveryIngest = options.allowRemoteExternalDeliveryIngest ?? false;
+    if (this.allowRemoteExternalDeliveryIngest && !options.networkPassword) {
+      throw new Error("WebUiServer: allowRemoteExternalDeliveryIngest requires a networkPassword");
     }
     this.mapTiles = options.mapTiles;
     const boundHost = options.host ?? "127.0.0.1";
@@ -1021,6 +1041,10 @@ export class WebUiServer {
       }
       if (url.pathname === "/api/ingest-relay-command") {
         void this.handleIngestRelayCommand(req, res);
+        return;
+      }
+      if (url.pathname === "/api/ingest-external-delivery") {
+        void this.handleIngestExternalDelivery(req, res);
         return;
       }
       res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
@@ -1790,6 +1814,84 @@ export class WebUiServer {
     }
     if (result === "rejected") {
       sendJson(res, 422, { error: "submission did not verify (bad signature, wrong target node, or a replay of a prior command)" });
+      return;
+    }
+    sendJson(res, 200, { accepted: true });
+  }
+
+  /**
+   * `POST /api/ingest-external-delivery` — "Pezzo 3" del canale di comando
+   * Box↔specchio (`docs/emergency-portal.md`, `docs/security.md` voce #84).
+   * Body `{ destinationId, senderEphemeralPublicKey, nonce, ciphertext,
+   * authTag, submittedAt }` — the exact `ExternalDeliveryPayload` shape
+   * `NomadNode.ingestExternalDelivery()` verifies (`external-delivery.ts`'s
+   * `extractExternalDeliveryPayload()`), already sealed server-side by the
+   * portal (`mirror-portal/lib/mesh-signing.ts`'s
+   * `sealExternalDeliveryForPortal()`) — this Box never sees plaintext on
+   * this path either, same as the real mesh one. Gated on
+   * `allowRemoteExternalDeliveryIngest` (404 when off) **and** the network
+   * password, same posture as every other opt-in endpoint here.
+   *
+   * Body size limit is sized dynamically off `node.maxExternalDeliveryPayloadBytes`
+   * (same reasoning as `handleSendExternalDelivery()`'s own dynamic cap) —
+   * but doubled, not `* 4/3`: this body's `ciphertext` field is hex-encoded
+   * (`extractExternalDeliveryPayload()`'s own `maxCiphertextHexLength`
+   * convention), not base64.
+   *
+   * Status mapping identical to the other three ingest endpoints:
+   * `"accepted"` → 200, `"rejected"` → 422 (terminal), `"rate-limited"` → 429
+   * (deferred).
+   */
+  private async handleIngestExternalDelivery(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.allowRemoteExternalDeliveryIngest || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+
+    const maxBodyBytes = this.node.maxExternalDeliveryPayloadBytes * 2 + 4096;
+    let raw: Buffer;
+    try {
+      raw = await readRequestBody(req, maxBodyBytes, MAX_CALL_BODY_READ_MS);
+    } catch (err) {
+      if (res.writableEnded || res.destroyed) return;
+      if (err instanceof BodyTooLargeError) {
+        sendJson(res, 413, { error: "request body too large" });
+      } else if (err instanceof Error && err.message.includes("timed out")) {
+        sendJson(res, 408, { error: "timed out waiting for the request body" });
+      } else {
+        sendJson(res, 400, { error: "failed to read request body" });
+      }
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = raw.length === 0 ? {} : JSON.parse(raw.toString("utf8"));
+    } catch {
+      sendJson(res, 400, { error: "malformed JSON body" });
+      return;
+    }
+
+    // Same coarse HTTP-layer shape check as the other ingest handlers — the rest of the shape is
+    // ingestExternalDelivery()'s job (there is no signature to verify on this path, see that
+    // method's own doc comment for why).
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      sendJson(res, 400, { error: "request body must be a JSON object" });
+      return;
+    }
+
+    const result = this.node.ingestExternalDelivery(parsed);
+    if (result === "rate-limited") {
+      sendJson(res, 429, { error: "too many requests for this destination, or this Box's ingest budget is exhausted — try again later" });
+      return;
+    }
+    if (result === "rejected") {
+      sendJson(res, 422, { error: "submission did not verify (malformed payload, or unknown destinationId)" });
       return;
     }
     sendJson(res, 200, { accepted: true });

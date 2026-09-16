@@ -7,6 +7,7 @@ import { PortalHeader } from "./PortalHeader";
 import { RemoteDropForm } from "./RemoteDropForm";
 import { RemoteNodeAppendForm } from "./RemoteNodeAppendForm";
 import { RemoteRelayCommandForm } from "./RemoteRelayCommandForm";
+import { RemoteExternalDeliveryForm } from "./RemoteExternalDeliveryForm";
 
 // Never statically cached — a mirror whose whole point is showing what arald-backend/sync.ts most
 // recently wrote would be actively misleading if Vercel served a stale build-time snapshot instead of
@@ -39,7 +40,7 @@ export default async function HomePage(): Promise<JSX.Element> {
     // unexpected exception, so the page still degrades to one panel rather than Next.js's generic
     // error screen. Never a raw stack trace to the browser either way.
     const message = err instanceof Error ? err.message : String(err);
-    snapshot = { nodes: [], relays: [], beacons: [], drops: [], errors: [{ section: "config", message }] };
+    snapshot = { nodes: [], relays: [], beacons: [], drops: [], destinations: [], errors: [{ section: "config", message }] };
   }
 
   const configError = sectionError(snapshot.errors, "config");
@@ -53,7 +54,7 @@ export default async function HomePage(): Promise<JSX.Element> {
   // dropsError are set: a Box's own connection/services still matter on their own, and
   // summarizeFleet() degrades an empty relays/drops/beacons array to "nothing extra to show" rather
   // than throwing, same posture as every other section on this page.
-  const fleet = summarizeFleet(snapshot.nodes, snapshot.relays, snapshot.drops, snapshot.beacons);
+  const fleet = summarizeFleet(snapshot.nodes, snapshot.relays, snapshot.drops, snapshot.beacons, snapshot.destinations);
 
   return (
     <>
@@ -192,6 +193,13 @@ export default async function HomePage(): Promise<JSX.Element> {
                               (route.ts stesso lo impone comunque — nascosto qui solo per non mostrare a un Operatore
                               un bottone che fallirebbe sempre con 403). */}
                           {f.isFixedRelay && session.user.role === "admin" && <RemoteRelayCommandForm nodeUrl={n.nodeUrl} />}
+                          {/* Solo se questo Box offre almeno una destinazione senza password (Pezzo 3, scope v1 —
+                              route.ts lo impone comunque server-side, nascosto qui solo per non mostrare un form
+                              vuoto). Stessa autorizzazione per-organizzazione di RemoteDropForm/RemoteNodeAppendForm,
+                              non solo Admin. */}
+                          {f.externalDeliveryDestinations.length > 0 && (
+                            <RemoteExternalDeliveryForm nodeUrl={n.nodeUrl} destinations={f.externalDeliveryDestinations} />
+                          )}
                         </li>
                       );
                     })}

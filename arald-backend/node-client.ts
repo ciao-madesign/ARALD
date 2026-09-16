@@ -64,6 +64,15 @@ export interface NodeAppendRow {
   timestamp: number;
 }
 
+export interface ExternalDeliveryDestinationRow {
+  destinationId: string;
+  /** The mesh node id of the Box that actually owns/published this destination's private allowlist entry — never assumed to be the `nodeUrl` this row was fetched *from*, since a Box's own `/api/external-delivery-destinations` can also carry entries mesh-propagated from *other* Boxes (`ExternalDeliveryDirectory`'s own doc comment, `node/src/external-delivery.ts`). */
+  boxNodeId: string;
+  label: string;
+  publicKeyHex: string;
+  requiresPassword: boolean;
+}
+
 export interface ServiceRow {
   serviceId: string;
   version: string;
@@ -95,6 +104,7 @@ export interface NodeSnapshot {
   emergencyBeacons: EmergencyBeaconRow[];
   drops: DropRow[];
   nodeAppends: NodeAppendRow[];
+  externalDeliveryDestinations: ExternalDeliveryDestinationRow[];
   /** Endpoints that returned 404 (not exposed by this node, e.g. `exposeRelayRegistry` off) or were skipped for lack of a network password — reported so the caller can tell "empty" from "not available", same distinction the mobile UI's capability-gated panels already make. */
   skipped: string[];
 }
@@ -184,6 +194,17 @@ function extractNodeAppendRow(raw: unknown): NodeAppendRow | undefined {
   return { appendId: r.appendId, text: r.text, kind: r.kind, timestamp: r.timestamp };
 }
 
+function extractExternalDeliveryDestinationRow(raw: unknown): ExternalDeliveryDestinationRow | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.destinationId !== "string" || r.destinationId.length === 0) return undefined;
+  if (typeof r.boxNodeId !== "string" || r.boxNodeId.length === 0) return undefined;
+  if (typeof r.label !== "string" || r.label.length === 0) return undefined;
+  if (typeof r.publicKeyHex !== "string" || r.publicKeyHex.length === 0) return undefined;
+  if (typeof r.requiresPassword !== "boolean") return undefined;
+  return { destinationId: r.destinationId, boxNodeId: r.boxNodeId, label: r.label, publicKeyHex: r.publicKeyHex, requiresPassword: r.requiresPassword };
+}
+
 function extractStatusRow(raw: unknown): StatusRow | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
   const r = raw as Record<string, unknown>;
@@ -242,14 +263,16 @@ export async function fetchNodeSnapshot(creds: NodeCredentials): Promise<NodeSna
     throw new Error(`${base}/api/status returned an unrecognized shape`);
   }
 
-  const [dropsRes, appendsRes, servicesRes] = await Promise.all([
+  const [dropsRes, appendsRes, servicesRes, externalDeliveryDestinationsRes] = await Promise.all([
     fetchJson(`${base}/api/drops`),
     fetchJson(`${base}/api/node-appends`),
     fetchJson(`${base}/api/services`),
+    fetchJson(`${base}/api/external-delivery-destinations`),
   ]);
   let drops: DropRow[] = [];
   let nodeAppends: NodeAppendRow[] = [];
   let services: ServiceRow[] = [];
+  let externalDeliveryDestinations: ExternalDeliveryDestinationRow[] = [];
   if (dropsRes.status === 200) {
     drops = asArray(dropsRes.body).map(extractDropRow).filter((v): v is DropRow => v !== undefined);
   } else {
@@ -264,6 +287,13 @@ export async function fetchNodeSnapshot(creds: NodeCredentials): Promise<NodeSna
     services = asArray(servicesRes.body).map(extractServiceRow).filter((v): v is ServiceRow => v !== undefined);
   } else {
     skipped.push(`/api/services (unexpected status ${servicesRes.status})`);
+  }
+  if (externalDeliveryDestinationsRes.status === 200) {
+    externalDeliveryDestinations = asArray(externalDeliveryDestinationsRes.body)
+      .map(extractExternalDeliveryDestinationRow)
+      .filter((v): v is ExternalDeliveryDestinationRow => v !== undefined);
+  } else {
+    skipped.push(`/api/external-delivery-destinations (unexpected status ${externalDeliveryDestinationsRes.status})`);
   }
 
   let relays: RelayRow[] = [];
@@ -297,5 +327,5 @@ export async function fetchNodeSnapshot(creds: NodeCredentials): Promise<NodeSna
     }
   }
 
-  return { status, services, relays, emergencyBeacons, drops, nodeAppends, skipped };
+  return { status, services, relays, emergencyBeacons, drops, nodeAppends, externalDeliveryDestinations, skipped };
 }

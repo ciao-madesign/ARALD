@@ -51,6 +51,7 @@ async function syncOnce(pool: Pool, nodeUrl: string, networkPassword: string | u
   console.log(`  emergency beacons: ${summary.emergencyBeacons}`);
   console.log(`  drops:             ${summary.drops}`);
   console.log(`  node appends:      ${summary.nodeAppends}`);
+  console.log(`  external delivery destinations: ${summary.externalDeliveryDestinations}`);
   console.log(`  services:          ${summary.services}`);
   console.log(`  status snapshot:   ${summary.statusSnapshot ? "recorded" : "skipped (node unreachable or malformed)"}`);
   if (snapshot.skipped.length > 0) {

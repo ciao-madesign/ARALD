@@ -271,6 +271,45 @@ export async function isRegisteredFixedRelay(nodeId: string): Promise<boolean> {
   return (res.rowCount ?? 0) > 0;
 }
 
+export interface ExternalDeliveryDestinationLookup {
+  publicKeyHex: string;
+  requiresPassword: boolean;
+  label: string;
+}
+
+/**
+ * Server-side re-derivation of one destination's `publicKeyHex`/`requiresPassword`, from this
+ * portal's own last sync of `nodeUrl`'s `/api/external-delivery-destinations` — used by `POST
+ * /api/commands/external-deliveries` ("Pezzo 3", `docs/security.md` voce #84) instead of trusting
+ * either field from the client, same "server-side re-check, not just a UI filter" discipline
+ * `isRegisteredFixedRelay()` above applies for Pezzo 4 (found necessary by that piece's own review).
+ * Requires **both** `box_node_id = targetNodeId` (`getLatestNodeId(nodeUrl)`'s own result — a real
+ * identity match, never inferred from the client) **and** `node_url = nodeUrl`: the directory a
+ * single Box's own `/api/external-delivery-destinations` returns can include entries mesh-propagated
+ * from *other* Boxes too (`ExternalDeliveryDirectory`'s own doc comment, `external-delivery.ts`) —
+ * without the `node_url` match, this could resolve a destination this portal only ever learned about
+ * *through* `nodeUrl` but that actually belongs to (and is only reachable by submitting to) a
+ * different Box entirely, silently routing the command-poller's delivery to the wrong process.
+ * `undefined` for no match — same "destination not found" outcome whether it was never synced, was
+ * synced from a different `node_url`, or belongs to a different Box.
+ */
+export async function getExternalDeliveryDestination(
+  nodeUrl: string,
+  targetNodeId: string,
+  destinationId: string,
+): Promise<ExternalDeliveryDestinationLookup | undefined> {
+  const db = getPool();
+  const res = await db.query(
+    `SELECT data FROM external_delivery_destinations WHERE node_url = $1 AND box_node_id = $2 AND destination_id = $3`,
+    [nodeUrl, targetNodeId, destinationId],
+  );
+  const data = res.rows[0]?.data as Record<string, unknown> | undefined;
+  if (!data || typeof data.publicKeyHex !== "string" || typeof data.requiresPassword !== "boolean" || typeof data.label !== "string") {
+    return undefined;
+  }
+  return { publicKeyHex: data.publicKeyHex, requiresPassword: data.requiresPassword, label: data.label };
+}
+
 export async function listAssignedNodes(): Promise<NodeAssignment[]> {
   const db = getPool();
   const res = await db.query(

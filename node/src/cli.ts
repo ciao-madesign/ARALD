@@ -423,6 +423,13 @@ async function main(): Promise<void> {
     // *accepted* into this process — --allow-remote-reboot below is the separate, decisive local
     // opt-in for whether an accepted one actually causes a shutdown() at all.
     const allowRemoteRelayCommandIngest = args["allow-remote-relay-command-ingest"] === "true";
+    // Opt-in, gates POST /api/ingest-external-delivery — "Pezzo 3" del canale di comando Box↔specchio
+    // (docs/emergency-portal.md, WebUiOptions.allowRemoteExternalDeliveryIngest's own doc comment).
+    // Independent from the other three ingest flags. Unlike --allow-remote-relay-command-ingest,
+    // there is no second local opt-in gating what an accepted submission *does* — enqueuing into
+    // externalDeliveryQueue is never as consequential as a reboot, see
+    // NomadNode.ingestExternalDelivery()'s own doc comment for the full reasoning.
+    const allowRemoteExternalDeliveryIngest = args["allow-remote-external-delivery-ingest"] === "true";
     // A dedicated location-registry node (docs/next-steps.md Opzione J) needs the same
     // networkName/networkPassword pairing mechanism as any other mobile-facing node — just handed
     // out separately to trusted operators only, never to guests, which is exactly what makes it a
@@ -435,7 +442,8 @@ async function main(): Promise<void> {
       exposeEmergencyBeacons ||
       allowRemoteContentIngest ||
       allowRemoteNodeAppendIngest ||
-      allowRemoteRelayCommandIngest;
+      allowRemoteRelayCommandIngest ||
+      allowRemoteExternalDeliveryIngest;
     // Generated fresh every run, printed/shown once, never persisted — the mobile client (Opzione H,
     // docs/next-steps.md) is expected to be paired by re-entering this each time the node restarts,
     // the same "out of band, by the operator" trust model as a Wi-Fi router's own password.
@@ -469,6 +477,7 @@ async function main(): Promise<void> {
       allowRemoteContentIngest,
       allowRemoteNodeAppendIngest,
       allowRemoteRelayCommandIngest,
+      allowRemoteExternalDeliveryIngest,
       networkName,
       networkPassword,
       publicHost: args["public-host"],
@@ -511,6 +520,9 @@ async function main(): Promise<void> {
       if (args["allow-remote-reboot"] !== "true") {
         console.log(`  Nota: --allow-remote-reboot non è impostato — un comando accettato non causerà comunque alcun riavvio su questo processo.`);
       }
+    }
+    if (allowRemoteExternalDeliveryIngest) {
+      console.log(`Canale di comando dal portale abilitato: POST /api/ingest-external-delivery (stessa password di rete)`);
     }
     if (mapTiles) {
       console.log(`Map tiles exposed: GET /api/map-info, GET /api/map-tiles/:z/:x/:y (non autenticati — non dati sensibili)`);

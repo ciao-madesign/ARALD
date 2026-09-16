@@ -3,7 +3,7 @@ import { syncSnapshotToPostgres, type SyncClient } from "../../arald-backend/pos
 import type { NodeSnapshot } from "../../arald-backend/node-client.js";
 
 function emptySnapshot(): NodeSnapshot {
-  return { status: undefined, services: [], relays: [], emergencyBeacons: [], drops: [], nodeAppends: [], skipped: [] };
+  return { status: undefined, services: [], relays: [], emergencyBeacons: [], drops: [], nodeAppends: [], externalDeliveryDestinations: [], skipped: [] };
 }
 
 function fakeClient(): SyncClient & { calls: { text: string; params: unknown[] }[] } {
@@ -23,7 +23,7 @@ describe("syncSnapshotToPostgres", () => {
     const summary = await syncSnapshotToPostgres(client, "http://node.example", emptySnapshot());
 
     expect(client.calls).toHaveLength(0);
-    expect(summary).toEqual({ relays: 0, emergencyBeacons: 0, drops: 0, nodeAppends: 0, services: 0, statusSnapshot: false });
+    expect(summary).toEqual({ relays: 0, emergencyBeacons: 0, drops: 0, nodeAppends: 0, externalDeliveryDestinations: 0, services: 0, statusSnapshot: false });
   });
 
   it("upserts one row per relay/beacon/drop/append, and inserts one status snapshot", async () => {
@@ -45,19 +45,27 @@ describe("syncSnapshotToPostgres", () => {
       emergencyBeacons: [{ beaconContentId: "B1", deviceId: "D1", timestamp: 1000 }],
       drops: [{ dropId: "DR1", author: "A1", text: "attenzione", lat: 45.1, lon: 9.2, kind: "hazard", timestamp: 1500 }],
       nodeAppends: [{ appendId: "AP1", text: "ciao", kind: "info", timestamp: 2000 }],
+      externalDeliveryDestinations: [{ destinationId: "HQ", boxNodeId: "N1", label: "Headquarter", publicKeyHex: "aa".repeat(32), requiresPassword: false }],
       skipped: [],
     };
 
     const summary = await syncSnapshotToPostgres(client, "http://node.example", snapshot);
 
-    expect(summary).toEqual({ relays: 1, emergencyBeacons: 1, drops: 1, nodeAppends: 1, services: 1, statusSnapshot: true });
-    expect(client.calls).toHaveLength(5);
+    expect(summary).toEqual({ relays: 1, emergencyBeacons: 1, drops: 1, nodeAppends: 1, externalDeliveryDestinations: 1, services: 1, statusSnapshot: true });
+    expect(client.calls).toHaveLength(6);
 
     const relayCall = client.calls.find((c) => c.text.includes("INTO relays"));
     expect(relayCall?.text).toContain("ON CONFLICT (relay_id) DO UPDATE");
     expect(relayCall?.params[0]).toBe("R1");
     expect(relayCall?.params[1]).toBe("http://node.example");
     expect(JSON.parse(relayCall!.params[2] as string)).toMatchObject({ relayId: "R1", online: true });
+
+    const destinationCall = client.calls.find((c) => c.text.includes("INTO external_delivery_destinations"));
+    expect(destinationCall?.text).toContain("ON CONFLICT (box_node_id, destination_id) DO UPDATE");
+    expect(destinationCall?.params[0]).toBe("HQ");
+    expect(destinationCall?.params[1]).toBe("N1");
+    expect(destinationCall?.params[2]).toBe("http://node.example");
+    expect(JSON.parse(destinationCall!.params[3] as string)).toMatchObject({ destinationId: "HQ", boxNodeId: "N1", requiresPassword: false });
 
     const statusCall = client.calls.find((c) => c.text.includes("INTO node_status_snapshots"));
     expect(statusCall?.text).not.toContain("ON CONFLICT");

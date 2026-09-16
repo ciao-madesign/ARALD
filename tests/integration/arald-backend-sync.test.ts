@@ -88,8 +88,29 @@ describe("arald-backend sync (docs/emergency-portal.md)", () => {
 
     const client = fakeClient();
     const summary = await syncSnapshotToPostgres(client, baseUrl(), snapshot);
-    expect(summary).toEqual({ relays: 1, emergencyBeacons: 1, drops: 1, nodeAppends: 1, services: 1, statusSnapshot: true });
-    expect(client.calls).toBe(5); // one upsert per relay/beacon/drop/append + one status insert
+    expect(summary).toEqual({ relays: 1, emergencyBeacons: 1, drops: 1, nodeAppends: 1, externalDeliveryDestinations: 0, services: 1, statusSnapshot: true });
+    expect(client.calls).toBe(5); // one upsert per relay/beacon/drop/append + one status insert (no external-delivery destinations configured on this test node)
+  });
+
+  it("syncs a Box's own external-delivery-destinations directory into the database (Pezzo 3, voce #84)", async () => {
+    node = new NomadNode({
+      displayName: "Box",
+      externalDeliveryAllowlist: new Map([["hq-1", { destinationId: "hq-1", label: "Headquarter", publicKeyHex: "aa".repeat(32), url: "http://127.0.0.1:1/unused" }]]),
+    });
+    await node.start();
+    webUi = new WebUiServer(node, { port: 0 });
+    await webUi.start();
+
+    node.publishExternalDeliveryDirectory();
+
+    const snapshot = await fetchNodeSnapshot({ nodeUrl: baseUrl() });
+    expect(snapshot.externalDeliveryDestinations).toEqual([
+      { destinationId: "hq-1", boxNodeId: node.nodeId, label: "Headquarter", publicKeyHex: "aa".repeat(32), requiresPassword: false },
+    ]);
+
+    const client = fakeClient();
+    const summary = await syncSnapshotToPostgres(client, baseUrl(), snapshot);
+    expect(summary.externalDeliveryDestinations).toBe(1);
   });
 
   it("skips /api/relays and /api/emergency-beacons (and reports why) when no network password is given", async () => {

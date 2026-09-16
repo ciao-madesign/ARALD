@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createPrivateKey, createPublicKey, generateKeyPairSync, sign as cryptoSign, type KeyObject } from "node:crypto";
+import { createCipheriv, createPrivateKey, createPublicKey, diffieHellman, generateKeyPairSync, randomBytes, sign as cryptoSign, type KeyObject } from "node:crypto";
 
 /**
  * Pure mesh-signing primitives for the canale di comando (Pezzo 1/2/4,
@@ -296,4 +296,78 @@ export function signRelayCommand(identity: MeshIdentity, targetNodeId: string): 
   };
   const signature = identity.sign(relayCommandSigningPayload(fields)).toString("hex");
   return { ...fields, signature };
+}
+
+// ---- mirrors node/src/encryption.ts (X25519 + AES-256-GCM) + node/src/external-delivery.ts's sealExternalDelivery() ----
+// "Pezzo 3" del canale di comando Box↔specchio (docs/emergency-portal.md, docs/security.md voce
+// #84) — consegna esterna differita composta dal portale. Deliberatamente NESSUNA firma Ed25519 qui,
+// a differenza di ogni altro pezzo sopra: il percorso mesh reale (node/src/node.ts's
+// handleExternalDelivery()) non controlla mai l'identità del mittente nemmeno lì — la sicurezza di
+// questo pezzo è interamente destinationId (verificato contro l'allowlist privata del Box) + una
+// password opzionale per-destinazione, mai chi ha originato l'invio. Vedi
+// NomadNode.ingestExternalDelivery()'s own doc comment per il ragionamento completo.
+//
+// Genera sempre una coppia X25519 effimera, usa-e-getta, per ogni singola chiamata — mai un'identità
+// custodita per operatore come getOrCreateMeshIdentity() sopra (quella è Ed25519, per firmare; questa
+// è X25519, per cifrare, e deve restare non correlabile fra un invio e il successivo, stesso
+// ragionamento del commento della vera sealExternalDelivery()).
+
+function x25519PublicKeyHex(publicKey: KeyObject): string {
+  const jwk = publicKey.export({ format: "jwk" }) as { x: string };
+  return Buffer.from(jwk.x, "base64url").toString("hex");
+}
+
+function x25519PublicKeyFromHex(hex: string): KeyObject {
+  return createPublicKey({ key: { kty: "OKP", crv: "X25519", x: Buffer.from(hex, "hex").toString("base64url") }, format: "jwk" });
+}
+
+export interface SealedExternalDelivery {
+  senderEphemeralPublicKey: string;
+  nonce: string;
+  ciphertext: string;
+  authTag: string;
+}
+
+/**
+ * Mirrors `sealExternalDelivery()` (`node/src/external-delivery.ts`)
+ * field-for-field: fresh X25519 ephemeral keypair, ECDH shared secret
+ * (`diffieHellman()`) hashed to 32 bytes (SHA-256, same as
+ * `EncryptionIdentity.sharedKeyWith()`), AES-256-GCM
+ * (`createCipheriv("aes-256-gcm", ...)`, same as `encryptForPeer()`).
+ * Interop verified in `tests/unit/mirror-portal-mesh-signing.test.ts`: this
+ * function seals, the real `unsealExternalDelivery()` opens, and the
+ * plaintext round-trips.
+ */
+export function sealExternalDeliveryForPortal(destinationPublicKeyHex: string, plaintext: Buffer): SealedExternalDelivery {
+  const { publicKey, privateKey } = generateKeyPairSync("x25519");
+  const senderEphemeralPublicKey = x25519PublicKeyHex(publicKey);
+  const peerPublicKey = x25519PublicKeyFromHex(destinationPublicKeyHex);
+  const sharedSecret = diffieHellman({ privateKey, publicKey: peerPublicKey });
+  const sharedKey = createHash("sha256").update(sharedSecret).digest();
+  const nonce = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", sharedKey, nonce);
+  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  return {
+    senderEphemeralPublicKey,
+    nonce: nonce.toString("hex"),
+    ciphertext: ciphertext.toString("hex"),
+    authTag: cipher.getAuthTag().toString("hex"),
+  };
+}
+
+/** Mirrors `MAX_EXTERNAL_DELIVERY_DESTINATION_ID_LENGTH` (`node/src/external-delivery.ts`) — kept as its own constant, same reasoning `MAX_NODE_APPEND_LABEL_LENGTH` above already gives for not importing across the Vercel-build boundary. */
+export const MAX_EXTERNAL_DELIVERY_DESTINATION_ID_LENGTH = 100;
+/** Mirrors `DEFAULT_MAX_EXTERNAL_DELIVERY_PAYLOAD_BYTES` (`node/src/node.ts`) — this route's own conservative cap, since the portal has no way to know a specific Box's own configured `maxExternalDeliveryPayloadBytes` ahead of time (never synced); a submission over a Box's real, possibly-smaller cap is rejected there with a 422/413 the command poller already treats as terminal. */
+export const DEFAULT_MAX_EXTERNAL_DELIVERY_PAYLOAD_BYTES = 1_000_000;
+
+/** The exact `ExternalDeliveryPayload` shape `node/src/external-delivery.ts`'s `extractExternalDeliveryPayload()` verifies — what `POST /api/commands/external-deliveries` stores in `remote_commands.metadata` and `command-poller.ts` forwards as-is to `POST /api/ingest-external-delivery`, same "the whole submission lives in metadata" convention as `SignedNodeAppend`/`SignedRelayCommand` above. */
+export interface ExternalDeliverySubmission extends SealedExternalDelivery {
+  destinationId: string;
+  submittedAt: number;
+}
+
+/** Builds a complete, ready-to-queue external-delivery submission — seals `plaintext` to `destinationPublicKeyHex` and attaches `destinationId`/`submittedAt`, mirroring `NomadNode.sendExternalDelivery()`'s own field assembly (minus `authProof`, out of scope for v1 — password-protected destinations aren't offered by this route, see `app/api/commands/external-deliveries/route.ts`'s own doc comment). */
+export function buildExternalDeliverySubmission(destinationId: string, destinationPublicKeyHex: string, plaintext: Buffer): ExternalDeliverySubmission {
+  const sealed = sealExternalDeliveryForPortal(destinationPublicKeyHex, plaintext);
+  return { destinationId, ...sealed, submittedAt: Date.now() };
 }

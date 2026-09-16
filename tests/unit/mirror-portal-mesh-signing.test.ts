@@ -7,11 +7,15 @@ import {
   dropKindPriority,
   signNodeAppend,
   signRelayCommand,
+  sealExternalDeliveryForPortal,
+  buildExternalDeliverySubmission,
   DROP_CONTENT_NAME,
   DEFAULT_DROP_TTL_MS,
   MAX_DROP_TTL_MS,
   DEFAULT_NODE_APPEND_TTL_MS,
   MAX_NODE_APPEND_TTL_MS,
+  MAX_EXTERNAL_DELIVERY_DESTINATION_ID_LENGTH,
+  DEFAULT_MAX_EXTERNAL_DELIVERY_PAYLOAD_BYTES,
 } from "../../mirror-portal/lib/mesh-signing.js";
 // Real mesh implementations, imported ONLY here (never from mirror-portal's own production code —
 // see mesh-signing.ts's own doc comment for why) specifically to prove the vendored copy is
@@ -27,7 +31,10 @@ import {
   MAX_DROP_TTL_MS as REAL_MAX_DROP_TTL_MS,
   DEFAULT_NODE_APPEND_TTL_MS as REAL_DEFAULT_NODE_APPEND_TTL_MS,
   MAX_NODE_APPEND_TTL_MS as REAL_MAX_NODE_APPEND_TTL_MS,
+  DEFAULT_MAX_EXTERNAL_DELIVERY_PAYLOAD_BYTES as REAL_DEFAULT_MAX_EXTERNAL_DELIVERY_PAYLOAD_BYTES,
 } from "../../node/src/node.js";
+import { EncryptionIdentity } from "../../node/src/encryption.js";
+import { unsealExternalDelivery, extractExternalDeliveryPayload, MAX_EXTERNAL_DELIVERY_DESTINATION_ID_LENGTH as REAL_MAX_EXTERNAL_DELIVERY_DESTINATION_ID_LENGTH } from "../../node/src/external-delivery.js";
 
 /**
  * `mirror-portal/lib/mesh-signing.ts` — vendored/duplicated crypto (not
@@ -193,5 +200,57 @@ describe("mirror-portal lib/mesh-signing (cross-verified against node/src/*)", (
 
     expect(signed.timestamp).toBeGreaterThanOrEqual(before);
     expect(signed.timestamp).toBeLessThanOrEqual(after);
+  });
+
+  /**
+   * `sealExternalDeliveryForPortal()`/`buildExternalDeliverySubmission()` — "Pezzo 3" del canale di
+   * comando (`docs/security.md` voce #84). Unlike every pair above, there is no Ed25519 signature to
+   * cross-verify here (see `mesh-signing.ts`'s own doc comment on this section for why the real mesh
+   * path never checks a sender identity either) — instead the cross-verification is that the sealed
+   * ciphertext this module produces actually *decrypts* against the real `unsealExternalDelivery()`
+   * (`node/src/external-delivery.ts`), and that `NomadNode.ingestExternalDelivery()`'s own shape
+   * validator (`extractExternalDeliveryPayload()`) accepts the submission this module builds.
+   */
+  it("sealExternalDeliveryForPortal() produces ciphertext the real unsealExternalDelivery() decrypts back to the original plaintext", () => {
+    const destination = EncryptionIdentity.generate();
+    const plaintext = Buffer.from("rapporto operativo riservato", "utf8");
+
+    const sealed = sealExternalDeliveryForPortal(destination.publicKeyHex, plaintext);
+    const opened = unsealExternalDelivery(destination, sealed);
+
+    expect(opened.equals(plaintext)).toBe(true);
+  });
+
+  it("sealExternalDeliveryForPortal() uses a fresh ephemeral keypair on every call — two seals of the same plaintext never share senderEphemeralPublicKey/ciphertext", () => {
+    const destination = EncryptionIdentity.generate();
+    const plaintext = Buffer.from("stesso testo", "utf8");
+
+    const first = sealExternalDeliveryForPortal(destination.publicKeyHex, plaintext);
+    const second = sealExternalDeliveryForPortal(destination.publicKeyHex, plaintext);
+
+    expect(first.senderEphemeralPublicKey).not.toBe(second.senderEphemeralPublicKey);
+    expect(first.ciphertext).not.toBe(second.ciphertext); // different nonce each time, AES-GCM output differs even for identical plaintext
+    // Both still decrypt correctly, independently.
+    expect(unsealExternalDelivery(destination, first).equals(plaintext)).toBe(true);
+    expect(unsealExternalDelivery(destination, second).equals(plaintext)).toBe(true);
+  });
+
+  it("buildExternalDeliverySubmission() produces a payload the real extractExternalDeliveryPayload() (NomadNode.ingestExternalDelivery()'s own shape validator) accepts", () => {
+    const destination = EncryptionIdentity.generate();
+    const plaintext = Buffer.from("file di test", "utf8");
+
+    const submission = buildExternalDeliverySubmission("HQ", destination.publicKeyHex, plaintext);
+    const validated = extractExternalDeliveryPayload(submission, DEFAULT_MAX_EXTERNAL_DELIVERY_PAYLOAD_BYTES * 2);
+
+    expect(validated).toBeDefined();
+    expect(validated?.destinationId).toBe("HQ");
+    expect(validated?.authProof).toBeUndefined(); // v1 scope: never a password proof, see route.ts's own doc comment
+    const opened = unsealExternalDelivery(destination, submission);
+    expect(opened.equals(plaintext)).toBe(true);
+  });
+
+  it("MAX_EXTERNAL_DELIVERY_DESTINATION_ID_LENGTH/DEFAULT_MAX_EXTERNAL_DELIVERY_PAYLOAD_BYTES match the real, currently-effective constants exactly", () => {
+    expect(MAX_EXTERNAL_DELIVERY_DESTINATION_ID_LENGTH).toBe(REAL_MAX_EXTERNAL_DELIVERY_DESTINATION_ID_LENGTH);
+    expect(DEFAULT_MAX_EXTERNAL_DELIVERY_PAYLOAD_BYTES).toBe(REAL_DEFAULT_MAX_EXTERNAL_DELIVERY_PAYLOAD_BYTES);
   });
 });

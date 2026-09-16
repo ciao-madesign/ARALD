@@ -35,6 +35,7 @@ describe("fetchNodeSnapshot (regression: partial endpoint failure)", () => {
       if (path === "/api/services") return new Response(JSON.stringify([]), { status: 200 });
       if (path === "/api/relays") return new Response("internal error", { status: 500 });
       if (path === "/api/emergency-beacons") return new Response(JSON.stringify([]), { status: 200 });
+      if (path === "/api/external-delivery-destinations") return new Response(JSON.stringify([]), { status: 200 });
       throw new Error(`unexpected path ${path}`);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -96,6 +97,7 @@ describe("fetchNodeSnapshot (regression: partial endpoint failure)", () => {
           { status: 200 },
         );
       }
+      if (path === "/api/external-delivery-destinations") return new Response(JSON.stringify([]), { status: 200 });
       throw new Error(`unexpected path ${path}`);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -130,6 +132,7 @@ describe("fetchNodeSnapshot (regression: partial endpoint failure)", () => {
           { status: 200 },
         );
       }
+      if (path === "/api/external-delivery-destinations") return new Response(JSON.stringify([]), { status: 200 });
       throw new Error(`unexpected path ${path}`);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -149,6 +152,7 @@ describe("fetchNodeSnapshot (regression: partial endpoint failure)", () => {
       if (path === "/api/drops") return new Response(JSON.stringify([]), { status: 200 });
       if (path === "/api/node-appends") return new Response(JSON.stringify([]), { status: 200 });
       if (path === "/api/services") return new Response("internal error", { status: 503 });
+      if (path === "/api/external-delivery-destinations") return new Response(JSON.stringify([]), { status: 200 });
       throw new Error(`unexpected path ${path}`);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -157,5 +161,50 @@ describe("fetchNodeSnapshot (regression: partial endpoint failure)", () => {
 
     expect(snapshot.services).toEqual([]);
     expect(snapshot.skipped).toContain("/api/services (unexpected status 503)");
+  });
+
+  it("fetches and defensively extracts /api/external-delivery-destinations, dropping malformed entries (Pezzo 3, voce #84)", async () => {
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      const path = new URL(url).pathname;
+      if (path === "/api/status") return new Response(JSON.stringify(statusBody), { status: 200 });
+      if (path === "/api/drops") return new Response(JSON.stringify([]), { status: 200 });
+      if (path === "/api/node-appends") return new Response(JSON.stringify([]), { status: 200 });
+      if (path === "/api/services") return new Response(JSON.stringify([]), { status: 200 });
+      if (path === "/api/external-delivery-destinations") {
+        return new Response(
+          JSON.stringify([
+            { destinationId: "HQ", boxNodeId: "N1", label: "Headquarter", publicKeyHex: "aa".repeat(32), requiresPassword: false },
+            { destinationId: "broken" }, // missing required fields — dropped, not thrown
+          ]),
+          { status: 200 },
+        );
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const snapshot = await fetchNodeSnapshot({ nodeUrl: "http://node.example" });
+
+    expect(snapshot.externalDeliveryDestinations).toEqual([
+      { destinationId: "HQ", boxNodeId: "N1", label: "Headquarter", publicKeyHex: "aa".repeat(32), requiresPassword: false },
+    ]);
+  });
+
+  it("records a skip, never throws, when /api/external-delivery-destinations returns an unexpected status", async () => {
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      const path = new URL(url).pathname;
+      if (path === "/api/status") return new Response(JSON.stringify(statusBody), { status: 200 });
+      if (path === "/api/drops") return new Response(JSON.stringify([]), { status: 200 });
+      if (path === "/api/node-appends") return new Response(JSON.stringify([]), { status: 200 });
+      if (path === "/api/services") return new Response(JSON.stringify([]), { status: 200 });
+      if (path === "/api/external-delivery-destinations") return new Response("internal error", { status: 503 });
+      throw new Error(`unexpected path ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const snapshot = await fetchNodeSnapshot({ nodeUrl: "http://node.example" });
+
+    expect(snapshot.externalDeliveryDestinations).toEqual([]);
+    expect(snapshot.skipped).toContain("/api/external-delivery-destinations (unexpected status 503)");
   });
 });

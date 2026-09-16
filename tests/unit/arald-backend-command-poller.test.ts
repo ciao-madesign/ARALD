@@ -349,4 +349,76 @@ describe("arald-backend command-poller pollAndDeliverCommands", () => {
       expect(calls.filter((c) => c.text.includes("status = 'delivered'"))).toHaveLength(3);
     });
   });
+
+  /**
+   * "Pezzo 3" del canale di comando (`docs/security.md` voce #84): un comando `kind: "external-delivery"`
+   * va a un quarto endpoint, stessa forma di `"node-append"`/`"relay-command"` (l'intera busta —
+   * già sigillata, mai firmata — come body).
+   */
+  describe("routing for kind: 'external-delivery'", () => {
+    it("posts the whole 'metadata' object (the sealed submission) to /api/ingest-external-delivery", async () => {
+      const sealedSubmission = { destinationId: "hq-1", senderEphemeralPublicKey: "aa".repeat(32), nonce: "bb".repeat(12), ciphertext: "cc".repeat(10), authTag: "dd".repeat(16), submittedAt: 1 };
+      const { pool, calls } = fakePool([{ id: "ed1", kind: "external-delivery", metadata: sealedSubmission, data: "", priority: 4 }]);
+      const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+        expect(url).toBe("http://node.example/api/ingest-external-delivery");
+        expect(JSON.parse(init.body as string)).toEqual(sealedSubmission);
+        return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const summary = await pollAndDeliverCommands(pool, "http://node.example", "pw");
+
+      expect(summary).toEqual({ delivered: 1, failed: 0, deferred: 0 });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("marks an external-delivery command failed (terminal) on a 422 — an unknown destinationId, never worth retrying", async () => {
+      const { pool, calls } = fakePool([{ id: "ed1", kind: "external-delivery", metadata: { destinationId: "unknown" }, data: "", priority: 4 }]);
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "unknown destinationId" }), { status: 422 })));
+
+      const summary = await pollAndDeliverCommands(pool, "http://node.example", "pw");
+
+      expect(summary).toEqual({ delivered: 0, failed: 1, deferred: 0 });
+      const update = calls.find((c) => c.text.includes("status = 'failed'"));
+      expect(update?.params).toEqual(["ed1", "unknown destinationId"]);
+    });
+
+    it("leaves an external-delivery command pending (deferred) on a 429 — this Box's own per-destination budget is temporarily exhausted", async () => {
+      const { pool, calls } = fakePool([{ id: "ed1", kind: "external-delivery", metadata: {}, data: "", priority: 4 }]);
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "too many requests" }), { status: 429 })));
+
+      const summary = await pollAndDeliverCommands(pool, "http://node.example", "pw");
+
+      expect(summary).toEqual({ delivered: 0, failed: 0, deferred: 1 });
+      expect(calls.filter((c) => c.text.includes("UPDATE"))).toHaveLength(0);
+    });
+
+    it("processes all four kinds ('drop', 'node-append', 'relay-command', 'external-delivery') in the same tick, each hitting its own endpoint", async () => {
+      const { pool, calls } = fakePool([
+        { id: "drop1", kind: "drop", metadata: { contentId: "x" }, data: "AA==", priority: 4 },
+        { id: "na1", kind: "node-append", metadata: { text: "nota" }, data: "", priority: 4 },
+        { id: "rc1", kind: "relay-command", metadata: { command: "reboot" }, data: "", priority: 2 },
+        { id: "ed1", kind: "external-delivery", metadata: { destinationId: "hq-1" }, data: "", priority: 4 },
+      ]);
+      const hitPaths: string[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) => {
+          hitPaths.push(new URL(url).pathname);
+          return new Response(JSON.stringify({}), { status: 200 });
+        }),
+      );
+
+      const summary = await pollAndDeliverCommands(pool, "http://node.example", "pw");
+
+      expect(summary).toEqual({ delivered: 4, failed: 0, deferred: 0 });
+      expect(hitPaths.sort()).toEqual([
+        "/api/ingest-external-delivery",
+        "/api/ingest-node-append",
+        "/api/ingest-relay-command",
+        "/api/ingest-signed-content",
+      ]);
+      expect(calls.filter((c) => c.text.includes("status = 'delivered'"))).toHaveLength(4);
+    });
+  });
 });
