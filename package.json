@@ -15,7 +15,8 @@
     "hub": "tsx nomad-hub/cli.ts",
     "portal:sync": "tsx arald-backend/sync.ts",
     "portal:local": "tsx local-portal/cli.ts",
-    "whatsapp-relay": "tsx whatsapp-relay/cli.ts"
+    "whatsapp-relay": "tsx whatsapp-relay/cli.ts",
+    "email-relay": "tsx email-relay/cli.ts"
   },
   "dependencies": {
     "pg": "^8.13.1"
