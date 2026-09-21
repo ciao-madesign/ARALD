@@ -11,7 +11,7 @@ import { raceTimeout } from "./async-timeout.js";
 import type { MbtilesReader } from "./map-tiles.js";
 import { BoundedFifoMap } from "./bounded-map.js";
 import { extractRelayRegistration } from "./relay-registry.js";
-import { priorityRank } from "./packet.js";
+import { priorityRank, type Packet } from "./packet.js";
 
 export interface WebUiOptions {
   /** Port to listen on; 0 (default) lets the OS assign one — useful in tests, mirrors TcpTransport's own `port` convention. */
@@ -892,6 +892,13 @@ export class WebUiServer {
   private readonly mapTileRateLimitState = new BoundedFifoMap<string, { windowStart: number; count: number }>({
     maxSize: MAX_TRACKED_MAP_TILE_RATE_LIMIT_IPS,
   });
+  // awaitDeliveryStatus()'s own state — see that method's doc comment. One shared pair of `this.node`
+  // listeners for the whole server lifetime (attached lazily, `ensureDeliveryStatusListeners()`)
+  // instead of one pair per in-flight send: a burst of concurrent sends used to push past Node's
+  // default EventEmitter maxListeners (10) and print MaxListenersExceededWarning (found by review).
+  private deliveryStatusListenersAttached = false;
+  private readonly deliveryStatusWaiters = new Map<string, (status: "sent" | "queued") => void>();
+  private readonly recentDeliveryStatuses = new BoundedFifoMap<string, "sent" | "queued">({ maxSize: 200 });
   private cachedPairingInfo: PairingInfo | undefined;
   private readonly httpServer: LoopbackHttpServer;
 
@@ -1357,6 +1364,82 @@ export class WebUiServer {
    * mirrors `handleCall()`'s "unknown or unavailable service" — "can't
    * reach this recipient (yet)" is the same class of condition.
    */
+  /**
+   * Attaches the *single* shared pair of `this.node` listeners `awaitDeliveryStatus()` needs, once per
+   * server lifetime — not once per in-flight send. An earlier version attached its own pair of
+   * listeners inside every `awaitDeliveryStatus()` call; a burst of concurrent sends (several phones on
+   * one relay sending within the same ~1.5s window) pushed the listener count for one event name past
+   * `EventEmitter`'s default `maxListeners` (10) and printed `MaxListenersExceededWarning` (found by
+   * review) — every listener was still correctly cleaned up, so nothing actually leaked, but the
+   * pattern didn't scale. `recentDeliveryStatuses` (bounded, see its own field comment) replaces the
+   * old per-call `seenBeforeId` buffer for the same reason it existed: when `floodExcept()` finds zero
+   * connected peers, it never awaits real I/O, so the "queued" event fires synchronously inside
+   * `sendFn()` itself, before `awaitDeliveryStatus()` below has an id to key a waiter on.
+   */
+  private ensureDeliveryStatusListeners(): void {
+    if (this.deliveryStatusListenersAttached) return;
+    this.deliveryStatusListenersAttached = true;
+    const record = (packetId: string, status: "sent" | "queued"): void => {
+      const waiter = this.deliveryStatusWaiters.get(packetId);
+      if (waiter) {
+        this.deliveryStatusWaiters.delete(packetId);
+        waiter(status);
+      } else {
+        this.recentDeliveryStatuses.set(packetId, status);
+      }
+    };
+    this.node.on("store-and-forward:queued", (packet: Packet) => record(packet.id, "queued"));
+    this.node.on("store-and-forward:handed-off", (packet: Packet) => record(packet.id, "sent"));
+  }
+
+  /**
+   * Calls `sendFn()` (expected to be `NomadNode.sendPrivateMessage()`/`sendExternalDelivery()`,
+   * synchronous, returning the new packet's id) and resolves once that packet is either handed to a
+   * neighbor or queued locally by `NomadNode.floodExcept()` (node.ts's
+   * `"store-and-forward:handed-off"`/`"store-and-forward:queued"` events, dispatched via
+   * `ensureDeliveryStatusListeners()` above) — the only two locally-knowable outcomes for a unicast
+   * send today (`docs/security.md` voce #86, "Le mie attività"). Neither status is a delivery
+   * confirmation: this mesh has no end-to-end ack for `PRIVATE_MESSAGE`/`EXTERNAL_DELIVERY` (only the
+   * unused `MessageType.ACK`/`DATA` pair does) — `"sent"` only ever means "left this device", never
+   * "arrived".
+   *
+   * Both events are gated on `floodExcept()`'s own `isUnicastElsewhere` (`packet.destination !==
+   * this.nodeId`) — a caller whose `to`/`boxNodeId` names *this* node itself would never see either
+   * event and always fall through to the timeout below. `handleSendMessage()` can't reach that case
+   * (`sendPrivateMessage()` already throws first: a node never holds its own key in `peerDirectory`);
+   * `handleSendExternalDelivery()` rejects a self-addressed `boxNodeId` before ever calling this, for
+   * the same reason.
+   *
+   * On timeout (deliberately generous — see `DELIVERY_STATUS_AWAIT_MS`), defaults to `"sent"` rather
+   * than surfacing an error: a slow-to-settle event is far less likely in practice than a genuine
+   * hand-off, and this status is advisory UI copy either way, not a correctness guarantee.
+   */
+  private awaitDeliveryStatus(sendFn: () => string, timeoutMs: number = DELIVERY_STATUS_AWAIT_MS): Promise<{ id: string; status: "sent" | "queued" }> {
+    this.ensureDeliveryStatusListeners();
+    return new Promise((resolve, reject) => {
+      let id: string;
+      try {
+        id = sendFn();
+      } catch (err) {
+        reject(err as Error);
+        return;
+      }
+      const alreadySeen = this.recentDeliveryStatuses.get(id);
+      if (alreadySeen !== undefined) {
+        resolve({ id, status: alreadySeen });
+        return;
+      }
+      const timer = setTimeout(() => {
+        this.deliveryStatusWaiters.delete(id);
+        resolve({ id, status: "sent" });
+      }, timeoutMs);
+      this.deliveryStatusWaiters.set(id, (status) => {
+        clearTimeout(timer);
+        resolve({ id, status });
+      });
+    });
+  }
+
   private async handleSendMessage(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!this.allowServiceCalls || !this.networkPassword) {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
@@ -1408,8 +1491,8 @@ export class WebUiServer {
     }
 
     try {
-      const id = this.node.sendPrivateMessage(to, { text });
-      sendJson(res, 200, { id });
+      const { id, status } = await this.awaitDeliveryStatus(() => this.node.sendPrivateMessage(to, { text }));
+      sendJson(res, 200, { id, status });
     } catch (err) {
       // sendPrivateMessage()'s only synchronous throw today is the "encryption key not yet
       // known" case (node.ts) — mapped to 404, same as handleCall()'s "unknown or unavailable
@@ -2415,6 +2498,14 @@ export class WebUiServer {
       sendJson(res, 400, { error: "'boxNodeId' must be a non-empty string" });
       return;
     }
+    if (boxNodeId === this.node.nodeId) {
+      // A self-addressed destination is meaningless (there is no "external" to deliver to) — rejected
+      // here rather than left to fall through: floodExcept()'s isUnicastElsewhere is false for a
+      // packet addressed to this node's own id, so neither of awaitDeliveryStatus()'s events would ever
+      // fire and every such request would silently stall for the full timeout (found by review).
+      sendJson(res, 400, { error: "'boxNodeId' cannot be this node's own id" });
+      return;
+    }
     const destinationId = body?.destinationId;
     if (typeof destinationId !== "string" || destinationId.length === 0) {
       sendJson(res, 400, { error: "'destinationId' must be a non-empty string" });
@@ -2446,8 +2537,10 @@ export class WebUiServer {
     }
 
     try {
-      const packetId = this.node.sendExternalDelivery(boxNodeId, destinationId, publicKeyHex, data, { password });
-      sendJson(res, 200, { sent: true, packetId });
+      const { id: packetId, status } = await this.awaitDeliveryStatus(() =>
+        this.node.sendExternalDelivery(boxNodeId, destinationId, publicKeyHex, data, { password }),
+      );
+      sendJson(res, 200, { sent: true, packetId, status });
     } catch (err) {
       // sendExternalDelivery()'s own validation throws for oversized destinationId/data (400, the
       // client picked/attached something outside this node's configured caps) — no rate limit exists
@@ -2665,6 +2758,7 @@ function isKnownAvailableService(node: NomadNode, serviceId: string): boolean {
 const MAX_CALL_BODY_BYTES = 262_144; // generous for a service call payload, nowhere near CHUNK_SIZE
 const MAX_CALL_BODY_READ_MS = 10_000; // bounds how long a slow/trickling body is tolerated (loopback-http-server.ts), well under Node's own 300s default
 const MAX_MESSAGE_BODY_BYTES = 65_536; // a chat message's JSON body is tiny compared to a service call's
+const DELIVERY_STATUS_AWAIT_MS = 1500; // generous for local async I/O to settle; see awaitDeliveryStatus()'s own doc comment for the timeout default
 const DEFAULT_CALL_TIMEOUT_MS = 5000;
 const MAX_CALL_TIMEOUT_MS = 15000; // caps how long a single POST /api/call can hold a connection open
 

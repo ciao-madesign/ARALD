@@ -3,6 +3,7 @@ import { NomadNode } from "../../node/src/node.js";
 import { TcpTransport } from "../../node/src/transports/tcp.js";
 import { WebUiServer } from "../../node/src/web-ui.js";
 import { Identity } from "../../node/src/identity.js";
+import { EncryptionIdentity } from "../../node/src/encryption.js";
 import { computeContentId, contentSigningPayload, type ContentMetadata } from "../../node/src/content.js";
 
 function waitFor(predicate: () => boolean, timeoutMs = 2000, intervalMs = 15): Promise<void> {
@@ -831,8 +832,11 @@ describe("WebUiServer /api/messages", () => {
       body: JSON.stringify({ to: b.node.nodeId, text: "rifugio raggiunto, tutto bene" }),
     });
     expect(sendRes.status).toBe(200);
-    const { id } = await sendRes.json();
+    const { id, status } = await sendRes.json();
     expect(typeof id).toBe("string");
+    // A real connected peer accepted it immediately — "sent" means "left this device", not a delivery
+    // confirmation (this mesh has no end-to-end ack for PRIVATE_MESSAGE, docs/security.md voce #86).
+    expect(status).toBe("sent");
 
     await expect(received).resolves.toEqual({ text: "rifugio raggiunto, tutto bene" });
 
@@ -845,6 +849,61 @@ describe("WebUiServer /api/messages", () => {
     // than racing b's GET endpoint against handlePrivateMessage()'s async decrypt-then-record.
     const recipientMessages = b.node.messageHistory.get(a.node.nodeId);
     expect(recipientMessages).toEqual([{ peer: a.node.nodeId, direction: "received", text: "rifugio raggiunto, tutto bene", timestamp: expect.any(Number) }]);
+  });
+
+  it("returns status 'queued' when the sender has no connected peer to hand the packet to (\"Le mie attività\", docs/security.md voce #86)", async () => {
+    const a = makeGateway("A");
+    await Promise.all([a.node.start(), a.webUi.start()]);
+    // No connect() at all — A has zero peers. Seeds peerDirectory directly (record() trusts its
+    // caller, same as a verified IDENTITY_RESPONSE would) so sendPrivateMessage() gets past its own
+    // "encryption key not yet known" guard without needing a real connection/key exchange — the
+    // point of this test is floodExcept()'s queuing behavior, not key propagation (covered elsewhere).
+    const fakeTargetId = "never-connected-target";
+    a.node.peerDirectory.record({ nodeId: fakeTargetId, encryptionPublicKey: EncryptionIdentity.generate().publicKeyHex, signature: "test" });
+
+    const res = await authedFetch(a.webUi, "/api/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to: fakeTargetId, text: "nessuno può ancora riceverlo" }),
+    });
+
+    expect(res.status).toBe(200);
+    const { status } = await res.json();
+    expect(status).toBe("queued");
+    expect(a.node.pendingDeliveryCount).toBe(1);
+  });
+
+  it("resolves two concurrent queued sends independently, without one clobbering the other's waiter (shared-listener redesign, docs/security.md voce #86)", async () => {
+    // Both unreachable (zero peers) — deliberately not one "sent" + one "queued": floodExcept() floods
+    // to *every* connected peer regardless of the packet's actual destination, so with any peer
+    // connected at all both sends would resolve "sent" here, proving nothing about cross-talk between
+    // awaitDeliveryStatus()'s now-shared deliveryStatusWaiters/recentDeliveryStatuses maps. Two
+    // distinct concurrent ids landing in those same shared maps is the actual scenario under test.
+    const a = makeGateway("A");
+    await Promise.all([a.node.start(), a.webUi.start()]);
+    const fakeTargetId1 = "never-connected-target-1";
+    const fakeTargetId2 = "never-connected-target-2";
+    a.node.peerDirectory.record({ nodeId: fakeTargetId1, encryptionPublicKey: EncryptionIdentity.generate().publicKeyHex, signature: "test" });
+    a.node.peerDirectory.record({ nodeId: fakeTargetId2, encryptionPublicKey: EncryptionIdentity.generate().publicKeyHex, signature: "test" });
+
+    const [res1, res2] = await Promise.all([
+      authedFetch(a.webUi, "/api/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to: fakeTargetId1, text: "first" }),
+      }),
+      authedFetch(a.webUi, "/api/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to: fakeTargetId2, text: "second" }),
+      }),
+    ]);
+    const [body1, body2] = await Promise.all([res1.json(), res2.json()]);
+
+    expect(body1.status).toBe("queued");
+    expect(body2.status).toBe("queued");
+    expect(body1.id).not.toBe(body2.id);
+    expect(a.node.pendingDeliveryCount).toBe(2);
   });
 
   it("GET returns the conversation oldest-first after multiple sends", async () => {

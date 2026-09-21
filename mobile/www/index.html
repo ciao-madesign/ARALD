@@ -189,6 +189,24 @@
 
     <div id="stats" class="panel trail-gauge" aria-label="Stato della rete"></div>
 
+    <!-- "Le mie attività" (docs/security.md voce #86, docs/next-steps.md — audit UX/UI): l'unico posto
+         dove sapere se un messaggio/file/SOS è uscito da questo dispositivo o è ancora in coda perché
+         non c'è nessun vicino raggiungibile. Mai "consegnato" — questa mesh non ha una conferma di
+         consegna end-to-end per questi tipi di invio (solo il tipo generico MessageType.DATA, mai usato
+         da messaggi/SOS/consegna esterna, ne ha una) — mostrare "consegnato" sarebbe mostrare qualcosa
+         di falso. Puramente locale (localStorage, mai sincronizzato/trasmesso), sempre visibile: non
+         dipende da nessuna capability del gateway. -->
+    <details class="panel" id="activity-panel">
+      <summary>
+        <div class="summary-row">
+          <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-send"></use></svg> Le mie attività <span class="count" id="activity-count"></span></h2>
+          <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+        </div>
+        <p class="hint">Tutto quello che hai inviato da questo dispositivo, con lo stato di ciascun invio.</p>
+      </summary>
+      <ul id="activity-log"></ul>
+    </details>
+
     <div id="share-location-panel" class="panel">
       <button type="button" id="share-location-button" class="call-submit">
         <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-map-pin"></use></svg> Condividi la mia posizione

@@ -3278,7 +3278,15 @@ export class NomadNode extends EventEmitter {
     if (isUnicastElsewhere) {
       const route = this.routingTable.bestRoute(packet.destination!);
       if (route && route.nextHop !== exceptPeerId) {
-        if (await this.sendToPeer(route.nextHop, packet)) return true;
+        if (await this.sendToPeer(route.nextHop, packet)) {
+          // Symmetric to "store-and-forward:queued" below — lets a caller (e.g. web-ui.ts) tell "handed
+          // to a neighbor just now" apart from "queued locally, no reachable peer yet" without polling.
+          // Says nothing about the *final* recipient ever receiving it — this mesh has no end-to-end ack
+          // for unicast content types (only the unused MessageType.ACK/DATA pair does), so this event
+          // only ever means "left this device", never "delivered".
+          this.emit("store-and-forward:handed-off", packet);
+          return true;
+        }
         // The routed next hop just failed (e.g. dropped mid-send) — fall through to flooding
         // rather than queuing immediately, since other peers may still be able to relay it.
       }
@@ -3288,9 +3296,13 @@ export class NomadNode extends EventEmitter {
     const delivered =
       targets.length > 0 && (await Promise.all(targets.map((p) => this.sendToPeer(p.id, packet)))).some(Boolean);
 
-    if (!delivered && isUnicastElsewhere) {
-      this.pendingDeliveries.enqueue(packet, exceptPeerId);
-      this.emit("store-and-forward:queued", packet);
+    if (isUnicastElsewhere) {
+      if (delivered) {
+        this.emit("store-and-forward:handed-off", packet);
+      } else {
+        this.pendingDeliveries.enqueue(packet, exceptPeerId);
+        this.emit("store-and-forward:queued", packet);
+      }
     }
 
     return delivered;

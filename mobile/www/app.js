@@ -62,6 +62,75 @@ function setContactName(nodeId, name) {
   }
 }
 
+const STORAGE_KEY_ACTIVITY_LOG = "nomadnet.activityLog";
+const MAX_ACTIVITY_LOG_ENTRIES = 50;
+
+/**
+ * "Le mie attività" (docs/security.md voce #86, UX/UI audit) — a purely local, user-authored log of
+ * every outbound send made from this device (message, external delivery, drop, channel post, SOS),
+ * never synced or transmitted. Same in-memory cache + try/catch persistence pattern as
+ * contactNamesCache/loadContactNames() above. `status` is one of:
+ *   - "sent" / "queued" — from the gateway's own response body for a unicast send (message, external
+ *     delivery): whether NomadNode.floodExcept() handed the packet to a neighbor or had to queue it
+ *     locally (no reachable peer yet). Never "delivered" — this mesh has no end-to-end delivery
+ *     confirmation for these packet types (only the unused MessageType.ACK/DATA pair does), so showing
+ *     anything stronger than "left this device" would be showing something false.
+ *   - "published" — Bacheca/Canali: a broadcast, pull-based publish that always succeeds locally the
+ *     moment the call returns (NomadNode.publishContent()), no "queued" concept applies the same way.
+ *   - "sent" for a phone-originated BLE SOS (ble-client.js) — a Bluetooth broadcast burst, never
+ *     routed through this gateway at all, so there is no HTTP response to read a status from.
+ */
+let activityLogCache = null;
+
+function loadActivityLog() {
+  if (activityLogCache) return activityLogCache;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_ACTIVITY_LOG);
+    const parsed = raw ? JSON.parse(raw) : [];
+    activityLogCache = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    activityLogCache = [];
+  }
+  return activityLogCache;
+}
+
+function recordActivity(type, label, status) {
+  const entries = loadActivityLog();
+  entries.unshift({ type, label, status, timestamp: Date.now() });
+  entries.length = Math.min(entries.length, MAX_ACTIVITY_LOG_ENTRIES);
+  activityLogCache = entries;
+  try {
+    localStorage.setItem(STORAGE_KEY_ACTIVITY_LOG, JSON.stringify(entries));
+  } catch {
+    // Storage full or unavailable — same accepted degradation as setContactName() above: the entry
+    // still renders for this page view, it just won't survive a reload.
+  }
+  renderActivityLog();
+}
+
+const ACTIVITY_TYPE_LABELS = { message: "Messaggio", "external-delivery": "Invio a un'organizzazione", drop: "Bacheca", channel: "Canale", sos: "SOS" };
+const ACTIVITY_STATUS_TEXT = { sent: "Inviato", queued: "In coda, nessun vicino nelle vicinanze", published: "Pubblicato" };
+
+/** Renders the current activityLogCache — called once from recordActivity() right after a send, never on the periodic refreshAll() poll: this list only ever changes because of something this device itself just did, not because of new network state arriving. */
+function renderActivityLog() {
+  const list = document.getElementById("activity-log");
+  if (!list) return;
+  const entries = loadActivityLog();
+  document.getElementById("activity-count").textContent = entries.length > 0 ? String(entries.length) : "";
+  if (renderEmptyIfNeeded(list, entries, "Non hai ancora inviato nulla.", "send")) return;
+  for (const entry of entries) {
+    const typeLabel = ACTIVITY_TYPE_LABELS[entry.type] || entry.type;
+    const li = el("li", null, [
+      el("div", { className: "row" }, [
+        el("span", { className: "row-title", textContent: entry.label ? typeLabel + " — " + entry.label : typeLabel }),
+        el("span", { className: "muted", textContent: timeAgo(entry.timestamp) }),
+      ]),
+      el("div", { className: "tags" }, [el("span", { className: "tag", textContent: ACTIVITY_STATUS_TEXT[entry.status] || entry.status })]),
+    ]);
+    list.append(li);
+  }
+}
+
 // A serviceId no real service will ever register (real ones are always "service://..." per spec
 // §35-37) — used only to probe whether a network password is accepted by POST /api/call without
 // actually invoking anything. handleCall() (node/src/web-ui.ts) checks the password before it looks
@@ -212,7 +281,7 @@ async function sendChatMessage(to, text) {
     err.status = res.status;
     throw err;
   }
-  return body.id;
+  return { id: body.id, status: body.status };
 }
 
 /**
@@ -432,6 +501,7 @@ async function sendExternalDelivery({ boxNodeId, destinationId, publicKeyHex, da
     err.status = res.status;
     throw err;
   }
+  return { status: body.status };
 }
 
 /**
@@ -1177,6 +1247,10 @@ function showDashboard() {
   closeGroupPanel();
   renderSkeletons();
   updateIntroBanner(false);
+  // "Le mie attività" is purely local (localStorage), never refreshed by refreshAll()'s network
+  // polling — without this call the persisted log from a previous session stayed invisible until the
+  // next send, defeating the point of persisting it across reloads (found by review).
+  renderActivityLog();
   const main = document.getElementById("dashboard-main");
   main.focus({ preventScroll: true }); // announces the screen change to screen-reader users
   refreshAll();
@@ -1762,13 +1836,14 @@ document.getElementById("send-external-delivery-form").addEventListener("submit"
   status.textContent = "Invio in corso...";
   try {
     const dataBase64 = text ? await readFileAsBase64(new Blob([text], { type: "text/plain" })) : await readFileAsBase64(file);
-    await sendExternalDelivery({
+    const { status: deliveryStatus } = await sendExternalDelivery({
       boxNodeId: destination.boxNodeId,
       destinationId: destination.destinationId,
       publicKeyHex: destination.publicKeyHex,
       dataBase64,
       password: passwordInput.hidden ? undefined : passwordInput.value,
     });
+    recordActivity("external-delivery", destination.label, deliveryStatus);
     textInput.value = "";
     fileInput.value = "";
     passwordInput.value = "";
@@ -1986,6 +2061,7 @@ document.getElementById("create-drop-form").addEventListener("submit", async (ev
     const { lat, lon } = await getCurrentPosition();
     status.textContent = "Invio in corso...";
     await createDrop({ text, lat, lon, label: label || undefined, kind });
+    recordActivity("drop", label || undefined, "published");
     textInput.value = "";
     labelInput.value = "";
     kindInput.value = "info";
@@ -2372,7 +2448,8 @@ function openChatPanel(peer, label) {
     input.disabled = true;
     submit.disabled = true;
     try {
-      await sendChatMessage(peer, text);
+      const { status: messageStatus } = await sendChatMessage(peer, text);
+      recordActivity("message", label, messageStatus);
       input.value = "";
       vibrate(10);
       await refreshChatMessages(peer, list);
@@ -2487,6 +2564,7 @@ function openChannelPanel(channel) {
     submit.disabled = true;
     try {
       await sendChannelMessage(channel, text);
+      recordActivity("channel", channel, "published");
       input.value = "";
       vibrate(10);
       await refreshChannelMessages(channel, list);
