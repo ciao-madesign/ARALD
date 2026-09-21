@@ -1239,6 +1239,30 @@ function renderSkeletons() {
   listSkeleton(document.getElementById("groups"), 2);
 }
 
+/**
+ * The 4-tab navigation (Fase 4 dell'audit UX/UI, docs/next-steps.md): "home"/"comunica"/"activity"
+ * are views inside #dashboard-main, toggled here; "Mappa" is deliberately NOT one of these — it opens
+ * #map-overlay directly (see mapview.js's #nav-map click listener), never routed through this function.
+ */
+const TAB_NAMES = ["home", "comunica", "activity"];
+
+function switchTab(tabName) {
+  for (const name of TAB_NAMES) {
+    document.getElementById("tab-" + name).hidden = name !== tabName;
+    const navButton = document.getElementById("nav-" + name);
+    navButton.classList.toggle("is-active", name === tabName);
+    if (name === tabName) navButton.setAttribute("aria-current", "page");
+    else navButton.removeAttribute("aria-current");
+  }
+  // #dashboard-main has no overflow/height rule of its own (the page/window scrolls, not this
+  // element) — scrolling it directly would be a no-op, found by review.
+  window.scrollTo(0, 0);
+}
+
+for (const name of TAB_NAMES) {
+  document.getElementById("nav-" + name).addEventListener("click", () => switchTab(name));
+}
+
 function showDashboard() {
   document.getElementById("setup-screen").hidden = true;
   document.getElementById("dashboard-screen").hidden = false;
@@ -1252,6 +1276,7 @@ function showDashboard() {
   closeChatPanel();
   closeChannelPanel();
   closeGroupPanel();
+  switchTab("home");
   renderSkeletons();
   updateIntroBanner(false);
   // "Le mie attività" is purely local (localStorage), never refreshed by refreshAll()'s network
@@ -1346,6 +1371,47 @@ function renderStats(s) {
   stats.setAttribute("aria-label", "Stato della rete: " + label + ". " + detail + ". " + internetNote);
   document.getElementById("node-label").textContent = "Connesso a: " + (s.networkName || s.displayName);
 }
+
+/**
+ * Diagnostica (Fase 4 dell'audit UX/UI, docs/next-steps.md): ID nodo completo, dettaglio cache,
+ * stato relay, fiducia dei vicini — tutti dati che GET /api/status e GET /api/peers già espongono
+ * altrove, solo non a colpo d'occhio nella Home. Aggiornata a ogni refreshAll(), non solo quando
+ * l'overlay è aperto — stesso principio già seguito da ogni altro pannello nascosto dietro un
+ * <details> (es. renderPeers()): i dati sotto restano sempre correnti quando l'utente la apre.
+ * Nessun campo "versione": GET /api/status non ne espone una a livello di nodo/app (solo versioni
+ * per-servizio, un concetto diverso — vedi node/src/web-ui.ts) e questo progetto non presenta mai
+ * un'informazione non verificata come se fosse reale (vedi CLAUDE.md).
+ */
+function renderDiagnostics(status, peers) {
+  if (isRenamePending()) return; // never yank an in-progress rename out from under the user — see isRenamePending()
+  document.getElementById("diagnostics-node-id").textContent = status.nodeId;
+  document.getElementById("diagnostics-cache").textContent = status.cachedContentPercent + "% dei contenuti conosciuti dalla rete";
+  document.getElementById("diagnostics-relay").textContent = status.relaying ? "Attivo — questo dispositivo inoltra pacchetti per altri" : "Fermo";
+
+  const list = document.getElementById("diagnostics-trust-list");
+  if (renderEmptyIfNeeded(list, peers, "Nessun vicino connesso al momento.", "users")) return;
+  for (const p of peers) {
+    list.append(
+      el("li", null, [
+        el("div", { className: "row" }, [
+          contactNameEl(p.nodeId, p.shortLabel),
+          el("span", { className: "tag", textContent: TRUST_LABELS[p.trustLevel] || p.trustLevel }),
+        ]),
+      ]),
+    );
+  }
+}
+
+function openDiagnostics() {
+  document.getElementById("diagnostics-overlay").hidden = false;
+}
+
+function closeDiagnostics() {
+  document.getElementById("diagnostics-overlay").hidden = true;
+}
+
+document.getElementById("open-diagnostics").addEventListener("click", openDiagnostics);
+document.getElementById("diagnostics-close").addEventListener("click", closeDiagnostics);
 
 let peerSeenIds = new Set();
 
@@ -2969,6 +3035,7 @@ async function refreshAll() {
     if (cycleId !== refreshCycleId) return; // superseded by a newer refresh while this one was in flight
     renderStats(status);
     renderPeers(peers);
+    renderDiagnostics(status, peers);
     renderServices(services);
     renderChannels(channels);
     renderDrops(drops);

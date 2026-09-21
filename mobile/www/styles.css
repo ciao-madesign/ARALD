@@ -397,11 +397,67 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
 }
 #map-overlay .error { position: absolute; inset: 40% 1.5em auto; text-align: center; z-index: 1; }
 
+/* ---------- diagnostica (Fase 4 dell'audit UX/UI) ---------- */
+
+#diagnostics-overlay:not([hidden]) {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  background: color-mix(in srgb, var(--ink) 45%, transparent);
+  display: flex;
+  align-items: flex-end;
+  animation: fade-in 200ms var(--ease);
+}
+.diagnostics-sheet {
+  background: var(--bg);
+  width: 100%;
+  max-height: 85vh;
+  overflow-y: auto;
+  border-radius: 1em 1em 0 0;
+  padding: 1.2em 1.2em calc(1.5em + env(safe-area-inset-bottom));
+  box-shadow: var(--shadow-lg);
+}
+.diagnostics-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.8em; }
+.diagnostics-header h2 { display: flex; align-items: center; gap: 0.5em; margin: 0; }
+.diagnostics-list { display: flex; flex-direction: column; gap: 0.6em; margin: 0 0 1.2em; }
+.diagnostics-list > div { display: flex; align-items: baseline; justify-content: space-between; gap: 1em; }
+.diagnostics-list dt { color: var(--muted); font-size: 0.85em; }
+.diagnostics-list dd { margin: 0; text-align: right; font-size: 0.9em; overflow-wrap: anywhere; }
+#diagnostics-trust-list { margin: 0 0 1.2em; }
+
 /* ---------- dashboard ---------- */
 
 #dashboard-screen:not([hidden]) { animation: screen-in 320ms var(--ease); }
-#dashboard-screen { padding: 1.2em 1em 3em; max-width: 40em; margin: 0 auto; }
+/* padding-bottom più ampio della norma: spazio per #bottom-nav (fixed) sotto, così l'ultimo pannello
+   di ogni vista non resta mai coperto. */
+#dashboard-screen { padding: 1.2em 1em calc(5.5em + env(safe-area-inset-bottom)); max-width: 40em; margin: 0 auto; }
 #dashboard-main:focus-visible { outline: none; } /* focused programmatically for a11y on screen switch, not a keyboard target */
+
+/* Barra di navigazione a 4 voci (Fase 4 dell'audit UX/UI, docs/next-steps.md): Home/Comunica/Attività
+   cambiano vista (switchTab(), app.js); Mappa apre #map-overlay direttamente, mai una vista. */
+#bottom-nav {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  z-index: 15;
+  display: flex;
+  background: var(--card);
+  border-top: 1px solid var(--border);
+  padding: 0.4em 0.4em calc(0.4em + env(safe-area-inset-bottom));
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.06);
+}
+.nav-item {
+  flex: 1;
+  display: flex; flex-direction: column; align-items: center; gap: 0.2em;
+  padding: 0.4em 0.2em;
+  border-radius: 0.6em;
+  color: var(--muted);
+  font-size: 0.7em; font-weight: 600;
+  transition: color 150ms var(--ease), background-color 150ms var(--ease);
+}
+.nav-item .icon { width: 1.3em; height: 1.3em; }
+.nav-item:active { background: color-mix(in srgb, var(--signal) 12%, transparent); }
+.nav-item.is-active { color: var(--signal); }
+.nav-item:disabled { color: var(--off); opacity: 0.55; }
 
 header { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.6em; margin-bottom: 1.2em; }
 .header-identity { display: flex; align-items: center; gap: 0.5em; min-width: 0; }
@@ -431,6 +487,12 @@ header { display: flex; align-items: flex-start; justify-content: space-between;
    applicato al pannello Servizi. */
 #share-location-panel { display: flex; flex-direction: column; gap: 0.5em; margin-bottom: 1.2em; }
 #share-location-status:empty { display: none; }
+
+/* Punto d'ingresso a Diagnostica (Fase 4) — un link discreto sotto lo stato rete, non un bottone
+   primario: è un dettaglio tecnico, non un'azione quotidiana. */
+.diagnostics-link { display: inline-flex; align-items: center; gap: 0.4em; margin-bottom: 1.2em; }
+
+.tab-view:not([hidden]) { animation: fade-in 200ms var(--ease); }
 
 .panels-grid { display: flex; flex-direction: column; gap: 1em; }
 
@@ -920,7 +982,7 @@ li.skel-row { display: flex; flex-direction: column; }
 /* ---------- tablet / wide layout ---------- */
 
 @media (min-width: 700px) {
-  #dashboard-screen { max-width: 64em; padding: 1.6em 2em 3.5em; }
+  #dashboard-screen { max-width: 64em; padding: 1.6em 2em calc(5.5em + env(safe-area-inset-bottom)); }
   .panels-grid { flex-direction: row; align-items: flex-start; }
   .panels-grid .panel { flex: 1; min-width: 0; }
   #home-hero { padding-top: 1em; }
