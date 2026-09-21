@@ -67,10 +67,14 @@ export default async function HomePage(): Promise<JSX.Element> {
 
       <div className="notice">
         <div className="notice-inner">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5f6e68" strokeWidth="1.8" style={{ marginTop: 1 }} aria-hidden="true">
+          {/* currentColor invece di un esadecimale letterale (docs/security.md voce #88, trovato dalla
+              revisione durante la migrazione token Waypoint) — .notice-inner già imposta `color:
+              var(--muted)` sul contenitore, quindi l'icona segue sempre il token corrente invece di
+              restare un valore vecchio ogni volta che la palette cambia. */}
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" style={{ marginTop: 1 }} aria-hidden="true">
             <circle cx="12" cy="12" r="9" />
             <line x1="12" y1="11" x2="12" y2="16" />
-            <circle cx="12" cy="8" r="0.6" fill="#5f6e68" stroke="none" />
+            <circle cx="12" cy="8" r="0.6" fill="currentColor" stroke="none" />
           </svg>
           <span>
             Vista di sola lettura, sincronizzata periodicamente da un ARALD Box (<code>arald-backend/sync.ts</code>). Il portale

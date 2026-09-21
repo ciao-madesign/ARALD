@@ -2,34 +2,76 @@
    prodotto via un canvas di bozzetti (tre direzioni a confronto, poi una fusione delle due preferite)
    — sobrio/istituzionale come prima, ma con un'intestazione a tinta piena, un pannello SOS molto più
    marcato, e un colore d'accento diverso per ciascun tipo di pannello invece di un'unica tonalità
-   uniforme. Font: Public Sans (testo) + IBM Plex Mono (dati tecnici/coordinate/orari), caricati come
-   Google Fonts da app/layout.tsx — prima eccezione di questo file alla convenzione "solo CSS puro,
-   nessuna dipendenza esterna": un link a un foglio di stile, non una libreria, stesso genere di
-   eccezione già accettata altrove nel progetto quando serve davvero (vedi mobile/README.md per come
-   viene motivata una deroga simile). */
+   uniforme.
+
+   Migrazione token Waypoint, Fase 3 dell'audit UX/UI (docs/security.md voce #88, 21 settembre 2026):
+   il sistema colore/font dell'app mobile ("Waypoint", mobile/www/styles.css) diventa la base condivisa
+   con questo portale, non il contrario (decisione presa esplicitamente con l'utente — Waypoint era già
+   più maturo e con font già auto-ospitati). `--accent`/`--accent-dark`/`--accent-soft` e
+   `--header-from`/`--header-to` restano *invariati*: erano già byte-per-byte identici al `--signal`
+   di Waypoint (voce #77, "Segnale verde") ancora prima di questa voce — il vero "colore di rete"
+   condiviso, non qualcosa da migrare ora. Ogni altro token di base/semantico sotto è stato invece
+   sostituito con l'equivalente Waypoint più vicino (`--sos`→`--bad`, `--hazard`→`--warn`,
+   `--good`→`--good`, `--off`/`--info`→`--off`). `--relay` non ha un equivalente in Waypoint (l'app non
+   distingue un colore "relay" a sé) — mantenuto come estensione bespoke ma intonata alla nuova
+   palette più calda (blu-ardesia invece del blu più saturo di prima).
+
+   Font: Overpass (testo) + Overpass Mono (dati tecnici) + Fraunces (titoli), auto-ospitati da
+   `public/fonts/` (stessi 5 file woff2 di `mobile/www/fonts/`, copiati qui) — sostituisce Public
+   Sans/IBM Plex Mono via Google Fonts: niente più dipendenza da una CDN esterna nemmeno per questo
+   portale, coerente con la stessa motivazione già usata per l'app mobile e per `web-ui.ts`
+   ("un'app pensata per funzionare senza internet non può dipendere da una CDN esterna per i propri
+   font", `mobile/README.md`) — qui il portale gira online su Vercel, ma il principio vale comunque:
+   nessuna richiesta di terze parti su ogni caricamento pagina. */
+@font-face {
+  font-family: "Overpass"; font-style: normal; font-weight: 400; font-display: swap;
+  src: url("/fonts/overpass-400.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Overpass"; font-style: normal; font-weight: 600; font-display: swap;
+  src: url("/fonts/overpass-600.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Overpass"; font-style: normal; font-weight: 700; font-display: swap;
+  src: url("/fonts/overpass-700.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Overpass Mono"; font-style: normal; font-weight: 400; font-display: swap;
+  src: url("/fonts/overpass-mono-400.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Fraunces"; font-style: normal; font-weight: 600; font-display: swap;
+  src: url("/fonts/fraunces-600.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 :root {
   color-scheme: light dark;
-  --bg: #f5f6f4;
+  --bg: #eef0e3;
   --card: #ffffff;
-  --border: #e0e4e1;
-  --ink: #172420;
-  --muted: #5f6e68;
+  --border: #c9cdbc;
+  --ink: #1e231f;
+  --muted: #5f6656;
   --accent: #1c6b57;
   --accent-dark: #123f33;
   --accent-soft: #e5f2ee;
-  --sos: #b3261e;
-  --sos-dark: #7c1a15;
-  --sos-soft: #fceceb;
-  --hazard: #9a5b12;
-  --hazard-soft: #faf0df;
-  --info: #55605c;
-  --info-soft: #eef1ef;
-  --good: #1f7a4a;
-  --good-soft: #e6f4ea;
-  --off: #5f6e68;
-  --off-soft: #eef0ee;
-  --relay: #3b5a78;
-  --relay-soft: #e6edf3;
+  --sos: #8e2e1c;
+  --sos-dark: #6b2314;
+  --sos-soft: #f3d9d0;
+  --hazard: #8f5518;
+  --hazard-soft: #f2dec4;
+  --info: #5f6656;
+  --info-soft: #e3e5d8;
+  --good: #3f5636;
+  --good-soft: #dee7d6;
+  --off: #5f6656;
+  --off-soft: #e3e5d8;
+  --relay: #3f5a6b;
+  --relay-soft: #e2eaea;
   /* Fixed, deliberately NOT overridden in the dark media query below — found by review (13 settembre
      2026, docs/security.md voce #76, while carrying this same header treatment into web-ui.ts): the
      header bar's white text needs a consistently dark fill, but --accent/--accent-dark are themselves
@@ -44,27 +86,27 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #101614;
-    --card: #182220;
-    --border: #2b3733;
-    --ink: #e7ece9;
-    --muted: #93a19b;
+    --bg: #10151a;
+    --card: #1a2329;
+    --border: #2b363c;
+    --ink: #edeae0;
+    --muted: #93a099;
     --accent: #4fbfa2;
     --accent-dark: #2f8b71;
     --accent-soft: #163a32;
-    --sos: #ff6b60;
-    --sos-dark: #ffb3ac;
-    --sos-soft: #351715;
-    --hazard: #e0a352;
-    --hazard-soft: #3a2c14;
-    --info: #a7b3ad;
-    --info-soft: #202a26;
-    --good: #4fbf7c;
-    --good-soft: #163a24;
-    --off: #93a19b;
-    --off-soft: #202a26;
-    --relay: #7fa3c4;
-    --relay-soft: #1c2a35;
+    --sos: #e06a4c;
+    --sos-dark: #f0a68f;
+    --sos-soft: #3a1f17;
+    --hazard: #e0954b;
+    --hazard-soft: #3a2814;
+    --info: #9aa090;
+    --info-soft: #2a2e26;
+    --good: #7fa36e;
+    --good-soft: #26331f;
+    --off: #9aa090;
+    --off-soft: #2a2e26;
+    --relay: #7ea3b8;
+    --relay-soft: #1e2a2d;
   }
 }
 
@@ -74,14 +116,14 @@
 
 body {
   margin: 0;
-  font-family: "Public Sans", -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: "Overpass", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--ink);
   line-height: 1.45;
 }
 
 .mono {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: "Overpass Mono", ui-monospace, monospace;
 }
 
 a {
@@ -295,6 +337,7 @@ h1 {
   margin: 0 0 0.3em;
   font-size: 1.5em;
   letter-spacing: 0.02em;
+  font-family: "Fraunces", Georgia, serif;
 }
 
 h2 {
@@ -384,7 +427,7 @@ h2 {
   border: 1px solid var(--sos);
   border-left: 6px solid var(--sos);
   background: var(--sos-soft);
-  box-shadow: 0 8px 22px -12px rgba(179, 38, 30, 0.45);
+  box-shadow: 0 8px 22px -12px rgba(142, 46, 28, 0.45);
   padding-top: 18px;
 }
 
@@ -433,7 +476,7 @@ h2 {
 }
 
 .sos-panel .row-list li {
-  border-top-color: rgba(179, 38, 30, 0.18);
+  border-top-color: rgba(142, 46, 28, 0.18);
 }
 
 .row-list li:first-child {
@@ -631,7 +674,7 @@ h2 {
   width: 32px;
   height: 32px;
   background: var(--sos);
-  box-shadow: 0 4px 10px rgba(124, 26, 21, 0.4);
+  box-shadow: 0 4px 10px rgba(107, 35, 20, 0.4);
 }
 
 .map-pin.sos .map-pin-stem {

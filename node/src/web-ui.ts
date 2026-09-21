@@ -518,14 +518,24 @@ const PAGE_HTML = `<!doctype html>
      locale sul Box, che può non avere mai accesso a Internet (il punto centrale di ARALD) — stack di
      sistema qui, stessa scelta già presa per l'app mobile ("font auto-ospitati... per funzionare
      offline", mobile/README.md) applicata nel modo più semplice possibile: niente da scaricare.
+
+     Migrazione token Waypoint, Fase 3 dell'audit UX/UI (docs/security.md voce #88, 21 settembre
+     2026): stessi valori di colore appena migrati in mirror-portal/app/globals.css (palette
+     "Waypoint" — mobile/www/styles.css — al posto della precedente). accent/accent-dark/header-from/
+     header-to restano invariati (erano già il colore signal di Waypoint). Solo il colore cambia qui,
+     non il font: la scelta "stack di sistema, niente da scaricare" sopra resta valida
+     indipendentemente da questa voce — non rivista, non necessaria (i font auto-ospitati di
+     mirror-portal risolvono lo stesso problema in un modo diverso, ma qui il vantaggio di zero I/O
+     per i font non vale il costo di una nuova infrastruttura di serving statico su questo server
+     scritto a mano, per una voce classificata "basso rischio, cambio meccanico di variabili CSS").
   */
   :root {
     color-scheme: light dark;
-    --bg: #f5f6f4; --card: #ffffff; --border: #e0e4e1; --ink: #172420; --muted: #5f6e68;
+    --bg: #eef0e3; --card: #ffffff; --border: #c9cdbc; --ink: #1e231f; --muted: #5f6656;
     --accent: #1c6b57; --accent-dark: #123f33; --accent-soft: #e5f2ee;
-    --good: #1f7a4a; --good-soft: #e6f4ea;
-    --warn: #9a5b12; --warn-soft: #faf0df;
-    --off: #5f6e68; --off-soft: #eef0ee;
+    --good: #3f5636; --good-soft: #dee7d6;
+    --warn: #8f5518; --warn-soft: #f2dec4;
+    --off: #5f6656; --off-soft: #e3e5d8;
     /* Fixed, deliberately NOT overridden in the dark media query below — found by review: the header
        bar's white text needs a consistently dark fill to read well, but --accent/--accent-dark are
        themselves flipped LIGHT in dark mode (correct for their other job, small accents/links/icons
@@ -537,11 +547,11 @@ const PAGE_HTML = `<!doctype html>
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #101614; --card: #182220; --border: #2b3733; --ink: #e7ece9; --muted: #93a19b;
+      --bg: #10151a; --card: #1a2329; --border: #2b363c; --ink: #edeae0; --muted: #93a099;
       --accent: #4fbfa2; --accent-dark: #2f8b71; --accent-soft: #163a32;
-      --good: #4fbf7c; --good-soft: #163a24;
-      --warn: #e0a352; --warn-soft: #3a2c14;
-      --off: #93a19b; --off-soft: #202a26;
+      --good: #7fa36e; --good-soft: #26331f;
+      --warn: #e0954b; --warn-soft: #3a2814;
+      --off: #9aa090; --off-soft: #2a2e26;
     }
   }
   * { box-sizing: border-box; }
