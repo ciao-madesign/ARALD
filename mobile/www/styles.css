@@ -419,6 +419,11 @@ header { display: flex; align-items: flex-start; justify-content: space-between;
 .trail-gauge .gauge-ring { width: 4.4em; height: 4.4em; flex: none; }
 .trail-gauge .gauge-label { font-size: 1.05em; font-weight: 700; }
 .trail-gauge .gauge-detail { font-size: 0.78em; color: var(--muted); margin-top: 0.25em; line-height: 1.5; }
+/* "ARALD disponibile — Internet assente" (voce #87, Fase 2 dell'audit UX/UI) — una riga a sé, non
+   infilata nel dettaglio tecnico sopra: risponde a una domanda diversa ("questo posto funziona anche
+   senza internet?"), non "quanti vicini ho ora". --accent invece di --muted: è la risposta rassicurante
+   che l'audit ha chiesto fosse la più leggibile della card, non un dettaglio secondario. */
+.trail-gauge .gauge-note { font-size: 0.82em; font-weight: 600; color: var(--accent); margin-top: 0.35em; }
 
 /* A single, always-visible commitment — opt-in per spec (docs/next-steps.md Opzione J: mai un
    invio automatico/periodico), quindi non nascosto dietro un <details> come le sezioni più

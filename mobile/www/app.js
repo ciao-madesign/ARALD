@@ -109,7 +109,14 @@ function recordActivity(type, label, status) {
 }
 
 const ACTIVITY_TYPE_LABELS = { message: "Messaggio", "external-delivery": "Invio a un'organizzazione", drop: "Bacheca", channel: "Canale", sos: "SOS" };
-const ACTIVITY_STATUS_TEXT = { sent: "Inviato", queued: "In coda, nessun vicino nelle vicinanze", published: "Pubblicato" };
+const ACTIVITY_STATUS_TEXT = { sent: "Inviato", queued: "In coda — verrà inoltrato appena c'è un vicino nelle vicinanze", published: "Pubblicato" };
+/** Overrides ACTIVITY_STATUS_TEXT for a (type, status) pair that reads better as its own dedicated phrase than as a generic verb + type label (docs/security.md voce #87, Fase 2 dell'audit UX/UI) — today only SOS's "sent": "SOS trasmesso" is a direct, reassuring confirmation of the one action where that matters most, instead of the same generic "Inviato" every other row uses. */
+const ACTIVITY_STATUS_TEXT_OVERRIDE = { sos: { sent: "SOS trasmesso" } };
+
+function activityStatusText(type, status) {
+  const override = ACTIVITY_STATUS_TEXT_OVERRIDE[type];
+  return (override && override[status]) || ACTIVITY_STATUS_TEXT[status] || status;
+}
 
 /** Renders the current activityLogCache — called once from recordActivity() right after a send, never on the periodic refreshAll() poll: this list only ever changes because of something this device itself just did, not because of new network state arriving. */
 function renderActivityLog() {
@@ -125,7 +132,7 @@ function renderActivityLog() {
         el("span", { className: "row-title", textContent: entry.label ? typeLabel + " — " + entry.label : typeLabel }),
         el("span", { className: "muted", textContent: timeAgo(entry.timestamp) }),
       ]),
-      el("div", { className: "tags" }, [el("span", { className: "tag", textContent: ACTIVITY_STATUS_TEXT[entry.status] || entry.status })]),
+      el("div", { className: "tags" }, [el("span", { className: "tag", textContent: activityStatusText(entry.type, entry.status) })]),
     ]);
     list.append(li);
   }
@@ -1211,7 +1218,7 @@ function renderStatSkeletons() {
   stats.setAttribute("aria-busy", "true");
   stats.append(
     buildGaugeRing(0, true, "off"),
-    el("div", null, [el("div", { className: "skel skel-line w-60" }), el("div", { className: "skel skel-line w-80" })]),
+    el("div", null, [el("div", { className: "skel skel-line w-60" }), el("div", { className: "skel skel-line w-80" }), el("div", { className: "skel skel-line w-60" })]),
   );
 }
 
@@ -1323,11 +1330,20 @@ function renderStats(s) {
     s.cachedContentPercent +
     "% · relay " +
     (s.relaying ? "attivo" : "fermo");
+  // "ARALD disponibile — Internet assente" (docs/security.md voce #87) — a plain-language answer to
+  // "does this work without internet?", never the raw "Internet: OFFLINE" wording the desktop status
+  // page uses for an operator audience. Independent of the vicini-based gauge above: this is about
+  // whether *this gateway* has real internet, not about mesh connectivity.
+  const internetNote = "ARALD disponibile — " + (s.internet === "ONLINE" ? "Internet raggiungibile" : "Internet assente");
   stats.append(
     buildGaugeRing(fraction, false, tone),
-    el("div", null, [el("div", { className: "gauge-label", textContent: label }), el("div", { className: "gauge-detail", textContent: detail })]),
+    el("div", null, [
+      el("div", { className: "gauge-label", textContent: label }),
+      el("div", { className: "gauge-detail", textContent: detail }),
+      el("div", { className: "gauge-note", textContent: internetNote }),
+    ]),
   );
-  stats.setAttribute("aria-label", "Stato della rete: " + label + ". " + detail);
+  stats.setAttribute("aria-label", "Stato della rete: " + label + ". " + detail + ". " + internetNote);
   document.getElementById("node-label").textContent = "Connesso a: " + (s.networkName || s.displayName);
 }
 
