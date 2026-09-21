@@ -525,9 +525,12 @@ h2 {
   flex: none;
 }
 
+/* Due colonne (non più tre, Fase 6 dell'audit UX/UI, docs/next-steps.md): il pannello Nodi è uscito
+   da questa griglia per diventare una tabella dati densa a piena larghezza sopra — Hazard/Info e
+   Relay restano gli unici due elementi rimasti. */
 .grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 20px;
 }
 
@@ -671,6 +674,103 @@ h2 {
   gap: 0.3em;
   font-size: 0.85em;
   color: var(--muted);
+}
+
+/* ---- Design System: tabella dati densa + badge di ruolo (Fase 6 dell'audit UX/UI,
+   docs/next-steps.md) — applicati al pannello Nodi (Home) e al Pannello Admin. Waypoint aveva solo
+   card/liste verticali leggere (una riga per elemento, testo impilato) — adatto per pochi elementi
+   eterogenei, non per una lista densa di righe tutte con la stessa forma (nodi, operatori, nodi
+   assegnati, audit log). ---- */
+.data-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.data-table th,
+.data-table td {
+  padding: 10px 14px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.data-table thead th {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.data-table tbody tr:not(:last-child) {
+  border-bottom: 1px solid var(--border);
+}
+
+/* Riga secondaria dentro una cella (es. l'indirizzo tecnico sotto il nome di un nodo) — lo stesso
+   principio "primario in evidenza, dettaglio tecnico sotto in muted" già usato da .row-meta altrove
+   in questo file, qui dentro una singola cella invece che in una card. */
+.data-table-secondary {
+  display: block;
+  color: var(--muted);
+  font-size: 11.5px;
+  margin-top: 2px;
+}
+
+/* Colonna "Dettagli" dell'audit log (AdminPanel.tsx) — un blob JSON di forma arbitraria, mai fatto
+   entrare in colonna troncando visivamente il layout: ellissi + il valore intero nel title nativo
+   (nessun tooltip custom da scrivere). */
+.data-table-details-cell {
+  max-width: 22em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Riga di dettaglio (form/azioni per riga) sotto la riga sommario di un nodo, nel pannello Nodi —
+   <tr> non può annidare un <details>/pannello senza rompere il layout a colonne, quindi una seconda
+   <tr> a piena larghezza (colSpan) ne prende il posto. */
+.data-table-detail-row td {
+  padding-top: 0;
+  background: var(--bg);
+}
+
+.data-table-detail-row > td > * + * {
+  margin-top: 0.6em;
+}
+
+.role-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* --header-from (mai `var(--accent)`), stesso token già fissato non-reattivo al tema per questo
+   identico motivo (voce #76, commento su --header-from/--header-to sopra): in tema scuro --accent
+   diventa un teal chiaro (pensato per accenti/link su sfondo scuro, non per testo bianco sopra),
+   dando un contrasto reale di ~2.3:1 — muto un errore trovato dalla revisione, la stessa classe di
+   bug già corretta una volta in questo file per la barra dell'header. Verificato: bianco su
+   --header-from è ~6.4:1 in entrambi i temi (fisso). */
+.role-badge.role-admin {
+  background: var(--header-from);
+  color: #fff;
+}
+
+.role-badge.role-operatore {
+  background: var(--off-soft);
+  color: var(--ink);
 }
 
 /* ---- Map pins (mappa/LeafletMap.tsx) — plain divIcon markup, styled globally here since Leaflet

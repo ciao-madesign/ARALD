@@ -3,6 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import type { NodeAssignment, Organization, PublicAppUser, UserRole } from "@/lib/auth-db";
+import { roleLabel } from "@/lib/format";
+
+interface FormattedOrganization extends Omit<Organization, "createdAt"> {
+  createdAt: string;
+}
 
 interface FormattedUser extends Omit<PublicAppUser, "createdAt"> {
   createdAt: string;
@@ -22,11 +27,21 @@ interface FormattedAuditLogEntry {
 }
 
 interface AdminPanelProps {
-  organizations: Organization[];
+  organizations: FormattedOrganization[];
   users: FormattedUser[];
   assignedNodes: FormattedNodeAssignment[];
   unassignedNodeUrls: string[];
   auditLogs: FormattedAuditLogEntry[];
+}
+
+/**
+ * "Badge di ruolo" (Fase 6 dell'audit UX/UI, docs/next-steps.md) — pattern nuovo del Design System,
+ * "nessun equivalente nell'app" (Waypoint non ha un concetto di ruolo utente). Distinto da `.role-pill`
+ * (PortalHeader.tsx, pensato solo per la propria intestazione scura) e da `.tag` (già sovraccarico di
+ * significati — severità, online/offline — un ruolo utente è un concetto diverso, non uno stato).
+ */
+function RoleBadge({ role }: { role: UserRole }): JSX.Element {
+  return <span className={`role-badge role-${role}`}>{roleLabel(role)}</span>;
 }
 
 /**
@@ -50,11 +65,24 @@ export function AdminPanel({ organizations, users, assignedNodes, unassignedNode
         {organizations.length === 0 ? (
           <p className="empty">Nessuna organizzazione ancora.</p>
         ) : (
-          <ul>
-            {organizations.map((o) => (
-              <li key={o.id}>{o.name}</li>
-            ))}
-          </ul>
+          <div className="data-table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Nome</th>
+                  <th scope="col">Creata</th>
+                </tr>
+              </thead>
+              <tbody>
+                {organizations.map((o) => (
+                  <tr key={o.id}>
+                    <td>{o.name}</td>
+                    <td className="mono muted">{o.createdAt}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
 
@@ -63,19 +91,30 @@ export function AdminPanel({ organizations, users, assignedNodes, unassignedNode
         {users.length === 0 ? (
           <p className="empty">Nessun utente ancora.</p>
         ) : (
-          <ul>
-            {users.map((u) => (
-              <li key={u.id}>
-                <div className="row">
-                  <span>{u.email}</span>
-                  <span className="tag info">{u.role === "admin" ? "Admin ARALD" : "Operatore"}</span>
-                </div>
-                <div className="muted">
-                  {u.organizationId ? organizationName(organizations, u.organizationId) : "nessuna organizzazione"} · creato {u.createdAt}
-                </div>
-              </li>
-            ))}
-          </ul>
+          <div className="data-table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Email</th>
+                  <th scope="col">Ruolo</th>
+                  <th scope="col">Organizzazione</th>
+                  <th scope="col">Creato</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map((u) => (
+                  <tr key={u.id}>
+                    <td>{u.email}</td>
+                    <td>
+                      <RoleBadge role={u.role} />
+                    </td>
+                    <td>{u.organizationId ? organizationName(organizations, u.organizationId) : <span className="muted">nessuna</span>}</td>
+                    <td className="mono muted">{u.createdAt}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
 
@@ -84,19 +123,29 @@ export function AdminPanel({ organizations, users, assignedNodes, unassignedNode
         {assignedNodes.length === 0 ? (
           <p className="empty">Nessun nodo assegnato ancora.</p>
         ) : (
-          <ul>
-            {assignedNodes.map((n) => (
-              <li key={n.nodeUrl}>
-                <div className="row">
-                  <span>{n.displayName ?? n.nodeUrl}</span>
-                  <span className="tag info">{n.organizationName}</span>
-                </div>
-                <div className="muted">
-                  {n.nodeUrl} · assegnato {n.registeredAt}
-                </div>
-              </li>
-            ))}
-          </ul>
+          <div className="data-table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Nodo</th>
+                  <th scope="col">Organizzazione</th>
+                  <th scope="col">Assegnato</th>
+                </tr>
+              </thead>
+              <tbody>
+                {assignedNodes.map((n) => (
+                  <tr key={n.nodeUrl}>
+                    <td>
+                      {n.displayName ?? n.nodeUrl}
+                      {n.displayName && <span className="data-table-secondary mono">{n.nodeUrl}</span>}
+                    </td>
+                    <td>{n.organizationName}</td>
+                    <td className="mono muted">{n.registeredAt}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
 
@@ -105,24 +154,37 @@ export function AdminPanel({ organizations, users, assignedNodes, unassignedNode
         {auditLogs.length === 0 ? (
           <p className="empty">Nessun evento ancora.</p>
         ) : (
-          <ul>
-            {auditLogs.map((a) => (
-              <li key={a.id}>
-                <div className="row">
-                  <span>{a.action}</span>
-                  <span className="muted">{a.createdAt}</span>
-                </div>
-                <div className="muted">{a.actorEmail ?? "sconosciuto"}</div>
-              </li>
-            ))}
-          </ul>
+          <div className="data-table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Azione</th>
+                  <th scope="col">Attore</th>
+                  <th scope="col">Dettagli</th>
+                  <th scope="col">Quando</th>
+                </tr>
+              </thead>
+              <tbody>
+                {auditLogs.map((a) => (
+                  <tr key={a.id}>
+                    <td>{a.action}</td>
+                    <td>{a.actorEmail ?? <span className="muted">sconosciuto</span>}</td>
+                    <td className="mono muted data-table-details-cell" title={a.details ? JSON.stringify(a.details) : undefined}>
+                      {a.details ? JSON.stringify(a.details) : "—"}
+                    </td>
+                    <td className="mono muted">{a.createdAt}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
     </>
   );
 }
 
-function organizationName(organizations: Organization[], id: string): string {
+function organizationName(organizations: FormattedOrganization[], id: string): string {
   return organizations.find((o) => o.id === id)?.name ?? id;
 }
 
@@ -167,7 +229,7 @@ function CreateOrganizationForm({ onDone }: { onDone: () => void }): JSX.Element
   );
 }
 
-function CreateUserForm({ organizations, onDone }: { organizations: Organization[]; onDone: () => void }): JSX.Element {
+function CreateUserForm({ organizations, onDone }: { organizations: FormattedOrganization[]; onDone: () => void }): JSX.Element {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<UserRole>("operatore");
@@ -243,7 +305,7 @@ function AssignNodeForm({
   unassignedNodeUrls,
   onDone,
 }: {
-  organizations: Organization[];
+  organizations: FormattedOrganization[];
   unassignedNodeUrls: string[];
   onDone: () => void;
 }): JSX.Element {

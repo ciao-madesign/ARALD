@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { getMirrorSnapshot, type MirrorSectionError, type MirrorSnapshot } from "../../lib/db";
 import { toMapPoints } from "../../lib/map-points";
+import { roleLabel } from "../../lib/format";
 import { PortalHeader } from "../PortalHeader";
 import { MapClient } from "./MapClient";
 
@@ -58,7 +59,7 @@ export default async function MapPage(): Promise<JSX.Element> {
     <>
       <PortalHeader
         userEmail={session.user.email ?? ""}
-        roleLabel={session.user.role === "admin" ? "Admin ARALD" : "Operatore"}
+        roleLabel={roleLabel(session.user.role)}
         active="mappa"
         isAdmin={session.user.role === "admin"}
       />

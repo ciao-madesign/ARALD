@@ -80,3 +80,8 @@ export function timeAgo(at: Date): string {
   if (hours < 24) return `${hours}h fa`;
   return `${Math.round(hours / 24)}g fa`;
 }
+
+/** "Admin ARALD"/"Operatore" — the one place this label is spelled out (found by review, Fase 6 dell'audit UX/UI: three independent copies of the same ternary had drifted apart in `app/page.tsx`, `app/mappa/page.tsx`, and `AdminPanel.tsx`'s `RoleBadge`, the kind of duplication a future relabeling could easily update in two places and miss the third). Not `Record<UserRole, string>` from `lib/auth-db.ts`'s own `UserRole` type, to avoid this file importing from there for a two-branch string — `role === "admin"` reads just as clearly. */
+export function roleLabel(role: "admin" | "operatore"): string {
+  return role === "admin" ? "Admin ARALD" : "Operatore";
+}

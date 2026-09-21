@@ -1,7 +1,8 @@
+import { Fragment } from "react";
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { getMirrorSnapshot, type MirrorSectionError, type MirrorSnapshot } from "../lib/db";
-import { dropKind, formatCoords, formatDateTime, relayOnline, relayType, timeAgo } from "../lib/format";
+import { dropKind, formatCoords, formatDateTime, relayOnline, relayType, roleLabel, timeAgo } from "../lib/format";
 import { buildAttentionFeed, summarizeFleet } from "../lib/node-status";
 import { PortalHeader } from "./PortalHeader";
 import { RemoteDropForm } from "./RemoteDropForm";
@@ -19,6 +20,15 @@ export const revalidate = 0;
 function sectionError(errors: MirrorSectionError[], section: MirrorSectionError["section"]): string | undefined {
   return errors.find((e) => e.section === section)?.message;
 }
+
+/**
+ * Column titles for the Nodi table (Fase 6 dell'audit UX/UI, docs/next-steps.md). A single source for
+ * both the `<thead>` cells and the detail row's `colSpan` below — a `colSpan={5}` literal, disconnected
+ * from the actual header cell count, would silently drift out of sync the next time a column is added
+ * or removed (found by review): the detail row's spanning `<td>` would then cover the wrong number of
+ * columns, leaving a visible gap or overlap under every node's expandable form row.
+ */
+const NODI_TABLE_COLUMNS = ["Nodo", "Stato", "Batteria", "Servizi", "Ultimo sync"];
 
 export default async function HomePage(): Promise<JSX.Element> {
   const session = await auth();
@@ -64,7 +74,7 @@ export default async function HomePage(): Promise<JSX.Element> {
     <>
       <PortalHeader
         userEmail={session.user.email ?? ""}
-        roleLabel={session.user.role === "admin" ? "Admin ARALD" : "Operatore"}
+        roleLabel={roleLabel(session.user.role)}
         active="elenco"
         isAdmin={session.user.role === "admin"}
       />
@@ -142,83 +152,107 @@ export default async function HomePage(): Promise<JSX.Element> {
               )}
             </section>
 
-            <div className="grid">
-              <section className="panel">
-                <div className="panel-head">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
-                    <circle cx="6" cy="18" r="2.2" />
-                    <circle cx="18" cy="18" r="2.2" />
-                    <circle cx="12" cy="6" r="2.2" />
-                    <line x1="7.8" y1="16.7" x2="10.2" y2="7.8" />
-                    <line x1="16.2" y1="16.7" x2="13.8" y2="7.8" />
-                    <line x1="8.2" y1="18" x2="15.8" y2="18" />
-                  </svg>
-                  <span className="panel-title">Nodi</span>
-                  <span className="panel-count">({snapshot.nodes.length})</span>
+            {/* Tabella dati densa (Fase 6 dell'audit UX/UI, docs/next-steps.md) — a piena larghezza,
+                fuori da .grid sotto: un pattern nuovo del Design System ("Waypoint aveva solo
+                card/liste verticali leggere, non pensate per una lista densa di righe omogenee")
+                merita spazio, non un terzo di una griglia a 3 colonne. Ogni nodo è due <tr>: la riga
+                sommario (nome/stato/batteria/servizi/sync) e una riga di dettaglio a piena larghezza
+                (avviso + i quattro form di comando remoto) — un <tr> non può annidare un pannello
+                senza rompere il layout a colonne, da qui la seconda riga con colSpan invece del
+                singolo <li> impilato di prima. */}
+            <section className="panel">
+              <div className="panel-head">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+                  <circle cx="6" cy="18" r="2.2" />
+                  <circle cx="18" cy="18" r="2.2" />
+                  <circle cx="12" cy="6" r="2.2" />
+                  <line x1="7.8" y1="16.7" x2="10.2" y2="7.8" />
+                  <line x1="16.2" y1="16.7" x2="13.8" y2="7.8" />
+                  <line x1="8.2" y1="18" x2="15.8" y2="18" />
+                </svg>
+                <span className="panel-title">Nodi</span>
+                <span className="panel-count">({snapshot.nodes.length})</span>
+              </div>
+              {nodesError ? (
+                <p className="empty">Impossibile caricare i nodi: {nodesError}</p>
+              ) : snapshot.nodes.length === 0 ? (
+                <p className="empty">Nessun nodo sincronizzato finora.</p>
+              ) : (
+                <div className="data-table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        {NODI_TABLE_COLUMNS.map((col) => (
+                          <th key={col} scope="col">
+                            {col}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {snapshot.nodes.map((n, i) => {
+                        const f = fleet[i];
+                        const topAlert = f.alerts[0];
+                        return (
+                          <Fragment key={n.nodeUrl}>
+                            <tr>
+                              <td>
+                                {f.displayName}
+                                <span className="data-table-secondary mono">{n.nodeUrl}</span>
+                              </td>
+                              <td>
+                                <span className={`tag ${f.connected ? "online" : "offline"}`}>{f.connected ? "online" : "offline"}</span>
+                              </td>
+                              <td className="mono">{f.batteryPercent !== undefined ? `${f.batteryPercent}%` : <span className="muted">—</span>}</td>
+                              <td className="mono">{f.services.length}</td>
+                              <td className="mono muted">{formatDateTime(n.syncedAt)}</td>
+                            </tr>
+                            <tr className="data-table-detail-row">
+                              {/* aria-label (trovato dalla revisione): senza, uno screen reader in
+                                  navigazione a tabella annuncia solo "riga N, colonna 1" per una cella
+                                  che in realtà contiene un avviso più fino a quattro form separati —
+                                  non dati tabellari. */}
+                              <td colSpan={NODI_TABLE_COLUMNS.length} aria-label={`Avvisi e azioni per ${f.displayName}`}>
+                                {topAlert && (
+                                  <div className="row-meta">
+                                    <span className={`tag ${topAlert.kind}`}>
+                                      {f.alerts.length} avviso{f.alerts.length > 1 ? "i" : ""}
+                                    </span>
+                                    <span className="row-text">{topAlert.text}</span>
+                                  </div>
+                                )}
+                                <RemoteDropForm nodeUrl={n.nodeUrl} />
+                                <RemoteNodeAppendForm nodeUrl={n.nodeUrl} />
+                                {/* Solo Fixed Relay (mai Mobile Relay/Card, richiesta esplicita dell'utente) e solo Admin
+                                    (route.ts stesso lo impone comunque — nascosto qui solo per non mostrare a un Operatore
+                                    un bottone che fallirebbe sempre con 403). f.displayName.length > 0 è già garantito
+                                    per costruzione (summarizeFleet() ricade su node.nodeId, mai una stringa vuota in
+                                    pratica) — controllo difensivo aggiunto comunque (trovato dalla revisione): senza,
+                                    un `relayLabel` vuoto renderebbe TwoStepConfirmDialog permanentemente non
+                                    confermabile (il testo da digitare per abilitare "Conferma riavvio" non esisterebbe)
+                                    senza alcuna spiegazione per l'operatore — meglio non offrire affatto il bottone. */}
+                                {f.isFixedRelay && session.user.role === "admin" && f.displayName.length > 0 && (
+                                  <RemoteRelayCommandForm nodeUrl={n.nodeUrl} relayLabel={f.displayName} />
+                                )}
+                                {/* Solo se questo Box offre almeno una destinazione senza password (Pezzo 3, scope v1 —
+                                    route.ts lo impone comunque server-side, nascosto qui solo per non mostrare un form
+                                    vuoto). Stessa autorizzazione per-organizzazione di RemoteDropForm/RemoteNodeAppendForm,
+                                    non solo Admin. */}
+                                {f.externalDeliveryDestinations.length > 0 && (
+                                  <RemoteExternalDeliveryForm nodeUrl={n.nodeUrl} destinations={f.externalDeliveryDestinations} />
+                                )}
+                              </td>
+                            </tr>
+                          </Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
-                {nodesError ? (
-                  <p className="empty">Impossibile caricare i nodi: {nodesError}</p>
-                ) : snapshot.nodes.length === 0 ? (
-                  <p className="empty">Nessun nodo sincronizzato finora.</p>
-                ) : (
-                  <ul className="row-list">
-                    {snapshot.nodes.map((n, i) => {
-                      const f = fleet[i];
-                      const topAlert = f.alerts[0];
-                      return (
-                        <li key={n.nodeUrl}>
-                          <div className="row">
-                            <span className="row-text">{f.displayName}</span>
-                            <span className={`tag ${f.connected ? "online" : "offline"}`}>{f.connected ? "online" : "offline"}</span>
-                          </div>
-                          <div className="row-meta mono">
-                            <span className="muted">{n.nodeUrl}</span>
-                            <span className="sep">·</span>
-                            <span>ultimo sync {formatDateTime(n.syncedAt)}</span>
-                            {f.batteryPercent !== undefined && (
-                              <>
-                                <span className="sep">·</span>
-                                <span>batteria {f.batteryPercent}%</span>
-                              </>
-                            )}
-                            <span className="sep">·</span>
-                            <span>{f.services.length} servizi</span>
-                          </div>
-                          {topAlert && (
-                            <div className="row-meta">
-                              <span className={`tag ${topAlert.kind}`}>
-                                {f.alerts.length} avviso{f.alerts.length > 1 ? "i" : ""}
-                              </span>
-                              <span className="row-text">{topAlert.text}</span>
-                            </div>
-                          )}
-                          <RemoteDropForm nodeUrl={n.nodeUrl} />
-                          <RemoteNodeAppendForm nodeUrl={n.nodeUrl} />
-                          {/* Solo Fixed Relay (mai Mobile Relay/Card, richiesta esplicita dell'utente) e solo Admin
-                              (route.ts stesso lo impone comunque — nascosto qui solo per non mostrare a un Operatore
-                              un bottone che fallirebbe sempre con 403). f.displayName.length > 0 è già garantito
-                              per costruzione (summarizeFleet() ricade su node.nodeId, mai una stringa vuota in
-                              pratica) — controllo difensivo aggiunto comunque (trovato dalla revisione): senza,
-                              un `relayLabel` vuoto renderebbe TwoStepConfirmDialog permanentemente non
-                              confermabile (il testo da digitare per abilitare "Conferma riavvio" non esisterebbe)
-                              senza alcuna spiegazione per l'operatore — meglio non offrire affatto il bottone. */}
-                          {f.isFixedRelay && session.user.role === "admin" && f.displayName.length > 0 && (
-                            <RemoteRelayCommandForm nodeUrl={n.nodeUrl} relayLabel={f.displayName} />
-                          )}
-                          {/* Solo se questo Box offre almeno una destinazione senza password (Pezzo 3, scope v1 —
-                              route.ts lo impone comunque server-side, nascosto qui solo per non mostrare un form
-                              vuoto). Stessa autorizzazione per-organizzazione di RemoteDropForm/RemoteNodeAppendForm,
-                              non solo Admin. */}
-                          {f.externalDeliveryDestinations.length > 0 && (
-                            <RemoteExternalDeliveryForm nodeUrl={n.nodeUrl} destinations={f.externalDeliveryDestinations} />
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </section>
+              )}
+            </section>
 
+            <div className="grid">
               <section className="panel hazard-panel">
                 <div className="panel-head">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
