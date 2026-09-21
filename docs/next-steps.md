@@ -308,3 +308,18 @@ Il 13 settembre 2026, in una discussione sulla valutazione di hardware low-cost 
 
 Vedi `docs/deployment.md`, paragrafo "LoRa unificato su SX1262" (sotto "ARALD Box e PORTABLE"), per il lato hardware/BOM di questa stessa decisione.
 
+## Terzo/quarto/quinto esempio di "consegna esterna differita" — pianificato, confermato dall'utente, non ancora implementato (21 settembre 2026)
+
+Dopo `whatsapp-relay/` (`docs/security.md` voce #79) ed `email-relay/` (voce #85), pianificate con l'utente le tre destinazioni rimaste tra i sei esempi concreti discussi in origine: **post su un canale/bot** (es. Slack/Telegram), **check-in di posizione** verso un servizio di coordinamento esterno, **upload di un report/foto** su una piattaforma esterna.
+
+**Osservazione emersa in fase di pianificazione**: le tre sono la stessa meccanica di fondo — un invio HTTP verso un indirizzo web configurato dall'operatore — quindi il piano concordato è costruire **un solo relay generico "a webhook"** invece di tre relay separati, sullo stesso pattern indipendente di `whatsapp-relay/`/`email-relay/` (fuori mesh, fuori workspace npm).
+
+**Tre decisioni raccolte con l'utente, tutte confermate**:
+1. Un relay generico unico per i tre casi, non tre relay separati.
+2. Corpo della richiesta HTTP verso il servizio esterno: JSON semplice (testo o file codificato dentro), stesso principio degli altri due relay — niente parser multipart/form-data da scrivere a mano.
+3. Autenticazione verso il servizio esterno: un token fisso configurato una tantum dall'operatore (stesso principio della password SMTP di `email-relay/`) — copre la maggior parte dei servizi reali (Slack, Zapier, API generiche); niente di più sofisticato, perché il servizio esterno reale non è ancora noto.
+
+**Lato mobile**: per l'upload di file/foto (il terzo di questi tre esempi) non serve nulla di nuovo — il pannello "Invia a un'organizzazione" accetta già un file allegato oggi. Per il check-in di posizione è consigliato un pulsante dedicato "Invia la mia posizione" che compila automaticamente le coordinate GPS (plugin Geolocation già in uso altrove nell'app, voce #44) più uno stato rapido ("Tutto ok"/"Serve aiuto"), invece di scrivere a mano nel campo testo esistente.
+
+**Nessun codice scritto finora** — piano confermato dall'utente, in attesa di essere ripreso in una sessione futura con lo stesso workflow a doppio check di ogni voce precedente.
+
