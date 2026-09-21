@@ -73,6 +73,12 @@ Dopo `whatsapp-relay/` (`docs/security.md` voce #79) ed `email-relay/` (voce #85
 
 **Nessun codice scritto finora** — piano confermato dall'utente, in attesa di essere ripreso in una sessione futura con lo stesso workflow a doppio check di ogni voce precedente.
 
+### Mockup pixel-precisi (Figma) — rimandati al lancio della beta, dopo i field test
+
+Il piano di audit UX/UI (Artifact "ARALD — UX/UI Audit & Redesign Plan", mini-team di 4 ruoli, sezione 11) prevedeva 8 fasi. Le Fasi 1-6 sono **✅ complete** (dettaglio in `docs/security.md` voci #86-91: "Le mie attività", stato persistente SOS, migrazione token Waypoint, navigazione a 4 voci + Diagnostica, feed "Richiede attenzione ora" + conferma a due passi, tabella dati densa + badge di ruolo). La Fase 7 (Field User Test sui prototipi con utenti reali, Marco/Elena) è stata **saltata esplicitamente** (21 settembre 2026, decisione dell'utente — nessun utente reale disponibile in questo ambiente); il piano stesso la segnava come prerequisito per considerare chiusa qualunque fase precedente, quindi quel criterio resta consapevolmente non soddisfatto.
+
+La Fase 8 (mockup pixel-precisi in Figma di tutti i flussi — griglie/spaziature esatte, ogni stato di ogni schermata, primo vero uso di Figma in questo progetto: nessun design system Figma esiste ancora, andrebbe ricostruito da zero a partire dai token già in `mobile/www/styles.css`/`mirror-portal/app/globals.css`) era subordinata dal piano stesso al via libera della Fase 7. **Decisione esplicita dell'utente (21 settembre 2026): il piano si chiude qui.** La Fase 8 resta un candidato aperto, da riprendere **al momento del lancio della versione beta di ARALD, dopo che i field test (validazione sul campo, non solo test utente sui prototipi) avranno confermato i flussi** — non prima, per non rifinire al pixel qualcosa che l'uso reale potrebbe ancora rivelare da cambiare.
+
 ---
 
 ## Milestone/feature completate — pointer al dettaglio in `docs/security.md`
