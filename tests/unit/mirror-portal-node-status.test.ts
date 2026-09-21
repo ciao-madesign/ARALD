@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { summarizeFleet } from "../../mirror-portal/lib/node-status.js";
+import { buildAttentionFeed, summarizeFleet, type NodeFleetStatus } from "../../mirror-portal/lib/node-status.js";
 import type { BeaconRow, DestinationRow, DropRow, NodeStatusRow, RelayRow } from "../../mirror-portal/lib/db.js";
 
 /**
@@ -195,5 +195,83 @@ describe("mirror-portal lib/node-status summarizeFleet", () => {
   it("defaults to an empty list when no destinations argument is given at all", () => {
     const rows = summarizeFleet([node("http://a", { nodeId: "N1", connected: true })], [], [], []);
     expect(rows[0].externalDeliveryDestinations).toEqual([]);
+  });
+
+  it("carries the node status row's own syncedAt through, for buildAttentionFeed() below", () => {
+    const at = new Date("2026-09-21T10:00:00Z");
+    const rows = summarizeFleet([{ nodeUrl: "http://a", nodeId: "N1", data: { connected: true }, syncedAt: at }], [], [], []);
+    expect(rows[0].syncedAt).toBe(at);
+  });
+});
+
+/**
+ * `buildAttentionFeed()` (Fase 5 dell'audit UX/UI, docs/next-steps.md — risolve P2 #10: "nessuna
+ * vista aggregata"): appiattisce `NodeFleetStatus.alerts` di ogni nodo della flotta + un'entry
+ * "offline" sintetica per ogni nodo con `connected: false`, ordinato per severità (SOS, poi
+ * emergency/hazard, poi offline) e, a parità di severità, dal più recente.
+ */
+describe("mirror-portal lib/node-status buildAttentionFeed", () => {
+  function fleetStatus(overrides: Partial<NodeFleetStatus>): NodeFleetStatus {
+    return {
+      nodeUrl: "http://a",
+      nodeId: "N1",
+      displayName: "Box A",
+      connected: true,
+      services: [],
+      isFixedRelay: false,
+      alerts: [],
+      externalDeliveryDestinations: [],
+      syncedAt: new Date(),
+      ...overrides,
+    };
+  }
+
+  it("orders SOS before emergency, emergency before hazard, hazard before offline", () => {
+    const fleet = [
+      fleetStatus({
+        displayName: "Box A",
+        alerts: [
+          { kind: "hazard", text: "frana", timestamp: 1000 },
+          { kind: "sos", text: "aiuto", timestamp: 2000 },
+          { kind: "emergency", text: "valanga", timestamp: 500 },
+        ],
+      }),
+      fleetStatus({ displayName: "Box B", connected: false, syncedAt: new Date(3000) }),
+    ];
+    const feed = buildAttentionFeed(fleet);
+    expect(feed.map((i) => i.kind)).toEqual(["sos", "emergency", "hazard", "offline"]);
+  });
+
+  it("within the same severity, orders the most recent first", () => {
+    const fleet = [
+      fleetStatus({
+        alerts: [
+          { kind: "sos", text: "vecchio", timestamp: 1000 },
+          { kind: "sos", text: "nuovo", timestamp: 5000 },
+        ],
+      }),
+    ];
+    const feed = buildAttentionFeed(fleet);
+    expect(feed.map((i) => i.text)).toEqual(["nuovo", "vecchio"]);
+  });
+
+  it("uses syncedAt as the offline entry's since, and an empty text (no message to show)", () => {
+    const at = new Date(4242);
+    const fleet = [fleetStatus({ displayName: "Box C", connected: false, syncedAt: at })];
+    const feed = buildAttentionFeed(fleet);
+    expect(feed).toEqual([{ kind: "offline", nodeDisplayName: "Box C", text: "", since: 4242 }]);
+  });
+
+  it("produces nothing for a fleet with no alerts and every node connected", () => {
+    expect(buildAttentionFeed([fleetStatus({})])).toEqual([]);
+  });
+
+  it("carries the originating node's own displayName onto each item, across multiple nodes", () => {
+    const fleet = [
+      fleetStatus({ displayName: "Rifugio Nord", alerts: [{ kind: "sos", text: "aiuto", timestamp: 1 }] }),
+      fleetStatus({ displayName: "Rifugio Sud", alerts: [{ kind: "hazard", text: "frana", timestamp: 1 }] }),
+    ];
+    const feed = buildAttentionFeed(fleet);
+    expect(feed.map((i) => i.nodeDisplayName)).toEqual(["Rifugio Nord", "Rifugio Sud"]);
   });
 });

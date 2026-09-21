@@ -8,6 +8,7 @@ import {
   nodeDisplayName,
   relayOnline,
   relayType,
+  timeAgo,
 } from "../../mirror-portal/lib/format.js";
 
 describe("mirror-portal/lib/format", () => {
@@ -89,6 +90,24 @@ describe("mirror-portal/lib/format", () => {
       expect(asFiniteNumber("45.83")).toBeUndefined();
       expect(asFiniteNumber(null)).toBeUndefined();
       expect(asFiniteNumber(undefined)).toBeUndefined();
+    });
+  });
+
+  // Fase 5 dell'audit UX/UI (docs/next-steps.md), stessi tre bucket/soglie di timeAgo() in
+  // mobile/www/app.js — solo la formattazione delle parole cambia ("N min fa" invece di "da N min").
+  describe("timeAgo", () => {
+    it("says 'adesso' for anything under a minute, including a future timestamp (clock skew)", () => {
+      expect(timeAgo(new Date(Date.now() - 30_000))).toBe("adesso");
+      expect(timeAgo(new Date(Date.now() + 5_000))).toBe("adesso");
+    });
+    it("uses minutes under an hour", () => {
+      expect(timeAgo(new Date(Date.now() - 3 * 60_000))).toBe("3 min fa");
+    });
+    it("uses hours under a day", () => {
+      expect(timeAgo(new Date(Date.now() - 5 * 3_600_000))).toBe("5h fa");
+    });
+    it("uses days from a day onward", () => {
+      expect(timeAgo(new Date(Date.now() - 2 * 86_400_000))).toBe("2g fa");
     });
   });
 

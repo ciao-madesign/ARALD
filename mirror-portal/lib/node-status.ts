@@ -88,6 +88,8 @@ export interface NodeFleetStatus {
    * established for Pezzo 4.
    */
   externalDeliveryDestinations: Array<{ destinationId: string; label: string }>;
+  /** When `node_status_snapshots` was last written for this Box (`NodeStatusRow.syncedAt`) — the one honest anchor available for "since when" on an offline entry in `buildAttentionFeed()` below: `postgres-sync.ts` only ever upserts this row on a *successful* poll (a Box that can't be reached at all leaves the row, and this timestamp, exactly where they were — `arald-backend/sync.ts`'s own "status snapshot: skipped (node unreachable or malformed)" log line), so an old `syncedAt` genuinely means "last time this Box was known reachable", not just "last time we happened to write a row". */
+  syncedAt: Date;
 }
 
 function extractServiceSummary(raw: unknown): ServiceSummary | undefined {
@@ -156,6 +158,49 @@ export function summarizeFleet(
       isFixedRelay: ownRelays.length === 1,
       alerts,
       externalDeliveryDestinations,
+      syncedAt: node.syncedAt,
     };
   });
+}
+
+/**
+ * "Richiede attenzione ora" — the Home page's unified triage feed (Fase 5 del piano di audit UX/UI,
+ * `docs/next-steps.md`, risolve P2 #10: "nessuna vista aggregata ... richiede aprire più pannelli").
+ * Flattens every node's own `alerts` (already SOS+hazard+emergency, per-node) across the whole fleet,
+ * plus one synthetic "offline" entry per node whose last-known `connected` was false — same field the
+ * existing Nodi panel already renders as an online/offline tag, reused here rather than inventing a
+ * new "hasn't synced in N minutes" staleness heuristic with no documented sync cadence to base a
+ * threshold on (this repository's own standing rule against presenting an unverified guess as real).
+ */
+export interface AttentionItem {
+  kind: "sos" | "emergency" | "hazard" | "offline";
+  nodeDisplayName: string;
+  /** Empty for "offline" — there's no message to show, just the node name and `since`. */
+  text: string;
+  /**
+   * ms since epoch: the alert's own event time for sos/emergency/hazard, `syncedAt` for offline (see
+   * `NodeFleetStatus.syncedAt`'s own doc comment for why that's an honest "since" instead of a
+   * fabricated duration). For sos/emergency/hazard this is `NodeAlert.timestamp`, i.e. whatever the
+   * originating mesh packet self-declared (`DropPayload.timestamp`/`EmergencyBeaconPayload.timestamp`)
+   * — not authenticated, same trust posture `summarizeFleet()`'s own `alerts` array already had before
+   * this feed existed (the Nodi panel's `topAlert` ordering already relies on it). Flagged honestly
+   * here rather than left unstated (found by review): a forged/skewed event timestamp can currently
+   * distort where an item lands within its own severity bucket, or make a stale alert read as
+   * "adesso" — a pre-existing limitation this feed inherits, not one it introduces or was designed
+   * to close; revisiting it means changing `summarizeFleet()`'s ordering too, out of this phase's scope.
+   */
+  since: number;
+}
+
+const ATTENTION_SEVERITY_RANK: Record<AttentionItem["kind"], number> = { sos: 0, emergency: 1, hazard: 2, offline: 3 };
+
+export function buildAttentionFeed(fleet: NodeFleetStatus[]): AttentionItem[] {
+  const items: AttentionItem[] = [];
+  for (const f of fleet) {
+    for (const alert of f.alerts) items.push({ kind: alert.kind, nodeDisplayName: f.displayName, text: alert.text, since: alert.timestamp });
+    if (!f.connected) items.push({ kind: "offline", nodeDisplayName: f.displayName, text: "", since: f.syncedAt.getTime() });
+  }
+  // Same severity order the wireframe fixes (SOS, poi Hazard/emergency, poi Box offline); within a
+  // severity, most recent first — matches how `alerts` is already ordered per node above.
+  return items.sort((a, b) => ATTENTION_SEVERITY_RANK[a.kind] - ATTENTION_SEVERITY_RANK[b.kind] || b.since - a.since);
 }

@@ -1,8 +1,8 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { getMirrorSnapshot, type MirrorSectionError, type MirrorSnapshot } from "../lib/db";
-import { beaconMessage, dropKind, formatCoords, formatDateTime, relayOnline, relayType } from "../lib/format";
-import { summarizeFleet } from "../lib/node-status";
+import { dropKind, formatCoords, formatDateTime, relayOnline, relayType, timeAgo } from "../lib/format";
+import { buildAttentionFeed, summarizeFleet } from "../lib/node-status";
 import { PortalHeader } from "./PortalHeader";
 import { RemoteDropForm } from "./RemoteDropForm";
 import { RemoteNodeAppendForm } from "./RemoteNodeAppendForm";
@@ -56,6 +56,10 @@ export default async function HomePage(): Promise<JSX.Element> {
   // than throwing, same posture as every other section on this page.
   const fleet = summarizeFleet(snapshot.nodes, snapshot.relays, snapshot.drops, snapshot.beacons, snapshot.destinations);
 
+  // "Richiede attenzione ora" (Fase 5 dell'audit UX/UI, docs/next-steps.md — risolve P2 #10): stessa
+  // logica, nessuna nuova query — vedi buildAttentionFeed()'s own doc comment in lib/node-status.ts.
+  const attentionFeed = buildAttentionFeed(fleet);
+
   return (
     <>
       <PortalHeader
@@ -98,7 +102,7 @@ export default async function HomePage(): Promise<JSX.Element> {
       {!configError && (
         <main className="content">
           <div className="content-inner">
-            <section className="panel sos-panel">
+            <section className="panel attention-panel">
               <div className="panel-head">
                 <span className="sos-badge">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.4" aria-hidden="true">
@@ -106,37 +110,34 @@ export default async function HomePage(): Promise<JSX.Element> {
                     <circle cx="12" cy="17" r="0.9" fill="#fff" stroke="none" />
                   </svg>
                 </span>
-                <span className="panel-title">SOS ricevuti</span>
-                <span className="panel-count">({snapshot.beacons.length})</span>
+                <span className="panel-title">Richiede attenzione ora</span>
+                <span className="panel-count">({attentionFeed.length})</span>
               </div>
-              {beaconsError ? (
-                <p className="empty">Impossibile caricare i SOS: {beaconsError}</p>
-              ) : snapshot.beacons.length === 0 ? (
-                <p className="empty">Nessun SOS.</p>
+              {(beaconsError || dropsError) && (
+                <p className="empty">
+                  Impossibile caricare {[beaconsError && "i SOS", dropsError && "gli hazard"].filter(Boolean).join(" e ")}: questo elenco potrebbe non essere completo.
+                </p>
+              )}
+              {attentionFeed.length === 0 ? (
+                <p className="empty">Nessun avviso al momento.</p>
               ) : (
                 <ul className="row-list">
-                  {snapshot.beacons.map((b) => {
-                    const coords = formatCoords(b.data);
-                    return (
-                      <li key={b.beaconContentId} className="sos-row">
-                        <div className="row">
-                          <span className="row-text">{beaconMessage(b.data)}</span>
-                          <span className="tag sos">SOS</span>
-                        </div>
-                        <div className="row-meta mono">
-                          <span>via {b.nodeUrl}</span>
-                          {coords && (
-                            <>
-                              <span className="sep">·</span>
-                              <span>{coords}</span>
-                            </>
-                          )}
-                          <span className="sep">·</span>
-                          <span>{formatDateTime(b.syncedAt)}</span>
-                        </div>
-                      </li>
-                    );
-                  })}
+                  {/* Nessun id stabile disponibile su un AttentionItem derivato (non è una riga di
+                      Postgres) — l'indice è comunque sicuro qui: la lista è ricalcolata da zero ad
+                      ogni render server-side, mai riordinata/filtrata in place lato client. */}
+                  {attentionFeed.map((item, i) => (
+                    <li key={i} className={item.kind === "sos" ? "sos-row" : undefined}>
+                      <div className="row">
+                        <span className="row-text">
+                          {item.kind === "offline" ? <>Box «{item.nodeDisplayName}» non raggiungibile</> : <>{item.nodeDisplayName} — {item.text}</>}
+                        </span>
+                        <span className={`tag ${item.kind}`}>{item.kind}</span>
+                      </div>
+                      <div className="row-meta mono">
+                        <span>{item.kind === "offline" ? `ultimo aggiornamento ${timeAgo(new Date(item.since))}` : timeAgo(new Date(item.since))}</span>
+                      </div>
+                    </li>
+                  ))}
                 </ul>
               )}
             </section>
@@ -195,8 +196,15 @@ export default async function HomePage(): Promise<JSX.Element> {
                           <RemoteNodeAppendForm nodeUrl={n.nodeUrl} />
                           {/* Solo Fixed Relay (mai Mobile Relay/Card, richiesta esplicita dell'utente) e solo Admin
                               (route.ts stesso lo impone comunque — nascosto qui solo per non mostrare a un Operatore
-                              un bottone che fallirebbe sempre con 403). */}
-                          {f.isFixedRelay && session.user.role === "admin" && <RemoteRelayCommandForm nodeUrl={n.nodeUrl} />}
+                              un bottone che fallirebbe sempre con 403). f.displayName.length > 0 è già garantito
+                              per costruzione (summarizeFleet() ricade su node.nodeId, mai una stringa vuota in
+                              pratica) — controllo difensivo aggiunto comunque (trovato dalla revisione): senza,
+                              un `relayLabel` vuoto renderebbe TwoStepConfirmDialog permanentemente non
+                              confermabile (il testo da digitare per abilitare "Conferma riavvio" non esisterebbe)
+                              senza alcuna spiegazione per l'operatore — meglio non offrire affatto il bottone. */}
+                          {f.isFixedRelay && session.user.role === "admin" && f.displayName.length > 0 && (
+                            <RemoteRelayCommandForm nodeUrl={n.nodeUrl} relayLabel={f.displayName} />
+                          )}
                           {/* Solo se questo Box offre almeno una destinazione senza password (Pezzo 3, scope v1 —
                               route.ts lo impone comunque server-side, nascosto qui solo per non mostrare un form
                               vuoto). Stessa autorizzazione per-organizzazione di RemoteDropForm/RemoteNodeAppendForm,

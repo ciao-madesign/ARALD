@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { TwoStepConfirmDialog } from "./TwoStepConfirmDialog";
 
 /**
  * Queue a remote reboot command for one Fixed Relay, from the portal —
@@ -9,20 +10,22 @@ import { useState } from "react";
  * already knows is a Fixed Relay (`NodeFleetStatus.isFixedRelay`, see that
  * field's own doc comment) — never for a Mobile Relay/Card, per the
  * user's own original request. Same "queued" ≠ "delivered" posture and
- * try/catch around `fetch()` as `RemoteDropForm`/`RemoteNodeAppendForm`,
- * plus a native `confirm()` before sending: unlike a note or a drop, this
- * command — once accepted by the Box and if `--allow-remote-reboot` is
- * set there — actually reboots the device, so a stray click deserves one
- * extra deliberate step, not a bare button.
+ * try/catch around `fetch()` as `RemoteDropForm`/`RemoteNodeAppendForm`.
+ *
+ * A native `window.confirm()` before sending was the original guard —
+ * replaced (Fase 5 dell'audit UX/UI, P1 #6: "nessuna doppia conferma
+ * testuale") with `TwoStepConfirmDialog`, requiring the operator to type
+ * `relayLabel` before the reboot can actually be sent: unlike a note or a
+ * drop, this command — once accepted by the Box and if
+ * `--allow-remote-reboot` is set there — actually reboots the device, so a
+ * stray click deserves one extra deliberate step, not a dialog a reflexive
+ * "OK" can click through.
  */
-export function RemoteRelayCommandForm({ nodeUrl }: { nodeUrl: string }): JSX.Element {
-  const [status, setStatus] = useState<"idle" | "submitting" | "queued" | "error">("idle");
+export function RemoteRelayCommandForm({ nodeUrl, relayLabel }: { nodeUrl: string; relayLabel: string }): JSX.Element {
+  const [status, setStatus] = useState<"idle" | "confirming" | "submitting" | "queued" | "error">("idle");
   const [error, setError] = useState<string | undefined>(undefined);
 
-  async function handleClick(): Promise<void> {
-    if (!window.confirm("Riavviare questo Box da remoto? Il riavvio effettivo dipende anche dalla configurazione locale del Box (--allow-remote-reboot).")) {
-      return;
-    }
+  async function sendReboot(): Promise<void> {
     setStatus("submitting");
     setError(undefined);
 
@@ -50,9 +53,19 @@ export function RemoteRelayCommandForm({ nodeUrl }: { nodeUrl: string }): JSX.El
     <div className="remote-relay-command-form">
       {status === "error" && <p className="login-error">{error}</p>}
       {status === "queued" && <p className="remote-drop-queued">Comando di riavvio messo in coda — sarà consegnato al Box appena si aggiorna.</p>}
-      <button type="button" onClick={handleClick} disabled={status === "submitting"}>
+      <button type="button" onClick={() => setStatus("confirming")} disabled={status === "submitting"}>
         {status === "submitting" ? "Invio…" : "Riavvia (remoto)"}
       </button>
+      {status === "confirming" && (
+        <TwoStepConfirmDialog
+          title={`Riavviare il relay «${relayLabel}»?`}
+          description="Questa azione interrompe temporaneamente la mesh in quella zona. Il riavvio effettivo dipende anche dalla configurazione locale del Box (--allow-remote-reboot)."
+          confirmWord={relayLabel}
+          confirmLabel="Conferma riavvio"
+          onConfirm={sendReboot}
+          onCancel={() => setStatus("idle")}
+        />
+      )}
     </div>
   );
 }

@@ -195,10 +195,80 @@ textarea {
 }
 
 /* ---- Remote relay command form (RemoteRelayCommandForm.tsx, canale di comando "Pezzo 4") — a
-   plain button, no disclosure: a reboot has no parameters to fill in, the confirm() dialog
-   inside the component is the only extra step before it's sent. ---- */
+   plain button, no disclosure: a reboot has no parameters to fill in, TwoStepConfirmDialog (see
+   below) is the only extra step before it's sent. ---- */
 .remote-relay-command-form {
   margin-top: 0.6em;
+}
+
+/* ---- TwoStepConfirmDialog.tsx (Fase 5 dell'audit UX/UI, docs/next-steps.md — risolve P1 #6): il
+   primo pattern di dialogo modale di questo portale, scritto generico per essere riusabile da una
+   futura seconda azione distruttiva, non solo dal riavvio remoto Fixed Relay che lo introduce.
+   z-index sopra ogni altro elemento posizionato della pagina, incluso .map-legend (1000). ---- */
+.confirm-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: rgba(16, 21, 26, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.confirm-dialog {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 6px solid var(--sos);
+  border-radius: 10px;
+  box-shadow: 0 20px 45px -20px rgba(0, 0, 0, 0.5);
+  max-width: 26em;
+  width: 100%;
+  padding: 20px 22px;
+}
+
+.confirm-dialog h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  color: var(--sos-dark);
+}
+
+.confirm-dialog p {
+  margin: 0 0 14px;
+  font-size: 13.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.confirm-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.confirm-dialog-field input {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5em 0.7em;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.confirm-dialog-actions button:first-child {
+  background: var(--off-soft);
+  color: var(--ink);
+}
+
+.confirm-dialog-danger {
+  background: var(--sos);
 }
 
 /* ---- Shared header/tabs (PortalHeader.tsx) — used by the Home and Mappa screens; Login/Admin keep
@@ -423,7 +493,11 @@ h2 {
   color: var(--relay);
 }
 
-.sos-panel {
+/* Rinominato da .sos-panel ad .attention-panel (Fase 5 dell'audit UX/UI, docs/next-steps.md — risolve
+   P2 #10): il pannello non mostra più solo i SOS, ma il feed unificato "Richiede attenzione ora"
+   (SOS + hazard/emergency + Box offline, ordinato per urgenza in buildAttentionFeed()) — stesso
+   trattamento visivo marcato di prima, dato che resta comunque il pannello più urgente della pagina. */
+.attention-panel {
   border: 1px solid var(--sos);
   border-left: 6px solid var(--sos);
   background: var(--sos-soft);
@@ -431,12 +505,12 @@ h2 {
   padding-top: 18px;
 }
 
-.sos-panel .panel-title {
+.attention-panel .panel-title {
   color: var(--sos-dark);
   font-size: 13px;
 }
 
-.sos-panel .panel-head svg {
+.attention-panel .panel-head svg {
   color: var(--sos);
 }
 
@@ -475,7 +549,7 @@ h2 {
   border-top: 1px solid var(--border);
 }
 
-.sos-panel .row-list li {
+.attention-panel .row-list li {
   border-top-color: rgba(142, 46, 28, 0.18);
 }
 
