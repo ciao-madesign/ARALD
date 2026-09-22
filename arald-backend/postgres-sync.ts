@@ -18,6 +18,9 @@ export interface SyncSummary {
   emergencyBeacons: number;
   drops: number;
   nodeAppends: number;
+  externalDeliveryDestinations: number;
+  /** Count only, same as `StatusRow.servicesCount` — the list itself lives inside the status snapshot's `data`, not a count this summary needs to duplicate a second way. */
+  services: number;
   statusSnapshot: boolean;
 }
 
@@ -87,12 +90,30 @@ export async function syncSnapshotToPostgres(client: SyncClient, nodeUrl: string
     ),
   );
 
+  // Composite key (box_node_id, destination_id), not destination_id alone — two different Boxes can
+  // reuse the same destinationId string in their own private allowlists, and this table's own
+  // consumer (mirror-portal's getExternalDeliveryDestination()) always looks a row up by both fields
+  // together anyway (docs/security.md voce #84).
+  await Promise.all(
+    snapshot.externalDeliveryDestinations.map((destination) =>
+      client.query(
+        `INSERT INTO external_delivery_destinations (destination_id, box_node_id, node_url, data, synced_at)
+         VALUES ($1, $2, $3, $4, now())
+         ON CONFLICT (box_node_id, destination_id) DO UPDATE SET node_url = excluded.node_url, data = excluded.data, synced_at = excluded.synced_at`,
+        [destination.destinationId, destination.boxNodeId, nodeUrl, JSON.stringify(destination)],
+      ),
+    ),
+  );
+
   let statusSnapshot = false;
   if (snapshot.status) {
+    // services rides inside the same row as the rest of the status — both are a "what does this
+    // node look like right now" fact with no identity of their own to upsert against (unlike
+    // relays/beacons/drops/appends above), so one merged blob instead of a fifth table.
     await client.query(`INSERT INTO node_status_snapshots (node_url, node_id, data, synced_at) VALUES ($1, $2, $3, now())`, [
       nodeUrl,
       snapshot.status.nodeId,
-      JSON.stringify(snapshot.status),
+      JSON.stringify({ ...snapshot.status, services: snapshot.services }),
     ]);
     statusSnapshot = true;
   }
@@ -102,6 +123,8 @@ export async function syncSnapshotToPostgres(client: SyncClient, nodeUrl: string
     emergencyBeacons: snapshot.emergencyBeacons.length,
     drops: snapshot.drops.length,
     nodeAppends: snapshot.nodeAppends.length,
+    externalDeliveryDestinations: snapshot.externalDeliveryDestinations.length,
+    services: snapshot.services.length,
     statusSnapshot,
   };
 }

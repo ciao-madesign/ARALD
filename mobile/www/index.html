@@ -101,7 +101,8 @@
 <!-- Visualizzatore di tile raster scritto da zero (mapview.js) — nessuna libreria di mappe: questo
      ambiente non ha accesso a internet reale per scaricare/vendorizzare una libreria come Leaflet, e
      il progetto non ha mai introdotto una dipendenza di terze parti in mobile/www/ (vedi CLAUDE.md).
-     Stesso pattern a schermo intero di #scanner-overlay sopra, unico altro overlay del progetto. -->
+     Stesso pattern a schermo intero di #scanner-overlay sopra. Aperto direttamente dalla voce "Mappa"
+     della barra di navigazione (Fase 4 dell'audit UX/UI) — mai da un pannello intermedio nella Home. -->
 <section id="map-overlay" hidden>
   <div id="map-viewport"><div id="map-tiles-layer"></div><div id="map-pins-layer"></div><div id="map-relays-layer"></div><div id="map-beacons-layer"></div></div>
   <div class="map-controls">
@@ -118,6 +119,58 @@
   <p id="map-error" class="error" role="alert" aria-live="assertive" hidden></p>
 </section>
 
+<!-- Diagnostica (Fase 4 dell'audit UX/UI, docs/next-steps.md) — dettaglio tecnico raggiungibile dalla
+     Home tramite #open-diagnostics, deliberatamente NON una delle 4 voci della barra di navigazione
+     principale: non è un percorso quotidiano. Stesso pattern overlay a schermo intero di
+     #scanner-overlay/#map-overlay. Contiene solo dati che il gateway espone già altrove (mai un campo
+     "versione": GET /api/status non espone alcuna versione a livello di nodo/app, solo versioni
+     per-servizio — un concetto diverso, vedi node/src/web-ui.ts — e questo progetto non presenta mai
+     un'informazione non verificata come se fosse reale, vedi CLAUDE.md). -->
+<section id="diagnostics-overlay" hidden>
+  <div class="diagnostics-sheet">
+    <div class="diagnostics-header">
+      <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-wrench"></use></svg> Diagnostica</h2>
+      <button type="button" id="diagnostics-close" class="icon-button" aria-label="Chiudi diagnostica">
+        <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-x"></use></svg>
+      </button>
+    </div>
+    <dl class="diagnostics-list">
+      <div><dt>ID nodo</dt><dd id="diagnostics-node-id" class="mono"></dd></div>
+      <div><dt>Contenuti in cache</dt><dd id="diagnostics-cache"></dd></div>
+      <div><dt>Relay</dt><dd id="diagnostics-relay"></dd></div>
+    </dl>
+
+    <h3>Fiducia dei vicini</h3>
+    <p class="hint">Quanto questo dispositivo si fida di ciascun vicino connesso, in base a come lo ha incontrato — non una valutazione delle persone in carne e ossa.</p>
+    <ul id="diagnostics-trust-list"></ul>
+
+    <!-- Spostato qui dalla Home (Fase 4): è un dettaglio tecnico ("relay Bluetooth attivo/spento"),
+         non un'azione quotidiana. Nascosto finché window.Capacitor.Plugins.BluetoothLe non è
+         disponibile (ble-client.js) — non dipende da una capability del gateway ma solo dal runtime
+         di questo dispositivo. Un toggle, non un "collega a una Clip specifica" (voce #62, sostituita
+         da #63): da attivo, il telefono scopre e si collega automaticamente a ogni dispositivo ARALD
+         nei paraggi (Clip, altri relay), più connessioni contemporanee, e relaya davvero pacchetti
+         tra loro. Sempre e solo ruolo centrale (mai periferica) — vedi mobile/README.md. -->
+    <div id="ble-relay-panel" class="panel" hidden>
+      <button type="button" id="ble-relay-toggle" class="call-submit" aria-pressed="false">
+        <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-wifi"></use></svg> Attiva relay Bluetooth
+      </button>
+      <p id="ble-relay-status" class="muted" role="status" aria-live="polite"></p>
+      <ul id="ble-relay-peers"></ul>
+      <!-- Attività relay (pezzo 3, docs/security.md): solo conteggi, mai contenuto — vincolo esplicito
+           dell'utente, vedi ble-client.js's renderRelayActivity()/classifyRelayedPacket() in
+           ble-relay.js. Anche per SOS: solo un numero, mai il testo/posizione. -->
+      <div id="ble-relay-activity" class="ble-relay-activity">
+        <h3>Attività relay</h3>
+        <p>Bacheca: <span id="ble-relay-activity-drops">0</span></p>
+        <p>SOS: <span id="ble-relay-activity-sos">0</span></p>
+        <p>Canali:</p>
+        <ul id="ble-relay-activity-channels"></ul>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section id="dashboard-screen" hidden>
   <header>
     <div class="header-identity">
@@ -126,10 +179,10 @@
     </div>
     <div class="header-actions">
       <!-- Nascosto finché window.Capacitor.Plugins.BluetoothLe non è disponibile (ble-client.js) —
-           stesso feature-gating di #ble-relay-panel sotto: un SOS via Bluetooth non ha senso senza
-           quel plugin. Niente trattamento "faro" (riservato a due soli bottoni in tutta l'app, voce
-           #50) — colore d'emergenza (--bad, già usato per #emergency-beacons) per distinguerlo
-           visivamente senza aggiungere una terza eccezione a quella disciplina. -->
+           stesso feature-gating di #ble-relay-panel (ora in Diagnostica): un SOS via Bluetooth non ha
+           senso senza quel plugin. Niente trattamento "faro" (riservato a due soli bottoni in tutta
+           l'app, voce #50) — colore d'emergenza (--bad, già usato per #emergency-beacons) per
+           distinguerlo visivamente senza aggiungere una terza eccezione a quella disciplina. -->
       <button type="button" id="sos-button" class="icon-button sos-button" aria-label="Invia un SOS" hidden>
         <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-alert-circle"></use></svg>
       </button>
@@ -157,278 +210,280 @@
   </div>
 
   <main id="dashboard-main" tabindex="-1">
-    <!-- Mostrato una sola volta in automatico dopo il primo pairing riuscito (stato "già visto" in
-         localStorage), sempre richiamabile dal bottone "?" nell'header sopra — mai un overlay a
-         schermo intero: una card come le altre, che si può ignorare e continuare a scorrere. -->
-    <div id="intro-banner" class="panel" hidden>
-      <button type="button" id="close-intro" class="icon-button" aria-label="Chiudi">
-        <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-x"></use></svg>
+    <!-- 4 viste (Fase 4 dell'audit UX/UI, docs/next-steps.md): #tab-home/#tab-comunica/#tab-activity
+         mostrate/nascoste da switchTab() (app.js) in base al bottone attivo in #bottom-nav sotto; "Mappa"
+         non è una quinta vista ma apre direttamente #map-overlay sopra (openMapOverlay(), già esistente).
+         #service-call-panel/#chat-panel/#channel-panel/#group-panel/#dashboard-error-wrap restano
+         fuori da ogni tab (deliberatamente, vedi il loro stesso commento più sotto): un pannello
+         aperto non deve sparire solo perché si cambia vista. -->
+    <div id="tab-home" class="tab-view">
+      <!-- Mostrato una sola volta in automatico dopo il primo pairing riuscito (stato "già visto" in
+           localStorage), sempre richiamabile dal bottone "?" nell'header sopra — mai un overlay a
+           schermo intero: una card come le altre, che si può ignorare e continuare a scorrere. -->
+      <div id="intro-banner" class="panel" hidden>
+        <button type="button" id="close-intro" class="icon-button" aria-label="Chiudi">
+          <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-x"></use></svg>
+        </button>
+        <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-waypoint"></use></svg> Cosa puoi fare qui</h2>
+        <p>Sei collegato alla rete locale di questo posto, anche senza internet. Da qui puoi: leggere notizie e contenuti già scaricati, chiedere aiuto all'assistente AI, scrivere in bacheca o nei canali pubblici, messaggiare in privato con chi è vicino, e vedere la mappa. Tutto quello che scrivi resta su questa rete locale.</p>
+      </div>
+
+      <section id="home-hero">
+        <h1 class="wordmark">ARALD<span class="dot">·</span>NETWORK</h1>
+        <form id="search-form" role="search">
+          <div class="search-box">
+            <svg viewBox="0 0 24 24" class="icon search-icon" aria-hidden="true"><use href="#icon-search"></use></svg>
+            <input id="search-input" type="text" placeholder="Cerca contenuti..." autocomplete="off" aria-label="Cerca contenuti">
+            <span id="search-spinner" class="mini-spinner" hidden aria-hidden="true"></span>
+          </div>
+        </form>
+        <p class="hint">Cerca tra i contenuti già disponibili qui — non è una ricerca su internet.</p>
+      </section>
+
+      <section class="panel panel-primary" id="services-panel">
+        <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-plug"></use></svg> Servizi <span class="count" id="services-count"></span></h2>
+        <p class="hint">Strumenti offerti da questa rete — tocca "Chiama" su uno di questi per usarlo.</p>
+        <ul id="services" class="service-cards"></ul>
+      </section>
+
+      <div id="stats" class="panel trail-gauge" aria-label="Stato della rete"></div>
+
+      <!-- Punto d'ingresso a Diagnostica (Fase 4): dettaglio tecnico (ID nodo completo, cache,
+           relay, fiducia dei vicini), deliberatamente non nella barra di navigazione principale — vedi
+           #diagnostics-overlay sopra. -->
+      <button type="button" id="open-diagnostics" class="link-button diagnostics-link">
+        <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-wrench"></use></svg> Diagnostica
       </button>
-      <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-waypoint"></use></svg> Cosa puoi fare qui</h2>
-      <p>Sei collegato alla rete locale di questo posto, anche senza internet. Da qui puoi: leggere notizie e contenuti già scaricati, chiedere aiuto all'assistente AI, scrivere in bacheca o nei canali pubblici, messaggiare in privato con chi è vicino, e vedere la mappa. Tutto quello che scrivi resta su questa rete locale.</p>
-    </div>
 
-    <section id="home-hero">
-      <h1 class="wordmark">ARALD<span class="dot">·</span>NETWORK</h1>
-      <form id="search-form" role="search">
-        <div class="search-box">
-          <svg viewBox="0 0 24 24" class="icon search-icon" aria-hidden="true"><use href="#icon-search"></use></svg>
-          <input id="search-input" type="text" placeholder="Cerca contenuti..." autocomplete="off" aria-label="Cerca contenuti">
-          <span id="search-spinner" class="mini-spinner" hidden aria-hidden="true"></span>
-        </div>
-      </form>
-      <p class="hint">Cerca tra i contenuti già disponibili qui — non è una ricerca su internet.</p>
-    </section>
+      <div id="share-location-panel" class="panel">
+        <button type="button" id="share-location-button" class="call-submit">
+          <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-map-pin"></use></svg> Condividi la mia posizione
+        </button>
+        <p id="share-location-status" class="muted" role="status" aria-live="polite"></p>
+      </div>
 
-    <section class="panel panel-primary" id="services-panel">
-      <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-plug"></use></svg> Servizi <span class="count" id="services-count"></span></h2>
-      <p class="hint">Strumenti offerti da questa rete — tocca "Chiama" su uno di questi per usarlo.</p>
-      <ul id="services" class="service-cards"></ul>
-      <div id="service-call-panel" hidden></div>
-    </section>
-
-    <div id="stats" class="panel trail-gauge" aria-label="Stato della rete"></div>
-
-    <div id="share-location-panel" class="panel">
-      <button type="button" id="share-location-button" class="call-submit">
-        <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-map-pin"></use></svg> Condividi la mia posizione
-      </button>
-      <p id="share-location-status" class="muted" role="status" aria-live="polite"></p>
-    </div>
-
-    <!-- Nascosto finché GET /api/map-info non risponde (mai un 404) — stesso degrado onesto già
-         usato per #location-registry-panel: non ogni gateway ha mappe offline configurate
-         (docs/next-steps.md), la maggior parte non le avrà mai. -->
-    <div id="map-panel" class="panel" hidden>
-      <button type="button" id="open-map-button" class="call-submit">
-        <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-map-pin"></use></svg> Apri mappa
-      </button>
-    </div>
-
-    <!-- Nascosto finché window.Capacitor.Plugins.BluetoothLe non è disponibile (ble-client.js) — a
-         differenza degli altri pannelli condizionali qui sopra, non dipende da una capability del
-         gateway ma solo dal runtime di questo dispositivo: non ogni telefono/browser ha il plugin
-         Bluetooth, stesso degrado onesto applicato a un caso diverso. Un toggle, non un "collega a
-         una Clip specifica" (voce #62, sostituita da #63): da attivo, il telefono scopre e si
-         collega automaticamente a ogni dispositivo ARALD nei paraggi (Clip, altri relay), più
-         connessioni contemporanee, e relaya davvero pacchetti tra loro — "ogni nodo della mesh deve
-         poter fare da relay, compresi gli smartphone". Sempre e solo ruolo centrale (mai periferica,
-         per restare realisticamente supportabile anche su iPhone) — vedi mobile/README.md per
-         l'indagine sul lato periferica, annotata per un prossimo sviluppo, non ancora costruita. -->
-    <div id="ble-relay-panel" class="panel" hidden>
-      <button type="button" id="ble-relay-toggle" class="call-submit" aria-pressed="false">
-        <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-wifi"></use></svg> Attiva relay Bluetooth
-      </button>
-      <p id="ble-relay-status" class="muted" role="status" aria-live="polite"></p>
-      <ul id="ble-relay-peers"></ul>
-      <!-- Attività relay (pezzo 3, docs/security.md): solo conteggi, mai contenuto — vincolo esplicito
-           dell'utente, vedi ble-client.js's renderRelayActivity()/classifyRelayedPacket() in
-           ble-relay.js. Anche per SOS: solo un numero, mai il testo/posizione. -->
-      <div id="ble-relay-activity" class="ble-relay-activity">
-        <h3>Attività relay</h3>
-        <p>Bacheca: <span id="ble-relay-activity-drops">0</span></p>
-        <p>SOS: <span id="ble-relay-activity-sos">0</span></p>
-        <p>Canali:</p>
-        <ul id="ble-relay-activity-channels"></ul>
+      <div class="panels-grid">
+        <details class="panel" id="content-panel">
+          <summary>
+            <div class="summary-row">
+              <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-inbox"></use></svg> Contenuti della rete <span class="count" id="content-count"></span></h2>
+              <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+            </div>
+            <!-- "Contenuti scaricati" (una prima versione di questa scritta) è stato scartato da una
+                 revisione: fuorviante quanto il problema che questo giro di lavoro voleva correggere,
+                 perché la lista mostra anche voci "remoto" non ancora scaricate (renderContent(),
+                 app.js — il pill "remoto"/"in cache" resta invariato sotto). -->
+            <p class="hint">File, pagine e mappe conosciuti su questa rete — alcuni già scaricati qui, altri recuperabili al bisogno.</p>
+          </summary>
+          <ul id="content"></ul>
+        </details>
       </div>
     </div>
 
-    <div class="panels-grid">
-      <details class="panel" id="content-panel">
-        <summary>
-          <div class="summary-row">
-            <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-inbox"></use></svg> Contenuti della rete <span class="count" id="content-count"></span></h2>
-            <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
-          </div>
-          <!-- "Contenuti scaricati" (una prima versione di questa scritta) è stato scartato da una
-               revisione: fuorviante quanto il problema che questo giro di lavoro voleva correggere,
-               perché la lista mostra anche voci "remoto" non ancora scaricate (renderContent(),
-               app.js — il pill "remoto"/"in cache" resta invariato sotto). -->
-          <p class="hint">File, pagine e mappe conosciuti su questa rete — alcuni già scaricati qui, altri recuperabili al bisogno.</p>
-        </summary>
-        <ul id="content"></ul>
-      </details>
+    <div id="tab-comunica" class="tab-view" hidden>
+      <div class="section-intro">
+        <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-users"></use></svg> Comunicare con gli altri</h2>
+        <p class="hint">Quattro modi diversi di scrivere, dal più aperto al più privato: bacheca e canali li vede chiunque sia collegato, i messaggi ai vicini e i gruppi solo chi partecipa.</p>
+      </div>
+
+      <div class="panels-grid">
+        <details class="panel" id="drops-panel">
+          <summary>
+            <div class="summary-row">
+              <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-alert-triangle"></use></svg> Bacheca <span class="count" id="drops-count"></span></h2>
+              <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+            </div>
+            <p class="hint">Segnalazioni legate a un luogo preciso (es. un pericolo sul sentiero) — le vede chiunque passi di lì.</p>
+          </summary>
+          <form id="create-drop-form">
+            <input id="create-drop-label" type="text" placeholder="Etichetta breve (opzionale), es. Frana sul sentiero" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="100">
+            <textarea id="create-drop-text" placeholder="Descrivi la segnalazione..." rows="2" required></textarea>
+            <select id="create-drop-kind">
+              <option value="info" selected>Informazione (es. sentiero chiuso)</option>
+              <option value="hazard">Pericolo (es. crepaccio, frana)</option>
+              <option value="emergency">Emergenza (es. valanga in corso)</option>
+            </select>
+            <button type="submit">Segnala qui</button>
+            <p id="create-drop-status" class="muted" role="status" aria-live="polite"></p>
+          </form>
+          <ul id="drops"></ul>
+        </details>
+
+        <details class="panel" id="node-appends-panel">
+          <summary>
+            <div class="summary-row">
+              <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-inbox"></use></svg> Bacheca del nodo <span class="count" id="node-appends-count"></span></h2>
+              <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+            </div>
+            <p class="hint">Messaggi depositati apposta su QUESTO nodo da un operatore (es. un avviso per chi passa di qui) — diverso dalla Bacheca sopra, che è visibile ovunque nella rete.</p>
+          </summary>
+          <ul id="node-appends"></ul>
+        </details>
+
+        <!-- GET /api/external-delivery-destinations è sempre pubblico su ogni nodo (mai un 404) — il
+             pannello resta sempre visibile, ma il form d'invio è utile solo quando almeno una
+             destinazione è nota (arriva via content:// sync, può richiedere qualche istante dopo l'avvio
+             o la connessione). "Consegna esterna differita" (docs/service-catalog.md): l'operatore
+             sceglie solo un'etichetta amichevole, mai un indirizzo tecnico — vedi node/src/external-delivery.ts. -->
+        <details class="panel" id="external-delivery-panel">
+          <summary>
+            <div class="summary-row">
+              <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-cloud"></use></svg> Invia a un'organizzazione</h2>
+              <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+            </div>
+            <p class="hint">Manda un messaggio di testo o un file a una destinazione esterna (es. la sede di un'organizzazione, o un contatto WhatsApp) — resta in coda su un nodo con accesso a Internet finché non riesce a consegnarlo, cifrato per la sola destinazione scelta.</p>
+          </summary>
+          <form id="send-external-delivery-form">
+            <select id="send-external-delivery-destination" required>
+              <option value="" disabled selected>Scegli una destinazione...</option>
+            </select>
+            <input id="send-external-delivery-password" type="password" placeholder="Password del canale" autocomplete="off" hidden>
+            <textarea id="send-external-delivery-text" placeholder="Scrivi un messaggio..." rows="3"></textarea>
+            <input id="send-external-delivery-file" type="file">
+            <button type="submit">Invia</button>
+            <p id="send-external-delivery-status" class="muted" role="status" aria-live="polite"></p>
+          </form>
+        </details>
+
+        <details class="panel" id="channels-panel">
+          <summary>
+            <div class="summary-row">
+              <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-message-circle"></use></svg> Canali <span class="count" id="channels-count"></span></h2>
+              <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+            </div>
+            <p class="hint">Messaggi pubblici organizzati per argomento — visibili a chiunque sia collegato a questa rete.</p>
+          </summary>
+          <form id="join-channel-form">
+            <input id="join-channel-input" type="text" placeholder="Nome canale, es. generale" autocomplete="off" autocapitalize="off" spellcheck="false">
+            <button type="submit">Apri</button>
+          </form>
+          <ul id="channels"></ul>
+        </details>
+
+        <details class="panel" id="peers-panel">
+          <summary>
+            <div class="summary-row">
+              <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-users"></use></svg> Vicini connessi <span class="count" id="peers-count"></span></h2>
+              <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+            </div>
+            <p class="hint">Le persone collegate in questo momento — tocca "Messaggia" per scriverne una in privato.</p>
+          </summary>
+          <ul id="peers"></ul>
+        </details>
+
+        <details class="panel" id="groups-panel">
+          <summary>
+            <div class="summary-row">
+              <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-lock"></use></svg> Gruppi <span class="count" id="groups-count"></span></h2>
+              <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+            </div>
+            <p class="hint">Chat private e cifrate, solo tra le persone che inviti tu.</p>
+          </summary>
+          <form id="create-group-form">
+            <input id="create-group-name" type="text" placeholder="Nome gruppo" autocomplete="off" autocapitalize="off" spellcheck="false">
+            <div id="group-member-picker" class="group-member-picker"></div>
+            <button type="submit">Crea gruppo cifrato</button>
+          </form>
+          <ul id="groups"></ul>
+        </details>
+
+        <details class="panel" id="location-registry-panel" hidden>
+          <summary>
+            <div class="summary-row">
+              <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-map-pin"></use></svg> Posizioni condivise <span class="count" id="location-registry-count"></span></h2>
+              <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+            </div>
+            <p class="hint">Dove si trovano, per ultimo, gli altri che hanno scelto di condividere la loro posizione.</p>
+          </summary>
+          <ul id="location-registry"></ul>
+        </details>
+
+        <!-- Nascosto finché GET /api/relays non risponde (mai un 404) — solo un nodo con
+             WebUiOptions.exposeRelayRegistry attivo lo offre (docs/beacon.md "Fixed Relay e Registro
+             dei relay"), stesso degrado onesto già usato per #location-registry-panel sopra. -->
+        <details class="panel" id="relays-panel" hidden>
+          <summary>
+            <div class="summary-row">
+              <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-wifi"></use></svg> Relay <span class="count" id="relays-count"></span></h2>
+              <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+            </div>
+            <p class="hint">Dispositivi relay installati sul territorio — chi li ha installati registra qui posizione e stato.</p>
+          </summary>
+          <form id="create-relay-form">
+            <input id="create-relay-id" type="text" placeholder="ID del relay (dalla sua pagina di stato)" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+            <select id="create-relay-type">
+              <option value="fixed">Fisso (pannello solare)</option>
+              <option value="mobile">Mobile (trasportato)</option>
+            </select>
+            <div class="checkbox-row-group">
+              <label class="checkbox-row"><input type="checkbox" id="create-relay-ble"><span>Bluetooth</span></label>
+              <label class="checkbox-row"><input type="checkbox" id="create-relay-lora"><span>LoRa</span></label>
+            </div>
+            <input id="create-relay-operator" type="text" placeholder="Operatore (opzionale), es. Soccorso Alpino" autocomplete="off" maxlength="200">
+            <button type="submit">Registra relay</button>
+            <p id="create-relay-status" class="muted" role="status" aria-live="polite"></p>
+          </form>
+          <ul id="relays"></ul>
+          <p class="hint">Deposita un messaggio su un relay specifico: resta solo lì, per chi si collegherà a quel nodo — non viene diffuso al resto della rete.</p>
+          <form id="send-node-append-form">
+            <select id="send-node-append-target" required>
+              <option value="" disabled selected>Scegli un relay...</option>
+            </select>
+            <input id="send-node-append-label" type="text" placeholder="Etichetta breve (opzionale), es. Sentiero chiuso" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="100">
+            <textarea id="send-node-append-text" placeholder="Messaggio da lasciare su quel nodo..." rows="2" required></textarea>
+            <select id="send-node-append-kind">
+              <option value="info" selected>Informazione</option>
+              <option value="hazard">Pericolo</option>
+              <option value="emergency">Emergenza</option>
+            </select>
+            <button type="submit">Invia al nodo</button>
+            <p id="send-node-append-status" class="muted" role="status" aria-live="polite"></p>
+          </form>
+        </details>
+
+        <!-- Nascosto finché GET /api/emergency-beacons non risponde (mai un 404) — solo un nodo con
+             WebUiOptions.exposeEmergencyBeacons attivo lo offre (docs/beacon.md, la vista Emergency
+             Node), stesso degrado onesto già usato per #relays-panel sopra. Nessun form: un SOS arriva
+             solo dalla mesh, mai digitato qui — vedi node/src/web-ui.ts. -->
+        <details class="panel" id="emergency-beacons-panel" hidden>
+          <summary>
+            <div class="summary-row">
+              <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-alert-circle"></use></svg> SOS ricevuti <span class="count" id="emergency-beacons-count"></span></h2>
+              <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+            </div>
+            <p class="hint">Richieste di soccorso ricevute dalla mesh — anche da un dispositivo mai connesso direttamente a questo nodo.</p>
+          </summary>
+          <ul id="emergency-beacons"></ul>
+        </details>
+      </div>
     </div>
 
-    <div class="section-intro">
-      <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-users"></use></svg> Comunicare con gli altri</h2>
-      <p class="hint">Quattro modi diversi di scrivere, dal più aperto al più privato: bacheca e canali li vede chiunque sia collegato, i messaggi ai vicini e i gruppi solo chi partecipa.</p>
+    <div id="tab-activity" class="tab-view" hidden>
+      <!-- "Le mie attività" (docs/security.md voce #86, docs/next-steps.md — audit UX/UI): l'unico posto
+           dove sapere se un messaggio/file/SOS è uscito da questo dispositivo o è ancora in coda perché
+           non c'è nessun vicino raggiungibile. Mai "consegnato" — questa mesh non ha una conferma di
+           consegna end-to-end per questi tipi di invio (solo il tipo generico MessageType.DATA, mai usato
+           da messaggi/SOS/consegna esterna, ne ha una) — mostrare "consegnato" sarebbe mostrare qualcosa
+           di falso. Puramente locale (localStorage, mai sincronizzato/trasmesso), sempre visibile: non
+           dipende da nessuna capability del gateway. Unico contenuto della vista Attività (Fase 4): non
+           più un <details> comprimibile come nella Home originaria, dato che qui è già tutto ciò che c'è
+           da vedere. -->
+      <div class="panel" id="activity-panel">
+        <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-send"></use></svg> Le mie attività <span class="count" id="activity-count"></span></h2>
+        <p class="hint">Tutto quello che hai inviato da questo dispositivo, con lo stato di ciascun invio.</p>
+        <ul id="activity-log"></ul>
+      </div>
     </div>
 
-    <div class="panels-grid">
-      <details class="panel" id="drops-panel">
-        <summary>
-          <div class="summary-row">
-            <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-alert-triangle"></use></svg> Bacheca <span class="count" id="drops-count"></span></h2>
-            <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
-          </div>
-          <p class="hint">Segnalazioni legate a un luogo preciso (es. un pericolo sul sentiero) — le vede chiunque passi di lì.</p>
-        </summary>
-        <form id="create-drop-form">
-          <input id="create-drop-label" type="text" placeholder="Etichetta breve (opzionale), es. Frana sul sentiero" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="100">
-          <textarea id="create-drop-text" placeholder="Descrivi la segnalazione..." rows="2" required></textarea>
-          <select id="create-drop-kind">
-            <option value="info" selected>Informazione (es. sentiero chiuso)</option>
-            <option value="hazard">Pericolo (es. crepaccio, frana)</option>
-            <option value="emergency">Emergenza (es. valanga in corso)</option>
-          </select>
-          <button type="submit">Segnala qui</button>
-          <p id="create-drop-status" class="muted" role="status" aria-live="polite"></p>
-        </form>
-        <ul id="drops"></ul>
-      </details>
-
-      <details class="panel" id="node-appends-panel">
-        <summary>
-          <div class="summary-row">
-            <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-inbox"></use></svg> Bacheca del nodo <span class="count" id="node-appends-count"></span></h2>
-            <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
-          </div>
-          <p class="hint">Messaggi depositati apposta su QUESTO nodo da un operatore (es. un avviso per chi passa di qui) — diverso dalla Bacheca sopra, che è visibile ovunque nella rete.</p>
-        </summary>
-        <ul id="node-appends"></ul>
-      </details>
-
-      <!-- GET /api/external-delivery-destinations è sempre pubblico su ogni nodo (mai un 404) — il
-           pannello resta sempre visibile, ma il form d'invio è utile solo quando almeno una
-           destinazione è nota (arriva via content:// sync, può richiedere qualche istante dopo l'avvio
-           o la connessione). "Consegna esterna differita" (docs/service-catalog.md): l'operatore
-           sceglie solo un'etichetta amichevole, mai un indirizzo tecnico — vedi node/src/external-delivery.ts. -->
-      <details class="panel" id="external-delivery-panel">
-        <summary>
-          <div class="summary-row">
-            <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-cloud"></use></svg> Invia a un'organizzazione</h2>
-            <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
-          </div>
-          <p class="hint">Manda un file a una destinazione esterna (es. la sede di un'organizzazione) — resta in coda su un nodo con accesso a Internet finché non riesce a consegnarlo, cifrato per la sola destinazione scelta.</p>
-        </summary>
-        <form id="send-external-delivery-form">
-          <select id="send-external-delivery-destination" required>
-            <option value="" disabled selected>Scegli una destinazione...</option>
-          </select>
-          <input id="send-external-delivery-password" type="password" placeholder="Password del canale" autocomplete="off" hidden>
-          <input id="send-external-delivery-file" type="file" required>
-          <button type="submit">Invia</button>
-          <p id="send-external-delivery-status" class="muted" role="status" aria-live="polite"></p>
-        </form>
-      </details>
-
-      <details class="panel" id="channels-panel">
-        <summary>
-          <div class="summary-row">
-            <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-message-circle"></use></svg> Canali <span class="count" id="channels-count"></span></h2>
-            <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
-          </div>
-          <p class="hint">Messaggi pubblici organizzati per argomento — visibili a chiunque sia collegato a questa rete.</p>
-        </summary>
-        <form id="join-channel-form">
-          <input id="join-channel-input" type="text" placeholder="Nome canale, es. generale" autocomplete="off" autocapitalize="off" spellcheck="false">
-          <button type="submit">Apri</button>
-        </form>
-        <ul id="channels"></ul>
-      </details>
-
-      <details class="panel" id="peers-panel">
-        <summary>
-          <div class="summary-row">
-            <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-users"></use></svg> Vicini connessi <span class="count" id="peers-count"></span></h2>
-            <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
-          </div>
-          <p class="hint">Le persone collegate in questo momento — tocca "Messaggia" per scriverne una in privato.</p>
-        </summary>
-        <ul id="peers"></ul>
-      </details>
-
-      <details class="panel" id="groups-panel">
-        <summary>
-          <div class="summary-row">
-            <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-lock"></use></svg> Gruppi <span class="count" id="groups-count"></span></h2>
-            <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
-          </div>
-          <p class="hint">Chat private e cifrate, solo tra le persone che inviti tu.</p>
-        </summary>
-        <form id="create-group-form">
-          <input id="create-group-name" type="text" placeholder="Nome gruppo" autocomplete="off" autocapitalize="off" spellcheck="false">
-          <div id="group-member-picker" class="group-member-picker"></div>
-          <button type="submit">Crea gruppo cifrato</button>
-        </form>
-        <ul id="groups"></ul>
-      </details>
-
-      <details class="panel" id="location-registry-panel" hidden>
-        <summary>
-          <div class="summary-row">
-            <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-map-pin"></use></svg> Posizioni condivise <span class="count" id="location-registry-count"></span></h2>
-            <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
-          </div>
-          <p class="hint">Dove si trovano, per ultimo, gli altri che hanno scelto di condividere la loro posizione.</p>
-        </summary>
-        <ul id="location-registry"></ul>
-      </details>
-
-      <!-- Nascosto finché GET /api/relays non risponde (mai un 404) — solo un nodo con
-           WebUiOptions.exposeRelayRegistry attivo lo offre (docs/beacon.md "Fixed Relay e Registro
-           dei relay"), stesso degrado onesto già usato per #location-registry-panel sopra. -->
-      <details class="panel" id="relays-panel" hidden>
-        <summary>
-          <div class="summary-row">
-            <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-wifi"></use></svg> Relay <span class="count" id="relays-count"></span></h2>
-            <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
-          </div>
-          <p class="hint">Dispositivi relay installati sul territorio — chi li ha installati registra qui posizione e stato.</p>
-        </summary>
-        <form id="create-relay-form">
-          <input id="create-relay-id" type="text" placeholder="ID del relay (dalla sua pagina di stato)" autocomplete="off" autocapitalize="off" spellcheck="false" required>
-          <select id="create-relay-type">
-            <option value="fixed">Fisso (pannello solare)</option>
-            <option value="mobile">Mobile (trasportato)</option>
-          </select>
-          <div class="checkbox-row-group">
-            <label class="checkbox-row"><input type="checkbox" id="create-relay-ble"><span>Bluetooth</span></label>
-            <label class="checkbox-row"><input type="checkbox" id="create-relay-lora"><span>LoRa</span></label>
-          </div>
-          <input id="create-relay-operator" type="text" placeholder="Operatore (opzionale), es. Soccorso Alpino" autocomplete="off" maxlength="200">
-          <button type="submit">Registra relay</button>
-          <p id="create-relay-status" class="muted" role="status" aria-live="polite"></p>
-        </form>
-        <ul id="relays"></ul>
-        <p class="hint">Deposita un messaggio su un relay specifico: resta solo lì, per chi si collegherà a quel nodo — non viene diffuso al resto della rete.</p>
-        <form id="send-node-append-form">
-          <select id="send-node-append-target" required>
-            <option value="" disabled selected>Scegli un relay...</option>
-          </select>
-          <input id="send-node-append-label" type="text" placeholder="Etichetta breve (opzionale), es. Sentiero chiuso" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="100">
-          <textarea id="send-node-append-text" placeholder="Messaggio da lasciare su quel nodo..." rows="2" required></textarea>
-          <select id="send-node-append-kind">
-            <option value="info" selected>Informazione</option>
-            <option value="hazard">Pericolo</option>
-            <option value="emergency">Emergenza</option>
-          </select>
-          <button type="submit">Invia al nodo</button>
-          <p id="send-node-append-status" class="muted" role="status" aria-live="polite"></p>
-        </form>
-      </details>
-
-      <!-- Nascosto finché GET /api/emergency-beacons non risponde (mai un 404) — solo un nodo con
-           WebUiOptions.exposeEmergencyBeacons attivo lo offre (docs/beacon.md, la vista Emergency
-           Node), stesso degrado onesto già usato per #relays-panel sopra. Nessun form: un SOS arriva
-           solo dalla mesh, mai digitato qui — vedi node/src/web-ui.ts. -->
-      <details class="panel" id="emergency-beacons-panel" hidden>
-        <summary>
-          <div class="summary-row">
-            <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-alert-circle"></use></svg> SOS ricevuti <span class="count" id="emergency-beacons-count"></span></h2>
-            <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
-          </div>
-          <p class="hint">Richieste di soccorso ricevute dalla mesh — anche da un dispositivo mai connesso direttamente a questo nodo.</p>
-        </summary>
-        <ul id="emergency-beacons"></ul>
-      </details>
-    </div>
-
-    <!-- Fuori dai <details> sopra (deliberatamente): un pannello aperto (chat 1:1, canale o gruppo)
-         non deve sparire solo perché la sezione da cui è stato aperto viene ricollassata — stesso
-         principio di #service-call-panel, mai annidato dentro un contenitore che potrebbe
-         nascondersi da solo. -->
+    <!-- Fuori dalle 3 viste sopra (deliberatamente): un pannello aperto (form di chiamata a un
+         servizio, chat 1:1, canale o gruppo) non deve sparire solo perché si cambia vista dalla barra
+         di navigazione — mai annidato dentro un contenitore che potrebbe nascondersi da solo (bug
+         reale trovato dalla revisione, Fase 4: #service-call-panel viveva ancora dentro #tab-home,
+         quindi spariva cambiando tab nonostante questo stesso commento dicesse il contrario).
+         #service-call-panel appare comunque subito sotto i contenuti della Home quando quella vista è
+         attiva (le altre due sono hidden, altezza zero), per la stessa collocazione "sotto la
+         griglia dei servizi" richiesta dall'utente. -->
+    <div id="service-call-panel" hidden></div>
     <div id="chat-panel" hidden></div>
     <div id="channel-panel" hidden></div>
     <div id="group-panel" hidden></div>
@@ -440,6 +495,30 @@
       </button>
     </div>
   </main>
+
+  <!-- Barra di navigazione a 4 voci (Fase 4 dell'audit UX/UI, docs/next-steps.md): Home/Comunica/Attività
+       cambiano vista dentro #dashboard-main (switchTab(), app.js); Mappa non è una vista ma apre
+       direttamente #map-overlay sopra (openMapOverlay(), già esistente in mapview.js) — disabilitato
+       finché GET /api/map-info non risponde, stesso degrado onesto già applicato al vecchio #map-panel
+       che sostituisce. -->
+  <nav id="bottom-nav" aria-label="Sezioni principali">
+    <button type="button" class="nav-item is-active" id="nav-home" aria-current="page">
+      <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-waypoint"></use></svg>
+      <span>Home</span>
+    </button>
+    <button type="button" class="nav-item" id="nav-comunica">
+      <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-users"></use></svg>
+      <span>Comunica</span>
+    </button>
+    <button type="button" class="nav-item" id="nav-activity">
+      <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-send"></use></svg>
+      <span>Attività</span>
+    </button>
+    <button type="button" class="nav-item" id="nav-map" disabled>
+      <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-map-pin"></use></svg>
+      <span>Mappa</span>
+    </button>
+  </nav>
 </section>
 
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>

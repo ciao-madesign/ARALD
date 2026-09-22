@@ -11,17 +11,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: ReactNode }): JSX.Element {
   return (
     <html lang="it">
-      <head>
-        {/* Restyle 11-13 settembre 2026 (docs/security.md voce #75) — unico link esterno di questo
-            progetto, per due font non di sistema (globals.css li usa come "Public Sans"/"IBM Plex
-            Mono", con fallback a stack di sistema se il link fallisce a caricare). */}
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
-        />
-      </head>
+      {/* Migrazione token Waypoint, Fase 3 dell'audit UX/UI (docs/security.md voce #88): i font non
+          sono più caricati da Google Fonts (il link esterno che stava qui) — `globals.css` li
+          dichiara ora via `@font-face` auto-ospitati da `public/fonts/` (stessi file woff2 dell'app
+          mobile), niente più dipendenza da una CDN esterna per questo portale. */}
       <body>{children}</body>
     </html>
   );

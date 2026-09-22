@@ -22,6 +22,13 @@ export async function requireAdminSession(): Promise<Session> {
   return session;
 }
 
+/** Same shape as `requireAdminSession()` but for routes any authenticated operator can use (e.g. `app/api/commands/*`, il canale di comando) — un Operatore resta comunque limitato alle organizzazioni proprie, verificato dal chiamante caso per caso, non da questa funzione. */
+export async function requireSession(): Promise<Session> {
+  const session = await auth();
+  if (!session?.user) throw new UnauthorizedError("Sessione non valida o scaduta.");
+  return session;
+}
+
 /**
  * Every `app/api/admin/*` route ends its `catch` block with this — one place
  * that maps each known failure to its HTTP status, so a route handler never

@@ -2,59 +2,111 @@
    prodotto via un canvas di bozzetti (tre direzioni a confronto, poi una fusione delle due preferite)
    — sobrio/istituzionale come prima, ma con un'intestazione a tinta piena, un pannello SOS molto più
    marcato, e un colore d'accento diverso per ciascun tipo di pannello invece di un'unica tonalità
-   uniforme. Font: Public Sans (testo) + IBM Plex Mono (dati tecnici/coordinate/orari), caricati come
-   Google Fonts da app/layout.tsx — prima eccezione di questo file alla convenzione "solo CSS puro,
-   nessuna dipendenza esterna": un link a un foglio di stile, non una libreria, stesso genere di
-   eccezione già accettata altrove nel progetto quando serve davvero (vedi mobile/README.md per come
-   viene motivata una deroga simile). */
+   uniforme.
+
+   Migrazione token Waypoint, Fase 3 dell'audit UX/UI (docs/security.md voce #88, 21 settembre 2026):
+   il sistema colore/font dell'app mobile ("Waypoint", mobile/www/styles.css) diventa la base condivisa
+   con questo portale, non il contrario (decisione presa esplicitamente con l'utente — Waypoint era già
+   più maturo e con font già auto-ospitati). `--accent`/`--accent-dark`/`--accent-soft` e
+   `--header-from`/`--header-to` restano *invariati*: erano già byte-per-byte identici al `--signal`
+   di Waypoint (voce #77, "Segnale verde") ancora prima di questa voce — il vero "colore di rete"
+   condiviso, non qualcosa da migrare ora. Ogni altro token di base/semantico sotto è stato invece
+   sostituito con l'equivalente Waypoint più vicino (`--sos`→`--bad`, `--hazard`→`--warn`,
+   `--good`→`--good`, `--off`/`--info`→`--off`). `--relay` non ha un equivalente in Waypoint (l'app non
+   distingue un colore "relay" a sé) — mantenuto come estensione bespoke ma intonata alla nuova
+   palette più calda (blu-ardesia invece del blu più saturo di prima).
+
+   Font: Overpass (testo) + Overpass Mono (dati tecnici) + Fraunces (titoli), auto-ospitati da
+   `public/fonts/` (stessi 5 file woff2 di `mobile/www/fonts/`, copiati qui) — sostituisce Public
+   Sans/IBM Plex Mono via Google Fonts: niente più dipendenza da una CDN esterna nemmeno per questo
+   portale, coerente con la stessa motivazione già usata per l'app mobile e per `web-ui.ts`
+   ("un'app pensata per funzionare senza internet non può dipendere da una CDN esterna per i propri
+   font", `mobile/README.md`) — qui il portale gira online su Vercel, ma il principio vale comunque:
+   nessuna richiesta di terze parti su ogni caricamento pagina. */
+@font-face {
+  font-family: "Overpass"; font-style: normal; font-weight: 400; font-display: swap;
+  src: url("/fonts/overpass-400.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Overpass"; font-style: normal; font-weight: 600; font-display: swap;
+  src: url("/fonts/overpass-600.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Overpass"; font-style: normal; font-weight: 700; font-display: swap;
+  src: url("/fonts/overpass-700.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Overpass Mono"; font-style: normal; font-weight: 400; font-display: swap;
+  src: url("/fonts/overpass-mono-400.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Fraunces"; font-style: normal; font-weight: 600; font-display: swap;
+  src: url("/fonts/fraunces-600.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 :root {
   color-scheme: light dark;
-  --bg: #f5f6f4;
+  --bg: #eef0e3;
   --card: #ffffff;
-  --border: #e0e4e1;
-  --ink: #172420;
-  --muted: #5f6e68;
+  --border: #c9cdbc;
+  --ink: #1e231f;
+  --muted: #5f6656;
   --accent: #1c6b57;
   --accent-dark: #123f33;
   --accent-soft: #e5f2ee;
-  --sos: #b3261e;
-  --sos-dark: #7c1a15;
-  --sos-soft: #fceceb;
-  --hazard: #9a5b12;
-  --hazard-soft: #faf0df;
-  --info: #55605c;
-  --info-soft: #eef1ef;
-  --good: #1f7a4a;
-  --good-soft: #e6f4ea;
-  --off: #5f6e68;
-  --off-soft: #eef0ee;
-  --relay: #3b5a78;
-  --relay-soft: #e6edf3;
+  --sos: #8e2e1c;
+  --sos-dark: #6b2314;
+  --sos-soft: #f3d9d0;
+  --hazard: #8f5518;
+  --hazard-soft: #f2dec4;
+  --info: #5f6656;
+  --info-soft: #e3e5d8;
+  --good: #3f5636;
+  --good-soft: #dee7d6;
+  --off: #5f6656;
+  --off-soft: #e3e5d8;
+  --relay: #3f5a6b;
+  --relay-soft: #e2eaea;
+  /* Fixed, deliberately NOT overridden in the dark media query below — found by review (13 settembre
+     2026, docs/security.md voce #76, while carrying this same header treatment into web-ui.ts): the
+     header bar's white text needs a consistently dark fill, but --accent/--accent-dark are themselves
+     flipped LIGHT in dark mode (correct for their other job, small accents/links/icons on a dark page
+     background) — reusing them for the header gradient in both themes left dark mode at roughly
+     2.2-2.8:1 contrast, well under WCAG AA (4.5:1 for this size/weight of text). This brand bar stays
+     visually the same dark teal in both themes instead — a colored header doesn't have to invert with
+     the rest of the page. */
+  --header-from: #1c6b57;
+  --header-to: #123f33;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #101614;
-    --card: #182220;
-    --border: #2b3733;
-    --ink: #e7ece9;
-    --muted: #93a19b;
+    --bg: #10151a;
+    --card: #1a2329;
+    --border: #2b363c;
+    --ink: #edeae0;
+    --muted: #93a099;
     --accent: #4fbfa2;
     --accent-dark: #2f8b71;
     --accent-soft: #163a32;
-    --sos: #ff6b60;
-    --sos-dark: #ffb3ac;
-    --sos-soft: #351715;
-    --hazard: #e0a352;
-    --hazard-soft: #3a2c14;
-    --info: #a7b3ad;
-    --info-soft: #202a26;
-    --good: #4fbf7c;
-    --good-soft: #163a24;
-    --off: #93a19b;
-    --off-soft: #202a26;
-    --relay: #7fa3c4;
-    --relay-soft: #1c2a35;
+    --sos: #e06a4c;
+    --sos-dark: #f0a68f;
+    --sos-soft: #3a1f17;
+    --hazard: #e0954b;
+    --hazard-soft: #3a2814;
+    --info: #9aa090;
+    --info-soft: #2a2e26;
+    --good: #7fa36e;
+    --good-soft: #26331f;
+    --off: #9aa090;
+    --off-soft: #2a2e26;
+    --relay: #7ea3b8;
+    --relay-soft: #1e2a2d;
   }
 }
 
@@ -64,14 +116,14 @@
 
 body {
   margin: 0;
-  font-family: "Public Sans", -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: "Overpass", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--ink);
   line-height: 1.45;
 }
 
 .mono {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: "Overpass Mono", ui-monospace, monospace;
 }
 
 a {
@@ -104,17 +156,125 @@ button:disabled {
 }
 
 input,
-select {
+select,
+textarea {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 0.5em 0.7em;
+  font: inherit;
+  color: inherit;
+}
+
+textarea {
+  resize: vertical;
+}
+
+/* ---- Remote drop form (RemoteDropForm.tsx, canale di comando "Pezzo 1") — a <details> disclosure
+   per node row, collapsed by default so it never adds visual weight to the Nodi list until an
+   operator actually wants it. ---- */
+.remote-drop-form {
+  margin-top: 0.6em;
+}
+
+.remote-drop-form summary {
+  cursor: pointer;
+  font-size: 0.85em;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.remote-drop-form .admin-form {
+  margin-top: 0.7em;
+}
+
+.remote-drop-queued {
+  color: var(--good);
+  margin: 0;
+  font-size: 0.85em;
+}
+
+/* ---- Remote relay command form (RemoteRelayCommandForm.tsx, canale di comando "Pezzo 4") — a
+   plain button, no disclosure: a reboot has no parameters to fill in, TwoStepConfirmDialog (see
+   below) is the only extra step before it's sent. ---- */
+.remote-relay-command-form {
+  margin-top: 0.6em;
+}
+
+/* ---- TwoStepConfirmDialog.tsx (Fase 5 dell'audit UX/UI, docs/next-steps.md — risolve P1 #6): il
+   primo pattern di dialogo modale di questo portale, scritto generico per essere riusabile da una
+   futura seconda azione distruttiva, non solo dal riavvio remoto Fixed Relay che lo introduce.
+   z-index sopra ogni altro elemento posizionato della pagina, incluso .map-legend (1000). ---- */
+.confirm-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: rgba(16, 21, 26, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.confirm-dialog {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 6px solid var(--sos);
+  border-radius: 10px;
+  box-shadow: 0 20px 45px -20px rgba(0, 0, 0, 0.5);
+  max-width: 26em;
+  width: 100%;
+  padding: 20px 22px;
+}
+
+.confirm-dialog h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  color: var(--sos-dark);
+}
+
+.confirm-dialog p {
+  margin: 0 0 14px;
+  font-size: 13.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.confirm-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.confirm-dialog-field input {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5em 0.7em;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.confirm-dialog-actions button:first-child {
+  background: var(--off-soft);
+  color: var(--ink);
+}
+
+.confirm-dialog-danger {
+  background: var(--sos);
 }
 
 /* ---- Shared header/tabs (PortalHeader.tsx) — used by the Home and Mappa screens; Login/Admin keep
    their own simpler header, unchanged, out of scope for this restyle. ---- */
 header.top {
-  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-dark) 130%);
+  background: linear-gradient(180deg, var(--header-from) 0%, var(--header-to) 130%);
   color: #fff;
 }
 
@@ -247,6 +407,7 @@ h1 {
   margin: 0 0 0.3em;
   font-size: 1.5em;
   letter-spacing: 0.02em;
+  font-family: "Fraunces", Georgia, serif;
 }
 
 h2 {
@@ -332,20 +493,24 @@ h2 {
   color: var(--relay);
 }
 
-.sos-panel {
+/* Rinominato da .sos-panel ad .attention-panel (Fase 5 dell'audit UX/UI, docs/next-steps.md — risolve
+   P2 #10): il pannello non mostra più solo i SOS, ma il feed unificato "Richiede attenzione ora"
+   (SOS + hazard/emergency + Box offline, ordinato per urgenza in buildAttentionFeed()) — stesso
+   trattamento visivo marcato di prima, dato che resta comunque il pannello più urgente della pagina. */
+.attention-panel {
   border: 1px solid var(--sos);
   border-left: 6px solid var(--sos);
   background: var(--sos-soft);
-  box-shadow: 0 8px 22px -12px rgba(179, 38, 30, 0.45);
+  box-shadow: 0 8px 22px -12px rgba(142, 46, 28, 0.45);
   padding-top: 18px;
 }
 
-.sos-panel .panel-title {
+.attention-panel .panel-title {
   color: var(--sos-dark);
   font-size: 13px;
 }
 
-.sos-panel .panel-head svg {
+.attention-panel .panel-head svg {
   color: var(--sos);
 }
 
@@ -360,9 +525,12 @@ h2 {
   flex: none;
 }
 
+/* Due colonne (non più tre, Fase 6 dell'audit UX/UI, docs/next-steps.md): il pannello Nodi è uscito
+   da questa griglia per diventare una tabella dati densa a piena larghezza sopra — Hazard/Info e
+   Relay restano gli unici due elementi rimasti. */
 .grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 20px;
 }
 
@@ -384,8 +552,8 @@ h2 {
   border-top: 1px solid var(--border);
 }
 
-.sos-panel .row-list li {
-  border-top-color: rgba(179, 38, 30, 0.18);
+.attention-panel .row-list li {
+  border-top-color: rgba(142, 46, 28, 0.18);
 }
 
 .row-list li:first-child {
@@ -508,6 +676,103 @@ h2 {
   color: var(--muted);
 }
 
+/* ---- Design System: tabella dati densa + badge di ruolo (Fase 6 dell'audit UX/UI,
+   docs/next-steps.md) — applicati al pannello Nodi (Home) e al Pannello Admin. Waypoint aveva solo
+   card/liste verticali leggere (una riga per elemento, testo impilato) — adatto per pochi elementi
+   eterogenei, non per una lista densa di righe tutte con la stessa forma (nodi, operatori, nodi
+   assegnati, audit log). ---- */
+.data-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.data-table th,
+.data-table td {
+  padding: 10px 14px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.data-table thead th {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.data-table tbody tr:not(:last-child) {
+  border-bottom: 1px solid var(--border);
+}
+
+/* Riga secondaria dentro una cella (es. l'indirizzo tecnico sotto il nome di un nodo) — lo stesso
+   principio "primario in evidenza, dettaglio tecnico sotto in muted" già usato da .row-meta altrove
+   in questo file, qui dentro una singola cella invece che in una card. */
+.data-table-secondary {
+  display: block;
+  color: var(--muted);
+  font-size: 11.5px;
+  margin-top: 2px;
+}
+
+/* Colonna "Dettagli" dell'audit log (AdminPanel.tsx) — un blob JSON di forma arbitraria, mai fatto
+   entrare in colonna troncando visivamente il layout: ellissi + il valore intero nel title nativo
+   (nessun tooltip custom da scrivere). */
+.data-table-details-cell {
+  max-width: 22em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Riga di dettaglio (form/azioni per riga) sotto la riga sommario di un nodo, nel pannello Nodi —
+   <tr> non può annidare un <details>/pannello senza rompere il layout a colonne, quindi una seconda
+   <tr> a piena larghezza (colSpan) ne prende il posto. */
+.data-table-detail-row td {
+  padding-top: 0;
+  background: var(--bg);
+}
+
+.data-table-detail-row > td > * + * {
+  margin-top: 0.6em;
+}
+
+.role-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* --header-from (mai `var(--accent)`), stesso token già fissato non-reattivo al tema per questo
+   identico motivo (voce #76, commento su --header-from/--header-to sopra): in tema scuro --accent
+   diventa un teal chiaro (pensato per accenti/link su sfondo scuro, non per testo bianco sopra),
+   dando un contrasto reale di ~2.3:1 — muto un errore trovato dalla revisione, la stessa classe di
+   bug già corretta una volta in questo file per la barra dell'header. Verificato: bianco su
+   --header-from è ~6.4:1 in entrambi i temi (fisso). */
+.role-badge.role-admin {
+  background: var(--header-from);
+  color: #fff;
+}
+
+.role-badge.role-operatore {
+  background: var(--off-soft);
+  color: var(--ink);
+}
+
 /* ---- Map pins (mappa/LeafletMap.tsx) — plain divIcon markup, styled globally here since Leaflet
    injects it straight into the page DOM, same as any other element. Colors mirror the tag palette
    above so a pin and its matching list row always read as "the same thing". ---- */
@@ -583,7 +848,7 @@ h2 {
   width: 32px;
   height: 32px;
   background: var(--sos);
-  box-shadow: 0 4px 10px rgba(124, 26, 21, 0.4);
+  box-shadow: 0 4px 10px rgba(107, 35, 20, 0.4);
 }
 
 .map-pin.sos .map-pin-stem {

@@ -33,6 +33,8 @@ export interface RelayRow {
   lat: number;
   lon: number;
   online: boolean;
+  /** Last self-reported battery level, 0-100 (`RelayEntry.batteryPercent`, `node/src/relay-registry.ts`) — `undefined` if this relay has never sent telemetry. Optional, unlike the fields above: telemetry is opt-in and self-declared, not something every registered relay necessarily has. */
+  batteryPercent?: number;
 }
 
 export interface EmergencyBeaconRow {
@@ -62,20 +64,47 @@ export interface NodeAppendRow {
   timestamp: number;
 }
 
+export interface ExternalDeliveryDestinationRow {
+  destinationId: string;
+  /** The mesh node id of the Box that actually owns/published this destination's private allowlist entry — never assumed to be the `nodeUrl` this row was fetched *from*, since a Box's own `/api/external-delivery-destinations` can also carry entries mesh-propagated from *other* Boxes (`ExternalDeliveryDirectory`'s own doc comment, `node/src/external-delivery.ts`). */
+  boxNodeId: string;
+  label: string;
+  publicKeyHex: string;
+  requiresPassword: boolean;
+}
+
+export interface ServiceRow {
+  serviceId: string;
+  version: string;
+  capabilities: string[];
+  providerId: string;
+  isLocal: boolean;
+  availability: boolean;
+}
+
 export interface StatusRow {
   nodeId: string;
   displayName: string;
   connected: boolean;
+  /** `NomadNode`'s own reachability to the wider Internet (`InternetGateway`-style check), distinct from `localNetwork` below — a Box can be fully connected to its own mesh while having no uplink at all, the normal/expected state this project is built around. */
+  internet: "ONLINE" | "OFFLINE";
+  /** Whether this node's own transports are up (`node.status === "ONLINE"`) — the mesh-local half of connectivity, independent of `internet` above. */
+  localNetwork: "ONLINE" | "OFFLINE";
   peers: number;
   relaying: boolean;
+  /** Count of currently-available services this node knows about (mirrors `/api/status`'s own definition) — the full list lives in `NodeSnapshot.services` below, fetched separately since it's its own endpoint. */
+  servicesCount: number;
+  cachedContentPercent: number;
 }
 
 export interface NodeSnapshot {
   status?: StatusRow;
+  services: ServiceRow[];
   relays: RelayRow[];
   emergencyBeacons: EmergencyBeaconRow[];
   drops: DropRow[];
   nodeAppends: NodeAppendRow[];
+  externalDeliveryDestinations: ExternalDeliveryDestinationRow[];
   /** Endpoints that returned 404 (not exposed by this node, e.g. `exposeRelayRegistry` off) or were skipped for lack of a network password — reported so the caller can tell "empty" from "not available", same distinction the mobile UI's capability-gated panels already make. */
   skipped: string[];
 }
@@ -119,7 +148,14 @@ function extractRelayRow(raw: unknown): RelayRow | undefined {
   if (r.type !== "fixed" && r.type !== "mobile") return undefined;
   if (!isFiniteNumber(r.lat) || !isFiniteNumber(r.lon)) return undefined;
   if (typeof r.online !== "boolean") return undefined;
-  return { relayId: r.relayId, type: r.type, lat: r.lat, lon: r.lon, online: r.online };
+  return {
+    relayId: r.relayId,
+    type: r.type,
+    lat: r.lat,
+    lon: r.lon,
+    online: r.online,
+    batteryPercent: isFiniteNumber(r.batteryPercent) ? r.batteryPercent : undefined,
+  };
 }
 
 function extractEmergencyBeaconRow(raw: unknown): EmergencyBeaconRow | undefined {
@@ -158,13 +194,55 @@ function extractNodeAppendRow(raw: unknown): NodeAppendRow | undefined {
   return { appendId: r.appendId, text: r.text, kind: r.kind, timestamp: r.timestamp };
 }
 
+function extractExternalDeliveryDestinationRow(raw: unknown): ExternalDeliveryDestinationRow | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.destinationId !== "string" || r.destinationId.length === 0) return undefined;
+  if (typeof r.boxNodeId !== "string" || r.boxNodeId.length === 0) return undefined;
+  if (typeof r.label !== "string" || r.label.length === 0) return undefined;
+  if (typeof r.publicKeyHex !== "string" || r.publicKeyHex.length === 0) return undefined;
+  if (typeof r.requiresPassword !== "boolean") return undefined;
+  return { destinationId: r.destinationId, boxNodeId: r.boxNodeId, label: r.label, publicKeyHex: r.publicKeyHex, requiresPassword: r.requiresPassword };
+}
+
 function extractStatusRow(raw: unknown): StatusRow | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
   const r = raw as Record<string, unknown>;
   if (typeof r.nodeId !== "string" || r.nodeId.length === 0) return undefined;
   if (typeof r.displayName !== "string" || typeof r.connected !== "boolean") return undefined;
   if (!isFiniteNumber(r.peers) || typeof r.relaying !== "boolean") return undefined;
-  return { nodeId: r.nodeId, displayName: r.displayName, connected: r.connected, peers: r.peers, relaying: r.relaying };
+  if (r.internet !== "ONLINE" && r.internet !== "OFFLINE") return undefined;
+  if (r.localNetwork !== "ONLINE" && r.localNetwork !== "OFFLINE") return undefined;
+  if (!isFiniteNumber(r.services) || !isFiniteNumber(r.cachedContentPercent)) return undefined;
+  return {
+    nodeId: r.nodeId,
+    displayName: r.displayName,
+    connected: r.connected,
+    internet: r.internet,
+    localNetwork: r.localNetwork,
+    peers: r.peers,
+    relaying: r.relaying,
+    servicesCount: r.services,
+    cachedContentPercent: r.cachedContentPercent,
+  };
+}
+
+function extractServiceRow(raw: unknown): ServiceRow | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.serviceId !== "string" || r.serviceId.length === 0) return undefined;
+  if (typeof r.version !== "string") return undefined;
+  if (!Array.isArray(r.capabilities) || !r.capabilities.every((c) => typeof c === "string")) return undefined;
+  if (typeof r.providerId !== "string" || r.providerId.length === 0) return undefined;
+  if (typeof r.isLocal !== "boolean" || typeof r.availability !== "boolean") return undefined;
+  return {
+    serviceId: r.serviceId,
+    version: r.version,
+    capabilities: r.capabilities as string[],
+    providerId: r.providerId,
+    isLocal: r.isLocal,
+    availability: r.availability,
+  };
 }
 
 /** Fetches every endpoint this sync cares about from one node. Never throws for a single missing/unauthorized endpoint — records it in `skipped` instead, same "degrade, don't crash" posture as the rest of this codebase's network-facing code. Does throw if the node itself is unreachable (wrong `nodeUrl`, node not running) or `/api/status` itself is malformed — those mean there is nothing useful to sync at all. */
@@ -185,9 +263,16 @@ export async function fetchNodeSnapshot(creds: NodeCredentials): Promise<NodeSna
     throw new Error(`${base}/api/status returned an unrecognized shape`);
   }
 
-  const [dropsRes, appendsRes] = await Promise.all([fetchJson(`${base}/api/drops`), fetchJson(`${base}/api/node-appends`)]);
+  const [dropsRes, appendsRes, servicesRes, externalDeliveryDestinationsRes] = await Promise.all([
+    fetchJson(`${base}/api/drops`),
+    fetchJson(`${base}/api/node-appends`),
+    fetchJson(`${base}/api/services`),
+    fetchJson(`${base}/api/external-delivery-destinations`),
+  ]);
   let drops: DropRow[] = [];
   let nodeAppends: NodeAppendRow[] = [];
+  let services: ServiceRow[] = [];
+  let externalDeliveryDestinations: ExternalDeliveryDestinationRow[] = [];
   if (dropsRes.status === 200) {
     drops = asArray(dropsRes.body).map(extractDropRow).filter((v): v is DropRow => v !== undefined);
   } else {
@@ -197,6 +282,18 @@ export async function fetchNodeSnapshot(creds: NodeCredentials): Promise<NodeSna
     nodeAppends = asArray(appendsRes.body).map(extractNodeAppendRow).filter((v): v is NodeAppendRow => v !== undefined);
   } else {
     skipped.push(`/api/node-appends (unexpected status ${appendsRes.status})`);
+  }
+  if (servicesRes.status === 200) {
+    services = asArray(servicesRes.body).map(extractServiceRow).filter((v): v is ServiceRow => v !== undefined);
+  } else {
+    skipped.push(`/api/services (unexpected status ${servicesRes.status})`);
+  }
+  if (externalDeliveryDestinationsRes.status === 200) {
+    externalDeliveryDestinations = asArray(externalDeliveryDestinationsRes.body)
+      .map(extractExternalDeliveryDestinationRow)
+      .filter((v): v is ExternalDeliveryDestinationRow => v !== undefined);
+  } else {
+    skipped.push(`/api/external-delivery-destinations (unexpected status ${externalDeliveryDestinationsRes.status})`);
   }
 
   let relays: RelayRow[] = [];
@@ -230,5 +327,5 @@ export async function fetchNodeSnapshot(creds: NodeCredentials): Promise<NodeSna
     }
   }
 
-  return { status, relays, emergencyBeacons, drops, nodeAppends, skipped };
+  return { status, services, relays, emergencyBeacons, drops, nodeAppends, externalDeliveryDestinations, skipped };
 }

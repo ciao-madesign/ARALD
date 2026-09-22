@@ -3,7 +3,7 @@ dist/
 *.log
 .DS_Store
 *.key
-!test/**/*.key
+!tests/**/*.key
 coverage/
 .next/
 mirror-portal/.env.local

@@ -62,6 +62,82 @@ function setContactName(nodeId, name) {
   }
 }
 
+const STORAGE_KEY_ACTIVITY_LOG = "nomadnet.activityLog";
+const MAX_ACTIVITY_LOG_ENTRIES = 50;
+
+/**
+ * "Le mie attività" (docs/security.md voce #86, UX/UI audit) — a purely local, user-authored log of
+ * every outbound send made from this device (message, external delivery, drop, channel post, SOS),
+ * never synced or transmitted. Same in-memory cache + try/catch persistence pattern as
+ * contactNamesCache/loadContactNames() above. `status` is one of:
+ *   - "sent" / "queued" — from the gateway's own response body for a unicast send (message, external
+ *     delivery): whether NomadNode.floodExcept() handed the packet to a neighbor or had to queue it
+ *     locally (no reachable peer yet). Never "delivered" — this mesh has no end-to-end delivery
+ *     confirmation for these packet types (only the unused MessageType.ACK/DATA pair does), so showing
+ *     anything stronger than "left this device" would be showing something false.
+ *   - "published" — Bacheca/Canali: a broadcast, pull-based publish that always succeeds locally the
+ *     moment the call returns (NomadNode.publishContent()), no "queued" concept applies the same way.
+ *   - "sent" for a phone-originated BLE SOS (ble-client.js) — a Bluetooth broadcast burst, never
+ *     routed through this gateway at all, so there is no HTTP response to read a status from.
+ */
+let activityLogCache = null;
+
+function loadActivityLog() {
+  if (activityLogCache) return activityLogCache;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_ACTIVITY_LOG);
+    const parsed = raw ? JSON.parse(raw) : [];
+    activityLogCache = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    activityLogCache = [];
+  }
+  return activityLogCache;
+}
+
+function recordActivity(type, label, status) {
+  const entries = loadActivityLog();
+  entries.unshift({ type, label, status, timestamp: Date.now() });
+  entries.length = Math.min(entries.length, MAX_ACTIVITY_LOG_ENTRIES);
+  activityLogCache = entries;
+  try {
+    localStorage.setItem(STORAGE_KEY_ACTIVITY_LOG, JSON.stringify(entries));
+  } catch {
+    // Storage full or unavailable — same accepted degradation as setContactName() above: the entry
+    // still renders for this page view, it just won't survive a reload.
+  }
+  renderActivityLog();
+}
+
+const ACTIVITY_TYPE_LABELS = { message: "Messaggio", "external-delivery": "Invio a un'organizzazione", drop: "Bacheca", channel: "Canale", sos: "SOS" };
+const ACTIVITY_STATUS_TEXT = { sent: "Inviato", queued: "In coda — verrà inoltrato appena c'è un vicino nelle vicinanze", published: "Pubblicato" };
+/** Overrides ACTIVITY_STATUS_TEXT for a (type, status) pair that reads better as its own dedicated phrase than as a generic verb + type label (docs/security.md voce #87, Fase 2 dell'audit UX/UI) — today only SOS's "sent": "SOS trasmesso" is a direct, reassuring confirmation of the one action where that matters most, instead of the same generic "Inviato" every other row uses. */
+const ACTIVITY_STATUS_TEXT_OVERRIDE = { sos: { sent: "SOS trasmesso" } };
+
+function activityStatusText(type, status) {
+  const override = ACTIVITY_STATUS_TEXT_OVERRIDE[type];
+  return (override && override[status]) || ACTIVITY_STATUS_TEXT[status] || status;
+}
+
+/** Renders the current activityLogCache — called once from recordActivity() right after a send, never on the periodic refreshAll() poll: this list only ever changes because of something this device itself just did, not because of new network state arriving. */
+function renderActivityLog() {
+  const list = document.getElementById("activity-log");
+  if (!list) return;
+  const entries = loadActivityLog();
+  document.getElementById("activity-count").textContent = entries.length > 0 ? String(entries.length) : "";
+  if (renderEmptyIfNeeded(list, entries, "Non hai ancora inviato nulla.", "send")) return;
+  for (const entry of entries) {
+    const typeLabel = ACTIVITY_TYPE_LABELS[entry.type] || entry.type;
+    const li = el("li", null, [
+      el("div", { className: "row" }, [
+        el("span", { className: "row-title", textContent: entry.label ? typeLabel + " — " + entry.label : typeLabel }),
+        el("span", { className: "muted", textContent: timeAgo(entry.timestamp) }),
+      ]),
+      el("div", { className: "tags" }, [el("span", { className: "tag", textContent: activityStatusText(entry.type, entry.status) })]),
+    ]);
+    list.append(li);
+  }
+}
+
 // A serviceId no real service will ever register (real ones are always "service://..." per spec
 // §35-37) — used only to probe whether a network password is accepted by POST /api/call without
 // actually invoking anything. handleCall() (node/src/web-ui.ts) checks the password before it looks
@@ -212,7 +288,7 @@ async function sendChatMessage(to, text) {
     err.status = res.status;
     throw err;
   }
-  return body.id;
+  return { id: body.id, status: body.status };
 }
 
 /**
@@ -432,6 +508,7 @@ async function sendExternalDelivery({ boxNodeId, destinationId, publicKeyHex, da
     err.status = res.status;
     throw err;
   }
+  return { status: body.status };
 }
 
 /**
@@ -1141,7 +1218,7 @@ function renderStatSkeletons() {
   stats.setAttribute("aria-busy", "true");
   stats.append(
     buildGaugeRing(0, true, "off"),
-    el("div", null, [el("div", { className: "skel skel-line w-60" }), el("div", { className: "skel skel-line w-80" })]),
+    el("div", null, [el("div", { className: "skel skel-line w-60" }), el("div", { className: "skel skel-line w-80" }), el("div", { className: "skel skel-line w-60" })]),
   );
 }
 
@@ -1162,6 +1239,30 @@ function renderSkeletons() {
   listSkeleton(document.getElementById("groups"), 2);
 }
 
+/**
+ * The 4-tab navigation (Fase 4 dell'audit UX/UI, docs/next-steps.md): "home"/"comunica"/"activity"
+ * are views inside #dashboard-main, toggled here; "Mappa" is deliberately NOT one of these — it opens
+ * #map-overlay directly (see mapview.js's #nav-map click listener), never routed through this function.
+ */
+const TAB_NAMES = ["home", "comunica", "activity"];
+
+function switchTab(tabName) {
+  for (const name of TAB_NAMES) {
+    document.getElementById("tab-" + name).hidden = name !== tabName;
+    const navButton = document.getElementById("nav-" + name);
+    navButton.classList.toggle("is-active", name === tabName);
+    if (name === tabName) navButton.setAttribute("aria-current", "page");
+    else navButton.removeAttribute("aria-current");
+  }
+  // #dashboard-main has no overflow/height rule of its own (the page/window scrolls, not this
+  // element) — scrolling it directly would be a no-op, found by review.
+  window.scrollTo(0, 0);
+}
+
+for (const name of TAB_NAMES) {
+  document.getElementById("nav-" + name).addEventListener("click", () => switchTab(name));
+}
+
 function showDashboard() {
   document.getElementById("setup-screen").hidden = true;
   document.getElementById("dashboard-screen").hidden = false;
@@ -1175,8 +1276,13 @@ function showDashboard() {
   closeChatPanel();
   closeChannelPanel();
   closeGroupPanel();
+  switchTab("home");
   renderSkeletons();
   updateIntroBanner(false);
+  // "Le mie attività" is purely local (localStorage), never refreshed by refreshAll()'s network
+  // polling — without this call the persisted log from a previous session stayed invisible until the
+  // next send, defeating the point of persisting it across reloads (found by review).
+  renderActivityLog();
   const main = document.getElementById("dashboard-main");
   main.focus({ preventScroll: true }); // announces the screen change to screen-reader users
   refreshAll();
@@ -1249,13 +1355,63 @@ function renderStats(s) {
     s.cachedContentPercent +
     "% · relay " +
     (s.relaying ? "attivo" : "fermo");
+  // "ARALD disponibile — Internet assente" (docs/security.md voce #87) — a plain-language answer to
+  // "does this work without internet?", never the raw "Internet: OFFLINE" wording the desktop status
+  // page uses for an operator audience. Independent of the vicini-based gauge above: this is about
+  // whether *this gateway* has real internet, not about mesh connectivity.
+  const internetNote = "ARALD disponibile — " + (s.internet === "ONLINE" ? "Internet raggiungibile" : "Internet assente");
   stats.append(
     buildGaugeRing(fraction, false, tone),
-    el("div", null, [el("div", { className: "gauge-label", textContent: label }), el("div", { className: "gauge-detail", textContent: detail })]),
+    el("div", null, [
+      el("div", { className: "gauge-label", textContent: label }),
+      el("div", { className: "gauge-detail", textContent: detail }),
+      el("div", { className: "gauge-note", textContent: internetNote }),
+    ]),
   );
-  stats.setAttribute("aria-label", "Stato della rete: " + label + ". " + detail);
+  stats.setAttribute("aria-label", "Stato della rete: " + label + ". " + detail + ". " + internetNote);
   document.getElementById("node-label").textContent = "Connesso a: " + (s.networkName || s.displayName);
 }
+
+/**
+ * Diagnostica (Fase 4 dell'audit UX/UI, docs/next-steps.md): ID nodo completo, dettaglio cache,
+ * stato relay, fiducia dei vicini — tutti dati che GET /api/status e GET /api/peers già espongono
+ * altrove, solo non a colpo d'occhio nella Home. Aggiornata a ogni refreshAll(), non solo quando
+ * l'overlay è aperto — stesso principio già seguito da ogni altro pannello nascosto dietro un
+ * <details> (es. renderPeers()): i dati sotto restano sempre correnti quando l'utente la apre.
+ * Nessun campo "versione": GET /api/status non ne espone una a livello di nodo/app (solo versioni
+ * per-servizio, un concetto diverso — vedi node/src/web-ui.ts) e questo progetto non presenta mai
+ * un'informazione non verificata come se fosse reale (vedi CLAUDE.md).
+ */
+function renderDiagnostics(status, peers) {
+  if (isRenamePending()) return; // never yank an in-progress rename out from under the user — see isRenamePending()
+  document.getElementById("diagnostics-node-id").textContent = status.nodeId;
+  document.getElementById("diagnostics-cache").textContent = status.cachedContentPercent + "% dei contenuti conosciuti dalla rete";
+  document.getElementById("diagnostics-relay").textContent = status.relaying ? "Attivo — questo dispositivo inoltra pacchetti per altri" : "Fermo";
+
+  const list = document.getElementById("diagnostics-trust-list");
+  if (renderEmptyIfNeeded(list, peers, "Nessun vicino connesso al momento.", "users")) return;
+  for (const p of peers) {
+    list.append(
+      el("li", null, [
+        el("div", { className: "row" }, [
+          contactNameEl(p.nodeId, p.shortLabel),
+          el("span", { className: "tag", textContent: TRUST_LABELS[p.trustLevel] || p.trustLevel }),
+        ]),
+      ]),
+    );
+  }
+}
+
+function openDiagnostics() {
+  document.getElementById("diagnostics-overlay").hidden = false;
+}
+
+function closeDiagnostics() {
+  document.getElementById("diagnostics-overlay").hidden = true;
+}
+
+document.getElementById("open-diagnostics").addEventListener("click", openDiagnostics);
+document.getElementById("diagnostics-close").addEventListener("click", closeDiagnostics);
 
 let peerSeenIds = new Set();
 
@@ -1712,7 +1868,14 @@ function updateExternalDeliveryPasswordVisibility() {
 }
 document.getElementById("send-external-delivery-destination").addEventListener("change", updateExternalDeliveryPasswordVisibility);
 
-/** Reads a `File` into a base64 string (no `data:...;base64,` prefix) for `POST /api/external-delivery`'s `dataBase64` field — no multipart upload exists anywhere in this codebase (`CLAUDE.md`, "niente di nuovo senza necessità reale"), same JSON-body convention every other write on this page already uses. */
+/**
+ * Reads a `File` or `Blob` into a base64 string (no `data:...;base64,` prefix) for `POST
+ * /api/external-delivery`'s `dataBase64` field — no multipart upload exists anywhere in this
+ * codebase (`CLAUDE.md`, "niente di nuovo senza necessità reale"), same JSON-body convention every
+ * other write on this page already uses. Also the encoding path for a typed text message (see the
+ * submit handler below): wrapping it in `new Blob([text], {type: "text/plain"})` reuses this exact,
+ * already-tested reader instead of a second UTF-8-to-base64 implementation.
+ */
 function readFileAsBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1731,32 +1894,48 @@ document.getElementById("send-external-delivery-form").addEventListener("submit"
   event.preventDefault();
   const select = document.getElementById("send-external-delivery-destination");
   const passwordInput = document.getElementById("send-external-delivery-password");
+  const textInput = document.getElementById("send-external-delivery-text");
   const fileInput = document.getElementById("send-external-delivery-file");
   const status = document.getElementById("send-external-delivery-status");
   const destinationId = select.value;
   const destination = knownExternalDeliveryDestinations.find((d) => d.destinationId === destinationId);
+  const text = textInput.value.trim();
   const file = fileInput.files[0];
-  if (!destination || !file) return;
+  if (!destination) return; // <select required> already stops this at the browser level
+  // A typed message wins over an attached file when both are present, rather than silently picking
+  // one or sending both — simplest rule for a form with two ways to provide the same "data" field.
+  if (!text && !file) {
+    // Neither field has a browser-native `required` (each is optional on its own — either one
+    // suffices), so unlike a missing destination this has no built-in feedback: say so explicitly
+    // instead of the button silently doing nothing (gap found by code review).
+    status.classList.add("error");
+    status.textContent = "Scrivi un messaggio o scegli un file da inviare.";
+    return;
+  }
   const submit = event.target.querySelector("button[type=submit]");
   setSendExternalDeliveryBusy(submit, true);
   status.classList.remove("error");
   status.textContent = "Invio in corso...";
   try {
-    const dataBase64 = await readFileAsBase64(file);
-    await sendExternalDelivery({
+    const dataBase64 = text ? await readFileAsBase64(new Blob([text], { type: "text/plain" })) : await readFileAsBase64(file);
+    const { status: deliveryStatus } = await sendExternalDelivery({
       boxNodeId: destination.boxNodeId,
       destinationId: destination.destinationId,
       publicKeyHex: destination.publicKeyHex,
       dataBase64,
       password: passwordInput.hidden ? undefined : passwordInput.value,
     });
+    recordActivity("external-delivery", destination.label, deliveryStatus);
+    textInput.value = "";
     fileInput.value = "";
     passwordInput.value = "";
     select.value = "";
     updateExternalDeliveryPasswordVisibility();
-    status.textContent = "File inviato — verrà consegnato non appena la destinazione sarà raggiungibile.";
+    status.textContent = text
+      ? "Messaggio inviato — verrà consegnato non appena la destinazione sarà raggiungibile."
+      : "File inviato — verrà consegnato non appena la destinazione sarà raggiungibile.";
     vibrate(10);
-    showToast("File inviato per la consegna", "cloud");
+    showToast(text ? "Messaggio inviato per la consegna" : "File inviato per la consegna", "cloud");
   } catch (err) {
     if (err.status === 401) {
       handlePasswordRejected();
@@ -1964,6 +2143,7 @@ document.getElementById("create-drop-form").addEventListener("submit", async (ev
     const { lat, lon } = await getCurrentPosition();
     status.textContent = "Invio in corso...";
     await createDrop({ text, lat, lon, label: label || undefined, kind });
+    recordActivity("drop", label || undefined, "published");
     textInput.value = "";
     labelInput.value = "";
     kindInput.value = "info";
@@ -2350,7 +2530,8 @@ function openChatPanel(peer, label) {
     input.disabled = true;
     submit.disabled = true;
     try {
-      await sendChatMessage(peer, text);
+      const { status: messageStatus } = await sendChatMessage(peer, text);
+      recordActivity("message", label, messageStatus);
       input.value = "";
       vibrate(10);
       await refreshChatMessages(peer, list);
@@ -2465,6 +2646,7 @@ function openChannelPanel(channel) {
     submit.disabled = true;
     try {
       await sendChannelMessage(channel, text);
+      recordActivity("channel", channel, "published");
       input.value = "";
       vibrate(10);
       await refreshChannelMessages(channel, list);
@@ -2853,6 +3035,7 @@ async function refreshAll() {
     if (cycleId !== refreshCycleId) return; // superseded by a newer refresh while this one was in flight
     renderStats(status);
     renderPeers(peers);
+    renderDiagnostics(status, peers);
     renderServices(services);
     renderChannels(channels);
     renderDrops(drops);

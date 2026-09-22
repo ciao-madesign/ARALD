@@ -1,13 +1,19 @@
 /* Palette "Waypoint" (docs/security.md voce #31): pietra/inchiostro per struttura, ambra-faro come
-   unico colore d'azione — usato con parsimonia, mai come tinta diffusa — e blu segnale per tutto
-   ciò che è "disponibile/connesso" (focus, link, icone di stato, servizi non ancora aperti). Vedi
-   il Field Guide (Artifact) per il sistema completo: la stessa distinzione beacon-vs-signal vale
-   qui, non solo nel documento di brand. */
+   unico colore d'azione — usato con parsimonia, mai come tinta diffusa — e segnale verde per tutto
+   ciò che è "disponibile/connesso" (focus, link, icone di stato, servizi non ancora aperti). Il verde
+   (voce #77) è lo stesso --accent primario dei due portali (mirror-portal, pannello per-nodo) —
+   era blu fino alla voce #77, cambiato per condividere il "colore della rete" tra le tre superfici
+   ARALD senza toccare la grammatica beacon-vs-signal. Vedi il Field Guide (Artifact) per il sistema
+   completo: la stessa distinzione beacon-vs-signal vale qui, non solo nel documento di brand. */
 :root {
   color-scheme: light dark;
   --bg: #eef0e3; --card: #ffffff; --border: #c9cdbc; --ink: #1e231f; --muted: #5f6656;
   --accent: #c9a227; --accent-2: #e7b74a; --accent-soft: #f1e6be; --accent-ink: #241505;
-  --signal: #35607c; --signal-soft: #d9e6ec; --signal-ink: #eaf3f8;
+  /* Verde ARALD (voce #77): stesso token che nei due portali fa da colore primario, qui riusato
+     solo per --signal ("disponibile/connesso") — mai per --accent, che resta il faro ambra riservato
+     all'unica azione che conta ora. Le tre superfici condividono così il "colore della rete" senza
+     toccare la grammatica beacon-vs-signal di Waypoint. */
+  --signal: #1c6b57; --signal-soft: #e5f2ee; --signal-ink: #f4fbf8;
   --good: #3f5636; --good-soft: #dee7d6;
   --warn: #8f5518; --warn-soft: #f2dec4;
   --bad: #8e2e1c; --bad-soft: #f3d9d0;
@@ -28,7 +34,7 @@
        blu-carbone più freddo al posto di un marrone caldo (voce #50). */
     --bg: #10151a; --card: #1a2329; --border: #2b363c; --ink: #edeae0; --muted: #93a099;
     --accent: #e3b64c; --accent-2: #f2cf7a; --accent-soft: #35290f; --accent-ink: #1c1204;
-    --signal: #7fb3d1; --signal-soft: #1e323d; --signal-ink: #08161c;
+    --signal: #4fbfa2; --signal-soft: #163a32; --signal-ink: #062018;
     --good: #7fa36e; --good-soft: #26331f;
     --warn: #e0954b; --warn-soft: #3a2814;
     --bad: #e06a4c; --bad-soft: #3a1f17;
@@ -391,11 +397,67 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
 }
 #map-overlay .error { position: absolute; inset: 40% 1.5em auto; text-align: center; z-index: 1; }
 
+/* ---------- diagnostica (Fase 4 dell'audit UX/UI) ---------- */
+
+#diagnostics-overlay:not([hidden]) {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  background: color-mix(in srgb, var(--ink) 45%, transparent);
+  display: flex;
+  align-items: flex-end;
+  animation: fade-in 200ms var(--ease);
+}
+.diagnostics-sheet {
+  background: var(--bg);
+  width: 100%;
+  max-height: 85vh;
+  overflow-y: auto;
+  border-radius: 1em 1em 0 0;
+  padding: 1.2em 1.2em calc(1.5em + env(safe-area-inset-bottom));
+  box-shadow: var(--shadow-lg);
+}
+.diagnostics-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.8em; }
+.diagnostics-header h2 { display: flex; align-items: center; gap: 0.5em; margin: 0; }
+.diagnostics-list { display: flex; flex-direction: column; gap: 0.6em; margin: 0 0 1.2em; }
+.diagnostics-list > div { display: flex; align-items: baseline; justify-content: space-between; gap: 1em; }
+.diagnostics-list dt { color: var(--muted); font-size: 0.85em; }
+.diagnostics-list dd { margin: 0; text-align: right; font-size: 0.9em; overflow-wrap: anywhere; }
+#diagnostics-trust-list { margin: 0 0 1.2em; }
+
 /* ---------- dashboard ---------- */
 
 #dashboard-screen:not([hidden]) { animation: screen-in 320ms var(--ease); }
-#dashboard-screen { padding: 1.2em 1em 3em; max-width: 40em; margin: 0 auto; }
+/* padding-bottom più ampio della norma: spazio per #bottom-nav (fixed) sotto, così l'ultimo pannello
+   di ogni vista non resta mai coperto. */
+#dashboard-screen { padding: 1.2em 1em calc(5.5em + env(safe-area-inset-bottom)); max-width: 40em; margin: 0 auto; }
 #dashboard-main:focus-visible { outline: none; } /* focused programmatically for a11y on screen switch, not a keyboard target */
+
+/* Barra di navigazione a 4 voci (Fase 4 dell'audit UX/UI, docs/next-steps.md): Home/Comunica/Attività
+   cambiano vista (switchTab(), app.js); Mappa apre #map-overlay direttamente, mai una vista. */
+#bottom-nav {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  z-index: 15;
+  display: flex;
+  background: var(--card);
+  border-top: 1px solid var(--border);
+  padding: 0.4em 0.4em calc(0.4em + env(safe-area-inset-bottom));
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.06);
+}
+.nav-item {
+  flex: 1;
+  display: flex; flex-direction: column; align-items: center; gap: 0.2em;
+  padding: 0.4em 0.2em;
+  border-radius: 0.6em;
+  color: var(--muted);
+  font-size: 0.7em; font-weight: 600;
+  transition: color 150ms var(--ease), background-color 150ms var(--ease);
+}
+.nav-item .icon { width: 1.3em; height: 1.3em; }
+.nav-item:active { background: color-mix(in srgb, var(--signal) 12%, transparent); }
+.nav-item.is-active { color: var(--signal); }
+.nav-item:disabled { color: var(--off); opacity: 0.55; }
 
 header { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.6em; margin-bottom: 1.2em; }
 .header-identity { display: flex; align-items: center; gap: 0.5em; min-width: 0; }
@@ -413,6 +475,11 @@ header { display: flex; align-items: flex-start; justify-content: space-between;
 .trail-gauge .gauge-ring { width: 4.4em; height: 4.4em; flex: none; }
 .trail-gauge .gauge-label { font-size: 1.05em; font-weight: 700; }
 .trail-gauge .gauge-detail { font-size: 0.78em; color: var(--muted); margin-top: 0.25em; line-height: 1.5; }
+/* "ARALD disponibile — Internet assente" (voce #87, Fase 2 dell'audit UX/UI) — una riga a sé, non
+   infilata nel dettaglio tecnico sopra: risponde a una domanda diversa ("questo posto funziona anche
+   senza internet?"), non "quanti vicini ho ora". --accent invece di --muted: è la risposta rassicurante
+   che l'audit ha chiesto fosse la più leggibile della card, non un dettaglio secondario. */
+.trail-gauge .gauge-note { font-size: 0.82em; font-weight: 600; color: var(--accent); margin-top: 0.35em; }
 
 /* A single, always-visible commitment — opt-in per spec (docs/next-steps.md Opzione J: mai un
    invio automatico/periodico), quindi non nascosto dietro un <details> come le sezioni più
@@ -420,6 +487,12 @@ header { display: flex; align-items: flex-start; justify-content: space-between;
    applicato al pannello Servizi. */
 #share-location-panel { display: flex; flex-direction: column; gap: 0.5em; margin-bottom: 1.2em; }
 #share-location-status:empty { display: none; }
+
+/* Punto d'ingresso a Diagnostica (Fase 4) — un link discreto sotto lo stato rete, non un bottone
+   primario: è un dettaglio tecnico, non un'azione quotidiana. */
+.diagnostics-link { display: inline-flex; align-items: center; gap: 0.4em; margin-bottom: 1.2em; }
+
+.tab-view:not([hidden]) { animation: fade-in 200ms var(--ease); }
 
 .panels-grid { display: flex; flex-direction: column; gap: 1em; }
 
@@ -909,7 +982,7 @@ li.skel-row { display: flex; flex-direction: column; }
 /* ---------- tablet / wide layout ---------- */
 
 @media (min-width: 700px) {
-  #dashboard-screen { max-width: 64em; padding: 1.6em 2em 3.5em; }
+  #dashboard-screen { max-width: 64em; padding: 1.6em 2em calc(5.5em + env(safe-area-inset-bottom)); }
   .panels-grid { flex-direction: row; align-items: flex-start; }
   .panels-grid .panel { flex: 1; min-width: 0; }
   #home-hero { padding-top: 1em; }

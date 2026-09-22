@@ -59,8 +59,16 @@ export interface DropRow {
   syncedAt: Date;
 }
 
+export interface DestinationRow {
+  destinationId: string;
+  boxNodeId: string;
+  nodeUrl: string;
+  data: Record<string, unknown>;
+  syncedAt: Date;
+}
+
 export interface MirrorSectionError {
-  section: "config" | "nodes" | "relays" | "beacons" | "drops";
+  section: "config" | "nodes" | "relays" | "beacons" | "drops" | "destinations";
   message: string;
 }
 
@@ -69,6 +77,7 @@ export interface MirrorSnapshot {
   relays: RelayRow[];
   beacons: BeaconRow[];
   drops: DropRow[];
+  destinations: DestinationRow[];
   /** One entry per section that failed to load — the page renders the sections that *did* succeed normally and shows this message only where data is actually missing, instead of one failing query blanking the whole mirror (found by review: a `Promise.all` across all four queries used to do exactly that). */
   errors: MirrorSectionError[];
 }
@@ -155,6 +164,16 @@ async function queryRelays(db: Pool, organizationId?: string): Promise<RelayRow[
   return res.rows.map((r) => ({ relayId: r.relay_id, nodeUrl: r.node_url, data: asRecord(r.data), syncedAt: r.synced_at }));
 }
 
+/** Same shape as `queryRelays()` above (a small, admin-curated set per Box — `EXTERNAL_DELIVERY_DIRECTORY_CONTENT_NAME`'s own 50-per-directory cap, `node/src/external-delivery.ts` — not an unbounded event stream like beacons/drops), so no `SQL_FETCH_CAP`/ranking needed here either. */
+async function queryDestinations(db: Pool, organizationId?: string): Promise<DestinationRow[]> {
+  const filter = organizationFilterClause(organizationId, 1);
+  const res = await db.query(
+    `SELECT destination_id, box_node_id, node_url, data, synced_at FROM external_delivery_destinations ${filter.clause} ORDER BY synced_at DESC`,
+    filter.params,
+  );
+  return res.rows.map((r) => ({ destinationId: r.destination_id, boxNodeId: r.box_node_id, nodeUrl: r.node_url, data: asRecord(r.data), syncedAt: r.synced_at }));
+}
+
 // This page shows "the 50 most recent" beacons/drops, but ranking that by `synced_at` alone breaks
 // once a table holds more than SQL_FETCH_CAP rows: postgres-sync.ts bumps synced_at on *every*
 // re-sync of an already-known row (its ON CONFLICT ... DO UPDATE), so in a mass-incident scenario
@@ -232,6 +251,7 @@ export function assembleSnapshot(results: {
   relays: PromiseSettledResult<RelayRow[]>;
   beacons: PromiseSettledResult<BeaconRow[]>;
   drops: PromiseSettledResult<DropRow[]>;
+  destinations: PromiseSettledResult<DestinationRow[]>;
 }): MirrorSnapshot {
   const errors: MirrorSectionError[] = [];
   return {
@@ -239,6 +259,7 @@ export function assembleSnapshot(results: {
     relays: unwrapSection(results.relays, "relays", errors),
     beacons: unwrapSection(results.beacons, "beacons", errors),
     drops: unwrapSection(results.drops, "drops", errors),
+    destinations: unwrapSection(results.destinations, "destinations", errors),
     errors,
   };
 }
@@ -255,15 +276,16 @@ export async function getMirrorSnapshot(organizationId?: string): Promise<Mirror
   try {
     db = getPool();
   } catch (err) {
-    return { nodes: [], relays: [], beacons: [], drops: [], errors: [{ section: "config", message: errorMessage(err) }] };
+    return { nodes: [], relays: [], beacons: [], drops: [], destinations: [], errors: [{ section: "config", message: errorMessage(err) }] };
   }
 
-  const [nodes, relays, beacons, drops] = await Promise.allSettled([
+  const [nodes, relays, beacons, drops, destinations] = await Promise.allSettled([
     queryLatestNodeStatus(db, organizationId),
     queryRelays(db, organizationId),
     queryRecentBeacons(db, organizationId),
     queryRecentDrops(db, organizationId),
+    queryDestinations(db, organizationId),
   ]);
 
-  return assembleSnapshot({ nodes, relays, beacons, drops });
+  return assembleSnapshot({ nodes, relays, beacons, drops, destinations });
 }

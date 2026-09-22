@@ -28,6 +28,7 @@ export default async function AdminPage(): Promise<JSX.Element> {
     listRecentAuditLogs(50),
   ]);
 
+  const formattedOrganizations = organizations.map((o) => ({ ...o, createdAt: formatAt(o.createdAt) }));
   const formattedUsers = users.map((u) => ({ ...u, createdAt: formatAt(u.createdAt) }));
   const formattedAssignedNodes = assignedNodes.map((n) => ({ ...n, registeredAt: formatAt(n.registeredAt) }));
   const formattedAuditLogs = auditLogs.map((a) => ({ ...a, createdAt: formatAt(a.createdAt) }));
@@ -42,7 +43,7 @@ export default async function AdminPage(): Promise<JSX.Element> {
         <p className="muted">Organizzazioni, operatori e assegnazione dei nodi mesh — visibile solo agli Admin ARALD.</p>
       </header>
       <AdminPanel
-        organizations={organizations}
+        organizations={formattedOrganizations}
         users={formattedUsers}
         assignedNodes={formattedAssignedNodes}
         unassignedNodeUrls={unassignedNodeUrls}

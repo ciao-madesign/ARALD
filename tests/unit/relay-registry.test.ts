@@ -4,10 +4,14 @@ import {
   extractRelayRegistration,
   extractRelayTelemetry,
   extractRelayCommand,
+  relayCommandSigningPayload,
+  verifySignedRelayCommandSubmission,
   MAX_RELAY_OPERATOR_LENGTH,
   type RelayStaticFields,
   type RelayTelemetryPayload,
+  type SignableRelayCommandFields,
 } from "../../node/src/relay-registry.js";
+import { Identity } from "../../node/src/identity.js";
 
 function validFields(overrides: Partial<RelayStaticFields> = {}): RelayStaticFields {
   return { relayId: "relay-a", type: "fixed", lat: 45.4642, lon: 9.19, radio: { ble: true, lora: false }, operator: "Soccorso Alpino", installedAt: 1000, ...overrides };
@@ -315,5 +319,80 @@ describe("extractRelayCommand", () => {
   it("rejects a missing/non-finite timestamp", () => {
     expect(extractRelayCommand({ type: "relay-command", command: "reboot", timestamp: undefined })).toBeUndefined();
     expect(extractRelayCommand({ type: "relay-command", command: "reboot", timestamp: Number.NaN })).toBeUndefined();
+  });
+});
+
+/**
+ * `relayCommandSigningPayload()`/`verifySignedRelayCommandSubmission()` — "Pezzo 4" del canale di
+ * comando Box↔specchio (`docs/security.md` voce #83), the remote-ingest counterpart of
+ * `extractRelayCommand()` above. Same combined shape+signature verification style as
+ * `verifySignedNodeAppendSubmission()` (`node-appends.ts`).
+ */
+describe("verifySignedRelayCommandSubmission", () => {
+  function validFields(overrides: Partial<SignableRelayCommandFields> = {}): Omit<SignableRelayCommandFields, "publisherId"> & { publisherId?: string } {
+    return { command: "reboot", timestamp: 1000, targetNodeId: "box-1", ...overrides };
+  }
+
+  function signedSubmission(identity: Identity, overrides: Partial<SignableRelayCommandFields> = {}) {
+    const fields: SignableRelayCommandFields = { ...validFields(), publisherId: identity.nodeId, ...overrides };
+    const signature = identity.sign(relayCommandSigningPayload(fields)).toString("hex");
+    return { ...fields, signature };
+  }
+
+  it("accepts a validly signed submission and returns its fields unchanged", () => {
+    const identity = Identity.generate();
+    const submission = signedSubmission(identity);
+
+    expect(verifySignedRelayCommandSubmission(submission)).toEqual(submission);
+  });
+
+  it("rejects a submission whose signature doesn't match its fields (tampered after signing)", () => {
+    const identity = Identity.generate();
+    const submission = signedSubmission(identity);
+
+    expect(verifySignedRelayCommandSubmission({ ...submission, timestamp: submission.timestamp + 1 })).toBeUndefined();
+    expect(verifySignedRelayCommandSubmission({ ...submission, targetNodeId: "box-2" })).toBeUndefined();
+  });
+
+  it("rejects a submission signed by one identity but claiming another's publisherId", () => {
+    const identity = Identity.generate();
+    const impostor = Identity.generate();
+    const fields: SignableRelayCommandFields = { ...validFields(), publisherId: impostor.nodeId };
+    const signature = identity.sign(relayCommandSigningPayload(fields)).toString("hex");
+
+    expect(verifySignedRelayCommandSubmission({ ...fields, signature })).toBeUndefined();
+  });
+
+  it("rejects malformed signature hex or a publisherId that isn't a valid Ed25519 key, without throwing", () => {
+    const identity = Identity.generate();
+    const submission = signedSubmission(identity);
+
+    expect(verifySignedRelayCommandSubmission({ ...submission, signature: "not-hex-!!" })).toBeUndefined();
+    expect(verifySignedRelayCommandSubmission({ ...submission, publisherId: "not-a-valid-node-id" })).toBeUndefined();
+  });
+
+  it("rejects any command other than exactly 'reboot'", () => {
+    const identity = Identity.generate();
+    expect(verifySignedRelayCommandSubmission(signedSubmission(identity, { command: "shutdown" as "reboot" }))).toBeUndefined();
+  });
+
+  it("rejects a missing/non-finite timestamp", () => {
+    const identity = Identity.generate();
+    expect(verifySignedRelayCommandSubmission({ ...signedSubmission(identity), timestamp: undefined })).toBeUndefined();
+    expect(verifySignedRelayCommandSubmission({ ...signedSubmission(identity), timestamp: Number.NaN })).toBeUndefined();
+  });
+
+  it("rejects a missing/empty targetNodeId or publisherId", () => {
+    const identity = Identity.generate();
+    const submission = signedSubmission(identity);
+    expect(verifySignedRelayCommandSubmission({ ...submission, targetNodeId: "" })).toBeUndefined();
+    expect(verifySignedRelayCommandSubmission({ ...submission, publisherId: "" })).toBeUndefined();
+  });
+
+  it("rejects a payload that isn't even an object, without throwing", () => {
+    expect(verifySignedRelayCommandSubmission(undefined)).toBeUndefined();
+    expect(verifySignedRelayCommandSubmission(null)).toBeUndefined();
+    expect(verifySignedRelayCommandSubmission("submission")).toBeUndefined();
+    expect(verifySignedRelayCommandSubmission(42)).toBeUndefined();
   });
 });

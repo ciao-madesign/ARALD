@@ -230,6 +230,86 @@ export async function createUser(
   }, pool);
 }
 
+/** The organization a single `nodeUrl` is assigned to, or `undefined` if it isn't assigned to any (or was never seen). Used to authorize a remote command (`app/api/commands/*`) against the target Box before queuing anything. */
+export async function getNodeOrganization(nodeUrl: string): Promise<string | undefined> {
+  const db = getPool();
+  const res = await db.query(`SELECT organization_id FROM nodes WHERE node_url = $1`, [nodeUrl]);
+  return res.rows[0]?.organization_id;
+}
+
+/**
+ * This `nodeUrl`'s own cryptographic mesh identity (`nodeId`), from its most recent synced status
+ * snapshot — or `undefined` if this Box has never synced yet. Used by `POST /api/commands/node-
+ * appends` ("Pezzo 2", `docs/security.md` voce #82) to bind a signed Node Append to the one Box it's
+ * meant for (`SignableNodeAppendFields.targetNodeId`, `mesh-signing.ts`), same `SELECT ... ORDER BY
+ * synced_at DESC LIMIT 1` pattern `queryLatestNodeStatus()` (`db.ts`) already uses, narrowed to a
+ * single `nodeUrl` instead of every node — deliberately re-derived server-side from the portal's own
+ * freshest sync rather than trusted from the client's page state, which could be stale (a second open
+ * tab, a Box re-provisioned with a new identity since the page was loaded).
+ */
+export async function getLatestNodeId(nodeUrl: string): Promise<string | undefined> {
+  const db = getPool();
+  const res = await db.query(`SELECT node_id FROM node_status_snapshots WHERE node_url = $1 ORDER BY synced_at DESC LIMIT 1`, [nodeUrl]);
+  return res.rows[0]?.node_id;
+}
+
+/**
+ * `true` only when the `relays` table (upserted, `relay_id` is its primary key — no `DISTINCT ON`/
+ * `ORDER BY` needed, unlike `node_status_snapshots`, which is append-only) has a row for exactly
+ * this `nodeId` with `data.type === "fixed"`. Found necessary by review ("Pezzo 4", `docs/security.md`
+ * voce #83): `POST /api/commands/relay-commands`'s own doc comment promised a server-side re-check
+ * of "solo Fixed Relay" (the user's own original request), not just `page.tsx`'s `isFixedRelay`
+ * gate on whether the button is ever rendered — a stale frontend, a direct API call, or a future UI
+ * regression must not be able to queue a reboot for a Mobile Relay/Card just because the client
+ * didn't show the button. Same `relayId === nodeId` identity match `node-status.ts`'s
+ * `summarizeFleet()` already uses for battery/online, never `nodeUrl` (see that file's own doc
+ * comment for why matching on `nodeUrl` would be wrong — a shared/centralized relay registry).
+ */
+export async function isRegisteredFixedRelay(nodeId: string): Promise<boolean> {
+  const db = getPool();
+  const res = await db.query(`SELECT 1 FROM relays WHERE relay_id = $1 AND data->>'type' = 'fixed'`, [nodeId]);
+  return (res.rowCount ?? 0) > 0;
+}
+
+export interface ExternalDeliveryDestinationLookup {
+  publicKeyHex: string;
+  requiresPassword: boolean;
+  label: string;
+}
+
+/**
+ * Server-side re-derivation of one destination's `publicKeyHex`/`requiresPassword`, from this
+ * portal's own last sync of `nodeUrl`'s `/api/external-delivery-destinations` — used by `POST
+ * /api/commands/external-deliveries` ("Pezzo 3", `docs/security.md` voce #84) instead of trusting
+ * either field from the client, same "server-side re-check, not just a UI filter" discipline
+ * `isRegisteredFixedRelay()` above applies for Pezzo 4 (found necessary by that piece's own review).
+ * Requires **both** `box_node_id = targetNodeId` (`getLatestNodeId(nodeUrl)`'s own result — a real
+ * identity match, never inferred from the client) **and** `node_url = nodeUrl`: the directory a
+ * single Box's own `/api/external-delivery-destinations` returns can include entries mesh-propagated
+ * from *other* Boxes too (`ExternalDeliveryDirectory`'s own doc comment, `external-delivery.ts`) —
+ * without the `node_url` match, this could resolve a destination this portal only ever learned about
+ * *through* `nodeUrl` but that actually belongs to (and is only reachable by submitting to) a
+ * different Box entirely, silently routing the command-poller's delivery to the wrong process.
+ * `undefined` for no match — same "destination not found" outcome whether it was never synced, was
+ * synced from a different `node_url`, or belongs to a different Box.
+ */
+export async function getExternalDeliveryDestination(
+  nodeUrl: string,
+  targetNodeId: string,
+  destinationId: string,
+): Promise<ExternalDeliveryDestinationLookup | undefined> {
+  const db = getPool();
+  const res = await db.query(
+    `SELECT data FROM external_delivery_destinations WHERE node_url = $1 AND box_node_id = $2 AND destination_id = $3`,
+    [nodeUrl, targetNodeId, destinationId],
+  );
+  const data = res.rows[0]?.data as Record<string, unknown> | undefined;
+  if (!data || typeof data.publicKeyHex !== "string" || typeof data.requiresPassword !== "boolean" || typeof data.label !== "string") {
+    return undefined;
+  }
+  return { publicKeyHex: data.publicKeyHex, requiresPassword: data.requiresPassword, label: data.label };
+}
+
 export async function listAssignedNodes(): Promise<NodeAssignment[]> {
   const db = getPool();
   const res = await db.query(

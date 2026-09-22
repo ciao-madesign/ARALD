@@ -11,6 +11,7 @@ import { raceTimeout } from "./async-timeout.js";
 import type { MbtilesReader } from "./map-tiles.js";
 import { BoundedFifoMap } from "./bounded-map.js";
 import { extractRelayRegistration } from "./relay-registry.js";
+import { priorityRank, type Packet } from "./packet.js";
 
 export interface WebUiOptions {
   /** Port to listen on; 0 (default) lets the OS assign one — useful in tests, mirrors TcpTransport's own `port` convention. */
@@ -165,6 +166,70 @@ export interface WebUiOptions {
    * no metered-bandwidth concern to gate against with a password either.
    */
   mapTiles?: MbtilesReader;
+  /**
+   * Enables `POST /api/ingest-signed-content` — "Pezzo 1" del canale di
+   * comando Box↔specchio (`docs/emergency-portal.md`): accetta un
+   * content-item già firmato da un'identità mesh non locale (l'identità
+   * dedicata di un operatore del portale, mai quella del Box) e lo
+   * inietta nella mesh (`NomadNode.ingestSignedContent()`) esattamente
+   * come se fosse appena arrivato da un peer. Off by default and gated on
+   * `networkPassword`, same shape as `exposeRelayRegistry`/
+   * `exposeEmergencyBeacons` — a genuinely new mesh-state-changing
+   * capability, not something the ordinary guest-facing gateway offers
+   * just by being paired. `arald-backend`'s command poller is the only
+   * intended caller, but the endpoint itself has no way to know that —
+   * the signature verification inside `ingestSignedContent()` is what
+   * actually keeps a caller from injecting a forged claim, this flag only
+   * gates whether the *attempt* is even possible on this deployment.
+   */
+  allowRemoteContentIngest?: boolean;
+  /**
+   * Enables `POST /api/ingest-node-append` — "Pezzo 2" del canale di
+   * comando Box↔specchio (`docs/emergency-portal.md`, `docs/security.md`
+   * voce #82): accetta un Node Append firmato da un'identità mesh non
+   * locale (la stessa identità per-operatore già custodita dal portale per
+   * "Pezzo 1", mai una nuova) e lo registra localmente
+   * (`NomadNode.ingestSignedNodeAppend()`) — mai propagato oltre, stessa
+   * postura "single-node deposit" di ogni Node Append. Indipendente da
+   * `allowRemoteContentIngest`: un operatore del Box può abilitare l'uno
+   * senza l'altro, stessa filosofia di opt-in granulare già usata per
+   * `exposeRelayRegistry`/`exposeEmergencyBeacons`. Off by default, gated
+   * on `networkPassword` (stessa validazione in costruzione di
+   * `allowRemoteContentIngest`).
+   */
+  allowRemoteNodeAppendIngest?: boolean;
+  /**
+   * Enables `POST /api/ingest-relay-command` — "Pezzo 4" del canale di
+   * comando Box↔specchio (`docs/emergency-portal.md`, `docs/security.md`
+   * voce #83): accetta un comando di riavvio relay firmato da un'identità
+   * mesh non locale e lo inoltra a `NomadNode.ingestSignedRelayCommand()`.
+   * Off by default, gated on `networkPassword` (stessa validazione degli
+   * altri due opt-in di ingest), indipendente da entrambi — un Box può
+   * abilitare qualunque combinazione. **Il vero interruttore decisivo resta
+   * `--allow-remote-reboot`** (`cli.ts`): questo flag da solo decide
+   * solo se il Box *ascolta* un comando firmato in arrivo dal portale,
+   * mai se lo esegue — vedi `NomadNode.ingestSignedRelayCommand()`'s own
+   * doc comment per il ragionamento completo su questo canale
+   * (deliberatamente meno vagliato di quanto la fiducia mesh richiederebbe
+   * di norma per questo comando, una decisione discussa esplicitamente
+   * con l'utente).
+   */
+  allowRemoteRelayCommandIngest?: boolean;
+  /**
+   * Enables `POST /api/ingest-external-delivery` — "Pezzo 3" del canale di
+   * comando Box↔specchio (`docs/emergency-portal.md`, `docs/security.md`
+   * voce #84): accetta una "Consegna esterna differita" già sigillata
+   * composta dal portale (`mirror-portal/lib/mesh-signing.ts`'s
+   * `sealExternalDeliveryForPortal()`) e la inoltra a
+   * `NomadNode.ingestExternalDelivery()`. A differenza degli altri tre
+   * ingest, questo canale non porta alcuna firma Ed25519 — vedi quel
+   * metodo's own doc comment per il perché: il percorso mesh reale
+   * (`handleExternalDelivery()`) non controlla mai l'identità del mittente
+   * nemmeno lì, solo `destinationId`/password per-destinazione. Off by
+   * default, gated on `networkPassword` (stessa validazione degli altri
+   * ingest opt-in), indipendente dagli altri tre.
+   */
+  allowRemoteExternalDeliveryIngest?: boolean;
 }
 
 const WILDCARD_OR_LOOPBACK_HOSTS = new Set(["0.0.0.0", "127.0.0.1", "localhost", "::", "::1"]);
@@ -390,6 +455,40 @@ function contentEntryFor(node: NomadNode, metadata: ContentMetadata): ContentEnt
   };
 }
 
+/**
+ * Defensively parses an untrusted `metadata` field of `POST /api/ingest-
+ * signed-content`'s body into a `ContentMetadata` — same posture as every
+ * other network/HTTP-sourced payload in this codebase (`CLAUDE.md`,
+ * "Convenzioni consolidate": never trust the shape just because the type
+ * looked right). `publisherId`/`signature` are required here (unlike
+ * `ContentMetadata`'s own type, where both are optional for the
+ * locally-trusted `put()` path) — this endpoint only ever exists to accept
+ * *signed* content, so an entry missing either is rejected before it ever
+ * reaches `ingestSignedContent()`'s real signature check.
+ */
+function extractIngestMetadata(raw: unknown): ContentMetadata | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.contentId !== "string" || r.contentId.length === 0) return undefined;
+  if (typeof r.name !== "string" || r.name.length === 0) return undefined;
+  if (typeof r.mimeType !== "string" || r.mimeType.length === 0) return undefined;
+  if (typeof r.size !== "number" || !Number.isFinite(r.size) || r.size < 0) return undefined;
+  if (typeof r.createdAt !== "number" || !Number.isFinite(r.createdAt)) return undefined;
+  if (typeof r.publisherId !== "string" || r.publisherId.length === 0) return undefined;
+  if (typeof r.signature !== "string" || r.signature.length === 0) return undefined;
+  if (r.expiresAt !== undefined && (typeof r.expiresAt !== "number" || !Number.isFinite(r.expiresAt))) return undefined;
+  return {
+    contentId: r.contentId,
+    name: r.name,
+    mimeType: r.mimeType,
+    size: r.size,
+    createdAt: r.createdAt,
+    publisherId: r.publisherId,
+    signature: r.signature,
+    expiresAt: r.expiresAt as number | undefined,
+  };
+}
+
 /** Everything this node knows about (spec §59 "browse", not just search) — same shape `buildSearchResults()` filters down to a query match. */
 function buildContentList(node: NomadNode): ContentEntry[] {
   return node.listKnownContent().map((metadata) => contentEntryFor(node, metadata));
@@ -412,40 +511,81 @@ const PAGE_HTML = `<!doctype html>
 <title>ARALD</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
+  /* Restyle 13 settembre 2026 (docs/security.md voce #76): stessa identità visiva appena approvata
+     per mirror-portal/ (stessi valori esatti di colore, stesso linguaggio di forma) — le due pagine
+     sono "sorelle" per scelta architetturale dichiarata da tempo (vedi mirror-portal/app/globals.css,
+     riga 1-4). Deliberatamente SENZA la tipografia Google Fonts usata lì: questa pagina gira in
+     locale sul Box, che può non avere mai accesso a Internet (il punto centrale di ARALD) — stack di
+     sistema qui, stessa scelta già presa per l'app mobile ("font auto-ospitati... per funzionare
+     offline", mobile/README.md) applicata nel modo più semplice possibile: niente da scaricare.
+
+     Migrazione token Waypoint, Fase 3 dell'audit UX/UI (docs/security.md voce #88, 21 settembre
+     2026): stessi valori di colore appena migrati in mirror-portal/app/globals.css (palette
+     "Waypoint" — mobile/www/styles.css — al posto della precedente). accent/accent-dark/header-from/
+     header-to restano invariati (erano già il colore signal di Waypoint). Solo il colore cambia qui,
+     non il font: la scelta "stack di sistema, niente da scaricare" sopra resta valida
+     indipendentemente da questa voce — non rivista, non necessaria (i font auto-ospitati di
+     mirror-portal risolvono lo stesso problema in un modo diverso, ma qui il vantaggio di zero I/O
+     per i font non vale il costo di una nuova infrastruttura di serving statico su questo server
+     scritto a mano, per una voce classificata "basso rischio, cambio meccanico di variabili CSS").
+  */
   :root {
     color-scheme: light dark;
-    --bg: #f4f6f5; --card: #ffffff; --border: #d9dfdc; --ink: #16211e; --muted: #5c6b66;
-    --accent: #1f7a68; --accent-soft: #e2f1ed;
-    --good: #1f7a4a; --good-soft: #e3f3e8;
-    --warn: #a8631a; --warn-soft: #faeee0;
-    --off: #8a938f; --off-soft: #ecefed;
+    --bg: #eef0e3; --card: #ffffff; --border: #c9cdbc; --ink: #1e231f; --muted: #5f6656;
+    --accent: #1c6b57; --accent-dark: #123f33; --accent-soft: #e5f2ee;
+    --good: #3f5636; --good-soft: #dee7d6;
+    --warn: #8f5518; --warn-soft: #f2dec4;
+    --off: #5f6656; --off-soft: #e3e5d8;
+    /* Fixed, deliberately NOT overridden in the dark media query below — found by review: the header
+       bar's white text needs a consistently dark fill to read well, but --accent/--accent-dark are
+       themselves flipped LIGHT in dark mode (correct for their other job, small accents/links/icons
+       on a dark page background) — using them for the header gradient in both themes left dark mode
+       at ~2.2-2.8:1 contrast, well under WCAG AA. This brand bar stays visually the same dark teal in
+       both themes instead (a colored header doesn't have to invert with the rest of the page). */
+    --header-from: #1c6b57;
+    --header-to: #123f33;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #101614; --card: #182220; --border: #2b3733; --ink: #e7ece9; --muted: #93a19b;
-      --accent: #4fbfa2; --accent-soft: #163a32;
-      --good: #4fbf7c; --good-soft: #163a24;
-      --warn: #e0a352; --warn-soft: #3a2c14;
-      --off: #6b7671; --off-soft: #202a26;
+      --bg: #10151a; --card: #1a2329; --border: #2b363c; --ink: #edeae0; --muted: #93a099;
+      --accent: #4fbfa2; --accent-dark: #2f8b71; --accent-soft: #163a32;
+      --good: #7fa36e; --good-soft: #26331f;
+      --warn: #e0954b; --warn-soft: #3a2814;
+      --off: #9aa090; --off-soft: #2a2e26;
     }
   }
   * { box-sizing: border-box; }
   body {
     font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
     background: var(--bg); color: var(--ink);
-    max-width: 64em; margin: 0 auto; padding: 1.5em 1em 3em;
+    margin: 0;
     line-height: 1.45;
   }
   .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
-  header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 0.5em; margin-bottom: 1.2em; }
+  header {
+    background: linear-gradient(180deg, var(--header-from) 0%, var(--header-to) 130%);
+    color: #fff;
+    padding: 1em;
+  }
+  .header-inner {
+    max-width: 64em; margin: 0 auto;
+    display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 0.5em;
+  }
+  .page-inner { max-width: 64em; margin: 0 auto; padding: 1.2em 1em 3em; }
   h1 { margin: 0; font-size: 1.4em; letter-spacing: 0.02em; }
   h2 { margin: 0 0 0.7em; font-size: 1em; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
-  #node-label { font-size: 0.85em; color: var(--muted); }
+  #node-label { font-size: 0.85em; opacity: 0.85; }
   .pill { display: inline-flex; align-items: center; gap: 0.4em; padding: 0.25em 0.7em; border-radius: 999px; font-size: 0.82em; font-weight: 600; }
   .pill.good { background: var(--good-soft); color: var(--good); }
   .pill.warn { background: var(--warn-soft); color: var(--warn); }
   .pill.off { background: var(--off-soft); color: var(--off); }
   .dot { width: 0.55em; height: 0.55em; border-radius: 50%; background: currentColor; flex: none; }
+  /* Inside the colored header bar, the soft light-on-light pill above would lose all contrast — a
+     translucent-white treatment instead, dot color still carrying the good/off distinction (mirrors
+     mirror-portal/app/globals.css's own .role-pill, adapted here for a status dot instead of text). */
+  header .pill { background: rgba(255, 255, 255, 0.18); color: #fff; }
+  header .pill.good .dot { background: #8fe0bd; }
+  header .pill.off .dot { background: #f2b3ab; }
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(9.5em, 1fr)); gap: 0.7em; margin-bottom: 1.4em; }
   .stat { background: var(--card); border: 1px solid var(--border); border-radius: 0.6em; padding: 0.8em 1em; }
   .stat .v { font-size: 1.5em; font-weight: 700; }
@@ -465,23 +605,33 @@ const PAGE_HTML = `<!doctype html>
   .empty { color: var(--muted); font-style: italic; padding: 0.4em 0; }
   #search-input { width: 100%; font: inherit; padding: 0.55em 0.7em; border-radius: 0.5em; border: 1px solid var(--border); background: var(--bg); color: var(--ink); margin-bottom: 0.8em; }
   #content-panel { margin-bottom: 1em; }
-  #pairing-panel { margin-bottom: 1em; border-color: var(--accent); }
+  #pairing-panel { margin-bottom: 1em; border-color: var(--accent); border-left: 4px solid var(--accent); }
   #pairing-panel .pairing-body { display: flex; gap: 1.4em; flex-wrap: wrap; align-items: flex-start; }
   #pairing-panel .pairing-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11em, 1fr)); gap: 1em; flex: 1; min-width: 12em; }
   #pairing-panel .k { font-size: 0.78em; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.25em; }
   #pairing-panel .v { font-size: 1.35em; font-weight: 700; font-family: ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.02em; }
   #pairing-panel p { margin: 0.8em 0 0; font-size: 0.85em; color: var(--muted); }
   #pairing-qr { width: 9em; height: 9em; border-radius: 0.5em; background: #fff; padding: 0.5em; flex: none; }
+  @media (max-width: 26em) {
+    /* Narrow phones only — the connected-pill's own text ("Connesso"/"Non connesso") wraps
+       awkwardly next to the h1 at very small widths without this, since header's flex-wrap alone
+       still tries to fit both on one line before giving up. */
+    .header-inner { flex-direction: column; align-items: flex-start; }
+  }
 </style>
 </head>
 <body>
 <header>
-  <div>
-    <h1>ARALD</h1>
-    <div id="node-label" class="mono"></div>
+  <div class="header-inner">
+    <div>
+      <h1>ARALD</h1>
+      <div id="node-label" class="mono"></div>
+    </div>
+    <span id="connected-pill" class="pill off"><span class="dot"></span><span>...</span></span>
   </div>
-  <span id="connected-pill" class="pill off"><span class="dot"></span><span>...</span></span>
 </header>
+
+<div class="page-inner">
 
 <div id="stats" class="stats"></div>
 
@@ -521,6 +671,8 @@ const PAGE_HTML = `<!doctype html>
   </form>
   <ul id="content"></ul>
 </section>
+
+</div>
 
 <script>
 function timeAgo(ms) {
@@ -739,6 +891,10 @@ export class WebUiServer {
   private readonly exposeLocationRegistry: boolean;
   private readonly exposeRelayRegistry: boolean;
   private readonly exposeEmergencyBeacons: boolean;
+  private readonly allowRemoteContentIngest: boolean;
+  private readonly allowRemoteNodeAppendIngest: boolean;
+  private readonly allowRemoteRelayCommandIngest: boolean;
+  private readonly allowRemoteExternalDeliveryIngest: boolean;
   private readonly networkName: string | undefined;
   private readonly networkPassword: string | undefined;
   private readonly publicHost: string | undefined;
@@ -746,6 +902,13 @@ export class WebUiServer {
   private readonly mapTileRateLimitState = new BoundedFifoMap<string, { windowStart: number; count: number }>({
     maxSize: MAX_TRACKED_MAP_TILE_RATE_LIMIT_IPS,
   });
+  // awaitDeliveryStatus()'s own state — see that method's doc comment. One shared pair of `this.node`
+  // listeners for the whole server lifetime (attached lazily, `ensureDeliveryStatusListeners()`)
+  // instead of one pair per in-flight send: a burst of concurrent sends used to push past Node's
+  // default EventEmitter maxListeners (10) and print MaxListenersExceededWarning (found by review).
+  private deliveryStatusListenersAttached = false;
+  private readonly deliveryStatusWaiters = new Map<string, (status: "sent" | "queued") => void>();
+  private readonly recentDeliveryStatuses = new BoundedFifoMap<string, "sent" | "queued">({ maxSize: 200 });
   private cachedPairingInfo: PairingInfo | undefined;
   private readonly httpServer: LoopbackHttpServer;
 
@@ -769,6 +932,22 @@ export class WebUiServer {
     this.exposeEmergencyBeacons = options.exposeEmergencyBeacons ?? false;
     if (this.exposeEmergencyBeacons && !options.networkPassword) {
       throw new Error("WebUiServer: exposeEmergencyBeacons requires a networkPassword");
+    }
+    this.allowRemoteContentIngest = options.allowRemoteContentIngest ?? false;
+    if (this.allowRemoteContentIngest && !options.networkPassword) {
+      throw new Error("WebUiServer: allowRemoteContentIngest requires a networkPassword");
+    }
+    this.allowRemoteNodeAppendIngest = options.allowRemoteNodeAppendIngest ?? false;
+    if (this.allowRemoteNodeAppendIngest && !options.networkPassword) {
+      throw new Error("WebUiServer: allowRemoteNodeAppendIngest requires a networkPassword");
+    }
+    this.allowRemoteRelayCommandIngest = options.allowRemoteRelayCommandIngest ?? false;
+    if (this.allowRemoteRelayCommandIngest && !options.networkPassword) {
+      throw new Error("WebUiServer: allowRemoteRelayCommandIngest requires a networkPassword");
+    }
+    this.allowRemoteExternalDeliveryIngest = options.allowRemoteExternalDeliveryIngest ?? false;
+    if (this.allowRemoteExternalDeliveryIngest && !options.networkPassword) {
+      throw new Error("WebUiServer: allowRemoteExternalDeliveryIngest requires a networkPassword");
     }
     this.mapTiles = options.mapTiles;
     const boundHost = options.host ?? "127.0.0.1";
@@ -867,6 +1046,22 @@ export class WebUiServer {
       }
       if (url.pathname === "/api/external-delivery") {
         void this.handleSendExternalDelivery(req, res);
+        return;
+      }
+      if (url.pathname === "/api/ingest-signed-content") {
+        void this.handleIngestSignedContent(req, res);
+        return;
+      }
+      if (url.pathname === "/api/ingest-node-append") {
+        void this.handleIngestNodeAppend(req, res);
+        return;
+      }
+      if (url.pathname === "/api/ingest-relay-command") {
+        void this.handleIngestRelayCommand(req, res);
+        return;
+      }
+      if (url.pathname === "/api/ingest-external-delivery") {
+        void this.handleIngestExternalDelivery(req, res);
         return;
       }
       res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
@@ -1179,6 +1374,82 @@ export class WebUiServer {
    * mirrors `handleCall()`'s "unknown or unavailable service" — "can't
    * reach this recipient (yet)" is the same class of condition.
    */
+  /**
+   * Attaches the *single* shared pair of `this.node` listeners `awaitDeliveryStatus()` needs, once per
+   * server lifetime — not once per in-flight send. An earlier version attached its own pair of
+   * listeners inside every `awaitDeliveryStatus()` call; a burst of concurrent sends (several phones on
+   * one relay sending within the same ~1.5s window) pushed the listener count for one event name past
+   * `EventEmitter`'s default `maxListeners` (10) and printed `MaxListenersExceededWarning` (found by
+   * review) — every listener was still correctly cleaned up, so nothing actually leaked, but the
+   * pattern didn't scale. `recentDeliveryStatuses` (bounded, see its own field comment) replaces the
+   * old per-call `seenBeforeId` buffer for the same reason it existed: when `floodExcept()` finds zero
+   * connected peers, it never awaits real I/O, so the "queued" event fires synchronously inside
+   * `sendFn()` itself, before `awaitDeliveryStatus()` below has an id to key a waiter on.
+   */
+  private ensureDeliveryStatusListeners(): void {
+    if (this.deliveryStatusListenersAttached) return;
+    this.deliveryStatusListenersAttached = true;
+    const record = (packetId: string, status: "sent" | "queued"): void => {
+      const waiter = this.deliveryStatusWaiters.get(packetId);
+      if (waiter) {
+        this.deliveryStatusWaiters.delete(packetId);
+        waiter(status);
+      } else {
+        this.recentDeliveryStatuses.set(packetId, status);
+      }
+    };
+    this.node.on("store-and-forward:queued", (packet: Packet) => record(packet.id, "queued"));
+    this.node.on("store-and-forward:handed-off", (packet: Packet) => record(packet.id, "sent"));
+  }
+
+  /**
+   * Calls `sendFn()` (expected to be `NomadNode.sendPrivateMessage()`/`sendExternalDelivery()`,
+   * synchronous, returning the new packet's id) and resolves once that packet is either handed to a
+   * neighbor or queued locally by `NomadNode.floodExcept()` (node.ts's
+   * `"store-and-forward:handed-off"`/`"store-and-forward:queued"` events, dispatched via
+   * `ensureDeliveryStatusListeners()` above) — the only two locally-knowable outcomes for a unicast
+   * send today (`docs/security.md` voce #86, "Le mie attività"). Neither status is a delivery
+   * confirmation: this mesh has no end-to-end ack for `PRIVATE_MESSAGE`/`EXTERNAL_DELIVERY` (only the
+   * unused `MessageType.ACK`/`DATA` pair does) — `"sent"` only ever means "left this device", never
+   * "arrived".
+   *
+   * Both events are gated on `floodExcept()`'s own `isUnicastElsewhere` (`packet.destination !==
+   * this.nodeId`) — a caller whose `to`/`boxNodeId` names *this* node itself would never see either
+   * event and always fall through to the timeout below. `handleSendMessage()` can't reach that case
+   * (`sendPrivateMessage()` already throws first: a node never holds its own key in `peerDirectory`);
+   * `handleSendExternalDelivery()` rejects a self-addressed `boxNodeId` before ever calling this, for
+   * the same reason.
+   *
+   * On timeout (deliberately generous — see `DELIVERY_STATUS_AWAIT_MS`), defaults to `"sent"` rather
+   * than surfacing an error: a slow-to-settle event is far less likely in practice than a genuine
+   * hand-off, and this status is advisory UI copy either way, not a correctness guarantee.
+   */
+  private awaitDeliveryStatus(sendFn: () => string, timeoutMs: number = DELIVERY_STATUS_AWAIT_MS): Promise<{ id: string; status: "sent" | "queued" }> {
+    this.ensureDeliveryStatusListeners();
+    return new Promise((resolve, reject) => {
+      let id: string;
+      try {
+        id = sendFn();
+      } catch (err) {
+        reject(err as Error);
+        return;
+      }
+      const alreadySeen = this.recentDeliveryStatuses.get(id);
+      if (alreadySeen !== undefined) {
+        resolve({ id, status: alreadySeen });
+        return;
+      }
+      const timer = setTimeout(() => {
+        this.deliveryStatusWaiters.delete(id);
+        resolve({ id, status: "sent" });
+      }, timeoutMs);
+      this.deliveryStatusWaiters.set(id, (status) => {
+        clearTimeout(timer);
+        resolve({ id, status });
+      });
+    });
+  }
+
   private async handleSendMessage(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!this.allowServiceCalls || !this.networkPassword) {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
@@ -1230,8 +1501,8 @@ export class WebUiServer {
     }
 
     try {
-      const id = this.node.sendPrivateMessage(to, { text });
-      sendJson(res, 200, { id });
+      const { id, status } = await this.awaitDeliveryStatus(() => this.node.sendPrivateMessage(to, { text }));
+      sendJson(res, 200, { id, status });
     } catch (err) {
       // sendPrivateMessage()'s only synchronous throw today is the "encryption key not yet
       // known" case (node.ts) — mapped to 404, same as handleCall()'s "unknown or unavailable
@@ -1407,6 +1678,316 @@ export class WebUiServer {
       const message = (err as Error).message;
       sendJson(res, message.includes("too many high-priority drops") ? 429 : 400, { error: message });
     }
+  }
+
+  /**
+   * `POST /api/ingest-signed-content` — "Pezzo 1" del canale di comando
+   * Box↔specchio (`docs/emergency-portal.md`, `docs/security.md` voce
+   * #81). Body `{ metadata: ContentMetadata, data: <base64>, priority?:
+   * number }`. Gated on `allowRemoteContentIngest` (404 when off — same
+   * "not registered, not offered" posture as every other opt-in endpoint
+   * here) **and** the network password, same shape as `POST /api/drops`.
+   *
+   * This endpoint's own auth only answers "is this caller even allowed to
+   * attempt an ingest on this deployment" — it never decides whether the
+   * *content itself* is legitimate. That's `NomadNode.ingestSignedContent()`'s
+   * job (independent Ed25519 verification against `metadata.publisherId`,
+   * never this caller's identity), whose `IngestSignedContentResult` maps
+   * onto three genuinely different statuses (found necessary by review
+   * alongside that method's own new rate-limit/elevated-drop-budget checks,
+   * `docs/security.md` voce #81 — a plain boolean couldn't carry this
+   * distinction): `"accepted"` → 200, `"rejected"` → 422 ("the submission
+   * itself doesn't verify" — terminal, never worth retrying), `"rate-
+   * limited"` → 429 (worth retrying later). These mean genuinely different
+   * things to `arald-backend`'s command poller: 401 means its own network
+   * password is stale, 422 means one specific queued command is
+   * corrupt/forged and should be marked failed, and 429 means this Box's
+   * own per-identity or elevated-drop budget is temporarily exhausted and
+   * the command should be retried, not given up on.
+   */
+  private async handleIngestSignedContent(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.allowRemoteContentIngest || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+
+    let raw: Buffer;
+    try {
+      raw = await readRequestBody(req, MAX_MESSAGE_BODY_BYTES, MAX_CALL_BODY_READ_MS);
+    } catch (err) {
+      if (res.writableEnded || res.destroyed) return;
+      if (err instanceof BodyTooLargeError) {
+        sendJson(res, 413, { error: "request body too large" });
+      } else if (err instanceof Error && err.message.includes("timed out")) {
+        sendJson(res, 408, { error: "timed out waiting for the request body" });
+      } else {
+        sendJson(res, 400, { error: "failed to read request body" });
+      }
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = raw.length === 0 ? {} : JSON.parse(raw.toString("utf8"));
+    } catch {
+      sendJson(res, 400, { error: "malformed JSON body" });
+      return;
+    }
+
+    const body = parsed as { metadata?: unknown; data?: unknown; priority?: unknown } | null;
+    const metadata = extractIngestMetadata(body?.metadata);
+    if (!metadata) {
+      sendJson(res, 400, { error: "'metadata' is missing or malformed" });
+      return;
+    }
+    if (typeof body?.data !== "string") {
+      sendJson(res, 400, { error: "'data' must be a base64-encoded string" });
+      return;
+    }
+    // Buffer.from(..., "base64") never throws (Node's decoder silently skips invalid characters
+    // instead of raising) — found by review: a try/catch here was dead code that could never fire,
+    // giving a false impression that malformed base64 was being explicitly rejected. A garbage
+    // input just decodes to different-than-intended bytes, which fail `ingestSignedContent()`'s own
+    // hash/signature check below (422) — the same posture `handleSendExternalDelivery()`'s own
+    // `dataBase64` handling already documents further down in this file.
+    const data = Buffer.from(body.data, "base64");
+
+    const result = this.node.ingestSignedContent(metadata, data, { announce: true, priority: priorityRank(body.priority) });
+    if (result === "rate-limited") {
+      sendJson(res, 429, { error: "too many requests for this identity, or this Box's elevated-drop budget is exhausted — try again later" });
+      return;
+    }
+    if (result === "rejected") {
+      sendJson(res, 422, { error: "content did not verify (bad signature, hash mismatch, or already expired)" });
+      return;
+    }
+    sendJson(res, 200, { contentId: metadata.contentId });
+  }
+
+  /**
+   * `POST /api/ingest-node-append` — "Pezzo 2" del canale di comando
+   * Box↔specchio (`docs/emergency-portal.md`, `docs/security.md` voce
+   * #82). Body `{ text, label?, kind?, timestamp, expiresAt, targetNodeId,
+   * publisherId, signature }` — the exact shape
+   * `NomadNode.ingestSignedNodeAppend()` verifies (see that method's own
+   * doc comment for why a signature, not `ContentMetadata`/base64 data
+   * like `POST /api/ingest-signed-content`, is the right shape here).
+   * Gated on `allowRemoteNodeAppendIngest` (404 when off) **and** the
+   * network password, same posture as every other opt-in endpoint here —
+   * this endpoint's own auth only answers "is this caller even allowed to
+   * attempt an ingest on this deployment", never whether the submission
+   * itself is legitimate. Status mapping identical to
+   * `handleIngestSignedContent()`, for the same reason (the command poller
+   * makes the same accept/give-up/retry decision either way): `"accepted"`
+   * → 200, `"rejected"` → 422 (terminal), `"rate-limited"` → 429
+   * (deferred).
+   */
+  private async handleIngestNodeAppend(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.allowRemoteNodeAppendIngest || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+
+    let raw: Buffer;
+    try {
+      raw = await readRequestBody(req, MAX_MESSAGE_BODY_BYTES, MAX_CALL_BODY_READ_MS);
+    } catch (err) {
+      if (res.writableEnded || res.destroyed) return;
+      if (err instanceof BodyTooLargeError) {
+        sendJson(res, 413, { error: "request body too large" });
+      } else if (err instanceof Error && err.message.includes("timed out")) {
+        sendJson(res, 408, { error: "timed out waiting for the request body" });
+      } else {
+        sendJson(res, 400, { error: "failed to read request body" });
+      }
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = raw.length === 0 ? {} : JSON.parse(raw.toString("utf8"));
+    } catch {
+      sendJson(res, 400, { error: "malformed JSON body" });
+      return;
+    }
+
+    // Only a coarse HTTP-layer shape check here (is this even a plain object at all — an array
+    // passes typeof === "object" too, so it's excluded explicitly) — the rest of the shape
+    // (types/lengths/required fields) plus the signature itself are `ingestSignedNodeAppend()`'s
+    // job, same split `handleIngestSignedContent()` uses for `data`/`ContentMetadata`. Unlike that
+    // endpoint, there's no separate binary blob or HTTP-specific decoding step here (a Node Append's
+    // `text` is already small, bounded by `MAX_MESSAGE_TEXT_LENGTH`), so one combined verification
+    // step in `node.ts` is enough — no `extract*()` pre-pass needed in this class.
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      sendJson(res, 400, { error: "request body must be a JSON object" });
+      return;
+    }
+
+    const result = this.node.ingestSignedNodeAppend(parsed);
+    if (result === "rate-limited") {
+      sendJson(res, 429, { error: "too many requests for this identity, or this Box's elevated-node-append budget is exhausted — try again later" });
+      return;
+    }
+    if (result === "rejected") {
+      sendJson(res, 422, { error: "submission did not verify (bad signature, wrong target node, or already expired)" });
+      return;
+    }
+    sendJson(res, 200, { accepted: true });
+  }
+
+  /**
+   * `POST /api/ingest-relay-command` — "Pezzo 4" del canale di comando
+   * Box↔specchio (`docs/emergency-portal.md`, `docs/security.md` voce
+   * #83). Body `{ command, timestamp, targetNodeId, publisherId,
+   * signature }` — the exact shape `NomadNode.ingestSignedRelayCommand()`
+   * verifies. Gated on `allowRemoteRelayCommandIngest` (404 when off)
+   * **and** the network password, same posture as every other opt-in
+   * endpoint here — but this one gates the single most sensitive action
+   * this class exposes (see `ingestSignedRelayCommand()`'s own doc
+   * comment for the full reasoning and the real safety valve,
+   * `--allow-remote-reboot`, which is independent of this flag entirely).
+   * Status mapping identical to the other two ingest endpoints: `"accepted"`
+   * → 200, `"rejected"` → 422 (terminal), `"rate-limited"` → 429 (deferred).
+   */
+  private async handleIngestRelayCommand(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.allowRemoteRelayCommandIngest || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+
+    let raw: Buffer;
+    try {
+      raw = await readRequestBody(req, MAX_MESSAGE_BODY_BYTES, MAX_CALL_BODY_READ_MS);
+    } catch (err) {
+      if (res.writableEnded || res.destroyed) return;
+      if (err instanceof BodyTooLargeError) {
+        sendJson(res, 413, { error: "request body too large" });
+      } else if (err instanceof Error && err.message.includes("timed out")) {
+        sendJson(res, 408, { error: "timed out waiting for the request body" });
+      } else {
+        sendJson(res, 400, { error: "failed to read request body" });
+      }
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = raw.length === 0 ? {} : JSON.parse(raw.toString("utf8"));
+    } catch {
+      sendJson(res, 400, { error: "malformed JSON body" });
+      return;
+    }
+
+    // Same coarse HTTP-layer shape check as handleIngestNodeAppend() — the rest of the shape plus
+    // the signature itself are ingestSignedRelayCommand()'s job.
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      sendJson(res, 400, { error: "request body must be a JSON object" });
+      return;
+    }
+
+    const result = this.node.ingestSignedRelayCommand(parsed);
+    if (result === "rate-limited") {
+      sendJson(res, 429, { error: "too many requests for this identity, or this Box's relay-command budget is exhausted — try again later" });
+      return;
+    }
+    if (result === "rejected") {
+      sendJson(res, 422, { error: "submission did not verify (bad signature, wrong target node, or a replay of a prior command)" });
+      return;
+    }
+    sendJson(res, 200, { accepted: true });
+  }
+
+  /**
+   * `POST /api/ingest-external-delivery` — "Pezzo 3" del canale di comando
+   * Box↔specchio (`docs/emergency-portal.md`, `docs/security.md` voce #84).
+   * Body `{ destinationId, senderEphemeralPublicKey, nonce, ciphertext,
+   * authTag, submittedAt }` — the exact `ExternalDeliveryPayload` shape
+   * `NomadNode.ingestExternalDelivery()` verifies (`external-delivery.ts`'s
+   * `extractExternalDeliveryPayload()`), already sealed server-side by the
+   * portal (`mirror-portal/lib/mesh-signing.ts`'s
+   * `sealExternalDeliveryForPortal()`) — this Box never sees plaintext on
+   * this path either, same as the real mesh one. Gated on
+   * `allowRemoteExternalDeliveryIngest` (404 when off) **and** the network
+   * password, same posture as every other opt-in endpoint here.
+   *
+   * Body size limit is sized dynamically off `node.maxExternalDeliveryPayloadBytes`
+   * (same reasoning as `handleSendExternalDelivery()`'s own dynamic cap) —
+   * but doubled, not `* 4/3`: this body's `ciphertext` field is hex-encoded
+   * (`extractExternalDeliveryPayload()`'s own `maxCiphertextHexLength`
+   * convention), not base64.
+   *
+   * Status mapping identical to the other three ingest endpoints:
+   * `"accepted"` → 200, `"rejected"` → 422 (terminal), `"rate-limited"` → 429
+   * (deferred).
+   */
+  private async handleIngestExternalDelivery(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.allowRemoteExternalDeliveryIngest || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+
+    const maxBodyBytes = this.node.maxExternalDeliveryPayloadBytes * 2 + 4096;
+    let raw: Buffer;
+    try {
+      raw = await readRequestBody(req, maxBodyBytes, MAX_CALL_BODY_READ_MS);
+    } catch (err) {
+      if (res.writableEnded || res.destroyed) return;
+      if (err instanceof BodyTooLargeError) {
+        sendJson(res, 413, { error: "request body too large" });
+      } else if (err instanceof Error && err.message.includes("timed out")) {
+        sendJson(res, 408, { error: "timed out waiting for the request body" });
+      } else {
+        sendJson(res, 400, { error: "failed to read request body" });
+      }
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = raw.length === 0 ? {} : JSON.parse(raw.toString("utf8"));
+    } catch {
+      sendJson(res, 400, { error: "malformed JSON body" });
+      return;
+    }
+
+    // Same coarse HTTP-layer shape check as the other ingest handlers — the rest of the shape is
+    // ingestExternalDelivery()'s job (there is no signature to verify on this path, see that
+    // method's own doc comment for why).
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      sendJson(res, 400, { error: "request body must be a JSON object" });
+      return;
+    }
+
+    const result = this.node.ingestExternalDelivery(parsed);
+    if (result === "rate-limited") {
+      sendJson(res, 429, { error: "too many requests for this destination, or this Box's ingest budget is exhausted — try again later" });
+      return;
+    }
+    if (result === "rejected") {
+      sendJson(res, 422, { error: "submission did not verify (malformed payload, or unknown destinationId)" });
+      return;
+    }
+    sendJson(res, 200, { accepted: true });
   }
 
   /**
@@ -1927,6 +2508,14 @@ export class WebUiServer {
       sendJson(res, 400, { error: "'boxNodeId' must be a non-empty string" });
       return;
     }
+    if (boxNodeId === this.node.nodeId) {
+      // A self-addressed destination is meaningless (there is no "external" to deliver to) — rejected
+      // here rather than left to fall through: floodExcept()'s isUnicastElsewhere is false for a
+      // packet addressed to this node's own id, so neither of awaitDeliveryStatus()'s events would ever
+      // fire and every such request would silently stall for the full timeout (found by review).
+      sendJson(res, 400, { error: "'boxNodeId' cannot be this node's own id" });
+      return;
+    }
     const destinationId = body?.destinationId;
     if (typeof destinationId !== "string" || destinationId.length === 0) {
       sendJson(res, 400, { error: "'destinationId' must be a non-empty string" });
@@ -1958,8 +2547,10 @@ export class WebUiServer {
     }
 
     try {
-      const packetId = this.node.sendExternalDelivery(boxNodeId, destinationId, publicKeyHex, data, { password });
-      sendJson(res, 200, { sent: true, packetId });
+      const { id: packetId, status } = await this.awaitDeliveryStatus(() =>
+        this.node.sendExternalDelivery(boxNodeId, destinationId, publicKeyHex, data, { password }),
+      );
+      sendJson(res, 200, { sent: true, packetId, status });
     } catch (err) {
       // sendExternalDelivery()'s own validation throws for oversized destinationId/data (400, the
       // client picked/attached something outside this node's configured caps) — no rate limit exists
@@ -2177,6 +2768,7 @@ function isKnownAvailableService(node: NomadNode, serviceId: string): boolean {
 const MAX_CALL_BODY_BYTES = 262_144; // generous for a service call payload, nowhere near CHUNK_SIZE
 const MAX_CALL_BODY_READ_MS = 10_000; // bounds how long a slow/trickling body is tolerated (loopback-http-server.ts), well under Node's own 300s default
 const MAX_MESSAGE_BODY_BYTES = 65_536; // a chat message's JSON body is tiny compared to a service call's
+const DELIVERY_STATUS_AWAIT_MS = 1500; // generous for local async I/O to settle; see awaitDeliveryStatus()'s own doc comment for the timeout default
 const DEFAULT_CALL_TIMEOUT_MS = 5000;
 const MAX_CALL_TIMEOUT_MS = 15000; // caps how long a single POST /api/call can hold a connection open
 

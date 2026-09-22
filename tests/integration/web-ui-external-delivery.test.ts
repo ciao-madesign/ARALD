@@ -160,6 +160,20 @@ describe("WebUiServer /api/external-delivery(-destinations)", () => {
     expect(await post({ ...valid, password: 12345 })).toBe(400);
   });
 
+  it("POST /api/external-delivery rejects a boxNodeId equal to this node's own id, instead of silently stalling for the delivery-status timeout (docs/security.md voce #86)", async () => {
+    const a = makeGateway("A");
+    await Promise.all([a.node.start(), a.webUi.start()]);
+
+    const res = await authedFetch(a.webUi, "/api/external-delivery", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ boxNodeId: a.node.nodeId, destinationId: "hq-1", publicKeyHex: "a".repeat(64), dataBase64: "aGVsbG8=" }),
+    });
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/own id/);
+  });
+
   it("POST /api/external-delivery with a malformed JSON body is a 400", async () => {
     const a = makeGateway("A");
     await Promise.all([a.node.start(), a.webUi.start()]);
@@ -210,10 +224,31 @@ describe("WebUiServer /api/external-delivery(-destinations)", () => {
     const body = await res.json();
     expect(body.sent).toBe(true);
     expect(typeof body.packetId).toBe("string");
+    // A real connected peer (the BOX) accepted it immediately — "sent" means "left this device", not a
+    // delivery confirmation (this mesh has no end-to-end ack for EXTERNAL_DELIVERY, voce #86).
+    expect(body.status).toBe("sent");
 
     await waitFor(() => box.node.externalDeliveryQueue.size === 1);
     // The BOX only ever sees opaque ciphertext — never asserted readable here, by construction: this
     // test never gives the BOX the destination's private key, matching production. Sealing/decryption
     // round-trip fidelity is covered end to end in external-delivery.test.ts.
+  });
+
+  it("returns status 'queued' when the sender has no connected peers at all (\"Le mie attività\", docs/security.md voce #86)", async () => {
+    const destination = EncryptionIdentity.generate();
+    const gateway = makeGateway("Gateway"); // never connected to anyone
+    await Promise.all([gateway.node.start(), gateway.webUi.start()]);
+
+    const dataBase64 = Buffer.from("nessuno può ancora riceverlo", "utf8").toString("base64");
+    const res = await authedFetch(gateway.webUi, "/api/external-delivery", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ boxNodeId: "never-connected-box", destinationId: "hq-1", publicKeyHex: destination.publicKeyHex, dataBase64 }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.status).toBe("queued");
+    expect(gateway.node.pendingDeliveryCount).toBe(1);
   });
 });

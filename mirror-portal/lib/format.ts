@@ -62,3 +62,26 @@ export function relayType(data: Record<string, unknown>): "fixed" | "mobile" {
 export function relayOnline(data: Record<string, unknown>): boolean {
   return data.online === true;
 }
+
+/**
+ * `"3 min fa"`/`"1h fa"`/`"2g fa"` — the relative-time phrasing the "Richiede attenzione ora" feed
+ * (Fase 5 dell'audit UX/UI, `lib/node-status.ts`'s `buildAttentionFeed()`) uses for each item, mirrored
+ * from `timeAgo()` in `mobile/www/app.js` (same three buckets/thresholds) rather than inventing new
+ * wording independently — this project already has one established voice for "how long ago", no reason
+ * for the portal to phrase it differently from the app. `at` in the future (clock skew between this
+ * server and whatever wrote the timestamp) clamps to "adesso" rather than a negative/nonsensical value.
+ */
+export function timeAgo(at: Date): string {
+  const seconds = Math.max(0, Math.round((Date.now() - at.getTime()) / 1000));
+  if (seconds < 60) return "adesso";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min fa`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h fa`;
+  return `${Math.round(hours / 24)}g fa`;
+}
+
+/** "Admin ARALD"/"Operatore" — the one place this label is spelled out (found by review, Fase 6 dell'audit UX/UI: three independent copies of the same ternary had drifted apart in `app/page.tsx`, `app/mappa/page.tsx`, and `AdminPanel.tsx`'s `RoleBadge`, the kind of duplication a future relabeling could easily update in two places and miss the third). Not `Record<UserRole, string>` from `lib/auth-db.ts`'s own `UserRole` type, to avoid this file importing from there for a two-branch string — `role === "admin"` reads just as clearly. */
+export function roleLabel(role: "admin" | "operatore"): string {
+  return role === "admin" ? "Admin ARALD" : "Operatore";
+}

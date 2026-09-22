@@ -405,12 +405,45 @@ async function main(): Promise<void> {
     // (docs/beacon.md, the Emergency Node view), see WebUiOptions.exposeEmergencyBeacons's own doc
     // comment for why there is no write side to gate: a SOS only ever arrives from the mesh.
     const exposeEmergencyBeacons = args["expose-emergency-beacons"] === "true";
+    // Opt-in, gates POST /api/ingest-signed-content — "Pezzo 1" del canale di comando Box↔specchio
+    // (docs/emergency-portal.md, WebUiOptions.allowRemoteContentIngest's own doc comment). The
+    // caller (arald-backend's command poller) still needs a valid signature on every submission
+    // regardless of this flag — this only decides whether the *attempt* is possible on this Box at
+    // all, same posture as --expose-relay-registry.
+    const allowRemoteContentIngest = args["allow-remote-content-ingest"] === "true";
+    // Opt-in, gates POST /api/ingest-node-append — "Pezzo 2" del canale di comando Box↔specchio
+    // (docs/emergency-portal.md, WebUiOptions.allowRemoteNodeAppendIngest's own doc comment).
+    // Independent from --allow-remote-content-ingest above: an operator can enable Drop injection
+    // without Node Append injection, or vice versa, same granular opt-in philosophy as
+    // --expose-relay-registry/--expose-emergency-beacons.
+    const allowRemoteNodeAppendIngest = args["allow-remote-node-append-ingest"] === "true";
+    // Opt-in, gates POST /api/ingest-relay-command — "Pezzo 4" del canale di comando Box↔specchio
+    // (docs/emergency-portal.md, WebUiOptions.allowRemoteRelayCommandIngest's own doc comment).
+    // Independent from the other two ingest flags. Gates only whether a signed reboot submission is
+    // *accepted* into this process — --allow-remote-reboot below is the separate, decisive local
+    // opt-in for whether an accepted one actually causes a shutdown() at all.
+    const allowRemoteRelayCommandIngest = args["allow-remote-relay-command-ingest"] === "true";
+    // Opt-in, gates POST /api/ingest-external-delivery — "Pezzo 3" del canale di comando Box↔specchio
+    // (docs/emergency-portal.md, WebUiOptions.allowRemoteExternalDeliveryIngest's own doc comment).
+    // Independent from the other three ingest flags. Unlike --allow-remote-relay-command-ingest,
+    // there is no second local opt-in gating what an accepted submission *does* — enqueuing into
+    // externalDeliveryQueue is never as consequential as a reboot, see
+    // NomadNode.ingestExternalDelivery()'s own doc comment for the full reasoning.
+    const allowRemoteExternalDeliveryIngest = args["allow-remote-external-delivery-ingest"] === "true";
     // A dedicated location-registry node (docs/next-steps.md Opzione J) needs the same
     // networkName/networkPassword pairing mechanism as any other mobile-facing node — just handed
     // out separately to trusted operators only, never to guests, which is exactly what makes it a
     // *different* node's password rather than a new access-control mechanism of its own. Same
     // reasoning extends to a relay-registry/Emergency Node.
-    const needsNetworkPassword = allowServiceCalls || exposeLocationRegistry || exposeRelayRegistry || exposeEmergencyBeacons;
+    const needsNetworkPassword =
+      allowServiceCalls ||
+      exposeLocationRegistry ||
+      exposeRelayRegistry ||
+      exposeEmergencyBeacons ||
+      allowRemoteContentIngest ||
+      allowRemoteNodeAppendIngest ||
+      allowRemoteRelayCommandIngest ||
+      allowRemoteExternalDeliveryIngest;
     // Generated fresh every run, printed/shown once, never persisted — the mobile client (Opzione H,
     // docs/next-steps.md) is expected to be paired by re-entering this each time the node restarts,
     // the same "out of band, by the operator" trust model as a Wi-Fi router's own password.
@@ -441,6 +474,10 @@ async function main(): Promise<void> {
       exposeLocationRegistry,
       exposeRelayRegistry,
       exposeEmergencyBeacons,
+      allowRemoteContentIngest,
+      allowRemoteNodeAppendIngest,
+      allowRemoteRelayCommandIngest,
+      allowRemoteExternalDeliveryIngest,
       networkName,
       networkPassword,
       publicHost: args["public-host"],
@@ -471,6 +508,21 @@ async function main(): Promise<void> {
     }
     if (exposeEmergencyBeacons) {
       console.log(`Emergency beacon sightings exposed: GET /api/emergency-beacons (stessa password di rete)`);
+    }
+    if (allowRemoteContentIngest) {
+      console.log(`Canale di comando dal portale abilitato: POST /api/ingest-signed-content (stessa password di rete)`);
+    }
+    if (allowRemoteNodeAppendIngest) {
+      console.log(`Canale di comando dal portale abilitato: POST /api/ingest-node-append (stessa password di rete)`);
+    }
+    if (allowRemoteRelayCommandIngest) {
+      console.log(`Canale di comando dal portale abilitato: POST /api/ingest-relay-command (stessa password di rete)`);
+      if (args["allow-remote-reboot"] !== "true") {
+        console.log(`  Nota: --allow-remote-reboot non è impostato — un comando accettato non causerà comunque alcun riavvio su questo processo.`);
+      }
+    }
+    if (allowRemoteExternalDeliveryIngest) {
+      console.log(`Canale di comando dal portale abilitato: POST /api/ingest-external-delivery (stessa password di rete)`);
     }
     if (mapTiles) {
       console.log(`Map tiles exposed: GET /api/map-info, GET /api/map-tiles/:z/:x/:y (non autenticati — non dati sensibili)`);
@@ -531,7 +583,13 @@ async function main(): Promise<void> {
       console.log(`[RELAY] reboot requested by ${senderId} — shutting down for the process supervisor to restart`);
       void shutdown();
     });
-    console.log("Remote reboot enabled — only a node trusted at TrustLevel.ADMIN (see --trust-admin) can trigger it");
+    console.log("Remote reboot enabled — via mesh, solo un nodo con fiducia TrustLevel.ADMIN (vedi --trust-admin) può innescarlo");
+    // Corrected (Pezzo 4, docs/security.md voce #83): unlike the mesh path above,
+    // ingestSignedRelayCommand() deliberately does NOT check trust — the portale command channel's
+    // own network-password + per-organization authorization is this specific path's only gate.
+    if (args["allow-remote-relay-command-ingest"] === "true") {
+      console.log("Remote reboot enabled — via portale, qualunque identità con una firma valida e la password di rete può innescarlo (nessun controllo di fiducia mesh su questo canale, vedi docs/security.md voce #83)");
+    }
   }
 }
 

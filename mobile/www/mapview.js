@@ -68,10 +68,10 @@ async function fetchMapInfo() {
   return res.json();
 }
 
-/** Shows/hides #map-panel's "Apri mappa" button based on the latest fetchMapInfo() result — called every refreshAll() cycle, same as renderLocationReports(). */
+/** Enables/disables the "Mappa" bottom-nav item based on the latest fetchMapInfo() result — called every refreshAll() cycle, same as renderLocationReports(). Fase 4 dell'audit UX/UI: sostituisce il vecchio #map-panel ("Apri mappa" nella Home) con lo stesso degrado onesto applicato alla voce di navigazione che lo rimpiazza. */
 function renderMapAvailability(info) {
   mapInfo = info;
-  document.getElementById("map-panel").hidden = info === null;
+  document.getElementById("nav-map").disabled = info === null;
 }
 
 /**
@@ -283,7 +283,10 @@ function endDrag(event) {
 
 // ---------- wiring ----------
 
-document.getElementById("open-map-button").addEventListener("click", openMapOverlay);
+// Fase 4 dell'audit UX/UI: #open-map-button (Home) è stato sostituito dalla voce "Mappa" della
+// barra di navigazione principale — stesso openMapOverlay(), che si auto-protegge già con
+// `if (!mapInfo) return;` quando la mappa non è disponibile (il bottone è comunque disabled in quel caso, vedi renderMapAvailability() sopra).
+document.getElementById("nav-map").addEventListener("click", openMapOverlay);
 document.getElementById("map-close").addEventListener("click", closeMapOverlay);
 document.getElementById("map-zoom-in").addEventListener("click", () => {
   if (mapState) setZoom(mapState.zoom + 1);

@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { createHash } from "node:crypto";
 import { Identity } from "./identity.js";
 import { PeerTable } from "./peer.js";
 import { MessageType, Priority, createPacket, type Packet } from "./packet.js";
@@ -11,6 +12,7 @@ import {
   type ContentMetadata,
 } from "./content.js";
 import { RemoteCatalog } from "./catalog.js";
+import { BoundedFifoMap } from "./bounded-map.js";
 import { SeenCache, decideForward } from "./routing.js";
 import { PendingDeliveryQueue } from "./store-and-forward.js";
 import { RateLimiter } from "./rate-limit.js";
@@ -55,6 +57,7 @@ import {
   RelayRegistry,
   extractRelayTelemetry,
   extractRelayCommand,
+  verifySignedRelayCommandSubmission,
   type RelayEntry,
   type RelayStaticFields,
   type RelayTelemetryPayload,
@@ -70,7 +73,14 @@ import {
   type EmergencyBeaconSighting,
 } from "./emergency-beacon.js";
 import type { BeaconBroadcastTransport } from "./transports/beacon-broadcast.js";
-import { NodeAppends, extractNodeAppendPayload, MAX_NODE_APPEND_LABEL_LENGTH, type NodeAppend, type NodeAppendPayload } from "./node-appends.js";
+import {
+  NodeAppends,
+  extractNodeAppendPayload,
+  verifySignedNodeAppendSubmission,
+  MAX_NODE_APPEND_LABEL_LENGTH,
+  type NodeAppend,
+  type NodeAppendPayload,
+} from "./node-appends.js";
 import { RoutingTable } from "./routing-table.js";
 import { ServiceDirectory } from "./service-directory.js";
 import { serviceSigningPayload, verifyServiceAnnouncement, type ServiceAnnouncement, type ServiceHandler } from "./service.js";
@@ -337,6 +347,12 @@ const MAX_CONCURRENT_EXTERNAL_DELIVERY_DIRECTORY_FETCHES = 16;
  * concern (a caller pushing this node's own priority above the mesh-wide
  * default `Priority.CONTENT` repeatedly), and a caller could otherwise
  * double its effective flood budget by alternating kinds.
+ *
+ * Also consumed by `ingestSignedContent()` (found by review, `docs/security.md`
+ * voce #81 — it originally bypassed this entirely) via the same
+ * `tryConsumeElevatedDropBudget()` helper: a remote portal operator's
+ * signed elevated-kind drop shares this Box's own node-wide budget with a
+ * locally-originated one, not a separate allowance.
  */
 const MAX_ELEVATED_DROPS_PER_WINDOW = 3;
 const ELEVATED_DROP_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
@@ -361,9 +377,52 @@ function dropKindPriority(kind: DropKind): Priority {
   }
 }
 
-/** Default/maximum lifetime for a drop (`NomadNode.publishDrop()`) — a drop is a notice tied to a moment, never a permanent fixture like a channel, so unlike `publishContent()` in general it always carries a `ttlMs`, capped so a caller can shorten it but never make it outlive this. */
-const DEFAULT_DROP_TTL_MS = 24 * 60 * 60 * 1000;
-const MAX_DROP_TTL_MS = 72 * 60 * 60 * 1000;
+/**
+ * Default/maximum lifetime for a drop (`NomadNode.publishDrop()`) — a drop is a notice tied to a
+ * moment, never a permanent fixture like a channel, so unlike `publishContent()` in general it
+ * always carries a `ttlMs`, capped so a caller can shorten it but never make it outlive this.
+ * Exported (found by review, `docs/security.md`): `mirror-portal/lib/mesh-signing.ts` deliberately
+ * vendors its own copy of this same value rather than importing across the Vercel-build boundary
+ * (see that file's own doc comment) — exporting this lets a test cross-check the two constants
+ * against each other directly, instead of the only synchronization being a doc comment that a
+ * future change here could silently stop matching.
+ */
+export const DEFAULT_DROP_TTL_MS = 24 * 60 * 60 * 1000;
+/** Same reasoning/export as `DEFAULT_DROP_TTL_MS` immediately above. */
+export const MAX_DROP_TTL_MS = 72 * 60 * 60 * 1000;
+
+/**
+ * Result of `NomadNode.ingestSignedContent()`, `ingestSignedNodeAppend()`
+ * ("Pezzo 2", `docs/security.md` voce #82), `ingestSignedRelayCommand()`
+ * ("Pezzo 4", voce #83), **and** `ingestExternalDelivery()` ("Pezzo 3", voce
+ * #84) — reused as-is rather than declaring a fourth near-identical type,
+ * since all four feed the exact same `arald-backend` command poller, which
+ * needs to make the exact same accept/give-up/retry distinction for any kind
+ * of remote command. A plain boolean isn't enough because callers
+ * (`web-ui.ts`'s HTTP endpoints, the command poller one layer further out)
+ * need to tell a genuinely forged/corrupt submission apart from one that was
+ * merely throttled, and react very differently to each:
+ * - `"accepted"` — stored and, if requested, announced/recorded as a Drop, or
+ *   recorded into `this.nodeAppends` (Node Append), emitted as
+ *   `"relay:reboot-requested"` (relay command), or enqueued into
+ *   `this.externalDeliveryQueue` (external delivery).
+ * - `"rate-limited"` — the per-identity packet budget (`this.ingestRateLimiter`)
+ *   or the relevant node-wide budget (`tryConsumeElevatedDropBudget()` /
+ *   `tryConsumeElevatedNodeAppendBudget()` / `tryConsumeHttpIngestedNodeAppendBudget()`
+ *   / `tryConsumeHttpIngestedRelayCommandBudget()`) was exhausted; the
+ *   submission itself was never even checked. Worth resubmitting later —
+ *   maps to HTTP 429, a *deferred* outcome for the command poller, never
+ *   `failed`.
+ * - `"rejected"` — the signature/hash didn't verify, the content was already
+ *   expired, it was signed for a different target node (Node Append/relay
+ *   command), it's a replay of an already-accepted relay command, or (external
+ *   delivery only, which has no signature at all — see `ingestExternalDelivery()`'s
+ *   own doc comment) the payload shape was invalid or `destinationId` doesn't
+ *   match a destination this Box's own `externalDeliveryAllowlist` knows.
+ *   Retrying the exact same bytes will never succeed — maps to HTTP 422, a
+ *   *terminal* outcome.
+ */
+export type IngestSignedContentResult = "accepted" | "rate-limited" | "rejected";
 
 /**
  * Same reasoning as `MAX_ELEVATED_DROPS_PER_WINDOW` immediately above — this
@@ -407,12 +466,51 @@ const MAX_BEACON_TTL_MS = 72 * 60 * 60 * 1000;
 const MAX_ELEVATED_NODE_APPENDS_PER_WINDOW = 3;
 const ELEVATED_NODE_APPEND_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 
-/** Default/maximum lifetime for a Node Append (`NomadNode.appendToNode()`) — same bounds as `publishDrop()`'s own (`DEFAULT_DROP_TTL_MS`/`MAX_DROP_TTL_MS`), kept as separate constants rather than shared ones so either can be retuned independently later without the two features silently moving together. */
-const DEFAULT_NODE_APPEND_TTL_MS = 24 * 60 * 60 * 1000;
-const MAX_NODE_APPEND_TTL_MS = 72 * 60 * 60 * 1000;
+/**
+ * Node-wide budget for **every** `ingestSignedNodeAppend()` submission, regardless of `kind` —
+ * found necessary by review ("Pezzo 2" del canale di comando, `docs/security.md` voce #82),
+ * distinct from `MAX_ELEVATED_NODE_APPENDS_PER_WINDOW` above (which only gates `"hazard"`/
+ * `"emergency"` and is shared with the mesh path via `appendToNode()`). The per-identity
+ * `ingestRateLimiter` budget alone doesn't stop this: an HTTP caller who merely knows this Box's
+ * network password (the same shared secret handed out for ordinary mobile pairing — not proof of
+ * being a vetted portal operator, see `ingestSignedNodeAppend()`'s own doc comment) can
+ * self-generate any number of *distinct* Ed25519 identities, each submitting only once, so a
+ * per-identity budget never engages. `NodeAppends`' trust-ranked eviction (`trustRank` passed to
+ * its constructor below) already makes it *harder* for a burst of never-vetted HTTP identities to
+ * evict a genuinely mesh-sourced, ≥`minTrustForNodeAppend`-gated entry (see that class's own doc
+ * comment for the known tie-break limitation this doesn't fully close) — but without *some*
+ * node-wide throttle, a burst of throwaway identities could still rapidly evict each other (and
+ * any earlier, legitimate operator-composed submission, which starts at the same "never
+ * independently vetted" trust rank).
+ * This budget bounds how fast that can happen to a controlled trickle instead of "hundreds within
+ * seconds" — generous enough for real portal usage (several notes per Box in a normal session),
+ * far too slow to meaningfully exhaust `NodeAppends`' bounded store before an operator would notice.
+ */
+const MAX_HTTP_INGESTED_NODE_APPENDS_PER_WINDOW = 20;
+const HTTP_INGESTED_NODE_APPEND_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 
-/** Default cap on a single "Consegna esterna differita" submission's raw ciphertext size — same order of magnitude as `DEFAULT_MAX_RESPONSE_BYTES` in `gateway/nomad/internet-gateway.ts`, a reasonable starting point for a report/file, never a hard requirement. */
-const DEFAULT_MAX_EXTERNAL_DELIVERY_PAYLOAD_BYTES = 1_000_000;
+/**
+ * Default/maximum lifetime for a Node Append (`NomadNode.appendToNode()`) — same bounds as
+ * `publishDrop()`'s own (`DEFAULT_DROP_TTL_MS`/`MAX_DROP_TTL_MS`), kept as separate constants rather
+ * than shared ones so either can be retuned independently later without the two features silently
+ * moving together. Exported (same reasoning/precedent as `DEFAULT_DROP_TTL_MS`/`MAX_DROP_TTL_MS`
+ * above, "Pezzo 2" del canale di comando, `docs/security.md` voce #82): `mirror-portal/lib/
+ * mesh-signing.ts` vendors its own copy for `signNodeAppend()`, and a test cross-checks the two
+ * directly instead of relying on a doc comment alone to catch drift.
+ */
+export const DEFAULT_NODE_APPEND_TTL_MS = 24 * 60 * 60 * 1000;
+/** Same reasoning/export as `DEFAULT_NODE_APPEND_TTL_MS` immediately above. */
+export const MAX_NODE_APPEND_TTL_MS = 72 * 60 * 60 * 1000;
+
+/**
+ * Default cap on a single "Consegna esterna differita" submission's raw ciphertext size — same order
+ * of magnitude as `DEFAULT_MAX_RESPONSE_BYTES` in `gateway/nomad/internet-gateway.ts`, a reasonable
+ * starting point for a report/file, never a hard requirement. Exported (same reasoning as
+ * `DEFAULT_DROP_TTL_MS`/`DEFAULT_NODE_APPEND_TTL_MS` above): `mirror-portal/lib/mesh-signing.ts`
+ * vendors its own copy for "Pezzo 3" (`docs/security.md` voce #84), and
+ * `tests/unit/mirror-portal-mesh-signing.test.ts` cross-checks the two directly.
+ */
+export const DEFAULT_MAX_EXTERNAL_DELIVERY_PAYLOAD_BYTES = 1_000_000;
 
 /**
  * Same reasoning as `MAX_ELEVATED_NODE_APPENDS_PER_WINDOW`, applied to
@@ -428,6 +526,51 @@ const DEFAULT_MAX_EXTERNAL_DELIVERY_PAYLOAD_BYTES = 1_000_000;
  */
 const MAX_RELAY_COMMANDS_PER_WINDOW = 3;
 const RELAY_COMMAND_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
+
+/**
+ * Node-wide budget for `ingestSignedRelayCommand()` — "Pezzo 4" del canale
+ * di comando Box↔specchio (`docs/emergency-portal.md`, `docs/security.md`
+ * voce #83). `MAX_RELAY_COMMANDS_PER_WINDOW` above is the *sender's own
+ * outgoing* budget (`sendRelayCommand()`, checked on the node originating a
+ * command) — irrelevant here, since `ingestSignedRelayCommand()` runs on
+ * the *receiving* Box, which has no equivalent receiving-side budget today
+ * because it normally relies on `minTrustForRelayCommand` (ADMIN, a small
+ * operator-curated set) as its real defense against volume.
+ * `ingestSignedRelayCommand()` deliberately doesn't consult that gate (see
+ * its own doc comment for why — the same "Fiducia" decision reused from
+ * Pezzo 1/2, applied here to the single most sensitive payload in this
+ * codebase), so this budget is the only volume defense left on this path —
+ * kept deliberately small, smaller even than a routine drop/append budget,
+ * because a false-positive here doesn't just add a spurious entry, it takes
+ * the Box offline (subject to `--allow-remote-reboot` also being set, the
+ * final, always-local, always-independent safety valve — see that flag's
+ * own doc comment in `cli.ts`).
+ */
+const MAX_HTTP_INGESTED_RELAY_COMMANDS_PER_WINDOW = 3;
+const HTTP_INGESTED_RELAY_COMMAND_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
+
+/** Cap on `lastAcceptedRelayCommandAt` (constructor) — see that field's own doc comment for why it's no longer safe to leave unbounded. */
+const MAX_TRACKED_RELAY_COMMAND_SENDERS = 256;
+
+/**
+ * Node-wide budget for **every** `ingestExternalDelivery()` submission, regardless of `destinationId`
+ * — found necessary by code review (`docs/security.md` voce #84): `this.ingestRateLimiter.allow(destinationId)`
+ * alone bounds how fast *one* destination's own budget is consumed, but does nothing to stop a flood
+ * spread thinly across many distinct no-password destinations (or a single destination whose own
+ * `RateLimiter` budget, shared node-wide default config, is far larger than `externalDeliveryQueue`'s
+ * own `DEFAULT_MAX_QUEUE_ENTRIES` (100) — the queue's two-axis bound does *not* make an extra budget
+ * redundant the way this method's own doc comment originally claimed: `enqueue()`'s priority-weighted
+ * eviction picks the oldest entry at the *worst* rank across the **whole shared queue**, not
+ * per-destination, and every HTTP-ingested submission here lands at the same `Priority.CONTENT` as a
+ * genuine, already-queued mesh delivery — so a fast-enough burst of garbage on any one allowed
+ * destination can evict real, long-waiting deliveries for *every* destination, not just its own).
+ * Same "generous, dedicated" sizing as `MAX_HTTP_INGESTED_NODE_APPENDS_PER_WINDOW` (20/5min) — this
+ * path isn't as catastrophic as an accepted reboot command, so it doesn't need
+ * `MAX_HTTP_INGESTED_RELAY_COMMANDS_PER_WINDOW`'s much stricter 3/5min, but it does need something
+ * well below the queue's own 100-entry capacity so a single burst can never come close to it.
+ */
+const MAX_HTTP_INGESTED_EXTERNAL_DELIVERIES_PER_WINDOW = 20;
+const HTTP_INGESTED_EXTERNAL_DELIVERY_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 
 /** Defaults for `sendEmergencyBeacon()`'s broadcast repetition (see its own doc comment for why this is "repeat the same signed packet on a timer", not a real ACK-based retry). */
 const DEFAULT_BEACON_BROADCAST_REPEAT_COUNT = 5;
@@ -837,6 +980,22 @@ export class NomadNode extends EventEmitter {
   private readonly pendingContentRequests = new Map<string, PendingContentEntry>();
   private readonly pendingDeliveries: PendingDeliveryQueue;
   private readonly rateLimiter: RateLimiter;
+  /**
+   * Separate `RateLimiter` instance for `ingestSignedContent()`/`ingestSignedNodeAppend()` — found
+   * by review ("Pezzo 2" del canale di comando, `docs/security.md` voce #82), applying equally to
+   * `ingestSignedContent()` (Pezzo 1): both used to key `this.rateLimiter.allow()` on the HTTP
+   * caller's *claimed* `publisherId`, sharing the exact same keyspace `handlePacket()` uses for
+   * `fromPeerId` — a real, currently-connected transport peer's own packet budget. An HTTP caller
+   * who already knows this Box's network password (the same shared secret handed out for ordinary
+   * mobile pairing, not proof of being a vetted identity) could claim `publisherId` equal to a real
+   * connected peer's `nodeId` and burn that peer's window with garbage that never even verifies —
+   * `this.rateLimiter.allow()` runs before signature verification (safe for *that caller's own*
+   * budget, since a lie about identity fails verification below regardless, but not safe for a
+   * *third party's* shared window when both paths use the same map). A separate instance closes
+   * this cross-path collision entirely: an HTTP-ingest claim can never share a bucket with a real
+   * transport peer's own traffic, regardless of what identity it claims.
+   */
+  private readonly ingestRateLimiter: RateLimiter;
   private readonly relayPolicy: RelayPolicy;
   /** Services this node itself offers (spec §35), registered via `registerService()` — never network-fed, so unlike `services` this needs no bound. */
   private readonly localServices = new Map<string, { announcement: ServiceAnnouncement; handler: ServiceHandler }>();
@@ -861,10 +1020,32 @@ export class NomadNode extends EventEmitter {
   private emergencyBeaconWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
   /** Sliding-window state for `MAX_ELEVATED_NODE_APPENDS_PER_WINDOW` (see its own doc comment) — `appendToNode({ kind: "hazard" | "emergency" })` checks and updates this before sending. */
   private elevatedNodeAppendWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
+  /** Sliding-window state for `MAX_HTTP_INGESTED_NODE_APPENDS_PER_WINDOW` (see its own doc comment) — `ingestSignedNodeAppend()` checks and updates this for every accepted submission, regardless of `kind`. */
+  private httpIngestedNodeAppendWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
+  /** Sliding-window state for `MAX_HTTP_INGESTED_RELAY_COMMANDS_PER_WINDOW` (see its own doc comment) — `ingestSignedRelayCommand()` checks and updates this for every accepted submission. */
+  private httpIngestedRelayCommandWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
+  /** Sliding-window state for `MAX_HTTP_INGESTED_EXTERNAL_DELIVERIES_PER_WINDOW` (see its own doc comment) — `ingestExternalDelivery()` checks and updates this for every accepted submission, regardless of `destinationId`. */
+  private httpIngestedExternalDeliveryWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
   /** Sliding-window state for `MAX_RELAY_COMMANDS_PER_WINDOW` (see its own doc comment) — `sendRelayCommand()` checks and updates this before sending. */
   private relayCommandWindow: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
-  /** Replay protection for `considerRelayCommand()` (see its own doc comment) — the timestamp of the last *accepted* relay command from each sender, keyed by that sender's node id. Deliberately unbounded: an entry only exists for a sender that already cleared `minTrustForRelayCommand` (ADMIN by default), a small, operator-curated set. */
-  private readonly lastAcceptedRelayCommandAt = new Map<string, number>();
+  /**
+   * Replay protection for `considerRelayCommand()`/`ingestSignedRelayCommand()`
+   * (see their own doc comments) — the timestamp of the last *accepted*
+   * relay command from each sender, keyed by that sender's node id. **No
+   * longer unconditionally safe to leave unbounded** ("Pezzo 4" del canale
+   * di comando, `docs/security.md` voce #83, found necessary proactively —
+   * same lesson `NodeAppends`' own `trustRank` fix already taught, "Pezzo 2",
+   * voce #82): an entry used to only ever exist for a sender that already
+   * cleared `minTrustForRelayCommand` (ADMIN by default), a small,
+   * operator-curated set — true no longer, since `ingestSignedRelayCommand()`
+   * deliberately does *not* consult `this.trust` (see that method's own doc
+   * comment for why). `trustRank` (constructor, same wiring `ContentStore`/
+   * `NodeAppends` already use) means a lower-trust entry is evicted first if
+   * this ever fills up — bounding memory growth from a flood of throwaway
+   * HTTP-ingested identities without needing to touch the admission
+   * decision itself.
+   */
+  private readonly lastAcceptedRelayCommandAt: BoundedFifoMap<string, number>;
   /** Monotonic counter backing `sendRelayCommand()`'s own timestamps (see that method's own comment) — guarantees every command this node sends is strictly newer than the last, even across two calls landing in the same `Date.now()` millisecond. */
   private lastSentRelayCommandTimestamp = 0;
   /**
@@ -908,6 +1089,13 @@ export class NomadNode extends EventEmitter {
       trustRank: (publisherId) => trustRank(this.trust.get(publisherId)),
     });
     this.rateLimiter = new RateLimiter({
+      maxPacketsPerWindow: options.maxPacketsPerWindow,
+      windowMs: options.rateLimitWindowMs,
+    });
+    // Same tuning as this.rateLimiter above, but its own instance/keyspace — see that field's own
+    // doc comment for why sharing one instance between real transport peers and HTTP-ingest claims
+    // was a cross-path DoS vector.
+    this.ingestRateLimiter = new RateLimiter({
       maxPacketsPerWindow: options.maxPacketsPerWindow,
       windowMs: options.rateLimitWindowMs,
     });
@@ -963,7 +1151,16 @@ export class NomadNode extends EventEmitter {
     });
     this.relayRegistry = new RelayRegistry({ maxRelays: options.maxRelays });
     this.emergencyBeacons = new EmergencyBeacons({ maxBeacons: options.maxEmergencyBeacons });
-    this.nodeAppends = new NodeAppends({ maxNodeAppends: options.maxNodeAppends });
+    // trustRank wired (found by review, "Pezzo 2", docs/security.md voce #82): NodeAppends' own
+    // doc comment above explains why plain FIFO stopped being safe once ingestSignedNodeAppend()
+    // started recording entries without passing minTrustForNodeAppend's gate first.
+    this.nodeAppends = new NodeAppends({ maxNodeAppends: options.maxNodeAppends, trustRank: (author) => trustRank(this.trust.get(author)) });
+    // trustRank wired for the same reason (Pezzo 4, docs/security.md voce #83): see this field's
+    // own doc comment for why plain unbounded storage stopped being safe.
+    this.lastAcceptedRelayCommandAt = new BoundedFifoMap({
+      maxSize: MAX_TRACKED_RELAY_COMMAND_SENDERS,
+      evictionScore: (senderId) => trustRank(this.trust.get(senderId)),
+    });
     this.minTrustForNodeAppend = options.minTrustForNodeAppend ?? TrustLevel.VERIFIED;
     this.minTrustForRelayCommand = options.minTrustForRelayCommand ?? TrustLevel.ADMIN;
     if (options.emergencyBeaconKey !== undefined && options.emergencyBeaconKey.length !== 32) {
@@ -1128,6 +1325,313 @@ export class NomadNode extends EventEmitter {
       void this.floodExcept(this.buildContentAnnouncePacket(metadata, options.priority ?? Priority.CONTENT));
     }
     return metadata;
+  }
+
+  /**
+   * Accepts a piece of content already signed by some *other* identity —
+   * unlike `publishContent()`, which always signs as `this.identity`, this
+   * never signs anything. "Pezzo 1" of the canale di comando Box↔specchio
+   * (`docs/emergency-portal.md`): a mirror-portal operator has their own
+   * dedicated Ed25519 identity (never the Box's own), signs a Drop
+   * server-side, and this Box only ever republishes the already-complete
+   * signed object — exactly as if it had just arrived from a mesh peer.
+   *
+   * The Box never has to trust the caller for the signature itself:
+   * `contentStore.putVerified()` independently re-verifies it against
+   * `metadata.publisherId`'s own public key, the same check any peer's
+   * `CONTENT_COMPLETE` goes through — a caller of this method (an
+   * authenticated HTTP endpoint, `web-ui.ts`) only ever gates *whether* to
+   * attempt the call at all, never *trusts* what's inside it. Never throws;
+   * returns an `IngestSignedContentResult` (see its own doc comment) so a
+   * caller can tell a genuinely forged/corrupt submission (`"rejected"` —
+   * never worth retrying) apart from one that was merely throttled
+   * (`"rate-limited"` — worth retrying later, found necessary by review
+   * alongside the budget checks themselves, `docs/security.md` voce #81:
+   * collapsing both into one boolean would have left `web-ui.ts` no way to
+   * map them to different HTTP statuses, and `arald-backend`'s command
+   * poller no way to tell "give up on this command" apart from "try again
+   * next tick").
+   *
+   * Reuses `considerDrop()` unconditionally (a no-op for anything whose
+   * `name` isn't `DROP_CONTENT_NAME`) so a remotely-ingested Drop's
+   * bookkeeping (`this.drops`) stays byte-for-byte the same as one learned
+   * from the mesh — `author` becomes the *operator's* node id
+   * (`metadata.publisherId`), never this Box's own, and `receivedFrom` is
+   * `undefined` (not relayed through an intermediate peer — the operator's
+   * own signature is the first hop this Box ever sees it at).
+   *
+   * Two gaps found by review (`docs/security.md` voce #81), both closed
+   * here rather than left to the HTTP layer (`web-ui.ts`), so they apply to
+   * every caller of this method, not just the one endpoint:
+   *
+   * 1. Unlike content arriving from a real mesh peer — always checked
+   *    against `this.rateLimiter.allow(fromPeerId)` before a packet ever
+   *    reaches a handler (see the dispatch above `handleContentAnnounce()`)
+   *    — this HTTP-originated path had no packet-rate budget at all, so an
+   *    authenticated caller (the shared network password, or a compromised
+   *    portal operator credential) could call it in an unbounded tight
+   *    loop. Keying on the *claimed* `publisherId` is safe for the
+   *    *caller's own* budget specifically because it's independently
+   *    re-verified by `putVerified()` right below: a lie about
+   *    `publisherId` fails verification, so it can never be used to dodge
+   *    or borrow someone else's budget *on the caller's side*. It is
+   *    checked against `this.ingestRateLimiter`, a **separate instance**
+   *    from `this.rateLimiter` — found necessary by a later review pass
+   *    ("Pezzo 2", `docs/security.md` voce #82): keying the *same* shared
+   *    instance used for real connected transport peers would have let a
+   *    caller who merely claims a real peer's `nodeId` burn that peer's
+   *    actual packet budget with garbage that never verifies, a one-way
+   *    DoS this method's own verification can't catch because the
+   *    rate-limit check necessarily happens *before* verification.
+   * 2. A Drop's announced priority was taken directly from the *caller-
+   *    supplied, unsigned* `options.priority` — never checked against the
+   *    Drop's own signed `kind`, unlike `publishDrop()`, which always
+   *    derives it via `dropKindPriority()`. That let a caller sign a
+   *    routine `"info"` drop but request `Priority.EMERGENCY` in the HTTP
+   *    body, monopolizing the highest-priority LoRa queue bucket with
+   *    content that was never actually emergency-severity — and let a
+   *    `"hazard"`/`"emergency"` drop bypass `MAX_ELEVATED_DROPS_PER_WINDOW`
+   *    entirely (that budget is only ever consumed by `publishDrop()`).
+   *    Fixed by deriving the priority from the parsed payload's own `kind`
+   *    whenever `metadata.name` is `DROP_CONTENT_NAME` (ignoring
+   *    `options.priority` in that case) and running it through the same
+   *    `tryConsumeElevatedDropBudget()` `publishDrop()` uses — checked
+   *    *before* `putVerified()` stores anything, using the cheap
+   *    `verifyContentSignature()`/`computeContentId()` pre-check below
+   *    (same split `acceptCatalogEntry()` already uses), so an unsigned or
+   *    forged submission can never burn through the budget on its own. A
+   *    malformed/non-drop-shaped payload falls through unchanged to the
+   *    pre-existing behavior (`options.priority` respected) — `considerDrop()`
+   *    independently no-ops for it either way.
+   */
+  ingestSignedContent(metadata: ContentMetadata, data: Buffer, options: { announce?: boolean; priority?: Priority } = {}): IngestSignedContentResult {
+    if (metadata.publisherId && !this.ingestRateLimiter.allow(metadata.publisherId)) return "rate-limited";
+
+    // Cheap pre-verification (same checks `contentStore.putVerified()` makes internally) *before*
+    // the elevated-drop budget below is ever touched — see this method's own doc comment, point 2.
+    if (computeContentId(data) !== metadata.contentId || !verifyContentSignature(metadata)) return "rejected";
+    if (metadata.expiresAt !== undefined && metadata.expiresAt <= Date.now()) return "rejected";
+
+    let priority = options.priority ?? Priority.CONTENT;
+    if (metadata.name === DROP_CONTENT_NAME) {
+      let dropPayload: DropPayload | undefined;
+      try {
+        dropPayload = extractDropPayload(JSON.parse(data.toString("utf8")));
+      } catch {
+        dropPayload = undefined; // malformed JSON — considerDrop() below independently no-ops for this too
+      }
+      if (dropPayload) {
+        if (dropPayload.kind !== "info" && !this.tryConsumeElevatedDropBudget()) return "rate-limited";
+        priority = dropKindPriority(dropPayload.kind);
+      }
+    }
+
+    if (!this.contentStore.putVerified(metadata, data)) return "rejected"; // re-verifies; the real store
+    if (options.announce) {
+      void this.floodExcept(this.buildContentAnnouncePacket(metadata, priority));
+    }
+    if (metadata.publisherId) this.considerDrop(metadata, metadata.publisherId);
+    return "accepted";
+  }
+
+  /**
+   * Accepts a Node Append signed by some *other* identity and addressed
+   * (via `submission.targetNodeId`, part of what's signed) at *this* node —
+   * "Pezzo 2" del canale di comando Box↔specchio (`docs/emergency-portal.md`,
+   * `docs/security.md` voce #82), the remote-delivery counterpart of
+   * `appendToNode()` the same way `ingestSignedContent()` is for
+   * `publishDrop()`. Unlike a real mesh-originated append
+   * (`handlePrivateMessage()` → `considerNodeAppend()`), this never arrives
+   * through `PRIVATE_MESSAGE`'s ECDH channel at all — it's an ordinary
+   * authenticated HTTP submission (`web-ui.ts`'s `POST
+   * /api/ingest-node-append`) carrying its own Ed25519 signature instead
+   * (`verifySignedNodeAppendSubmission()`, `node-appends.ts` — see that
+   * module's own doc comment for why a signature, not a new encryption
+   * channel, is the right replacement here: this delivery path has no
+   * intermediate mesh couriers to keep the content secret *from* in the
+   * first place, and `GET /api/node-appends` is already unauthenticated —
+   * see that handler's own comment — so nothing about visibility once it
+   * lands actually changes).
+   *
+   * Deliberately does **not** consult `this.trust`/`minTrustForNodeAppend`
+   * the way `considerNodeAppend()` (the real-mesh path) does. That gate
+   * exists to stop an arbitrary, never-vetted mesh peer from depositing
+   * content here — and a caller of *this* method is, precisely, exactly
+   * that kind of never-vetted identity as far as this Box's own
+   * `TrustManager` is concerned (`this.trust.get(publisherId)` returns
+   * `UNKNOWN` for an operator's fresh mesh identity the first time it's
+   * ever used, same as a genuine attacker's throwaway one). **Corrected by
+   * review** (`docs/security.md` voce #82): the original reasoning here
+   * claimed the network password was "a strictly narrower gate" than
+   * `minTrustForNodeAppend` — it is not. `networkPassword` is the same
+   * shared secret handed out for ordinary mobile pairing (`web-ui.ts`), not
+   * proof of being a vetted portal operator, and the mirror-portal's own
+   * per-organization authorization happens entirely *before* this Box ever
+   * sees the request — nothing here can tell "an authorized operator's
+   * submission" apart from "anyone who learned the network password,
+   * signing with a fresh throwaway identity". The "Fiducia" decision made
+   * with the user (`docs/emergency-portal.md`, "trust for a portal operator
+   * is automatic from their portal role") was never actually wired end to
+   * end — no mechanism here maps a portal role onto a mesh `TrustLevel` yet;
+   * that remains a real, open gap, not something this method closes.
+   *
+   * What actually protects `this.nodeAppends` from that gap today is
+   * eviction-time, not admission-time: `NodeAppends` ranks eviction by the
+   * live trust of an entry's `author` (`trustRank` wiring in the
+   * constructor, `node-appends.ts`'s own doc comment) — so a flood of
+   * self-generated identities submitted through this method can never
+   * evict a genuinely mesh-vetted (`>= minTrustForNodeAppend`) entry, only
+   * other equally-unvetted HTTP-ingested ones — plus
+   * `tryConsumeHttpIngestedNodeAppendBudget()` below, which throttles how
+   * fast *any* number of distinct identities can be admitted through this
+   * channel at all. Together these bound the damage without requiring the
+   * still-missing "portal role → mesh trust" pipeline; closing that gap
+   * properly is future scope, not this piece's.
+   *
+   * Never throws; returns the same `IngestSignedContentResult` union
+   * `ingestSignedContent()` does (`"accepted"` → 200, `"rejected"` → 422
+   * terminal, `"rate-limited"` → 429 worth retrying) — reused as-is rather
+   * than declaring a near-identical type for this method, since
+   * `arald-backend`'s command poller needs to make the exact same
+   * accept/give-up/retry distinction here it already makes for Drop
+   * ingestion.
+   *
+   * Budget ordering mirrors `ingestSignedContent()`'s own fix (`docs/security.md`
+   * voce #81, applied proactively here from the start): the per-identity
+   * rate limiter (`this.ingestRateLimiter`, a **separate instance** from
+   * `this.rateLimiter` — see that field's own doc comment for why sharing
+   * one with real transport peers was itself a cross-path DoS vector found
+   * by review here) is checked first on the *claimed* `publisherId` — safe
+   * before verification, since a lie about it fails the signature check
+   * below regardless, so it can only ever burn the liar's own claimed
+   * identity's budget. Then signature/target/expiry are verified, and only
+   * *then* are the two node-wide budgets consumed — **in a specific order,
+   * itself found necessary by a second review pass**: the HTTP-ingest
+   * budget (`tryConsumeHttpIngestedNodeAppendBudget()`, this endpoint's own
+   * generous, dedicated resource, unconditional) is consumed *before*
+   * `tryConsumeElevatedNodeAppendBudget()` (`kind !== "info"` only, shared
+   * cross-path with `appendToNode()`'s own real mesh emergency traffic).
+   * Checked the other way around, a submission already doomed to fail the
+   * HTTP-ingest budget would still have irrevocably burned a slot of the
+   * scarcer *shared* one first — this ordering guarantees the shared
+   * budget is only ever touched by a submission that would otherwise have
+   * gone on to succeed, so a caller who never has any real mesh trust
+   * can't cheaply exhaust it and deny a genuine operator's real emergency
+   * Node Append sent via the actual mesh. Verified/expired-checked first,
+   * so a forged or already-expired submission can never burn through
+   * either budget. `MAX_ELEVATED_NODE_APPENDS_PER_WINDOW` is already
+   * dedicated to Node Append specifically (never shared with drops), so
+   * unlike `ingestSignedContent()` (whose elevated-budget gate is scoped
+   * to `DROP_CONTENT_NAME` only, flagged as a future-scope gap for exactly
+   * this kind of reuse — voce #81, point "Fuori scope") this method needs
+   * no extra gating on that front.
+   */
+  ingestSignedNodeAppend(submission: unknown): IngestSignedContentResult {
+    const candidate = submission as { publisherId?: unknown } | null;
+    if (candidate && typeof candidate.publisherId === "string" && !this.ingestRateLimiter.allow(candidate.publisherId)) {
+      return "rate-limited";
+    }
+
+    const verified = verifySignedNodeAppendSubmission(submission);
+    if (!verified) return "rejected";
+    if (verified.targetNodeId !== this.nodeId) return "rejected";
+    if (verified.expiresAt <= Date.now()) return "rejected";
+
+    // Order matters (found by a second review pass, docs/security.md voce #82): the node-wide
+    // HTTP-ingest budget (this endpoint's own, generous, dedicated resource) is checked *before*
+    // the shared elevated-node-append budget (scarce, cross-path with appendToNode()'s real mesh
+    // emergency traffic) — reversed, a submission already doomed to fail the HTTP-ingest check
+    // would still have irrevocably burned a slot of the shared, scarcer budget for nothing. This
+    // ordering means the shared budget is only ever touched by a submission that would otherwise
+    // have gone on to succeed.
+    if (!this.tryConsumeHttpIngestedNodeAppendBudget()) return "rate-limited";
+    if (verified.kind !== "info" && !this.tryConsumeElevatedNodeAppendBudget()) return "rate-limited";
+
+    const append: NodeAppend = {
+      type: "node-append",
+      text: verified.text,
+      label: verified.label,
+      kind: verified.kind,
+      timestamp: verified.timestamp,
+      expiresAt: verified.expiresAt,
+      appendId: verified.signature,
+      author: verified.publisherId,
+    };
+    this.nodeAppends.record(append);
+    this.emit("node-append:received", append);
+    return "accepted";
+  }
+
+  /**
+   * Accepts a relay reboot command signed by some *other* identity and
+   * addressed (via `submission.targetNodeId`, part of what's signed) at
+   * *this* node — "Pezzo 4" del canale di comando Box↔specchio
+   * (`docs/emergency-portal.md`, `docs/security.md` voce #83), the
+   * remote-delivery counterpart of `sendRelayCommand()` the same way
+   * `ingestSignedNodeAppend()` is for `appendToNode()`. Same reasoning as
+   * that method for why a bespoke Ed25519 signature (`verifySignedRelayCommandSubmission()`,
+   * `relay-registry.ts`), not a new encryption channel, is the right shape
+   * for a command with no intermediate mesh couriers to keep secret from.
+   *
+   * **Deliberately does not consult `this.trust`/`minTrustForRelayCommand`**
+   * — same "Fiducia" decision already reused for `ingestSignedNodeAppend()`
+   * (`docs/emergency-portal.md`, "Canale di comando Box↔specchio — piano
+   * pianificato": trust for a portal operator is automatic from their
+   * portal role), applied here to `RelayCommandPayload`, **the single most
+   * sensitive payload in this codebase** (that type's own doc comment,
+   * `relay-registry.ts`) — a successful call here causes the receiving
+   * process to shut down. This was discussed explicitly with the user
+   * before writing this method (not assumed): the alternative — a real
+   * per-Box ADMIN allowlist provisioned out of band, closing the gap
+   * `ingestSignedNodeAppend()`'s own doc comment already flags as open —
+   * was offered and declined in favor of reusing this same channel, for
+   * consistency and speed. What actually bounds the risk of that choice,
+   * layered on top of the ordinary network-password + portal-side
+   * per-organization authorization every ingest endpoint already has:
+   * - `verifySignedRelayCommandSubmission()` still requires a real Ed25519
+   *   signature — a caller can't forge a submission for an identity whose
+   *   private key it doesn't hold (mirror-portal's own custodied operator
+   *   key), even though this method doesn't check *how much* that
+   *   identity is independently trusted by this specific Box.
+   * - `MAX_HTTP_INGESTED_RELAY_COMMANDS_PER_WINDOW` (see its own doc
+   *   comment) — deliberately smaller than the other ingest paths'
+   *   budgets, given the severity of what accepting a submission does.
+   * - Replay protection shared with the real mesh path
+   *   (`lastAcceptedRelayCommandAt`, see `considerRelayCommand()`'s own
+   *   doc comment) — a captured, resubmitted signed command is a no-op,
+   *   never a second reboot.
+   * - **`--allow-remote-reboot`** (`cli.ts`) — the decisive, independent,
+   *   always-local safety valve this whole design leans on: regardless of
+   *   what this method accepts, the physical Box operator retains full
+   *   local control over whether an accepted command ever causes an
+   *   actual `shutdown()` at all. A Box operator who judges this channel
+   *   too weak for their deployment simply never sets that flag.
+   *
+   * Never throws; returns the same `IngestSignedContentResult` union the
+   * other two ingest methods do, for the same reason (the command poller
+   * needs the identical accept/give-up/retry distinction here). On
+   * `"accepted"`, only emits `"relay:reboot-requested"` — same posture as
+   * `considerRelayCommand()`, never calls `process.exit()`/`shutdown()`
+   * itself.
+   */
+  ingestSignedRelayCommand(submission: unknown): IngestSignedContentResult {
+    const candidate = submission as { publisherId?: unknown } | null;
+    if (candidate && typeof candidate.publisherId === "string" && !this.ingestRateLimiter.allow(candidate.publisherId)) {
+      return "rate-limited";
+    }
+
+    const verified = verifySignedRelayCommandSubmission(submission);
+    if (!verified) return "rejected";
+    if (verified.targetNodeId !== this.nodeId) return "rejected";
+
+    const lastAccepted = this.lastAcceptedRelayCommandAt.get(verified.publisherId);
+    if (lastAccepted !== undefined && verified.timestamp <= lastAccepted) return "rejected"; // replay of a prior submission, never a legitimate new command
+
+    if (!this.tryConsumeHttpIngestedRelayCommandBudget()) return "rate-limited";
+
+    this.lastAcceptedRelayCommandAt.set(verified.publisherId, verified.timestamp);
+    this.emit("relay:reboot-requested", verified.publisherId);
+    return "accepted";
   }
 
   /**
@@ -1358,15 +1862,8 @@ export class NomadNode extends EventEmitter {
     if (!this.peerDirectory.getKey(targetNodeId)) {
       throw new Error(`cannot send private message: encryption key for ${targetNodeId} is not yet known`);
     }
-    if (kind !== "info") {
-      const now = Date.now();
-      if (now - this.elevatedNodeAppendWindow.windowStart >= ELEVATED_NODE_APPEND_RATE_LIMIT_WINDOW_MS) {
-        this.elevatedNodeAppendWindow = { windowStart: now, count: 0 };
-      }
-      if (this.elevatedNodeAppendWindow.count >= MAX_ELEVATED_NODE_APPENDS_PER_WINDOW) {
-        throw new Error("appendToNode: too many high-priority node appends, try again later");
-      }
-      this.elevatedNodeAppendWindow.count++;
+    if (kind !== "info" && !this.tryConsumeElevatedNodeAppendBudget()) {
+      throw new Error("appendToNode: too many high-priority node appends, try again later");
     }
     const timestamp = Date.now();
     const ttlMs = Math.min(append.expiresInMs ?? DEFAULT_NODE_APPEND_TTL_MS, MAX_NODE_APPEND_TTL_MS);
@@ -1517,6 +2014,109 @@ export class NomadNode extends EventEmitter {
       priority: packet.priority,
     });
     this.emit("external-delivery:queued", packet.id);
+  }
+
+  /**
+   * Accepts an already-sealed external-delivery submission composed
+   * *outside* the mesh (mirror-portal's `POST /api/commands/external-
+   * deliveries`, `mesh-signing.ts`'s `sealExternalDeliveryForPortal()`) and
+   * addressed at this node's own `externalDeliveryAllowlist` — "Pezzo 3" del
+   * canale di comando Box↔specchio (`docs/emergency-portal.md`,
+   * `docs/security.md` voce #84), the remote-delivery counterpart of
+   * `sendExternalDelivery()` the same way `ingestSignedNodeAppend()` is for
+   * `appendToNode()`.
+   *
+   * **Deliberately carries no Ed25519 signature at all**, unlike every other
+   * `ingest*()` method in this class — not an oversight, a direct consequence
+   * of how the real mesh path already works: `handleExternalDelivery()`
+   * above never checks a sender identity either (its own doc comment), since
+   * this feature's whole security model is `destinationId` (looked up in the
+   * **private** allowlist, never trusted from the payload) plus an optional
+   * per-destination password, not who originated the packet. So this method
+   * reuses `extractExternalDeliveryPayload()`/`verifyExternalDeliveryAuthProof()`
+   * as-is — the exact same validation `handleExternalDelivery()` applies to a
+   * real mesh packet's payload — just without a `Packet` wrapper to unwrap
+   * first.
+   *
+   * `packetId` is derived deterministically (`sha256(destinationId:nonce:
+   * ciphertext:authTag)`, never `Packet.id` since there is no `Packet` on
+   * this path) rather than a fresh `randomUUID()` per call — found by code
+   * review: `arald-backend/command-poller.ts` retries a `pending` command
+   * (a transport failure reaching this endpoint, or any non-terminal status)
+   * with the *exact same* stored bytes on the next tick. The other three
+   * ingest methods are naturally idempotent against exactly this retry
+   * (`ingestSignedNodeAppend()`'s `appendId` is the submission's own
+   * signature, `ingestSignedRelayCommand()`'s replay guard rejects a
+   * repeated `timestamp`) — this one had no equivalent, so a retried
+   * delivery would mint a second, indistinguishable queue entry and
+   * eventually `attemptExternalDeliveryPost()` the same file to the real
+   * external organization twice. A random id would never collide with
+   * itself on retry; this deterministic one does, so
+   * `ExternalDeliveryQueue.enqueue()`'s own existing `has(packetId)` dedup
+   * catches the retry as a no-op, same as the real mesh path's own
+   * `packet.id` naturally would for a re-flooded packet.
+   *
+   * Rate-limited on **two independent axes**, both found necessary by code
+   * review — a single budget alone left a real gap either way:
+   * - `this.ingestRateLimiter.allow(destinationId)` — the same HTTP-ingest-only
+   *   limiter instance `ingestSignedContent()`/`ingestSignedNodeAppend()`/
+   *   `ingestSignedRelayCommand()` share, keyed here on `destinationId`
+   *   instead of a signed `publisherId` (there is no identity to key on) —
+   *   bounds how fast *one* destination's own share can be consumed. Checked
+   *   only after `destinationId` is confirmed to be a real, admin-curated
+   *   allowlist entry (an unknown/fabricated one is rejected first and never
+   *   touches this limiter's bounded state at all) and after the auth proof
+   *   itself verifies (cheap, but no reason to spend budget on a submission
+   *   already doomed to fail, e.g. a password-guessing attempt against a
+   *   protected destination).
+   * - `tryConsumeHttpIngestedExternalDeliveryBudget()` — **node-wide**,
+   *   across every `destinationId`, added after the per-destination budget
+   *   above turned out *not* to make `externalDeliveryQueue`'s own two-axis
+   *   bound (entry count + total bytes) sufficient on its own, contrary to
+   *   this method's own earlier reasoning: `RateLimiter`'s default window is
+   *   far larger than the queue's default `maxEntries`, so a burst against a
+   *   single allowed, password-less destination could already exhaust the
+   *   *entire shared queue* well before its own per-destination budget ran
+   *   out — and because every HTTP-ingested entry lands at the same
+   *   `Priority.CONTENT` as a genuine mesh-originated one, priority-weighted
+   *   eviction offers no protection either: the oldest already-queued real
+   *   delivery (for *any* destination) is evicted first, indistinguishably
+   *   from the flood. See that budget's own doc comment for the full
+   *   reasoning and sizing.
+   *
+   * Never throws; returns the same `IngestSignedContentResult` union the
+   * other three ingest methods do (`"accepted"` → 200, `"rejected"` → 422
+   * terminal, `"rate-limited"` → 429 deferred) so the command poller makes
+   * the identical accept/give-up/retry decision here it already makes for
+   * the other three.
+   */
+  ingestExternalDelivery(payload: unknown): IngestSignedContentResult {
+    if (!this.externalDeliveryAllowlist) return "rejected";
+    const parsed = extractExternalDeliveryPayload(payload, this.maxExternalDeliveryPayloadBytes * 2);
+    if (!parsed) return "rejected";
+    const destination = this.externalDeliveryAllowlist.get(parsed.destinationId);
+    if (!destination) return "rejected";
+    if (!verifyExternalDeliveryAuthProof(parsed.authProof, destination.password, parsed.destinationId, parsed.nonce, parsed.ciphertext, parsed.authTag)) {
+      return "rejected";
+    }
+    if (!this.ingestRateLimiter.allow(parsed.destinationId)) return "rate-limited";
+    if (!this.tryConsumeHttpIngestedExternalDeliveryBudget()) return "rate-limited";
+
+    const packetId = `http-ingest:${createHash("sha256").update(`${parsed.destinationId}:${parsed.nonce}:${parsed.ciphertext}:${parsed.authTag}`).digest("hex")}`;
+    this.externalDeliveryQueue.enqueue({
+      packetId,
+      destinationId: parsed.destinationId,
+      url: destination.url,
+      senderEphemeralPublicKey: parsed.senderEphemeralPublicKey,
+      nonce: parsed.nonce,
+      ciphertext: parsed.ciphertext,
+      authTag: parsed.authTag,
+      submittedAt: parsed.submittedAt,
+      sizeBytes: Buffer.byteLength(parsed.ciphertext, "hex"),
+      priority: Priority.CONTENT,
+    });
+    this.emit("external-delivery:queued", parsed.destinationId);
+    return "accepted";
   }
 
   /**
@@ -1691,6 +2291,101 @@ export class NomadNode extends EventEmitter {
   }
 
   /**
+   * Attempts to consume one unit of `MAX_ELEVATED_DROPS_PER_WINDOW`'s shared, node-wide budget for
+   * an elevated-severity (`"hazard"`/`"emergency"`) drop — resetting the window first if it has
+   * rolled over. Returns `false` (nothing consumed) instead of throwing, so both `publishDrop()`
+   * (which turns that into a thrown error, its own "fail loudly" contract for a locally-originated
+   * drop) and `ingestSignedContent()` (which turns it into a plain `false` return, its own "never
+   * throws" contract for a remotely-ingested one — `docs/security.md` voce #81, found by review)
+   * can share the exact same counter: the physical LoRa channel this protects doesn't care whether
+   * the flood would have come from this Box's own operator or a remote portal operator's signed
+   * submission, only how many elevated-priority announces this Box originates in the window.
+   */
+  private tryConsumeElevatedDropBudget(): boolean {
+    const now = Date.now();
+    if (now - this.elevatedDropWindow.windowStart >= ELEVATED_DROP_RATE_LIMIT_WINDOW_MS) {
+      this.elevatedDropWindow = { windowStart: now, count: 0 };
+    }
+    if (this.elevatedDropWindow.count >= MAX_ELEVATED_DROPS_PER_WINDOW) return false;
+    this.elevatedDropWindow.count++;
+    return true;
+  }
+
+  /**
+   * Same shape as `tryConsumeElevatedDropBudget()` immediately above, for
+   * `MAX_ELEVATED_NODE_APPENDS_PER_WINDOW` instead — extracted out of
+   * `appendToNode()`'s own inline block ("Pezzo 2" del canale di comando,
+   * `docs/security.md` voce #82) so `ingestSignedNodeAppend()` can share the
+   * exact same counter, for the same reason `ingestSignedContent()` shares
+   * `tryConsumeElevatedDropBudget()` with `publishDrop()`: the mesh-wide
+   * flood risk this budget protects against doesn't care whether the
+   * elevated-severity append originated from this Box's own paired client or
+   * a remote portal operator's signed submission.
+   */
+  private tryConsumeElevatedNodeAppendBudget(): boolean {
+    const now = Date.now();
+    if (now - this.elevatedNodeAppendWindow.windowStart >= ELEVATED_NODE_APPEND_RATE_LIMIT_WINDOW_MS) {
+      this.elevatedNodeAppendWindow = { windowStart: now, count: 0 };
+    }
+    if (this.elevatedNodeAppendWindow.count >= MAX_ELEVATED_NODE_APPENDS_PER_WINDOW) return false;
+    this.elevatedNodeAppendWindow.count++;
+    return true;
+  }
+
+  /**
+   * Same shape, for `MAX_HTTP_INGESTED_NODE_APPENDS_PER_WINDOW` (see that constant's own doc
+   * comment) — unlike `tryConsumeElevatedNodeAppendBudget()` above, consulted for **every**
+   * `ingestSignedNodeAppend()` submission regardless of `kind`, never shared with the mesh path
+   * (`appendToNode()`/`considerNodeAppend()` never call this): the risk it guards against is
+   * specific to the HTTP channel (many distinct, never-vetted identities each submitting once),
+   * not something a real mesh peer's own traffic could trigger.
+   */
+  private tryConsumeHttpIngestedNodeAppendBudget(): boolean {
+    const now = Date.now();
+    if (now - this.httpIngestedNodeAppendWindow.windowStart >= HTTP_INGESTED_NODE_APPEND_RATE_LIMIT_WINDOW_MS) {
+      this.httpIngestedNodeAppendWindow = { windowStart: now, count: 0 };
+    }
+    if (this.httpIngestedNodeAppendWindow.count >= MAX_HTTP_INGESTED_NODE_APPENDS_PER_WINDOW) return false;
+    this.httpIngestedNodeAppendWindow.count++;
+    return true;
+  }
+
+  /**
+   * Same shape, for `MAX_HTTP_INGESTED_RELAY_COMMANDS_PER_WINDOW` (see that constant's own doc
+   * comment) — "Pezzo 4" del canale di comando, `docs/security.md` voce #83. Never shared with
+   * `MAX_RELAY_COMMANDS_PER_WINDOW`/`relayCommandWindow` (`sendRelayCommand()`'s own *outgoing*
+   * budget, checked on the sending node, not the receiving one) — this is the receiving Box's own,
+   * the only volume defense `ingestSignedRelayCommand()` has left given it doesn't consult trust.
+   */
+  private tryConsumeHttpIngestedRelayCommandBudget(): boolean {
+    const now = Date.now();
+    if (now - this.httpIngestedRelayCommandWindow.windowStart >= HTTP_INGESTED_RELAY_COMMAND_RATE_LIMIT_WINDOW_MS) {
+      this.httpIngestedRelayCommandWindow = { windowStart: now, count: 0 };
+    }
+    if (this.httpIngestedRelayCommandWindow.count >= MAX_HTTP_INGESTED_RELAY_COMMANDS_PER_WINDOW) return false;
+    this.httpIngestedRelayCommandWindow.count++;
+    return true;
+  }
+
+  /**
+   * Same shape, for `MAX_HTTP_INGESTED_EXTERNAL_DELIVERIES_PER_WINDOW` (see that constant's own doc
+   * comment) — "Pezzo 3" del canale di comando, `docs/security.md` voce #84. Node-wide, across every
+   * `destinationId`, unlike `this.ingestRateLimiter.allow(destinationId)` (`ingestExternalDelivery()`'s
+   * own per-destination budget) — the two are complementary: the per-destination one bounds how much
+   * of the abuse any single allowed destination can absorb, this one bounds the total regardless of
+   * how it's spread across the allowlist.
+   */
+  private tryConsumeHttpIngestedExternalDeliveryBudget(): boolean {
+    const now = Date.now();
+    if (now - this.httpIngestedExternalDeliveryWindow.windowStart >= HTTP_INGESTED_EXTERNAL_DELIVERY_RATE_LIMIT_WINDOW_MS) {
+      this.httpIngestedExternalDeliveryWindow = { windowStart: now, count: 0 };
+    }
+    if (this.httpIngestedExternalDeliveryWindow.count >= MAX_HTTP_INGESTED_EXTERNAL_DELIVERIES_PER_WINDOW) return false;
+    this.httpIngestedExternalDeliveryWindow.count++;
+    return true;
+  }
+
+  /**
    * Publishes a drop — a location-tagged public notice (`docs/next-steps.md`,
    * concept credited to BitChat's mesh-local `BoardManager`, Unlicense/public
    * domain — see `drops.ts`'s own doc comment for the full mapping onto
@@ -1744,15 +2439,8 @@ export class NomadNode extends EventEmitter {
     if (drop.expiresInMs !== undefined && (!Number.isFinite(drop.expiresInMs) || drop.expiresInMs <= 0)) {
       throw new Error("publishDrop: 'expiresInMs' must be a finite positive number");
     }
-    if (drop.kind !== "info") {
-      const now = Date.now();
-      if (now - this.elevatedDropWindow.windowStart >= ELEVATED_DROP_RATE_LIMIT_WINDOW_MS) {
-        this.elevatedDropWindow = { windowStart: now, count: 0 };
-      }
-      if (this.elevatedDropWindow.count >= MAX_ELEVATED_DROPS_PER_WINDOW) {
-        throw new Error("publishDrop: too many high-priority drops, try again later");
-      }
-      this.elevatedDropWindow.count++;
+    if (drop.kind !== "info" && !this.tryConsumeElevatedDropBudget()) {
+      throw new Error("publishDrop: too many high-priority drops, try again later");
     }
     const ttlMs = Math.min(drop.expiresInMs ?? DEFAULT_DROP_TTL_MS, MAX_DROP_TTL_MS);
     const timestamp = Date.now();
@@ -2352,10 +3040,18 @@ export class NomadNode extends EventEmitter {
    * command's timestamp from the same `senderId` — a genuine resend uses a
    * fresh `Date.now()` (`sendRelayCommand()` never lets a caller supply
    * one), so this only ever blocks a literal replay of prior wire bytes,
-   * never a legitimate new command. `lastAcceptedRelayCommandAt` is safe to
-   * leave unbounded: it only ever gains an entry once `senderId` has
-   * already cleared the `minTrustForRelayCommand` gate above (`ADMIN` by
-   * default), a small, operator-curated set, not an attacker-controlled one.
+   * never a legitimate new command. `lastAcceptedRelayCommandAt` used to be
+   * safe left unbounded on the reasoning that an entry only ever existed
+   * for a sender that already cleared the `minTrustForRelayCommand` gate
+   * above — no longer true now that `ingestSignedRelayCommand()` also
+   * writes into this same map without that gate (see its own doc comment
+   * for why); it's bounded with `trustRank`-based eviction instead (see
+   * this field's own doc comment, "Pezzo 4", `docs/security.md` voce #83).
+   * Shared, not duplicated, between the two paths: whether a given
+   * `senderId`'s last-accepted timestamp came from a real mesh
+   * `PRIVATE_MESSAGE` or an HTTP-ingested submission, it's the same
+   * logical fact about that one identity, so both paths must observe and
+   * update the same state to actually prevent a replay across the two.
    */
   private considerRelayCommand(senderId: string, command: RelayCommandPayload | undefined): void {
     if (!command) return;
@@ -2582,7 +3278,15 @@ export class NomadNode extends EventEmitter {
     if (isUnicastElsewhere) {
       const route = this.routingTable.bestRoute(packet.destination!);
       if (route && route.nextHop !== exceptPeerId) {
-        if (await this.sendToPeer(route.nextHop, packet)) return true;
+        if (await this.sendToPeer(route.nextHop, packet)) {
+          // Symmetric to "store-and-forward:queued" below — lets a caller (e.g. web-ui.ts) tell "handed
+          // to a neighbor just now" apart from "queued locally, no reachable peer yet" without polling.
+          // Says nothing about the *final* recipient ever receiving it — this mesh has no end-to-end ack
+          // for unicast content types (only the unused MessageType.ACK/DATA pair does), so this event
+          // only ever means "left this device", never "delivered".
+          this.emit("store-and-forward:handed-off", packet);
+          return true;
+        }
         // The routed next hop just failed (e.g. dropped mid-send) — fall through to flooding
         // rather than queuing immediately, since other peers may still be able to relay it.
       }
@@ -2592,9 +3296,13 @@ export class NomadNode extends EventEmitter {
     const delivered =
       targets.length > 0 && (await Promise.all(targets.map((p) => this.sendToPeer(p.id, packet)))).some(Boolean);
 
-    if (!delivered && isUnicastElsewhere) {
-      this.pendingDeliveries.enqueue(packet, exceptPeerId);
-      this.emit("store-and-forward:queued", packet);
+    if (isUnicastElsewhere) {
+      if (delivered) {
+        this.emit("store-and-forward:handed-off", packet);
+      } else {
+        this.pendingDeliveries.enqueue(packet, exceptPeerId);
+        this.emit("store-and-forward:queued", packet);
+      }
     }
 
     return delivered;

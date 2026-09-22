@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { getMirrorSnapshot, type MirrorSectionError, type MirrorSnapshot } from "../../lib/db";
 import { toMapPoints } from "../../lib/map-points";
+import { roleLabel } from "../../lib/format";
 import { PortalHeader } from "../PortalHeader";
 import { MapClient } from "./MapClient";
 
@@ -17,6 +18,10 @@ const SECTION_LABELS: Record<Exclude<MirrorSectionError["section"], "config">, s
   beacons: "SOS",
   drops: "hazard/info",
   relays: "relay",
+  // "Consegna esterna differita" destinations never put a pin on this map (no lat/lon of their own) —
+  // included only because SECTION_LABELS' own type requires every non-"config" section, not because
+  // this page ever surfaces a "destinations" failure to the operator.
+  destinations: "destinazioni",
 };
 
 export default async function MapPage(): Promise<JSX.Element> {
@@ -30,7 +35,7 @@ export default async function MapPage(): Promise<JSX.Element> {
     snapshot = await getMirrorSnapshot(organizationId);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    snapshot = { nodes: [], relays: [], beacons: [], drops: [], errors: [{ section: "config", message }] };
+    snapshot = { nodes: [], relays: [], beacons: [], drops: [], destinations: [], errors: [{ section: "config", message }] };
   }
 
   const configError = sectionError(snapshot.errors, "config");
@@ -54,7 +59,7 @@ export default async function MapPage(): Promise<JSX.Element> {
     <>
       <PortalHeader
         userEmail={session.user.email ?? ""}
-        roleLabel={session.user.role === "admin" ? "Admin ARALD" : "Operatore"}
+        roleLabel={roleLabel(session.user.role)}
         active="mappa"
         isAdmin={session.user.role === "admin"}
       />

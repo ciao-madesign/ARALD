@@ -737,6 +737,9 @@ if (sosButton) {
       }
       const message = sosMessage.value.trim() || undefined;
       await sendEmergencyBeaconViaRelay({ message, lat, lon });
+      // Never "consegnato": a broadcast Bluetooth burst has no delivery confirmation of any kind — see
+      // recordActivity()'s own doc comment (app.js) for why "sent" is the strongest honest claim here.
+      recordActivity("sos", undefined, "sent");
       sosStatus.textContent = "SOS inviato.";
       vibrate([30, 50, 30, 50, 30]);
       showToast("SOS inviato", "alert-circle");
