@@ -79,6 +79,16 @@ Il piano di audit UX/UI (Artifact "ARALD — UX/UI Audit & Redesign Plan", mini-
 
 La Fase 8 (mockup pixel-precisi in Figma di tutti i flussi — griglie/spaziature esatte, ogni stato di ogni schermata, primo vero uso di Figma in questo progetto: nessun design system Figma esiste ancora, andrebbe ricostruito da zero a partire dai token già in `mobile/www/styles.css`/`mirror-portal/app/globals.css`) era subordinata dal piano stesso al via libera della Fase 7. **Decisione esplicita dell'utente (21 settembre 2026): il piano si chiude qui.** La Fase 8 resta un candidato aperto, da riprendere **al momento del lancio della versione beta di ARALD, dopo che i field test (validazione sul campo, non solo test utente sui prototipi) avranno confermato i flussi** — non prima, per non rifinire al pixel qualcosa che l'uso reale potrebbe ancora rivelare da cambiare.
 
+### IP locale del prototipo Box (Orange Pi 4 Pro) non ancora stabile sulla rete domestica — appunto, 25 settembre 2026
+
+**Non un problema di codice, una decisione di infrastruttura di rete** — di competenza dell'utente (`CLAUDE.md`, "Priorità per chi riprende questo lavoro": contatti/configurazioni con enti o hardware terzi restano decisioni dell'utente, mai una questione tecnica di questo repository). Annotato qui solo perché è un candidato aperto da riprendere, non perché richieda lavoro in questo repository.
+
+**Osservazione**: l'IP locale del prototipo Box (assegnato via DHCP dal router di casa) è stato visto cambiare tra una sessione e l'altra — comportamento DHCP normale (un indirizzo liberato torna nel pool e può essere riassegnato ad altro), non un problema di identità del dispositivo. Oggi non blocca nulla: il Box resta un prototipo ad avvio manuale via SSH (`docs/riavvio-box-prototipo.md`), non ancora un dispositivo sempre acceso con un indirizzo pubblicizzato da qualche parte.
+
+**Direzione già decisa, da eseguire quando comodo**: una prenotazione DHCP (static lease) sul router, basata sul MAC address dell'interfaccia Ethernet del prototipo — non un IP statico configurato sul sistema operativo del dispositivo. Riserva un indirizzo fisso senza rinunciare alla gestione centralizzata DHCP del router; da verificare che l'indirizzo riservato sia fuori dal range dinamico del pool (o che il router gestisca correttamente le riserve al suo interno).
+
+**Perché conviene comunque farlo ora**: toglie l'attrito di un URL della Web UI che cambia tra una sessione e l'altra durante lo sviluppo, e diventa necessario appena il Box smetterà di essere solo un prototipo ad avvio manuale. Quando la riserva sarà stata impostata, l'IP fisso risultante è il tipo di "risultato" che può essere annotato in `docs/riavvio-box-prototipo.md` (mai la procedura di configurazione del router in sé, che resta fuori da questo repository).
+
 ---
 
 ## Milestone/feature completate — pointer al dettaglio in `docs/security.md`
