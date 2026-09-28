@@ -58,6 +58,22 @@ Il software si ferma da solo quando il sistema operativo si spegne (il servizio 
 - **SSH avvisa "host key has changed" o "can't be established"**: capitato durante la configurazione iniziale (documentato per riferimento) — quasi sempre legato a un cambio di indirizzo IP altrove sulla rete, non un problema di sicurezza reale su una rete domestica nota. Sul Mac: `ssh-keygen -R <IP in questione>` rimuove solo la voce obsoleta (nessun effetto su altri dispositivi della rete), poi si riprova la connessione — se il messaggio è "can't be established" (prima connessione a un indirizzo mai visto), basta confermare con `yes`.
 - **Password dimenticata/da cambiare**: la password dell'utente `orangepi` può essere quella di default — per cambiarla, una volta collegati via SSH: `passwd`.
 
+## Da fare al prossimo intervento — identità persistente (`--identity-dir`)
+
+**Scoperto il 28 settembre 2026**: il Node ID del Box cambia a ogni riavvio del servizio, perché il comando attuale non passa `--identity-dir`. Non è un problema urgente per un utilizzo puramente esplorativo, ma invalida trust/registro relay/connessioni peer stabilite a ogni riavvio — da correggere prima di qualunque uso più stabile.
+
+**Prossimo aggiornamento della configurazione** (quando si riprende):
+```bash
+sudo nano /etc/systemd/system/arald-box.service
+```
+Aggiungere `--identity-dir /home/orangepi/.arald-identity` alla riga `ExecStart` (qualunque cartella va bene, basta che sia stabile e non venga mai cancellata), poi:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart arald-box.service
+journalctl -u arald-box.service --no-pager | grep "Node ID"
+```
+Verificare che il Node ID resti lo stesso a un riavvio successivo (`sudo systemctl restart arald-box.service` di nuovo, poi ricontrollare).
+
 ---
 
-*Nota: prossimo passo pianificato è verificare la mesh con un secondo nodo reale (non solo questo Box da solo) — vedi la conversazione di progetto per il piano.*
+*Nota: prossimo passo pianificato è validare la mesh e il registro relay su una base di identità stabile — vedi la conversazione di progetto per il piano completo.*
