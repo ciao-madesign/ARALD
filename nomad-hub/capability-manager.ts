@@ -28,7 +28,7 @@ function toGb(bytes: number): number {
 
 /**
  * Builds a best-effort hardware profile of whatever machine this process
- * runs on — `docs/deployment.md`'s "NOMAD-NET BOX e PORTABLE" §8
+ * runs on — `docs/deployment.md`'s "ARALD Box e PORTABLE" §8
  * "Capability Manager", the one piece of that specification buildable
  * without physical hardware: every field here comes from `node:os`/
  * `node:fs`, so it works identically on this sandbox, an Orange Pi, or any

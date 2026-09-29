@@ -31,12 +31,21 @@ export interface ManagementServerOptions {
 }
 
 /**
- * HTTP server for the "NOMAD Management API" (`docs/deployment.md`, "Il
- * NOMAD Hub come sistema portatile"/"NOMAD-NET BOX e PORTABLE") —
- * administers the Docker containers a NOMAD Hub host runs, via
+ * HTTP server for the ARALD Hub Management API (`docs/deployment.md`,
+ * "L'ARALD Hub come sistema portatile" / "ARALD Box e PORTABLE") —
+ * administers the Docker containers a Project NOMAD host runs, via
  * `DockerClient`, and reports the host's own hardware profile via
  * `capability-manager.ts` (`GET /api/hub/capabilities`, independent of
- * Docker connectivity). Deliberately **not** part of
+ * Docker connectivity). This directory is named `nomad-hub/` because it
+ * manages a host running Project NOMAD — same naming logic as
+ * `gateway/nomad/`, not a leftover of this project's own former name
+ * ("Nomad-Net", renamed ARALD on 4 September 2026 — see
+ * `docs/due-diligence-naming-2026-09-04.md`). That said, whether ARALD
+ * keeps depending on Project NOMAD at all is an open question, not a
+ * settled fact — see `docs/next-steps.md`'s "Ipotesi di indipendenza da
+ * Project NOMAD" for a live reconsideration of this exact dependency;
+ * this file's references to it reflect the current state, not a
+ * permanent architectural commitment. Deliberately **not** part of
  * `node/src/`/`gateway/nomad/`: this never touches the mesh (`NomadNode`)
  * at all, so it can't be reached by a mesh guest the way `service://...`
  * calls or `WebUiServer` endpoints can — see `nomad-hub/`'s own top-level

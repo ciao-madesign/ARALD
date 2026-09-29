@@ -48,7 +48,7 @@ describe("MbtilesReader", () => {
   let filePath: string;
 
   beforeEach(() => {
-    dir = mkdtempSync(path.join(tmpdir(), "nomad-net-map-tiles-"));
+    dir = mkdtempSync(path.join(tmpdir(), "arald-map-tiles-"));
     filePath = path.join(dir, "region.mbtiles");
   });
 

@@ -4,11 +4,11 @@ import { mapWithConcurrency } from "./concurrency.js";
 const DEFAULT_SYNC_CONCURRENCY = 8;
 
 /**
- * Translates Nomad-Net's abstract APIs (spec §37 — `GET content://...`,
+ * Translates ARALD's abstract APIs (spec §37 — `GET content://...`,
  * `CALL service://...`) into HTTP calls against a Project NOMAD instance's
  * Kiwix service (`docs/next-steps.md` Option B) — a real Docker+NOMAD
  * instance in production, `FakeNomadServer` in this slice's tests/demo.
- * Nomad-Net itself never needs to know the difference: this gateway is
+ * ARALD itself never needs to know the difference: this gateway is
  * just another `NomadNode`, using the exact same public API
  * (`publishContent`, `registerService`) any other node would.
  *
@@ -114,7 +114,7 @@ export class KiwixGateway {
   /**
    * Registers `service://kiwix-search` (spec §37 `CALL service://...`) —
    * every call proxies live to NOMAD's own search endpoint, translating
-   * the result back into Nomad-Net's shape. Never caches; a call made
+   * the result back into ARALD's shape. Never caches; a call made
    * while NOMAD happens to be unreachable rejects with a clear error
    * (surfaced to the original caller as a normal SERVICE_RESPONSE `error`,
    * `node.ts`'s `handleServiceRequest`) rather than serving something stale

@@ -70,9 +70,9 @@ Non saltare il passaggio di code-review nemmeno quando il codice "sembra ovviame
 ## Struttura del repository
 
 ```
-nomad-net/
+arald/
 ├─ docs/            specifica (SPECIFICATION.md) e documentazione tecnica
-├─ node/src/        nomad-node: il runtime di rete (unico package con codice reale)
+├─ node/src/        arald-node: il runtime di rete (unico package con codice reale)
 ├─ tests/           unit/, integration/, network/ (vitest)
 ├─ tools/simulator/ simulatore di rete a scala (usato anche da `npm run simulate`)
 ├─ gateway/nomad/   gateway NOMAD: KiwixGateway, AiGateway, NewsGateway, TranslateGateway, InternetGateway, FlatnotesGateway — mockato, non nel workspace npm
