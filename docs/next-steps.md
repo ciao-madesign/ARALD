@@ -79,6 +79,26 @@ Il piano di audit UX/UI (Artifact "ARALD — UX/UI Audit & Redesign Plan", mini-
 
 La Fase 8 (mockup pixel-precisi in Figma di tutti i flussi — griglie/spaziature esatte, ogni stato di ogni schermata, primo vero uso di Figma in questo progetto: nessun design system Figma esiste ancora, andrebbe ricostruito da zero a partire dai token già in `mobile/www/styles.css`/`mirror-portal/app/globals.css`) era subordinata dal piano stesso al via libera della Fase 7. **Decisione esplicita dell'utente (21 settembre 2026): il piano si chiude qui.** La Fase 8 resta un candidato aperto, da riprendere **al momento del lancio della versione beta di ARALD, dopo che i field test (validazione sul campo, non solo test utente sui prototipi) avranno confermato i flussi** — non prima, per non rifinire al pixel qualcosa che l'uso reale potrebbe ancora rivelare da cambiare.
 
+### IP locale del prototipo Box (Orange Pi 4 Pro) — parzialmente risolto, 28 settembre 2026; resta un rifinimento facoltativo
+
+**Non un problema di codice, una decisione di infrastruttura di rete** — di competenza dell'utente (`CLAUDE.md`, "Priorità per chi riprende questo lavoro"). Annotato qui solo come candidato aperto, non perché richieda lavoro in questo repository.
+
+**Aggiornamento 28 settembre 2026**: il Box è passato da avvio manuale via SSH a **persistente** (servizio `systemd`) e da Ethernet a **solo Wi-Fi**, con un indirizzo IP **fisso impostato direttamente sulla scheda** (non più DHCP dinamico) — risultato pratico dell'osservazione sotto: una collisione reale con un altro dispositivo della rete (che usava un IP fisso configurato sul proprio sistema, non una riserva sul router) ha causato un avviso "host key changed" su SSH, diagnosticato e risolto in sessione. Dettaglio completo in `docs/riavvio-box-prototipo.md`.
+
+**Osservazione originale (25 settembre 2026), ancora rilevante in parte**: un IP fisso impostato *sul dispositivo stesso* (come fatto ora) evita la collisione con quel dispositivo specifico, ma **non è equivalente a una riserva DHCP sul router** — resta teoricamente possibile che il router assegni lo stesso indirizzo a un altro dispositivo in futuro via DHCP, visto che il router non sa che quell'indirizzo è "preso".
+
+**Direzione già decisa, ancora da eseguire quando comodo (rifinimento, non più bloccante)**: una prenotazione DHCP (static lease) sul router, basata sul MAC address dell'interfaccia Wi-Fi del prototipo — elimina anche il rischio residuo sopra. Da verificare che l'indirizzo riservato sia fuori dal range dinamico del pool (o che il router gestisca correttamente le riserve al suo interno).
+
+---
+
+### Pulsante di spegnimento sicuro nella Web UI — pianificato, non ancora implementato (28 settembre 2026)
+
+**Richiesta dell'utente**: poter spegnere in sicurezza il Box (equivalente a `sudo shutdown -h now` + attesa del filesystem sincronizzato) da un pulsante nell'interfaccia web, invece di doversi collegare via SSH ogni volta.
+
+**Decisione architetturale presa prima di iniziare (non ancora implementata)**: questo comando **non va aggiunto a `web-ui.ts`** — quell'interfaccia (stato/interazione della mesh, spec §59) è deliberatamente priva di qualunque accesso all'OS/Docker dell'host, stessa separazione già documentata per `nomad-hub/` contro l'app mobile (`CLAUDE.md`). Il posto corretto è **`nomad-hub/`** (ARALD Hub Management API, già pensata per amministrare l'host con una password propria separata da quella di rete della mesh) — non ancora attivo su questo prototipo Box.
+
+**Cosa servirebbe, quando si riprenderà**: un nuovo endpoint autenticato in `nomad-hub/management-server.ts`, un permesso `sudo` **specifico e limitato** al solo comando di spegnimento per l'utente di sistema (mai sudo generico), un pulsante nel pannello `mobile/www/hub-control.html`/`.js` esistente, test dedicati — stesso workflow a doppio check di ogni feature sostanziale di questo repository. Richiede prima di attivare `nomad-hub/` su questo Box (oggi gira solo il nodo ARALD base).
+
 ---
 
 ## Milestone/feature completate — pointer al dettaglio in `docs/security.md`

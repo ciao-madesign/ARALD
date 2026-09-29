@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { autoDetect } from "@serialport/bindings-cpp";
 import { SerialPortStream } from "@serialport/stream";
 import { NomadNode } from "./node.js";
+import { Identity } from "./identity.js";
 import type { Transport } from "./transport.js";
 import { TcpTransport } from "./transports/tcp.js";
 import { LoraSerialTransport } from "./transports/lora-serial.js";
@@ -187,8 +188,28 @@ async function main(): Promise<void> {
     deviceClass = args["device-class"];
   }
 
+  // Persists this node's Ed25519 identity across restarts (Identity.loadOrCreate(), identity.ts —
+  // the same load-or-generate-and-save-to-disk primitive already used by whatsapp-relay/email-relay's
+  // loadOrCreateDestinationKeypair()) instead of NomadNode's default Identity.generate(), which mints
+  // a brand-new node id every process start. Without this, a persistent deployment (systemd,
+  // Restart=on-failure included) silently discards every trust relationship, relay-registry entry,
+  // and established peer connection tied to the old node id on every restart — found running this
+  // Box as a real systemd service (docs/deployment.md, 28 settembre 2026). Opt-in, never on by
+  // default: tests/tools/simulator.ts spin up many short-lived nodes and want fresh identities every
+  // time, not key files left behind on disk. `!== undefined` + explicit empty-string rejection, same
+  // pattern already used for --trust-admin/--lora-serial-port/--device-class above.
+  let identity: Identity | undefined;
+  if (args["identity-dir"] !== undefined) {
+    if (args["identity-dir"] === "") {
+      console.error("--identity-dir was given an empty value");
+      process.exit(1);
+    }
+    identity = Identity.loadOrCreate(args["identity-dir"]);
+  }
+
   const node = new NomadNode({
     displayName,
+    identity,
     relayPolicy: batteryPercent !== undefined ? { getResourceState: () => ({ batteryPercent }) } : undefined,
     externalDeliveryAllowlist,
     maxExternalDeliveryEntries,
@@ -283,6 +304,11 @@ async function main(): Promise<void> {
   console.log("ARALD Node");
   console.log(`Display name: ${displayName}`);
   console.log(`Node ID: ${node.nodeId}`);
+  if (identity) {
+    console.log(`Identity persisted in: ${args["identity-dir"]} (same Node ID across restarts)`);
+  } else {
+    console.log(`Identity: ephemeral, regenerated on every restart (pass --identity-dir to persist)`);
+  }
   console.log(`Listening on port: ${port}`);
   console.log(`Status: ${node.status}`);
 
