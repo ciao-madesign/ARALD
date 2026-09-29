@@ -73,6 +73,42 @@ Dopo `whatsapp-relay/` (`docs/security.md` voce #79) ed `email-relay/` (voce #85
 
 **Nessun codice scritto finora** — piano confermato dall'utente, in attesa di essere ripreso in una sessione futura con lo stesso workflow a doppio check di ogni voce precedente.
 
+### Installer/wizard "ARALD Portable" software-puro — proposto dall'utente, 29 settembre 2026, non ancora implementato
+
+**Idea**: distribuire il solo runtime mesh (`node/src/` — `NomadNode`/`cli.ts`/`web-ui.ts`, nessuna dipendenza da Docker o Project NOMAD) come pacchetto installabile per un utente non tecnico: scarica/riceve un pacchetto, lo installa sul proprio SSD esterno (o direttamente sul proprio PC), un breve wizard di configurazione iniziale, pronto all'uso — variante **Wi-Fi-only**, nessun hardware radio richiesto (il kit LoRa resta un componente opzionale per chi vuole portata lunga, vedi `docs/deployment.md`, "Chiarimento terminologico... due significati di ARALD Portable").
+
+**Perché non è bloccata come le Opzioni A/B sopra**: a differenza del "Bootstrap/packaging del ARALD Hub" (Docker+Project NOMAD, `docs/deployment.md`, tuttora bloccato da prerequisiti esterni), questo pacchetto confeziona solo codice già reale e testato in questo repository — nessun Docker, nessun sorgente NOMAD, nessun hardware radio necessario per la variante base.
+
+**Cosa manca**:
+1. Un vero step di packaging — oggi si esegue solo via `npm run dev -w node --` da riga di comando; da valutare uno script di installazione/bundle eseguibile per Windows/macOS/Linux.
+2. Un wizard di primo avvio (nome nodo, password di rete, directory dati/SSD, avvio automatico) — non esiste ancora, oggi la configurazione è solo tramite i flag di `cli.ts`.
+3. Verifica end-to-end con un utente non tecnico che segue solo le istruzioni del pacchetto, senza assistenza — non ancora fatta.
+
+**Effetto collaterale utile per la campagna Kickstarter**: costo di produzione ~0€ per il progetto nella variante Wi-Fi-only — discusso con l'utente come possibile reward a basso costo in fase di definizione della campagna (29 settembre 2026).
+
+### Ipotesi di indipendenza da Project NOMAD — Kiwix/Ollama diretti (29 settembre 2026, ricerca fatta, decisione ancora aperta)
+
+**Domanda, sollevata dall'utente esplicitamente come ipotesi**: è possibile ottenere gli stessi servizi oggi previsti tramite Project NOMAD (Wikipedia offline, AI locale, traduzione, notizie, note condivise) **senza dipendere da Project NOMAD come progetto**, integrando direttamente i componenti open source sottostanti — **Kiwix** (server Wikipedia offline) e **Ollama** (runtime AI locale)? **Se possibile, l'utente preferisce questa strada.**
+
+**Verificato nel codice**: `gateway/nomad/kiwix-gateway.ts` e `gateway/nomad/ai-gateway.ts` parlano entrambi con una semplice API HTTP a un `baseUrl` qualunque — il commento di `ai-gateway.ts` lo dice esplicitamente ("una vera istanza Ollama", non "un'istanza Ollama dietro NOMAD"). Indifferenti a *chi* risponde, purché rispetti quell'API (lo stesso `FakeNomadServer`/`FakeOllamaServer` dei test lo dimostra). Un'installazione "solo Kiwix + solo Ollama" (senza il resto di Project NOMAD attorno) dovrebbe quindi già funzionare oggi **senza modifiche al codice** — resta da verificare in pratica, non ancora tentato (nessun ambiente Docker disponibile in questa sessione).
+
+**Ricerca fatta il 29 settembre 2026, con accesso web reale disponibile in questa sessione (a differenza delle altre informazioni di questo repository — qui verificato, non un'ipotesi di lavoro):**
+
+1. **Licenze e copyright — verificato, esito favorevole con un'eccezione netta**:
+   - Kiwix (Kiwix Desktop, kiwix-js, ecc.): **GPL-3.0**. `libzim` (la libreria che legge i file ZIM): **GPL-2.0** — le due licenze sono già in tensione tra loro secondo gli stessi sviluppatori di Kiwix ([openzim/libzim#30](https://github.com/openzim/libzim/issues/30)).
+   - Ollama: **MIT** — nessun vincolo, compatibile con la licenza MIT di ARALD.
+   - Contenuto Wikipedia: **CC BY-SA** — richiede solo attribuzione visibile, nessun blocco pratico.
+   - **Il punto che decide tutto**: la GPL vincola solo chi *incorpora* codice GPL nel proprio programma (link/compilazione insieme) — non chi parla con un programma GPL separato via rete. Kiwix fatto girare come processo/container a sé (con o senza Docker) e interrogato via HTTP, **esattamente come oggi**, resta quindi sicuro: nessun obbligo di licenza si trasferisce ad ARALD. **L'unica idea da scartare** è quella più radicale valutata insieme all'utente — leggere i file ZIM direttamente dentro `node/src/` via `libzim` — perché incorporerebbe codice GPL-2.0 nel codice MIT di ARALD, probabile obbligo di rilicenziare quella parte sotto GPL. Nessun servizio ne risente: Kiwix continuerebbe a girare come processo separato, solo senza quella specifica scorciatoia implementativa.
+   - Modelli AI (separati dalla licenza di Ollama stesso): licenza non uniforme, da scegliere con attenzione caso per caso — alcuni molto permissivi (Apache/MIT), altri con restrizioni reali d'uso (es. soglie di utenti attivi, esclusioni territoriali). Non un problema del codice ARALD, ma una scelta da fare al momento di indicare quale modello scaricare.
+2. **Requisiti di sistema/hardware — confermata l'ipotesi**: fonti generiche concordano che ~8 GB di RAM restano il minimo tipico per un modello AI locale piccolo (7B parametri), **indipendentemente da Docker** — è la dimensione del modello a pesare su RAM/CPU, non il container. Togliere Docker/NOMAD non riduce quindi i requisiti hardware, solo la complessità di installazione (meno pezzi, meno spazio disco) — da comunicare così, mai come un risparmio hardware.
+3. **Sforzo di sviluppo reale — probabilmente minimo**: entrambi i gateway sono già scritti in modo agnostico rispetto a chi risponde all'API (vedi sopra) — il lavoro restante è **verifica**, non riscrittura: puntare `kiwix-gateway.ts`/`ai-gateway.ts` contro un Kiwix/Ollama installati da soli e controllare che l'API risponda nella forma attesa. Non ancora fatto (nessun ambiente Docker disponibile in questa sessione).
+
+**Implicazione non ancora affrontata, se si decide di procedere**: rimuovere Project NOMAD come dipendenza avrebbe un effetto a catena sul naming di questo repository — la cartella `gateway/nomad/` e molti documenti nominano esplicitamente "Project NOMAD" proprio perché *quella* era la dipendenza. Va trattato come un lavoro a sé, distinto dalla pulizia del nome storico "Nomad-Net"/`NomadNode` (che riguarda il nome che *questo stesso progetto* aveva prima di rinominarsi ARALD, questione diversa — vedi voce dedicata sotto).
+
+**Non ancora deciso**: se procedere con "solo Kiwix + solo Ollama", e se tentarlo prima di scaricare Project NOMAD stesso — la ricerca sopra rimuove i tre principali dubbi, resta solo la verifica pratica (richiede Docker, non disponibile qui).
+
+**Non ancora deciso**: se procedere, e quale dei due gradini tentare per primo (solo-Kiwix/solo-Ollama dietro il gateway esistente, o lettura diretta ZIM come le mappe) — dipende dall'esito della verifica licenze sopra, il vincolo più probabile a orientare la scelta.
+
 ### Mockup pixel-precisi (Figma) — rimandati al lancio della beta, dopo i field test
 
 Il piano di audit UX/UI (Artifact "ARALD — UX/UI Audit & Redesign Plan", mini-team di 4 ruoli, sezione 11) prevedeva 8 fasi. Le Fasi 1-6 sono **✅ complete** (dettaglio in `docs/security.md` voci #86-91: "Le mie attività", stato persistente SOS, migrazione token Waypoint, navigazione a 4 voci + Diagnostica, feed "Richiede attenzione ora" + conferma a due passi, tabella dati densa + badge di ruolo). La Fase 7 (Field User Test sui prototipi con utenti reali, Marco/Elena) è stata **saltata esplicitamente** (21 settembre 2026, decisione dell'utente — nessun utente reale disponibile in questo ambiente); il piano stesso la segnava come prerequisito per considerare chiusa qualunque fase precedente, quindi quel criterio resta consapevolmente non soddisfatto.

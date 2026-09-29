@@ -80,11 +80,6 @@
             <p>Pocket-sized radio. Sends an SOS, relays other people's messages, or both.</p>
           </div>
           <div class="device-card">
-            <div class="device-icon" data-icon="relay" aria-hidden="true"></div>
-            <h3>ARALD Relay</h3>
-            <p>Same logic, fixed and solar-powered, or carried along as a courier.</p>
-          </div>
-          <div class="device-card">
             <div class="device-icon" data-icon="box" aria-hidden="true"></div>
             <h3>ARALD Box</h3>
             <p>A small always-on computer: content, local search, translation, AI, coordination.</p>
@@ -92,7 +87,7 @@
           <div class="device-card">
             <div class="device-icon" data-icon="portable" aria-hidden="true"></div>
             <h3>ARALD Portable</h3>
-            <p>The same environment on a bootable drive — plug into whatever computer is on hand.</p>
+            <p>The same environment on a spare drive — plug into whatever computer is on hand. Pure software: no radio hardware to buy for the Wi-Fi-only path.</p>
           </div>
           <div class="device-card">
             <div class="device-icon" data-icon="phone" aria-hidden="true"></div>
@@ -100,6 +95,7 @@
             <p>A dashboard onto any of the above: browse content, chat, share your location, call a service.</p>
           </div>
         </div>
+        <p class="section-lede" style="margin-top: 1.6em;">A Card or a Box can also run as a <strong>fixed relay</strong> — installed permanently with weatherproofing and solar power. Same electronics, no separate device.</p>
       </div>
     </section>
 
@@ -109,7 +105,7 @@
           <p class="section-eyebrow">Where things stand</p>
           <h2 id="status-title">A working prototype, built in the open</h2>
           <p>Core networking — identity, routing, encryption, store-and-forward, content caching — is implemented and covered by automated tests, running today over real local networks (Wi-Fi/TCP). Radio transports (Bluetooth, LoRa) are implemented behind the same interface the real hardware will use, validated today in software simulation, with two real LoRa radio drivers already written and tested against faithful hardware emulators. Application features on top — chat, a community noticeboard, opportunistic location sharing, an emergency SOS beacon, local search and AI services, and deferred delivery of a file to an outside organization once connectivity returns — are built and tested.</p>
-          <p class="status-honest">We say this plainly because it matters: this is real, working code — not a pitch deck. A first Box prototype has been powered on and verified on real hardware, and has now formed a real mesh connection — full cryptographic identity handshake included, not just a network cable — with a second independent machine on the same network. What's still ahead is the radio hardware, field testing, and scale: the physical devices (Card, Relay) haven't been manufactured yet.</p>
+          <p class="status-honest">We say this plainly because it matters: this is real, working code — not a pitch deck. A first Box prototype has been powered on and verified on real hardware, and has now formed a real mesh connection — full cryptographic identity handshake included, not just a network cable — with a second independent machine on the same network. What's still ahead is the radio hardware, field testing, and scale: the ARALD Card hasn't been manufactured yet.</p>
           <a class="btn btn-ghost" href="https://github.com/ciao-madesign/ARALD" target="_blank" rel="noopener">Explore the code and docs →</a>
         </div>
         <div class="status-stats">
