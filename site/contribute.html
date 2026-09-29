@@ -125,15 +125,15 @@
             <div class="device-icon" data-icon="portable" aria-hidden="true"></div>
             <h3>ARALD Portable — the same node on hardware you already own</h3>
           </div>
-          <p class="tier-desc">Turns an ordinary x86-64 computer into an ARALD node — no dedicated machine required. The question it tests: can the same node run unchanged across very different host hardware, with only the radio bridge staying constant?</p>
+          <p class="tier-desc">Turns an ordinary x86-64 computer into an ARALD node — no dedicated machine required. In its base form it's pure software: install it on a spare external SSD and it talks to other nodes over Wi-Fi, with no radio hardware to buy at all. The radio module below is optional — it adds a LoRa bridge for range beyond Wi-Fi, and tests whether the same node runs unchanged across very different host hardware and radio bridges.</p>
           <div class="table-scroll">
             <table class="spec-table">
               <thead><tr><th>Component</th><th>Indicative spec</th><th>Function</th></tr></thead>
               <tbody>
                 <tr><td>Host computer</td><td>x86-64, 8 GB RAM or more</td><td>ARALD processing</td></tr>
                 <tr><td>External SSD</td><td>USB 3.x, ~250 GB</td><td>Environment and data</td></tr>
-                <tr><td>Radio module</td><td>XIAO ESP32-S3 + Wio-SX1262</td><td>First LoRa transport</td></tr>
-                <tr><td>Antenna</td><td>EU868-compatible</td><td>LoRa communication</td></tr>
+                <tr><td>Radio module (optional)</td><td>XIAO ESP32-S3 + Wio-SX1262</td><td>LoRa bridge, for range beyond Wi-Fi</td></tr>
+                <tr><td>Antenna (optional)</td><td>EU868-compatible</td><td>LoRa communication</td></tr>
               </tbody>
             </table>
           </div>
@@ -250,7 +250,7 @@
           <div class="priority-card">
             <span class="priority-num">Priority 4</span>
             <h3>ARALD Portable</h3>
-            <p>USB 3.x SSD, and whatever's needed to connect the radio module.</p>
+            <p>USB 3.x SSD. The radio module is optional — only needed to test LoRa range beyond Wi-Fi.</p>
           </div>
         </div>
       </div>

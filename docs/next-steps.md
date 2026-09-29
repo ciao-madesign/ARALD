@@ -73,6 +73,19 @@ Dopo `whatsapp-relay/` (`docs/security.md` voce #79) ed `email-relay/` (voce #85
 
 **Nessun codice scritto finora** — piano confermato dall'utente, in attesa di essere ripreso in una sessione futura con lo stesso workflow a doppio check di ogni voce precedente.
 
+### Installer/wizard "ARALD Portable" software-puro — proposto dall'utente, 29 settembre 2026, non ancora implementato
+
+**Idea**: distribuire il solo runtime mesh (`node/src/` — `NomadNode`/`cli.ts`/`web-ui.ts`, nessuna dipendenza da Docker o Project NOMAD) come pacchetto installabile per un utente non tecnico: scarica/riceve un pacchetto, lo installa sul proprio SSD esterno (o direttamente sul proprio PC), un breve wizard di configurazione iniziale, pronto all'uso — variante **Wi-Fi-only**, nessun hardware radio richiesto (il kit LoRa resta un componente opzionale per chi vuole portata lunga, vedi `docs/deployment.md`, "Chiarimento terminologico... due significati di ARALD Portable").
+
+**Perché non è bloccata come le Opzioni A/B sopra**: a differenza del "Bootstrap/packaging del ARALD Hub" (Docker+Project NOMAD, `docs/deployment.md`, tuttora bloccato da prerequisiti esterni), questo pacchetto confeziona solo codice già reale e testato in questo repository — nessun Docker, nessun sorgente NOMAD, nessun hardware radio necessario per la variante base.
+
+**Cosa manca**:
+1. Un vero step di packaging — oggi si esegue solo via `npm run dev -w node --` da riga di comando; da valutare uno script di installazione/bundle eseguibile per Windows/macOS/Linux.
+2. Un wizard di primo avvio (nome nodo, password di rete, directory dati/SSD, avvio automatico) — non esiste ancora, oggi la configurazione è solo tramite i flag di `cli.ts`.
+3. Verifica end-to-end con un utente non tecnico che segue solo le istruzioni del pacchetto, senza assistenza — non ancora fatta.
+
+**Effetto collaterale utile per la campagna Kickstarter**: costo di produzione ~0€ per il progetto nella variante Wi-Fi-only — discusso con l'utente come possibile reward a basso costo in fase di definizione della campagna (29 settembre 2026).
+
 ### Mockup pixel-precisi (Figma) — rimandati al lancio della beta, dopo i field test
 
 Il piano di audit UX/UI (Artifact "ARALD — UX/UI Audit & Redesign Plan", mini-team di 4 ruoli, sezione 11) prevedeva 8 fasi. Le Fasi 1-6 sono **✅ complete** (dettaglio in `docs/security.md` voci #86-91: "Le mie attività", stato persistente SOS, migrazione token Waypoint, navigazione a 4 voci + Diagnostica, feed "Richiede attenzione ora" + conferma a due passi, tabella dati densa + badge di ruolo). La Fase 7 (Field User Test sui prototipi con utenti reali, Marco/Elena) è stata **saltata esplicitamente** (21 settembre 2026, decisione dell'utente — nessun utente reale disponibile in questo ambiente); il piano stesso la segnava come prerequisito per considerare chiusa qualunque fase precedente, quindi quel criterio resta consapevolmente non soddisfatto.
