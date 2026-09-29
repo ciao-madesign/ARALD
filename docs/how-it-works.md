@@ -28,11 +28,12 @@ The same software runs on very different hardware, matched to what a situation c
 
 | Device | What it does | Needs a phone? |
 |---|---|---|
-| **ARALD Card** | Pocket-sized radio: sends an SOS, relays other people's messages, or both. | No |
-| **ARALD Relay** (fixed or mobile) | Same logic as the Card, installed permanently (solar-powered) or carried along as a "courier". | No |
-| **ARALD Box** | A small always-on computer: stores content, runs local services (search, translation, AI), coordinates a site. | No |
-| **ARALD Portable** | The same environment as the Box, on a bootable drive — plug it into whatever computer is available. | No |
+| **ARALD Card** | Pocket-sized radio: sends an SOS, relays other people's messages, or both. Can also run as a fixed relay if installed permanently (solar-powered). | No |
+| **ARALD Box** | A small always-on computer: stores content, runs local services (search, translation, AI), coordinates a site. Can also run as a fixed relay if installed permanently. | No |
+| **ARALD Portable** | The same runtime, installed on a spare drive you already own. Pure software — no radio hardware needed for the Wi-Fi-only path. | No |
 | Smartphone app | A dashboard onto any of the above: browse content, chat, share your location, call a service. | — |
+
+"Fixed relay" is a deployment mode — a Card or Box installed permanently with weatherproofing and solar power — not a separate device.
 
 None of these need internet to talk to each other. A gateway device can *optionally* bridge out to the internet when it's available, purely as a bonus — never a requirement.
 
