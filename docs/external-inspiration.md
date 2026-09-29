@@ -1,0 +1,15 @@
+# Idee da repository esterni
+
+Appunto leggero di piccoli spunti/possibili migliorie per ARALD notati confrontando il progetto con repository esterni (analisi fatta **a comando**, non un monitoraggio automatico permanente). Non sono candidati pianificati — per quelli vedi [`docs/next-steps.md`](./next-steps.md). Questo file è solo una lista grezza da cui eventualmente promuovere una voce a `next-steps.md` quando/se si decide di lavorarci.
+
+| Data | Fonte | Idea | Perché potenzialmente utile per ARALD | Stato |
+|---|---|---|---|---|
+| 2026-09-29 | [Crosstalk-Solutions/project-nomad](https://github.com/Crosstalk-Solutions/project-nomad) (v1.34.1, commit `85da928`) | Auto-update "sicuro": update minor/patch automatici solo dentro una finestra oraria configurabile, dopo un periodo di cool-off, con pre-flight check (spazio disco sufficiente, nessun download/installazione in corso); major version sempre manuali. Comando dry-run dedicato che simula l'intera pipeline di decisione senza mai eseguire un update reale. | `nomad-hub/` (ARALD Hub Management API) non ha ancora nessuna logica di auto-update per sé stesso o per i container che gestisce. | Da valutare |
+| 2026-09-29 | project-nomad | "Collections" curate per dominio (es. hanno appena aggiunto "FDA Drug Reference" sotto "Medicine > Standard") | Concettualmente identico ai "pacchetti pre-confezionati per caso d'uso" già previsti in [`docs/service-catalog.md`](./service-catalog.md) — utile tenerlo d'occhio per capire quali contenuti curano loro, se in futuro si vuole espandere il catalogo ARALD via `gateway/nomad/kiwix-gateway.ts`. | Da valutare |
+| 2026-09-29 | project-nomad | Test di connettività "a cascata": prova prima `https://1.1.1.1/cdn-cgi/trace` (Cloudflare), poi fallback su altri endpoint già contattati (GitHub API, API propria) se il primo è bloccato dalla rete | Pattern minore ma pulito, applicabile se in futuro serve un check "c'è davvero internet" in un gateway ARALD (es. `internet-gateway.ts` o un futuro controllo per `external-delivery.ts`) | Da valutare |
+| 2026-09-22 | [NawfalMotii79/PLFM_RADAR](https://github.com/NawfalMotii79/PLFM_RADAR) | Doppia licenza: hardware sotto CERN-OHL-P (Permissive), software/firmware sotto MIT | Schema di riferimento pulito se in futuro si decidesse di pubblicare i design hardware di ARALD Box/Card/Relay (schematici, PCB, Gerber) separatamente dal codice | Da valutare |
+
+## Repository confrontati finora
+
+- [Crosstalk-Solutions/project-nomad](https://github.com/Crosstalk-Solutions/project-nomad) — il progetto NOMAD esterno a cui ARALD si ispira per il ruolo di "service provider" locale (vedi `docs/reuse-vs-new.md`). Nessun automatismo attivo: si ri-analizza solo quando l'utente lo chiede esplicitamente.
+- [NawfalMotii79/PLFM_RADAR](https://github.com/NawfalMotii79/PLFM_RADAR) — radar phased-array open source; dominio troppo distante da ARALD (rilevamento RF attivo vs. rete mesh di comunicazione passiva) per feature dirette, solo lo spunto di licenza sopra.
