@@ -72,6 +72,11 @@
       <h2>Host</h2>
       <p class="hint">Hardware della macchina su cui gira questa Management API — indipendente da Docker, disponibile anche se il demone non risponde.</p>
       <dl id="hub-host-details"></dl>
+      <button type="button" id="hub-reboot-button" class="hub-reboot-button" disabled>
+        <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#hub-icon-refresh"></use></svg>
+        Riavvia host
+      </button>
+      <p id="hub-reboot-hint" class="hint">Verifica in corso…</p>
       <button type="button" id="hub-shutdown-button" class="hub-shutdown-button" disabled>
         <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#hub-icon-power"></use></svg>
         Spegni host
