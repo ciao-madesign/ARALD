@@ -99,6 +99,28 @@ Terzo/quarto/quinto esempio di "consegna esterna differita" — post su un canal
 5. **Verifica end-to-end con un utente non tecnico** — resta bloccata, nessun utente reale disponibile in questo ambiente, stesso limite di ogni verifica "sul campo" di questo repository.
 6. **Effetto Kickstarter** — framing "costo di produzione ~0€" resta pulito con questa forma (zero hardware da procurarsi, solo scaricare ed eseguire) — anzi migliora rispetto all'ipotesi immagine-avviabile, che avrebbe comunque richiesto un SSD/chiavetta propria.
 
+### Provisioning Wi-Fi via Bluetooth per un Box senza cavo Ethernet — emerso da una domanda dell'utente, 30 settembre 2026, non ancora implementato
+
+**Priorità: alta** — a differenza della voce sotto, questa blocca un percorso d'acquisto reale (chi riceve un Box senza avere un cavo Ethernet a disposizione) per il prodotto hardware di punta, non solo un caso limite di una feature già funzionante.
+
+**Il problema**: il Box (Orange Pi 4 Pro) non ha schermo né tastiera. Oggi, sul prototipo reale, collegarlo per la prima volta al Wi-Fi di casa/rifugio si fa via SSH + `nmcli` da un operatore tecnico (`docs/riavvio-box-prototipo.md`) — non un'esperienza da consumatore. Senza un cavo Ethernet per il primo collegamento, un utente non tecnico resterebbe bloccato.
+
+**Idea**: il telefono si collega al Box via Bluetooth (che non richiede alcuna rete già presente — è un link diretto dispositivo-dispositivo) e gli passa in un solo scambio nome/password del Wi-Fi di casa, una tantum. Il Box si collega da solo alla rete indicata. Riuso di infrastruttura già esistente: il Box ha Bluetooth 5.4 di fabbrica; il lato telefono sa già parlare Bluetooth con dispositivi ARALD (`mobile/www/ble-client.js`/`ble-link.js`, già usato per il pairing con la Card). Manca lo scambio specifico "credenziali Wi-Fi" e il lato Box che le riceve e le applica (wrapper su `nmcli`, con lo stesso principio di comando limitato e specifico già usato per `nomad-hub/host-power.ts` — mai una shell generica).
+
+**Alternativa scartata come soluzione unica**: il Box crea una propria rete Wi-Fi (come un piccolo router) invece di collegarsi a quella di casa — pattern già documentato per lo scenario rifugio (`docs/guida-hardware-rifugio.md`, hostapd/dnsmasq + il redirect captive-portal già presente in `web-ui.ts`). Resta valida come opzione per chi non ha proprio nessuna rete Wi-Fi esistente da usare, ma non risolve da sola il caso "il Box deve anche uscire su Internet per i propri servizi" — a quel punto serve comunque un modo per farlo uscire in rete, il problema si sposta ma non si risolve.
+
+**Cosa manca**: (1) un piccolo servizio Bluetooth lato Box che riceve `{ssid, password}` e li applica via `nmcli` con permessi limitati allo scopo, (2) l'estensione lato app per lo scambio (nuova schermata di pairing, prima ancora del pairing di rete già esistente), (3) verifica end-to-end su hardware reale — non disponibile in questo ambiente.
+
+### Coda SOS persistente sul telefono, in attesa di un peer BLE — emerso da una domanda dell'utente, 30 settembre 2026, non ancora implementato
+
+**Priorità: media** — migliora un caso limite di una feature già funzionante (l'SOS via Bluetooth dal telefono, voce #65), non blocca un percorso d'acquisto/onboarding.
+
+**Stato attuale, verificato nel codice**: `mobile/www/ble-client.js`'s `sendEmergencyBeaconViaRelay()` attiva il relay Bluetooth del telefono se non è già attivo, poi ripete l'invio dell'SOS per `SOS_BROADCAST_REPEAT_COUNT` volte a intervalli brevi (pochi secondi in tutto) — cattura un peer che si connette subito dopo il tap, ma se nessuno è a portata in quella finestra, l'SOS non resta in attesa oltre.
+
+**Idea**: tenere l'SOS "pronto" e farlo partire automaticamente il momento in cui il telefono incrocia un qualunque dispositivo ARALD via Bluetooth, anche minuti o ore dopo — non solo nella finestra immediata dopo il tap. Coerente con l'obiettivo dichiarato del progetto di sfruttare qualunque canale disponibile, incluso "il primo che capita, quando capita".
+
+**Cosa servirebbe**: una coda locale sul telefono (persistita, sopravvive alla chiusura dell'app) con l'SOS già costruito e firmato (`ble-sos.js`), un listener sulla scoperta di nuovi peer Bluetooth che, se la coda non è vuota, tenta l'invio subito; un modo per l'utente di vedere "SOS in attesa di essere trasmesso" invece del solo "SOS trasmesso" attuale, e di annullarlo. Da progettare: per quanto tempo tenerlo in coda (batteria/rilevanza del messaggio scadono), e se ripetere l'invio anche dopo il primo successo (un solo peer raggiunto non garantisce che il messaggio arrivi a un Emergency Node reale, la mesh sottostante gestisce già l'inoltro una volta entrato, ma vale la pena chiarirlo esplicitamente quando si progetterà).
+
 ### Ipotesi di indipendenza da Project NOMAD — Kiwix/Ollama diretti (29 settembre 2026, ricerca fatta, decisione ancora aperta)
 
 **Domanda, sollevata dall'utente esplicitamente come ipotesi**: è possibile ottenere gli stessi servizi oggi previsti tramite Project NOMAD (Wikipedia offline, AI locale, traduzione, notizie, note condivise) **senza dipendere da Project NOMAD come progetto**, integrando direttamente i componenti open source sottostanti — **Kiwix** (server Wikipedia offline) e **Ollama** (runtime AI locale)? **Se possibile, l'utente preferisce questa strada.**
