@@ -118,7 +118,7 @@ describe("NewsGateway.generateDigest() (composes service://news with service://a
 
     gatewayNode = makeNode("gateway");
     await gatewayNode.node.start();
-    new AiGateway(gatewayNode.node, `http://127.0.0.1:${fakeOllama.port}`).registerAiService();
+    new AiGateway(gatewayNode.node, `http://127.0.0.1:${fakeOllama.port}`, "test-model").registerAiService();
     gateway = new NewsGateway(gatewayNode.node, started.url);
   }
 

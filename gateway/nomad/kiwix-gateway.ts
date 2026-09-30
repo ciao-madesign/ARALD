@@ -1,133 +1,135 @@
 import type { NomadNode } from "../../node/src/node.js";
-import { mapWithConcurrency } from "./concurrency.js";
-
-const DEFAULT_SYNC_CONCURRENCY = 8;
 
 /**
- * Translates Nomad-Net's abstract APIs (spec §37 — `GET content://...`,
- * `CALL service://...`) into HTTP calls against a Project NOMAD instance's
- * Kiwix service (`docs/next-steps.md` Option B) — a real Docker+NOMAD
- * instance in production, `FakeNomadServer` in this slice's tests/demo.
- * Nomad-Net itself never needs to know the difference: this gateway is
- * just another `NomadNode`, using the exact same public API
- * (`publishContent`, `registerService`) any other node would.
+ * Translates ARALD's abstract APIs (spec §37 — `GET content://...`,
+ * `CALL service://...`) into HTTP calls against a **real, bare `kiwix-serve`
+ * instance** — not Project NOMAD's own (never verified, never seen) API
+ * surface. Rewritten 30 September 2026 while investigating
+ * `docs/next-steps.md`'s "Ipotesi di indipendenza da Project NOMAD": the
+ * previous version of this class called invented endpoints (`/api/articles`,
+ * `/api/search?q=`) that `FakeNomadServer` modeled but that neither real
+ * Kiwix nor (as far as anyone has verified) real Project NOMAD actually
+ * expose — `FakeNomadServer`'s own doc comment said as much explicitly
+ * ("Not a Kiwix API clone"). This version targets kiwix-serve's real,
+ * documented HTTP API instead, verified against `kiwix/kiwix-tools`'
+ * `docs/kiwix-serve.rst` (real web access available this session) — see
+ * `docs/next-steps.md` for exactly what was confirmed and what wasn't.
  *
- * Two distinct translation modes, matching the two abstract APIs spec §37
- * names:
- * - `syncCatalog()` (`content://...`): fetches NOMAD's article catalog and
- *   publishes each one via `publishContent()`, making it discoverable and
- *   retrievable through the *existing* CONTENT_QUERY/FOUND/REQUEST/CHUNK/
- *   COMPLETE cycle with zero changes to node.ts — genuinely fetched from
- *   NOMAD, not hand-authored content, but served from the cache
- *   `publishContent()` already builds from that point on (the same
- *   fetch-once-serve-many shape any real caching gateway has). Content
- *   addressing (spec §24: a content id is the hash of its bytes) means the
- *   gateway *must* hold the bytes before it can be discoverable by id at
- *   all — there is no way to advertise "this exists" without having
- *   fetched it first, unlike a path-based API.
- * - `registerSearchService()` (`CALL service://...`): registers a service
- *   whose handler proxies a live HTTP call to NOMAD on *every* invocation —
- *   no caching, no snapshot, a genuine per-request translation. Services
- *   aren't content-addressed, so this mode has none of `syncCatalog()`'s
- *   fetch-before-advertise constraint, and is the more faithful
- *   demonstration of "translate this request to NOMAD's local API" spec §37
- *   actually describes.
+ * **Architectural change forced by what's real, not a stylistic rewrite**:
+ * `kiwix-serve` has **no endpoint that lists/enumerates every article in a
+ * ZIM file** — confirmed against the same doc. The previous `syncCatalog()`
+ * (fetch every article up front, publish each via `publishContent()`) has
+ * therefore been **removed**, not adapted: there is nothing for it to call.
+ * The real, portable building block is `publishArticle(path)`, which
+ * fetches and publishes **one already-known path** — an operator, or code
+ * elsewhere that has learned a path some other way (e.g. a
+ * `service://kiwix-search` result, or an operator-curated list), calls it
+ * per article. Bulk pre-publishing an entire book's worth of content is not
+ * possible against real Kiwix without either (a) an operator supplying the
+ * full path list from outside this gateway, or (b) a different content
+ * source entirely — a genuine open design question, not resolved here.
  */
 export class KiwixGateway {
-  /** contentId last published for each path, so a re-sync of unchanged content doesn't re-report it in `syncCatalog()`'s return value. Does *not* mean unchanged content is skipped over the wire — see `syncCatalog()`'s doc comment for why it still has to be fetched. */
-  private readonly publishedByPath = new Map<string, string>();
-
   constructor(
     private readonly node: NomadNode,
-    /** Base URL of the NOMAD/Kiwix HTTP API, e.g. `http://127.0.0.1:PORT` (a `FakeNomadServer` in tests, a real Project NOMAD instance in production). */
+    /** Base URL of a real `kiwix-serve` instance, e.g. `http://127.0.0.1:PORT` (`FakeKiwixServer` in tests/demo). */
     private readonly baseUrl: string,
+    /**
+     * The ZIM file's book name as `kiwix-serve` knows it (the `ZIMNAME` in
+     * `/content/ZIMNAME/...`/`/suggest?content=ZIMNAME`) — `kiwix-serve` can
+     * serve several books at once, so this gateway must be told which one
+     * it speaks for. No default: guessing wrong silently 404s every call.
+     */
+    private readonly book: string,
   ) {}
 
   /**
-   * Fetches NOMAD's current article list and publishes each one locally
-   * (bounded concurrency — `DEFAULT_SYNC_CONCURRENCY` fetches in flight at
-   * once, not all of them at once against a real NOMAD instance). Callable
-   * more than once to pick up articles added since the last sync — there
-   * is no automatic polling/interval here (out of scope for this slice; a
-   * real deployment would call this on a timer or in response to a
-   * NOMAD-side webhook, neither of which this mocked gateway has anything
-   * to hook into). Returns only the entries that are new or whose content
-   * actually changed since the last sync from this same `KiwixGateway`
-   * instance — not a delta computed for free, since content addressing
-   * (spec §24: a content id is the hash of its bytes) means there is no
-   * way to know whether an article changed *without* fetching its full
-   * body first, unlike a path-based API with something like an ETag.
+   * Fetches one article by its in-ZIM path (`kiwix-serve`'s real
+   * `/content/{book}/{path}`, confirmed against `kiwix-tools`' own API
+   * reference) and publishes it via `publishContent()` — the same
+   * content-addressed cache every other `content://` source already uses,
+   * zero changes to `node.ts`. `Content-Type` is read from the real
+   * response header rather than assumed, since a ZIM entry can be
+   * HTML, an image, or anything else the archive was built with.
    *
-   * Known, accepted limitation: an article that changes at NOMAD gets
-   * published under a brand new content id — the *previous* content id's
-   * bytes are not explicitly deleted when that happens, since content in
-   * this prototype is otherwise immutable by construction and nothing
-   * elsewhere ever deletes a published entry either. A gateway that syncs
-   * on a timer against a catalog whose articles are edited over time will
-   * keep accumulating historical versions of every edited article — but
-   * `node.contentStore` is bounded (`NomadNodeOptions.maxContentStoreEntries`,
-   * spec §57 resource limits; this gateway's own `NomadNode` sizes it via
-   * `cli.ts`'s `--max-content-entries`, generously above the default sized
-   * for a generic mesh node's opportunistic cache), so it's memory-safe
-   * rather than truly unbounded. This node's own published entries are
-   * preferred for retention over anything merely relay-cached from other
-   * peers (`node.ts`'s `OWN_CONTENT_TRUST_RANK`), but **not** over each
-   * other — once the store is full, its own oldest published entries are
-   * evicted first-in-first-out, historical and current alike. A catalog
-   * (including accumulated historical versions) larger than
-   * `maxContentStoreEntries` will therefore start losing access to
-   * still-current articles, not just superseded ones — an operator syncing
-   * a catalog at that scale needs to size that option (or add a `ttlMs` on
-   * gateway-published content) accordingly, rather than relying on this
-   * prototype's cache to hold everything forever.
+   * Unlike the old `syncCatalog()`, this is neither automatic nor bulk —
+   * see this class's doc comment for why kiwix-serve makes that
+   * impossible to offer honestly. Safe to call repeatedly for the same
+   * path (e.g. from a periodic refresh an operator sets up): content
+   * addressing means an unchanged article republishes under the same
+   * `contentId` and is a cheap no-op downstream.
    */
-  async syncCatalog(): Promise<Array<{ path: string; contentId: string }>> {
-    const listRes = await fetch(`${this.baseUrl}/api/articles`);
-    if (!listRes.ok) {
-      throw new Error(`NOMAD gateway: failed to list articles (HTTP ${listRes.status})`);
+  async publishArticle(path: string): Promise<{ path: string; contentId: string }> {
+    // Each segment is percent-encoded independently, `/` separators kept literal — a raw
+    // interpolation let a path containing `?`/`#` get silently reinterpreted as a query string or
+    // fragment by URL parsing (found by review), truncating the request to the wrong resource
+    // while this method still reported success for the caller's original, untruncated `path`.
+    const encodedPath = encodePathSegments(path);
+    const res = await fetch(`${this.baseUrl}/content/${encodePathSegments(this.book)}/${encodedPath}`);
+    if (!res.ok) {
+      throw new Error(`Kiwix: failed to fetch article '${path}' (HTTP ${res.status})`);
     }
-    const entries = (await listRes.json()) as Array<{ path: string; title: string; mimeType: string }>;
-
-    const results = await mapWithConcurrency(entries, DEFAULT_SYNC_CONCURRENCY, async (entry) => {
-      const articleRes = await fetch(`${this.baseUrl}/api/articles/${encodeURIComponent(entry.path)}`);
-      if (!articleRes.ok) {
-        // NOMAD "non è dichiarato stabile" (spec §4) — an article listed a moment ago disappearing
-        // by the time it's actually fetched is exactly the kind of thing this prototype must
-        // tolerate rather than let take the whole sync down with it.
-        return undefined;
-      }
-      const article = (await articleRes.json()) as { path: string; title: string; mimeType: string; body: string };
-      const metadata = this.node.publishContent(article.title, article.mimeType, Buffer.from(article.body, "utf8"));
-      return { path: article.path, contentId: metadata.contentId };
-    });
-
-    const published: Array<{ path: string; contentId: string }> = [];
-    for (const result of results) {
-      if (!result) continue;
-      if (this.publishedByPath.get(result.path) === result.contentId) continue; // unchanged since this instance's last sync
-      this.publishedByPath.set(result.path, result.contentId);
-      published.push(result);
-    }
-    return published;
+    const mimeType = res.headers.get("content-type") ?? "application/octet-stream";
+    const body = Buffer.from(await res.arrayBuffer());
+    const title = path.split("/").pop() ?? path;
+    const metadata = this.node.publishContent(title, mimeType, body);
+    return { path, contentId: metadata.contentId };
   }
 
   /**
    * Registers `service://kiwix-search` (spec §37 `CALL service://...`) —
-   * every call proxies live to NOMAD's own search endpoint, translating
-   * the result back into Nomad-Net's shape. Never caches; a call made
-   * while NOMAD happens to be unreachable rejects with a clear error
-   * (surfaced to the original caller as a normal SERVICE_RESPONSE `error`,
-   * `node.ts`'s `handleServiceRequest`) rather than serving something stale
-   * silently.
+   * every call proxies live to kiwix-serve's real `/suggest` endpoint
+   * (`?content={book}&term={q}`, confirmed path/params against
+   * `kiwix-tools`' own docs), translating the result back into ARALD's
+   * shape. Never caches, same reasoning as before: a stale suggestion list
+   * is worse than a slow real one.
+   *
+   * **Response field names are not fully verified.** `kiwix-tools`' own
+   * documentation describes the response only as "JSON suggestions", and
+   * community reports (GitHub issues on `kiwix/libkiwix`) mention a
+   * `label`/`value`-shaped item without a captured concrete example this
+   * session could fetch — real web access was available, but no exact
+   * sample JSON was found. Parsed defensively below, trying every
+   * plausible key name a real response might use; **must be re-verified
+   * against a live `kiwix-serve` instance before this is trusted**, per
+   * this project's standing rule against presenting unverified specifics
+   * as confirmed (same posture already taken for `CHIP_BUFFER_SIZE` in the
+   * SX1262 driver).
    */
   registerSearchService(): void {
     this.node.registerService("service://kiwix-search", "1.0.0", ["search"], async (payload) => {
       const { q } = payload as { q?: unknown };
       if (typeof q !== "string") throw new Error("service://kiwix-search requires a string 'q' field");
 
-      const res = await fetch(`${this.baseUrl}/api/search?q=${encodeURIComponent(q)}`);
-      if (!res.ok) throw new Error(`NOMAD search failed (HTTP ${res.status})`);
-      return { results: (await res.json()) as Array<{ path: string; title: string }> };
+      const res = await fetch(`${this.baseUrl}/suggest?content=${encodeURIComponent(this.book)}&term=${encodeURIComponent(q)}`);
+      if (!res.ok) throw new Error(`Kiwix suggest failed (HTTP ${res.status})`);
+      const raw = (await res.json()) as unknown;
+      if (!Array.isArray(raw)) throw new Error("Kiwix suggest returned a malformed response");
+
+      // Skips (rather than throws on) any entry that isn't a plain object — a single malformed
+      // suggestion must not lose every other legitimate one in the same response, especially given
+      // this endpoint's response shape is only best-effort modeled (see this method's doc comment).
+      const results = raw
+        .filter((entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null)
+        .map((e) => ({
+          title: pickString(e, ["label", "title", "value"]) ?? "",
+          path: pickString(e, ["path", "value", "kind"]) ?? "",
+        }));
+      return { results };
     });
   }
+}
+
+/** Percent-encodes each `/`-separated segment independently, keeping `/` itself literal — encoding the whole string as one component would turn a legitimate nested ZIM path like `wiki/italia` into a single literal segment `wiki%2Fitalia`, which kiwix-serve would not resolve the same way. */
+function encodePathSegments(path: string): string {
+  return path.split("/").map(encodeURIComponent).join("/");
+}
+
+/** First string-valued field found among `keys`, in order — see `registerSearchService()`'s doc comment for why this defensive lookup exists instead of a single known field name. */
+function pickString(obj: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = obj[key];
+    if (typeof value === "string") return value;
+  }
+  return undefined;
 }

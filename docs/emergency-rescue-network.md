@@ -99,14 +99,14 @@ eventuale pilot esteso
 
 **Stato**: principio strategico ricevuto dall'utente lo stesso giorno, integrato dopo valutazione — nessuna novità tecnica per il codice esistente, nessun codice scritto.
 
-Il punto centrale, individuato dall'utente: l'efficacia di ARALD non dipende solo da quanto bene funziona un singolo relay, ma dalla **densità** di dispositivi presenti sul territorio e soprattutto dalle **persone che li trasportano**. Un Beacon senza alcun relay nelle vicinanze non serve a nulla; più persone/dispositivi compatibili attraversano un'area, più aumenta la probabilità di consegna. È un classico **effetto di rete**: più NOMAD viene usato, più NOMAD diventa efficace — coerente con quanto già scritto in questo documento sulla necessità di una massa critica di infrastruttura prima di un Field Pilot.
+Il punto centrale, individuato dall'utente: l'efficacia di ARALD non dipende solo da quanto bene funziona un singolo relay, ma dalla **densità** di dispositivi presenti sul territorio e soprattutto dalle **persone che li trasportano**. Un Beacon senza alcun relay nelle vicinanze non serve a nulla; più persone/dispositivi compatibili attraversano un'area, più aumenta la probabilità di consegna. È un classico **effetto di rete**: più ARALD viene usato, più ARALD diventa efficace — coerente con quanto già scritto in questo documento sulla necessità di una massa critica di infrastruttura prima di un Field Pilot.
 
-Principio formalizzato dall'utente, riportato qui come dichiarato:
+Principio formalizzato dall'utente, riportato qui come dichiarato (terminologia aggiornata da "NOMAD" ad "ARALD" il 29 settembre 2026 — un find-replace rimasto indietro rispetto al rename del progetto, confermato dall'utente, non una citazione letterale da preservare):
 
 > **ARALD Network Effect**
-> The effectiveness of ARALD increases with the density of fixed infrastructure and participating mobile devices. The network should therefore not depend exclusively on dedicated NOMAD hardware. In addition to fixed relays and emergency beacons, NOMAD functionality should progressively be made available through smartphones and, where technically and commercially feasible, embedded directly into outdoor, safety and communication equipment.
+> The effectiveness of ARALD increases with the density of fixed infrastructure and participating mobile devices. The network should therefore not depend exclusively on dedicated ARALD hardware. In addition to fixed relays and emergency beacons, ARALD functionality should progressively be made available through smartphones and, where technically and commercially feasible, embedded directly into outdoor, safety and communication equipment.
 >
-> The long-term objective is to make NOMAD relay functionality sufficiently ubiquitous that users can contribute to emergency information propagation without consciously operating the network.
+> The long-term objective is to make ARALD relay functionality sufficiently ubiquitous that users can contribute to emergency information propagation without consciously operating the network.
 
 ### Bivacchi: ARALD Box invece di un semplice relay
 
@@ -114,12 +114,12 @@ Raccomandazione operativa dell'utente per il Relay Registry (`docs/beacon.md`): 
 
 ### Livelli di partecipazione — non puntare tutto sull'app
 
-Osservazione dell'utente, condivisibile: richiedere a tutti l'app NOMAD per partecipare creerebbe una barriera enorme. Meglio più livelli di partecipazione indipendenti, ciascuno già coperto da quanto documentato in questo progetto:
+Osservazione dell'utente, condivisibile: richiedere a tutti l'app ARALD per partecipare creerebbe una barriera enorme. Meglio più livelli di partecipazione indipendenti, ciascuno già coperto da quanto documentato in questo progetto:
 
 | Livello | Chi/cosa | Riferimento |
 |---|---|---|
 | 1 — Infrastruttura | Fixed Relay e ARALD Box installati sul territorio | `docs/beacon.md`, sezione Fixed Relay |
-| 2 — Smartphone | App NOMAD come relay opportunistico | `docs/beacon.md`, ruolo "Relay" — modalità "NOMAD Relay" |
+| 2 — Smartphone | App ARALD come relay opportunistico | `docs/beacon.md`, ruolo "Relay" — modalità "ARALD Relay" |
 | 3 — Beacon | Persone che portano una ARALD Card in Beacon Mode | `docs/beacon.md`, sezione ARALD Card |
 | 4 — Relay personali | Persone che portano una ARALD Card in Relay Mode | `docs/beacon.md`, sezione ARALD Card |
 | 5 — Infrastruttura professionale | Droni, veicoli di soccorso, rifugi, operatori | `docs/beacon.md`, sezione Fixed Relay |

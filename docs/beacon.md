@@ -113,9 +113,8 @@ Famiglia hardware aggiornata:
 | **ARALD Card** | No | LED/pulsante | Propria |
 | **ARALD Cover** | Sì (nativo) | Smartphone | Propria, indipendente dal telefono |
 | **ARALD Clip** | Sì (universale, via fissaggio) | Smartphone | Propria, indipendente dal telefono |
-| **ARALD Relay** | No | — | Solare + batteria |
 
-Il Card resta comunque necessario per chi non ha (o non vuole usare) uno smartphone compatibile — nessuna delle tre varianti sostituisce le altre, stesso principio "densità di rete" già in `docs/emergency-rescue-network.md`.
+Il Card resta comunque necessario per chi non ha (o non vuole usare) uno smartphone compatibile — nessuna delle tre varianti sostituisce le altre, stesso principio "densità di rete" già in `docs/emergency-rescue-network.md`. (Fixed Relay non è una quarta variante hardware — è un modo di impiego di Card/Box, vedi "Decisione finale, 29 settembre 2026" sotto.)
 
 ### Tre proposte software, in implementazione a pezzi (dal 4 settembre 2026)
 
@@ -146,14 +145,16 @@ Principio dichiarato esplicitamente nella proposta, coerente con come questo pro
 
 Verificato contro la sezione "ARALD Card" sopra: **Fixed Relay e la ARALD Card in Relay Mode sono la stessa architettura software** — stesso comportamento `NomadNode`/`decideForward()`/`PendingDeliveryQueue`/`SeenCache`/`Identity`/`TrustManager`, stessi transport BLE/LoRa simulati. L'unica differenza reale è l'alimentazione (pannello solare + batteria contro batteria portatile Li-Po) e il fatto di restare fermo invece di muoversi — nessuna delle due cose cambia una sola riga di logica di rete. Questo conferma, da un angolo diverso, la stessa conclusione già scritta sopra per la Card: **non serve alcun nuovo protocollo** per il ruolo di relay in sé, a prescindere da dove/come viene installato.
 
-Famiglia hardware risultante (dalla proposta):
+**Decisione finale, 29 settembre 2026 — Fixed Relay non è una quarta linea hardware**: la tabella qui sotto elencava in origine "ARALD Relay" come un dispositivo a sé (con "antenne esterne/migliori, più memoria"), in tensione con l'affermazione appena sopra ("stessa architettura... nessuna differenza di logica di rete"). Chiarito esplicitamente con l'utente in fase di definizione della distinta hardware per il lancio: **Fixed Relay è un modo di impiego di una ARALD Card (o di un ARALD Box) esistente, non una scheda elettronica separata**. Ciò che serve in più è un **kit di installazione fissa** — involucro da esterno IP-rated, pannello solare + gestione batteria, eventuale antenna esterna migliorativa, staffe di montaggio — un accessorio meccanico attorno all'elettronica esistente, non una nuova SKU elettronica da progettare/certificare a parte.
+
+Famiglia hardware risultante (aggiornata):
 
 | Dispositivo | Hardware | Alimentazione | Funzione |
 |---|---|---|---|
-| **ARALD Card** | compatto (form factor carta) | Li-Po | Beacon / Relay / Beacon+Relay |
-| **ARALD Relay** | stessa architettura della Card, con antenne esterne/migliori, più memoria | solare + batteria | Relay permanente |
-| **ARALD Box** | Orange Pi 4 Pro (`docs/deployment.md`) | rete elettrica/solare | nodo infrastrutturale + servizi |
-| **ARALD Portable** | computer/nodo portatile (`docs/deployment.md`) | batteria | nodo operativo |
+| **ARALD Card** | compatto (form factor carta), radio LoRa integrata | Li-Po | Beacon / Relay / Beacon+Relay — anche come Fixed Relay se installata con il kit di installazione fissa sotto |
+| **ARALD Box** | Orange Pi 4 Pro/ROCK 3C (`docs/deployment.md`), radio LoRa via bridge USB opzionale | rete elettrica/solare | nodo infrastrutturale + servizi — anche come Fixed Relay se installato con il kit sotto |
+| **ARALD Portable** | computer/nodo portatile (`docs/deployment.md`), software puro, radio LoRa via bridge USB opzionale | batteria/rete dell'host | nodo operativo, costo di produzione ~0€ nella variante Wi-Fi-only |
+| *(accessorio)* Kit di installazione fissa | involucro IP-rated + pannello solare/gestione batteria + antenna esterna opzionale | — | trasforma una Card o un Box in un Fixed Relay permanente |
 
 **Nota, 5 settembre 2026 — radio LoRa allineata su tutta la famiglia**: fino a questa data, la tabella hardware del Box in `docs/deployment.md` non includeva alcuna radio LoRa (solo Wi-Fi/Bluetooth/Ethernet) — un disallineamento reale rispetto a Card/Relay, che la includono già. Su richiesta esplicita dell'utente, `docs/deployment.md` ("ARALD Box e PORTABLE") è stato aggiornato per raccomandare un modulo LoRa esterno (SX126x/SX127x, via USB o header UART/SPI) anche per Box e Portable, così l'intera famiglia hardware condivide lo stesso mezzo di trasmissione — Box segnalato come priorità in quanto nodo infrastrutturale principale. Vale comunque, per l'intera famiglia **Card inclusa**, la stessa verifica software fatta in quella sede: `node/src/transports/lora.ts` è **interamente simulato** (`docs/security.md` voce #51) — nessun dispositivo di questo elenco ha un driver LoRa **verificato contro hardware fisico**, un limite universale e non specifico di Box/Portable. L'interfaccia `Transport` (`node/src/transport.ts`) resta comunque pronta a ospitare un driver reale senza toccare la logica di rete condivisa — e lo stesso giorno un primo driver reale è stato effettivamente scritto: `node/src/transports/lora-serial.ts` (`LoraSerialTransport`, `docs/security.md` voce #61), parla con un chip SX127x tramite un bridge seriale, validato contro `FakeSX127xSerialDevice` (fedele al datasheet pubblico) ma **mai contro un chip vero** — nessun hardware disponibile in questa sessione, stessa distinzione già fatta altrove tra "logica di rete implementata e testata" e "dispositivo fisico costruito/verificato" (es. Relay Registry/Beacon SOS sopra). Nessun wiring su `cli.ts` in questa voce.
 

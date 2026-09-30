@@ -65,7 +65,7 @@ describe("NomadNode over a simulated BLE transport", () => {
     // Its JSON-encoded CONTENT_FOUND/REQUEST/CHUNK/COMPLETE packets are all comfortably larger than
     // the default 20-byte MTU — this genuinely exercises transport-level fragmentation for every
     // step of the content-centric protocol, not just a single hand-picked packet.
-    const helloBytes = Buffer.from("hello nomad-net world, over BLE");
+    const helloBytes = Buffer.from("hello arald world, over BLE");
     const metadata = c.node.publishContent("hello.txt", "text/plain", helloBytes);
     expect(a.node.contentStore.has(metadata.contentId)).toBe(false);
 

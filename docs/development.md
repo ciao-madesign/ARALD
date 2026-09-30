@@ -73,15 +73,15 @@ Entrambi sono visibili anche sulla pagina web del nodo stesso (`http://<host>:<w
 
 La stessa sezione "Collega un telefono" mostra anche un **QR code**: inquadrandolo con l'app mobile si compilano da soli indirizzo, nome rete e password, senza digitare nulla (`docs/security.md` voce #25). Il QR codifica l'indirizzo LAN di questo nodo — con `--web-host 0.0.0.0` viene rilevato automaticamente (`node:os.networkInterfaces()`, prima interfaccia non interna), ma su una macchina con più interfacce di rete (VPN, bridge Docker...) può individuare quella sbagliata: usa `--public-host <indirizzo>` per specificarlo esplicitamente in quel caso.
 
-## Gateway NOMAD mockato (§37, seguito audit — voci #9/#10)
+## Gateway Kiwix/AI mockato (§37, seguito audit — voci #9/#10, riscritto contro le vere API il 30 settembre 2026)
 
-Nessuna istanza Docker/Project NOMAD reale necessaria — la demo avvia anche un `FakeNomadServer` e un `FakeOllamaServer` locali, con qualche articolo/risposta d'esempio:
+Nessuna istanza Docker/kiwix-serve/Ollama reale necessaria — la demo avvia anche un `FakeKiwixServer` e un `FakeOllamaServer` locali, con qualche articolo/risposta d'esempio:
 
 ```bash
 npm run gateway:demo
 ```
 
-Espone lo stesso `NomadNode` (transport TCP) con il catalogo NOMAD pubblicato via `syncCatalog()`, `service://kiwix-search` e `service://ai` registrati — connettiti come a qualunque altro nodo (`npm run dev -w node -- --connect 127.0.0.1:<porta>`) per recuperare gli articoli o chiamare i due servizi, ad esempio `node.callService("service://ai", { prompt: "..." })` da un altro nodo o dallo script della sessione. `--nomad-url <url>`/`--ai-url <url>` puntano rispettivamente a un'istanza NOMAD/Kiwix e Ollama reali già in esecuzione, se disponibili, al posto dei fake server. `--max-content-entries <n>` (default 8192) dimensiona quante entry può tenere il `ContentStore` di questo nodo gateway (spec §57) — vedi `docs/security.md` per la voce che ha introdotto il limite: un catalogo NOMAD/una cronologia di notizie più grande del default va dimensionata esplicitamente con questa opzione, altrimenti le entry pubblicate più vecchie iniziano a essere sfrattate. Vedi `gateway/nomad/kiwix-gateway.ts`, `gateway/nomad/ai-gateway.ts` e `docs/next-steps.md` Opzione B per il dettaglio.
+Espone lo stesso `NomadNode` (transport TCP) con un paio di articoli demo pubblicati via `publishArticle()`, `service://kiwix-search` e `service://ai` registrati — connettiti come a qualunque altro nodo (`npm run dev -w node -- --connect 127.0.0.1:<porta>`) per recuperarli o chiamare i due servizi, ad esempio `node.callService("service://ai", { prompt: "..." })` da un altro nodo o dallo script della sessione. `--kiwix-url <url>`/`--kiwix-book <nome>`/`--ai-url <url>`/`--ai-model <nome>` puntano rispettivamente a un vero `kiwix-serve` e a una vera istanza Ollama già in esecuzione, se disponibili, al posto dei fake server — **nota**: contro un `--kiwix-url` reale nessun articolo viene pubblicato automaticamente, `kiwix-serve` non ha un endpoint per elencare gli articoli di un libro (vedi `gateway/nomad/kiwix-gateway.ts`). `--max-content-entries <n>` (default 8192) dimensiona quante entry può tenere il `ContentStore` di questo nodo gateway (spec §57) — vedi `docs/security.md` per la voce che ha introdotto il limite. Vedi `gateway/nomad/kiwix-gateway.ts`, `gateway/nomad/ai-gateway.ts` e `docs/next-steps.md` ("Ipotesi di indipendenza da Project NOMAD") per il dettaglio.
 
 ## Test (§17-18, §90-92)
 

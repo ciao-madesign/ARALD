@@ -824,10 +824,23 @@ interface ServiceResponsePayload {
 }
 
 /**
- * A Nomad-Net mesh node (spec §7): wires identity, peer table, one or more
- * transports, controlled-flooding routing and the content-centric protocol
- * together. This is `nomad-node` (spec §13), currently implementing
- * milestones 0-7 of docs/roadmap.md.
+ * A mesh node (spec §7): wires identity, peer table, one or more transports,
+ * controlled-flooding routing and the content-centric protocol together.
+ * This is `nomad-node` (spec §13), currently implementing milestones 0-7 of
+ * docs/roadmap.md.
+ *
+ * `NomadNode` is this class's historical name, dating to when this project
+ * was itself called "Nomad-Net" — renamed **ARALD** on 4 September 2026
+ * after a due-diligence review found the name overlapped with two unrelated
+ * external projects (NomadNet by Mark Qvist, and Project N.O.M.A.D., the
+ * external service this project's gateway optionally connects to — see
+ * `docs/due-diligence-naming-2026-09-04.md` and `docs/reuse-vs-new.md`). The
+ * class itself was not renamed — it is never visible outside this codebase,
+ * and renaming it would touch several hundred references across `node/src/`
+ * and `tests/` for no external benefit. No code from either external
+ * project was copied here, and none of their rights are claimed or
+ * infringed by this name — the overlap was in naming and application
+ * domain only.
  */
 export class NomadNode extends EventEmitter {
   readonly identity: Identity;
@@ -2389,7 +2402,7 @@ export class NomadNode extends EventEmitter {
    * Publishes a drop — a location-tagged public notice (`docs/next-steps.md`,
    * concept credited to BitChat's mesh-local `BoardManager`, Unlicense/public
    * domain — see `drops.ts`'s own doc comment for the full mapping onto
-   * existing Nomad-Net primitives; no code reused, only the concept).
+   * existing ARALD primitives; no code reused, only the concept).
    * `lat`/`lon` are meant to be the caller's own current position (same
    * "always here, right now" posture as `shareLocation()`, never an
    * arbitrary point) — validated the same way. `expiresInMs` defaults to
@@ -2479,11 +2492,11 @@ export class NomadNode extends EventEmitter {
   }
 
   /**
-   * Publishes and floods an emergency SOS (`docs/beacon.md`, "NOMAD Card"
+   * Publishes and floods an emergency SOS (`docs/beacon.md`, "ARALD Card"
    * Beacon Mode / "Cosa manca davvero" #1) — always at `Priority.EMERGENCY`,
    * unlike `publishDrop()` there is no "non-urgent" variant. Callable by
    * *any* `NomadNode`, not only a dedicated Beacon device — coherent with
-   * the "NOMAD-Net Network Effect" principle (`docs/emergency-rescue-network.md`):
+   * the "ARALD Network Effect" principle (`docs/emergency-rescue-network.md`):
    * a phone or any other originator can raise a SOS the same way.
    *
    * Two independent delivery paths, both carrying the *same* signed packet

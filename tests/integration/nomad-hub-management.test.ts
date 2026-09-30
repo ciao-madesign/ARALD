@@ -45,6 +45,8 @@ describe("NOMAD Hub Management API (mocked, no real Docker)", () => {
     actionRateLimitWindowMs?: number;
     maxActionsPerWindow?: number;
     capabilityStoragePath?: string;
+    shutdown?: () => Promise<void>;
+    reboot?: () => Promise<void>;
   }): Promise<{
     password: string;
   }> {
@@ -71,8 +73,8 @@ describe("NOMAD Hub Management API (mocked, no real Docker)", () => {
 
   it("lists containers with name/state/health", async () => {
     const { password } = await setup();
-    fakeDocker!.addContainer({ id: "c1", name: "nomad-core", image: "nomad-net/core:latest", state: "running", health: "healthy" });
-    fakeDocker!.addContainer({ id: "c2", name: "nomad-kiwix", image: "nomad-net/kiwix:latest", state: "exited" });
+    fakeDocker!.addContainer({ id: "c1", name: "nomad-core", image: "nomad-core:latest", state: "running", health: "healthy" });
+    fakeDocker!.addContainer({ id: "c2", name: "nomad-kiwix", image: "nomad-kiwix:latest", state: "exited" });
 
     const res = await authedFetch(server!, "/api/hub/status", password);
     expect(res.status).toBe(200);
@@ -233,6 +235,28 @@ describe("NOMAD Hub Management API (mocked, no real Docker)", () => {
     expect(res.status).toBe(401);
   });
 
+  it("GET /api/hub/capabilities reports shutdownEnabled/rebootEnabled matching whether each function was configured — independently of each other, so the Control UI can hide/disable each button instead of guessing", async () => {
+    const { password: neitherPassword } = await setup();
+    const neitherRes = (await (await authedFetch(server!, "/api/hub/capabilities", neitherPassword)).json()) as { shutdownEnabled: boolean; rebootEnabled: boolean };
+    expect(neitherRes.shutdownEnabled).toBe(false);
+    expect(neitherRes.rebootEnabled).toBe(false);
+
+    await server!.stop();
+    await fakeDocker!.stop();
+    // Only shutdown enabled — proves the two flags are genuinely independent, not one derived from the other.
+    const { password: shutdownOnlyPassword } = await setup({ shutdown: async () => {} });
+    const shutdownOnlyRes = (await (await authedFetch(server!, "/api/hub/capabilities", shutdownOnlyPassword)).json()) as { shutdownEnabled: boolean; rebootEnabled: boolean };
+    expect(shutdownOnlyRes.shutdownEnabled).toBe(true);
+    expect(shutdownOnlyRes.rebootEnabled).toBe(false);
+
+    await server!.stop();
+    await fakeDocker!.stop();
+    const { password: bothPassword } = await setup({ shutdown: async () => {}, reboot: async () => {} });
+    const bothRes = (await (await authedFetch(server!, "/api/hub/capabilities", bothPassword)).json()) as { shutdownEnabled: boolean; rebootEnabled: boolean };
+    expect(bothRes.shutdownEnabled).toBe(true);
+    expect(bothRes.rebootEnabled).toBe(true);
+  });
+
   it("GET /api/hub/capabilities reports real, verifiable host facts — not fabricated ones", async () => {
     const { password } = await setup();
     const res = await authedFetch(server!, "/api/hub/capabilities", password);
@@ -294,5 +318,257 @@ describe("NOMAD Hub Management API (mocked, no real Docker)", () => {
     // For contrast: /api/hub/status *does* depend on Docker, and correctly degrades to 502 here.
     const statusRes = await authedFetch(server!, "/api/hub/status", password);
     expect(statusRes.status).toBe(502);
+  });
+
+  describe("POST /api/hub/shutdown", () => {
+    it("answers 403 and never calls the shutdown function when the host didn't opt in (no shutdown option configured — the default)", async () => {
+      const { password } = await setup();
+      const res = await authedFetch(server!, "/api/hub/shutdown", password, { method: "POST" });
+      expect(res.status).toBe(403);
+    });
+
+    it("answers 403 (never 429) on every repeated attempt when disabled — the enabled-check runs before the rate limit, so a disabled host never burns rate-limit budget it will never need", async () => {
+      const { password } = await setup({ maxActionsPerWindow: 2, actionRateLimitWindowMs: 60_000 });
+      for (let i = 0; i < 5; i++) {
+        const res = await authedFetch(server!, "/api/hub/shutdown", password, { method: "POST" });
+        expect(res.status).toBe(403);
+      }
+    });
+
+    it("requires the management password, same as every other endpoint", async () => {
+      await setup({ shutdown: async () => {} });
+      const res = await fetch(apiUrl(server!, "/api/hub/shutdown"), { method: "POST" });
+      expect(res.status).toBe(401);
+    });
+
+    it("calls the injected shutdown function and answers 200 when enabled", async () => {
+      let called = false;
+      const { password } = await setup({
+        shutdown: async () => {
+          called = true;
+        },
+      });
+      const res = await authedFetch(server!, "/api/hub/shutdown", password, { method: "POST" });
+      expect(res.status).toBe(200);
+      // The call itself is fire-and-forget (see management-server.ts's own doc comment on
+      // handleShutdown() for why) — give the microtask queue a turn before asserting.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(called).toBe(true);
+    });
+
+    it("answers 200 immediately even when the shutdown function never resolves — regression test for the response being sent before awaiting the actual shutdown, not after", async () => {
+      const { password } = await setup({ shutdown: () => new Promise(() => {}) }); // never resolves, simulates the host halting mid-command
+      const res = await authedFetch(server!, "/api/hub/shutdown", password, { method: "POST" });
+      expect(res.status).toBe(200);
+    });
+
+    it("a shutdown function that rejects doesn't crash the server or the already-sent response", async () => {
+      const { password } = await setup({ shutdown: async () => { throw new Error("sudo: a password is required"); } });
+      const res = await authedFetch(server!, "/api/hub/shutdown", password, { method: "POST" });
+      expect(res.status).toBe(200); // the response was already sent before the rejection
+
+      // Server must still be alive and answering normal requests afterwards.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const status = await authedFetch(server!, "/api/hub/status", password);
+      expect(status.status).toBe(200);
+    });
+
+    it("regression: two overlapping shutdown requests while the first is still in flight only actually invoke the shutdown function once", async () => {
+      let calls = 0;
+      let resolveFirst!: () => void;
+      const { password } = await setup({
+        shutdown: () =>
+          new Promise<void>((resolve) => {
+            calls++;
+            resolveFirst = resolve;
+          }),
+      });
+
+      const [first, second] = await Promise.all([
+        authedFetch(server!, "/api/hub/shutdown", password, { method: "POST" }),
+        authedFetch(server!, "/api/hub/shutdown", password, { method: "POST" }),
+      ]);
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200); // both acked — the caller only cares a shutdown is under way
+      expect(calls).toBe(1); // but only one real sudo/shutdown process was actually spawned
+
+      resolveFirst();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      // Once the in-flight one finishes, a genuinely new request is free to trigger another attempt
+      // (e.g. a retry after the first attempt somehow failed to actually halt the host).
+      await authedFetch(server!, "/api/hub/shutdown", password, { method: "POST" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(calls).toBe(2);
+    });
+
+    it("rate limit: rejects the (N+1)th shutdown attempt from the same caller within the window, same as container actions", async () => {
+      let calls = 0;
+      const { password } = await setup({
+        maxActionsPerWindow: 2,
+        actionRateLimitWindowMs: 60_000,
+        shutdown: async () => {
+          calls++;
+        },
+      });
+
+      for (let i = 0; i < 2; i++) {
+        const res = await authedFetch(server!, "/api/hub/shutdown", password, { method: "POST" });
+        expect(res.status).toBe(200);
+      }
+      const limited = await authedFetch(server!, "/api/hub/shutdown", password, { method: "POST" });
+      expect(limited.status).toBe(429);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(calls).toBe(2); // the 3rd, rate-limited request never reached the shutdown function
+    });
+  });
+
+  describe("POST /api/hub/reboot", () => {
+    it("answers 403 and never calls the reboot function when the host didn't opt in (no reboot option configured — the default)", async () => {
+      const { password } = await setup();
+      const res = await authedFetch(server!, "/api/hub/reboot", password, { method: "POST" });
+      expect(res.status).toBe(403);
+    });
+
+    it("answers 403 (never 429) on every repeated attempt when disabled", async () => {
+      const { password } = await setup({ maxActionsPerWindow: 2, actionRateLimitWindowMs: 60_000 });
+      for (let i = 0; i < 5; i++) {
+        const res = await authedFetch(server!, "/api/hub/reboot", password, { method: "POST" });
+        expect(res.status).toBe(403);
+      }
+    });
+
+    it("requires the management password, same as every other endpoint", async () => {
+      await setup({ reboot: async () => {} });
+      const res = await fetch(apiUrl(server!, "/api/hub/reboot"), { method: "POST" });
+      expect(res.status).toBe(401);
+    });
+
+    it("calls the injected reboot function and answers 200 when enabled, independently of shutdown's own configuration", async () => {
+      let called = false;
+      const { password } = await setup({
+        // shutdown deliberately left unconfigured — reboot must work on its own, the two opt-ins are independent.
+        reboot: async () => {
+          called = true;
+        },
+      });
+      const res = await authedFetch(server!, "/api/hub/reboot", password, { method: "POST" });
+      expect(res.status).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(called).toBe(true);
+    });
+
+    it("answers 200 immediately even when the reboot function never resolves", async () => {
+      const { password } = await setup({ reboot: () => new Promise(() => {}) });
+      const res = await authedFetch(server!, "/api/hub/reboot", password, { method: "POST" });
+      expect(res.status).toBe(200);
+    });
+
+    it("a reboot function that rejects doesn't crash the server or the already-sent response", async () => {
+      const { password } = await setup({
+        reboot: async () => {
+          throw new Error("sudo: a password is required");
+        },
+      });
+      const res = await authedFetch(server!, "/api/hub/reboot", password, { method: "POST" });
+      expect(res.status).toBe(200);
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const status = await authedFetch(server!, "/api/hub/status", password);
+      expect(status.status).toBe(200);
+    });
+
+    it("regression: two overlapping reboot requests while the first is still in flight only actually invoke the reboot function once", async () => {
+      let calls = 0;
+      let resolveFirst!: () => void;
+      const { password } = await setup({
+        reboot: () =>
+          new Promise<void>((resolve) => {
+            calls++;
+            resolveFirst = resolve;
+          }),
+      });
+
+      const [first, second] = await Promise.all([
+        authedFetch(server!, "/api/hub/reboot", password, { method: "POST" }),
+        authedFetch(server!, "/api/hub/reboot", password, { method: "POST" }),
+      ]);
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      expect(calls).toBe(1);
+
+      resolveFirst();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await authedFetch(server!, "/api/hub/reboot", password, { method: "POST" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(calls).toBe(2);
+    });
+
+    it("rate limit: rejects the (N+1)th reboot attempt from the same caller within the window, same as container actions", async () => {
+      let calls = 0;
+      const { password } = await setup({
+        maxActionsPerWindow: 2,
+        actionRateLimitWindowMs: 60_000,
+        reboot: async () => {
+          calls++;
+        },
+      });
+
+      for (let i = 0; i < 2; i++) {
+        const res = await authedFetch(server!, "/api/hub/reboot", password, { method: "POST" });
+        expect(res.status).toBe(200);
+      }
+      const limited = await authedFetch(server!, "/api/hub/reboot", password, { method: "POST" });
+      expect(limited.status).toBe(429);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(calls).toBe(2);
+    });
+
+    it("regression: whichever of a concurrent shutdown/reboot pair starts first blocks the other — powerActionInFlight is shared between the two actions, not one flag each", async () => {
+      // Two independently-initiated fetch() calls to different endpoints give no ordering guarantee
+      // over which handler actually reaches powerActionInFlight first (CLAUDE.md's own "Race di
+      // timing nota e ricorrente nei test") — found by review: an earlier version of this test
+      // asserted shutdown always wins, which is a false assumption the actual implementation never
+      // makes. Asserts only the symmetric, order-independent property instead: exactly one of the two
+      // real commands fires, whichever it is.
+      let shutdownCalls = 0;
+      let rebootCalls = 0;
+      let resolveShutdown: (() => void) | undefined;
+      let resolveReboot: (() => void) | undefined;
+      const { password } = await setup({
+        shutdown: () =>
+          new Promise<void>((resolve) => {
+            shutdownCalls++;
+            resolveShutdown = resolve;
+          }),
+        reboot: () =>
+          new Promise<void>((resolve) => {
+            rebootCalls++;
+            resolveReboot = resolve;
+          }),
+      });
+
+      const [shutdownRes, rebootRes] = await Promise.all([
+        authedFetch(server!, "/api/hub/shutdown", password, { method: "POST" }),
+        authedFetch(server!, "/api/hub/reboot", password, { method: "POST" }),
+      ]);
+      expect(shutdownRes.status).toBe(200);
+      expect(rebootRes.status).toBe(200); // both acked regardless of which one actually fired
+      expect(shutdownCalls + rebootCalls).toBe(1); // exactly one real command spawned, never both
+
+      // Release whichever one actually started, then confirm the *other* action is free to fire once
+      // it finishes — proves the block isn't permanent or specific to one direction.
+      (resolveShutdown ?? resolveReboot)!();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (shutdownCalls === 1) {
+        await authedFetch(server!, "/api/hub/reboot", password, { method: "POST" });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(rebootCalls).toBe(1);
+      } else {
+        await authedFetch(server!, "/api/hub/shutdown", password, { method: "POST" });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(shutdownCalls).toBe(1);
+      }
+    });
   });
 });

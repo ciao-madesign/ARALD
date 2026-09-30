@@ -67,7 +67,7 @@ describe("AI gateway (mocked Ollama, no Docker/real Project NOMAD)", () => {
     await waitFor(() => relay.node.peers.has(gateway.node.nodeId));
     await waitFor(() => gateway.node.peers.has(relay.node.nodeId));
 
-    const aiGateway = new AiGateway(gateway.node, `http://127.0.0.1:${fakeOllama.port}`);
+    const aiGateway = new AiGateway(gateway.node, `http://127.0.0.1:${fakeOllama.port}`, "test-model");
     aiGateway.registerAiService();
 
     const result = (await weak.node.callService(
@@ -89,7 +89,7 @@ describe("AI gateway (mocked Ollama, no Docker/real Project NOMAD)", () => {
     await Promise.all([gateway.node.start(), weak.node.start()]);
     await weak.node.connect({ host: "127.0.0.1", port: gateway.transport.port });
 
-    const aiGateway = new AiGateway(gateway.node, `http://127.0.0.1:${fakeOllama.port}`);
+    const aiGateway = new AiGateway(gateway.node, `http://127.0.0.1:${fakeOllama.port}`, "test-model");
     aiGateway.registerAiService();
 
     const first = (await weak.node.callService("service://ai", { prompt: "meteo domani" }, { timeoutMs: 2000 })) as {
@@ -116,7 +116,7 @@ describe("AI gateway (mocked Ollama, no Docker/real Project NOMAD)", () => {
     await Promise.all([gateway.node.start(), weak.node.start()]);
     await weak.node.connect({ host: "127.0.0.1", port: gateway.transport.port });
 
-    const aiGateway = new AiGateway(gateway.node, `http://127.0.0.1:${fakeOllama.port}`);
+    const aiGateway = new AiGateway(gateway.node, `http://127.0.0.1:${fakeOllama.port}`, "test-model");
     aiGateway.registerAiService();
 
     await expect(weak.node.callService("service://ai", { prompt: 12345 }, { timeoutMs: 2000 })).rejects.toThrow(/prompt/);
@@ -134,7 +134,7 @@ describe("AI gateway (mocked Ollama, no Docker/real Project NOMAD)", () => {
     await Promise.all([gateway.node.start(), weak.node.start()]);
     await weak.node.connect({ host: "127.0.0.1", port: gateway.transport.port });
 
-    const aiGateway = new AiGateway(gateway.node, unreachableUrl);
+    const aiGateway = new AiGateway(gateway.node, unreachableUrl, "test-model");
     aiGateway.registerAiService();
 
     await expect(weak.node.callService("service://ai", { prompt: "qualsiasi" }, { timeoutMs: 2000 })).rejects.toThrow();
@@ -155,9 +155,21 @@ describe("AI gateway (mocked Ollama, no Docker/real Project NOMAD)", () => {
     const ok = await fetch(`http://127.0.0.1:${fakeOllama.port}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: "ciao" }),
+      body: JSON.stringify({ model: "test-model", prompt: "ciao" }),
     });
     expect(ok.status).toBe(200);
     expect(await ok.json()).toEqual({ response: "ciao a te" });
+  });
+
+  it("FakeOllamaServer rejects a request missing 'model', mirroring real Ollama's requirement", async () => {
+    fakeOllama = new FakeOllamaServer();
+    await fakeOllama.start();
+
+    const res = await fetch(`http://127.0.0.1:${fakeOllama.port}/api/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "ciao" }),
+    });
+    expect(res.status).toBe(400);
   });
 });

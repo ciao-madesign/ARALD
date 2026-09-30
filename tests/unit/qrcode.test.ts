@@ -15,8 +15,8 @@ import { encodeQr, qrToSvg } from "../../node/src/qrcode.js";
  */
 describe("encodeQr", () => {
   it("is deterministic — encoding the same text twice produces an identical matrix", () => {
-    const a = encodeQr("nomadnet://pair?h=192.168.1.5:8080&n=Base&p=K7XM-2QRT");
-    const b = encodeQr("nomadnet://pair?h=192.168.1.5:8080&n=Base&p=K7XM-2QRT");
+    const a = encodeQr("arald://pair?h=192.168.1.5:8080&n=Base&p=K7XM-2QRT");
+    const b = encodeQr("arald://pair?h=192.168.1.5:8080&n=Base&p=K7XM-2QRT");
     expect(a).toEqual(b);
   });
 

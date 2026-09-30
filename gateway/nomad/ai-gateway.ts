@@ -25,6 +25,19 @@ export class AiGateway {
     private readonly node: NomadNode,
     /** Base URL of the NOMAD/Ollama HTTP API, e.g. `http://127.0.0.1:PORT` (a `FakeOllamaServer` in tests/demo, a real Ollama instance behind Project NOMAD in production). */
     private readonly baseUrl: string,
+    /**
+     * Model name Ollama should use (e.g. `"llama3.2"`) — **required** by
+     * Ollama's real `/api/generate` (verified against Ollama's own API
+     * reference, 30 September 2026: `model` is a mandatory top-level
+     * request field, not optional). Previously missing entirely from this
+     * class — a real bug found while investigating whether this gateway
+     * could work against Kiwix/Ollama directly instead of through Project
+     * NOMAD (`docs/next-steps.md`, "Ipotesi di indipendenza da Project
+     * NOMAD"): every call here would have failed against a real Ollama
+     * instance, NOMAD-mediated or not, since NOMAD presumably just proxies
+     * to real Ollama underneath rather than defining its own AI API.
+     */
+    private readonly model: string,
   ) {}
 
   /**
@@ -56,7 +69,10 @@ export class AiGateway {
         const res = await fetch(`${this.baseUrl}/api/generate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt }),
+          // `model` is mandatory (see this class's doc comment); `stream: false` is required too —
+          // omitted, Ollama's real API defaults to streaming newline-delimited JSON chunks, which
+          // `res.json()` below cannot parse as a single value.
+          body: JSON.stringify({ model: this.model, prompt, stream: false }),
         });
         if (!res.ok) throw new Error(`NOMAD AI backend failed (HTTP ${res.status})`);
         const body = (await res.json()) as { response?: unknown };

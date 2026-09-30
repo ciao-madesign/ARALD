@@ -77,14 +77,14 @@ function jsonForInlineScript(value: string): string {
 
 /**
  * Injects a small bootstrap `<script>` right after `<head>` that pre-seeds
- * `localStorage`'s `nomadnet.gatewayUrl` key — the exact key
+ * `localStorage`'s `arald.gatewayUrl` key — the exact key
  * `mobile/www/app.js` itself reads at startup — only if the browser
  * doesn't already have one saved, so a device that later re-pairs to a
  * different gateway on purpose (`app.js`'s "change address" flow) is never
  * fought back to this default on its next visit.
  */
 function injectGatewayUrl(html: string, gatewayUrl: string): string {
-  const bootstrap = `<script>try{if(!localStorage.getItem("nomadnet.gatewayUrl"))localStorage.setItem("nomadnet.gatewayUrl",${jsonForInlineScript(gatewayUrl)});}catch(e){}</script>`;
+  const bootstrap = `<script>try{if(!localStorage.getItem("arald.gatewayUrl"))localStorage.setItem("arald.gatewayUrl",${jsonForInlineScript(gatewayUrl)});}catch(e){}</script>`;
   // Matches <head>, <head lang="it">, <HEAD>, etc. (found by review: a literal `html.replace("<head>",
   // ...)` silently no-ops — no error, no log — the moment the real file's <head> tag ever gains an
   // attribute or different casing, quietly turning off the one thing this server exists to do). Falls

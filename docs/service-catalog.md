@@ -39,11 +39,11 @@ Richiamo diretto da `docs/architecture.md` ("Un ARALD Card è quasi solo Connect
 | Mappe offline | Tile MBTiles in sola lettura | `--map-file <percorso.mbtiles>` |
 | Interfaccia web locale | Dashboard di stato/ricerca/pairing telefono (spec §59) | `--web-port` |
 
-### Servizi via Project NOMAD (richiedono Docker + `gateway/nomad/`, solo su un host che fa girare NOMAD — quindi BOX/Portable)
+### Servizi via Project NOMAD (richiedono `gateway/nomad/`, solo su un host che fa girare NOMAD/i servizi sottostanti — quindi BOX/Portable)
 
 | Servizio | Cos'è | Flag (`gateway/nomad/cli.ts`) |
 |---|---|---|
-| Kiwix (`content://`+`service://kiwix-search`) | Wikipedia/Wikivoyage/altri archivi offline (ZIM) | `--nomad-url` |
+| Kiwix (`content://`+`service://kiwix-search`) | Wikipedia/Wikivoyage/altri archivi offline (ZIM) — **aggiornamento 30 settembre 2026**: parla direttamente con un vero `kiwix-serve`, non più con un'ipotetica API di Project NOMAD (mai verificata) — vedi `docs/next-steps.md`, "Ipotesi di indipendenza da Project NOMAD" | `--kiwix-url`/`--kiwix-book` |
 | AI locale (`service://ai`) | Domande/risposte via Ollama | `--ai-url` |
 | News/digest (`service://news`/`service://emergency-news`) | Ingestione RSS/Atom reale + riassunto generato dall'AI | `--news-url` |
 | Traduzione (`service://translation`) | Traduzione assistita, compone `service://ai` | (segue l'AI) |
@@ -85,6 +85,8 @@ Costruito il 9 settembre 2026 (`docs/security.md` voce #70) — un operatore sul
 **Primo esempio concreto di destinazione — un relay verso WhatsApp** (`docs/security.md` voce #79, 13 settembre 2026): `whatsapp-relay/`, un piccolo servizio indipendente (fuori dalla mesh, fuori dal workspace npm) che un operatore fa girare sul proprio server sempre connesso — riceve la busta E2E-cifrata dal Box, la decifra con la propria chiave privata, e invia il testo in chiaro a un contatto WhatsApp fisso via WhatsApp Business Cloud API. Nessuna modifica al protocollo mesh: il payload che la mesh trasporta è già byte opachi, "WhatsApp" è solo una scelta di cosa gira sul server ricevente. Generalizza allo stesso schema qualunque altro servizio esterno puntuale (email, un post su un canale, un upload) — vedi `docs/security.md` voce #79 per il dettaglio tecnico completo, incluse le due cose verificate solo con conoscenza di addestramento e non con accesso reale a Meta (forma dell'API, limite di lunghezza messaggio).
 
 **Secondo esempio concreto — un relay verso email** (`docs/security.md` voce #85, 21 settembre 2026): `email-relay/`, stesso pattern indipendente di `whatsapp-relay/` — riceve la busta E2E-cifrata dal Box, la decifra, invia il testo in chiaro a un indirizzo email fisso via un client SMTP scritto da zero (TLS implicito, porta 465, `AUTH PLAIN`). Stessa scelta architetturale: nessuna modifica al protocollo mesh, l'indirizzo reale vive solo nella configurazione privata del relay. Vedi `docs/security.md` voce #85 per il dettaglio tecnico completo, inclusi i tre problemi trovati dalla revisione (riga spuria nel terminatore DATA, timeout di connessione rimasto armato durante la transazione, mancata codifica quoted-printable per testo accentato).
+
+**Terzo esempio concreto — un relay generico "a webhook"** (`docs/security.md` voce #94, 29 settembre 2026): `webhook-relay/`, stesso pattern indipendente di `whatsapp-relay/`/`email-relay/`, ma generico invece di un'unica API reale — copre in un solo relay i tre esempi rimasti tra i sei discussi in origine (post su un canale/bot come Slack/Telegram, check-in di posizione verso un servizio di coordinamento, upload di un report/foto), decisione presa con l'utente il 21 settembre 2026 dato che condividono la stessa meccanica di fondo (un invio HTTP verso un indirizzo configurato dall'operatore). Ogni `destinationId` porta con sé il proprio `webhookUrl` e un token fisso di autenticazione opzionale (`Authorization: Bearer <token>`), mai un backend condiviso come per WhatsApp/SMTP. Corpo JSON semplice verso il webhook — `{"text": "..."}` o `{"dataBase64": "..."}`, mai entrambi: il lato mesh non invia mai metadati (nessun nome file/MIME), quindi l'unico segnale disponibile per distinguere un messaggio scritto da un file allegato è se i byte decifrati sono un testo UTF-8 valido. Vedi `docs/security.md` voce #94 per il dettaglio tecnico completo.
 
 ## Pacchetti per caso d'uso
 

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -37,7 +37,7 @@ describe("Identity", () => {
   });
 
   it("persists and reloads the same identity from disk", () => {
-    const dir = mkdtempSync(path.join(tmpdir(), "nomad-net-identity-"));
+    const dir = mkdtempSync(path.join(tmpdir(), "arald-identity-"));
     try {
       const original = Identity.loadOrCreate(dir);
       const reloaded = Identity.loadOrCreate(dir);
@@ -46,6 +46,22 @@ describe("Identity", () => {
       const data = Buffer.from("courier payload");
       const signature = reloaded.sign(data);
       expect(original.verify(data, signature)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("regression: refuses to silently regenerate when only one of private.key/public.key survived an interrupted write", () => {
+    // Simulates a process killed between the two writeFileSync() calls inside loadOrCreate()'s
+    // fresh-directory branch (crash, power loss, disk full on a real device like an ARALD Box) —
+    // the exact scenario --identity-dir was added to survive. Silently treating this as "absent"
+    // would discard the still-recoverable private key and mint a fresh random identity instead.
+    const dir = mkdtempSync(path.join(tmpdir(), "arald-identity-partial-"));
+    try {
+      const original = Identity.generate();
+      writeFileSync(path.join(dir, "private.key"), original.exportRawPrivateKey(), { mode: 0o600 });
+      // public.key deliberately left missing.
+      expect(() => Identity.loadOrCreate(dir)).toThrow(/only one of/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

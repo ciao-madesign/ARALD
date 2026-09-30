@@ -48,7 +48,7 @@ describe("WebUiServer map tiles (docs/next-steps.md)", () => {
   let mapTiles: MbtilesReader | undefined;
 
   beforeEach(() => {
-    dir = mkdtempSync(path.join(tmpdir(), "nomad-net-map-web-ui-"));
+    dir = mkdtempSync(path.join(tmpdir(), "arald-map-web-ui-"));
     filePath = path.join(dir, "region.mbtiles");
     buildFixtureMbtiles(filePath);
   });

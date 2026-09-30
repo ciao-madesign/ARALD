@@ -40,15 +40,31 @@ export class Identity {
     return Identity.fromKeyObjects(publicKey, privateKey);
   }
 
-  /** Loads an identity from `<directory>/private.key` + `public.key`, generating and persisting a new one if absent. */
+  /**
+   * Loads an identity from `<directory>/private.key` + `public.key`, generating and persisting a
+   * new one if the directory is genuinely empty. Throws instead of silently regenerating if
+   * exactly one of the two files is present — that shape isn't a fresh directory, it's leftover
+   * state from a write interrupted between the two `writeFileSync()` calls below (process killed,
+   * disk full, power loss on a device like an ARALD Box). Treating it as "absent" would silently
+   * overwrite the still-recoverable `private.key` with a brand-new random identity, discarding the
+   * old key forever and defeating the entire purpose of a caller (e.g. `cli.ts`'s `--identity-dir`)
+   * persisting identity specifically to survive an unclean restart (found by review).
+   */
   static loadOrCreate(directory: string): Identity {
     const privatePath = path.join(directory, "private.key");
     const publicPath = path.join(directory, "public.key");
-    if (existsSync(privatePath) && existsSync(publicPath)) {
+    const hasPrivate = existsSync(privatePath);
+    const hasPublic = existsSync(publicPath);
+    if (hasPrivate && hasPublic) {
       return Identity.fromRawKeys(readFileSync(publicPath), readFileSync(privatePath));
     }
+    if (hasPrivate || hasPublic) {
+      throw new Error(
+        `Identity.loadOrCreate: ${directory} has only one of private.key/public.key — refusing to overwrite what looks like an interrupted write instead of a fresh directory`,
+      );
+    }
     const identity = Identity.generate();
-    mkdirSync(directory, { recursive: true });
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
     writeFileSync(privatePath, identity.exportRawPrivateKey(), { mode: 0o600 });
     writeFileSync(publicPath, identity.exportRawPublicKey());
     return identity;
