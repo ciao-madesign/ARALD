@@ -39,11 +39,11 @@ Richiamo diretto da `docs/architecture.md` ("Un ARALD Card è quasi solo Connect
 | Mappe offline | Tile MBTiles in sola lettura | `--map-file <percorso.mbtiles>` |
 | Interfaccia web locale | Dashboard di stato/ricerca/pairing telefono (spec §59) | `--web-port` |
 
-### Servizi via Project NOMAD (richiedono Docker + `gateway/nomad/`, solo su un host che fa girare NOMAD — quindi BOX/Portable)
+### Servizi via Project NOMAD (richiedono `gateway/nomad/`, solo su un host che fa girare NOMAD/i servizi sottostanti — quindi BOX/Portable)
 
 | Servizio | Cos'è | Flag (`gateway/nomad/cli.ts`) |
 |---|---|---|
-| Kiwix (`content://`+`service://kiwix-search`) | Wikipedia/Wikivoyage/altri archivi offline (ZIM) | `--nomad-url` |
+| Kiwix (`content://`+`service://kiwix-search`) | Wikipedia/Wikivoyage/altri archivi offline (ZIM) — **aggiornamento 30 settembre 2026**: parla direttamente con un vero `kiwix-serve`, non più con un'ipotetica API di Project NOMAD (mai verificata) — vedi `docs/next-steps.md`, "Ipotesi di indipendenza da Project NOMAD" | `--kiwix-url`/`--kiwix-book` |
 | AI locale (`service://ai`) | Domande/risposte via Ollama | `--ai-url` |
 | News/digest (`service://news`/`service://emergency-news`) | Ingestione RSS/Atom reale + riassunto generato dall'AI | `--news-url` |
 | Traduzione (`service://translation`) | Traduzione assistita, compone `service://ai` | (segue l'AI) |

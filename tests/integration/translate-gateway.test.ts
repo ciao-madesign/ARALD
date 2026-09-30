@@ -39,7 +39,7 @@ describe("service://translation (registerTranslateService, composes service://ai
 
     gatewayNode = makeNode("gateway");
     await gatewayNode.node.start();
-    new AiGateway(gatewayNode.node, `http://127.0.0.1:${fakeOllama.port}`).registerAiService();
+    new AiGateway(gatewayNode.node, `http://127.0.0.1:${fakeOllama.port}`, "test-model").registerAiService();
     registerTranslateService(gatewayNode.node);
     return gatewayNode.node;
   }

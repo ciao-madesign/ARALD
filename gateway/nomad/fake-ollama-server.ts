@@ -112,7 +112,15 @@ export class FakeOllamaServer {
       return;
     }
 
-    const prompt = (parsed as { prompt?: unknown } | null)?.prompt;
+    const body = parsed as { prompt?: unknown; model?: unknown } | null;
+    // Real Ollama requires `model` on every /api/generate call — enforced here too (not just
+    // documented in AiGateway) so a caller that regresses and drops the field is caught by the
+    // existing test suite instead of only failing against a real instance.
+    if (typeof body?.model !== "string" || body.model.length === 0) {
+      sendJson(res, 400, { error: "'model' must be a non-empty string" });
+      return;
+    }
+    const prompt = body.prompt;
     if (typeof prompt !== "string") {
       sendJson(res, 400, { error: "'prompt' must be a string" });
       return;
