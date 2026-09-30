@@ -134,12 +134,17 @@ async function main(): Promise<void> {
     console.log(`Fake Ollama server (no --ai-url given): ${aiBaseUrl}`);
   }
 
+  // Only meaningful against the fake below — real Flatnotes has no bulk-listing endpoint to discover
+  // titles from (FlatnotesGateway's own doc comment), same reasoning as demoArticlePaths above.
+  let demoNoteTitles: string[] = [];
+
   let fakeFlatnotes: FakeFlatnotesServer | undefined;
   let flatnotesBaseUrl = args["flatnotes-url"];
   if (!flatnotesBaseUrl) {
+    demoNoteTitles = ["Benvenuto", "Regole del rifugio"];
     fakeFlatnotes = new FakeFlatnotesServer();
-    fakeFlatnotes.addNote({ path: "benvenuto", title: "Benvenuto", content: "Questo e' un quaderno condiviso: chiunque puo' leggere o aggiungere una nota." });
-    fakeFlatnotes.addNote({ path: "regole-rifugio", title: "Regole del rifugio", content: "Silenzio dopo le 22, spegnere le luci comuni, richiudere il cancello." });
+    fakeFlatnotes.addNote({ title: "Benvenuto", content: "Questo e' un quaderno condiviso: chiunque puo' leggere o aggiungere una nota." });
+    fakeFlatnotes.addNote({ title: "Regole del rifugio", content: "Silenzio dopo le 22, spegnere le luci comuni, richiudere il cancello." });
     await fakeFlatnotes.start();
     flatnotesBaseUrl = `http://127.0.0.1:${fakeFlatnotes.port}`;
     console.log(`Fake FlatNotes server (no --flatnotes-url given): ${flatnotesBaseUrl}`);
@@ -177,10 +182,18 @@ async function main(): Promise<void> {
     maxRequestsPerWindow: parsePositiveInt(args["flatnotes-max-requests-global"], 60, "flatnotes-max-requests-global"),
     windowMs: parsePositiveInt(args["flatnotes-window-ms"], 60_000, "flatnotes-window-ms"),
   });
-  const publishedNotes = await flatnotesGateway.syncCatalog();
+  const publishedNotes: Array<{ title: string; contentId: string }> = [];
+  for (const title of demoNoteTitles) {
+    try {
+      publishedNotes.push(await flatnotesGateway.fetchNote(title));
+    } catch (err) {
+      console.error(`failed to publish demo note '${title}':`, err);
+    }
+  }
   flatnotesGateway.registerSearchService();
+  flatnotesGateway.registerFetchService();
   flatnotesGateway.registerCreateService();
-  console.log(`Published ${publishedNotes.length} note(s) from FlatNotes, registered service://flatnotes-search and service://flatnotes-create`);
+  console.log(`Published ${publishedNotes.length} note(s) from FlatNotes, registered service://flatnotes-search, service://flatnotes-fetch and service://flatnotes-create`);
 
   let newsGateway: NewsGateway | undefined;
   const newsFeedUrl = args["news-url"];

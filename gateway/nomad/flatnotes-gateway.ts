@@ -2,43 +2,23 @@ import type { NomadNode } from "../../node/src/node.js";
 import { BoundedFifoMap } from "../../node/src/bounded-map.js";
 import { trustRank } from "../../node/src/trust.js";
 import { MAX_MESSAGE_TEXT_LENGTH } from "../../node/src/message-history.js";
-import { mapWithConcurrency } from "./concurrency.js";
-
-const DEFAULT_SYNC_CONCURRENCY = 8;
 
 /** Same purpose/shape as `MAX_DROP_LABEL_LENGTH` in `node/src/drops.ts` — a note's title is short-form free text, not chat-message-length, but private to this file (no other gateway needs it). */
 const MAX_NOTE_TITLE_LENGTH = 120;
 
 /**
- * Bounds `publishedByPath` (spec §57) — unlike `KiwixGateway.publishedByPath`,
- * whose growth is capped by a finite operator-owned NOMAD catalog,
- * `FlatnotesGateway`'s twin is also fed by `service://flatnotes-create`
- * (any mesh peer within its rate-limit budget can keep adding distinct
- * notes indefinitely), so it needs the same explicit bound
- * `NewsGateway.publishedById` already has for the identical reason
- * (`docs/security.md`). Plain FIFO eviction (no trust weighting, unlike
- * peer-keyed structures — this map is keyed by note *path*, not by an
- * identity `trustRank()` could meaningfully rank).
- *
- * Accepted limitation (same class as `KiwixGateway.syncCatalog()`'s own
- * documented ContentStore-overflow tradeoff): a real FlatNotes catalog with
- * more than this many *distinct* note paths will, on a full `syncCatalog()`
- * re-sync, cascade into re-reporting more than just the truly-evicted
- * entries as "changed" — native `Map` iteration order isn't updated by a
- * no-op `get()`, so an unchanged entry evicted to make room for one
- * processed earlier in the same listing-order pass can itself still be
- * ahead of other not-yet-visited entries, which then also get "bumped" in
- * turn. Memory still never grows past `MAX_TRACKED_NOTE_PATHS` (the actual
- * guarantee this bound exists for) — only the "only report genuinely new/
- * changed entries" optimization degrades once a catalog exceeds it, the
- * same "an operator syncing at that scale needs to size accordingly"
- * posture `KiwixGateway`'s own doc comment already takes. Not just a
- * bigger returned array either: each spuriously re-reported entry also
- * re-runs a real `Identity.sign()` and a `ContentStore` write inside
- * `publishContent()`, so a cascading re-sync of a catalog well past this
- * cap costs real CPU, not only a less useful result.
+ * Characters real Flatnotes rejects in a title (`server/helpers.py`'s
+ * `is_valid_filename` — notes are literal files on disk). Validated here too
+ * so a caller gets a clear ARALD-side error instead of a raw Flatnotes HTTP
+ * failure. Exported so `fake-flatnotes-server.ts` enforces the identical
+ * rule instead of a second, independently-maintained copy that could drift
+ * from this one (found by `code-review`, 30 September 2026) — **not**
+ * given the `g` flag: a global regex reused across multiple `.test()` calls
+ * carries `lastIndex` state between them, silently alternating true/false
+ * on the same input (see `validateCreateRequest()`'s doc comment for where
+ * this project actually hit that pitfall while writing this file).
  */
-const MAX_TRACKED_NOTE_PATHS = 4096;
+export const INVALID_TITLE_CHARS = /[<>:"/\\|?*]/;
 
 /** See `InternetGateway`'s identical constants (`internet-gateway.ts`) — same defaults, same two-layer reasoning, reused rather than re-derived. */
 const MAX_TRACKED_RATE_LIMIT_PEERS = 4096;
@@ -59,45 +39,77 @@ interface RateWindow {
 
 /**
  * Translates ARALD's abstract APIs (spec §37) into HTTP calls against a
- * FlatNotes instance (Project NOMAD component, spec §4/
- * `docs/SPECIFICATION.md:102`, `docs/reuse-vs-new.md`: "Esiste,
- * containerizzato → Consumato tramite gateway") — a real Docker+NOMAD
- * instance in production, `FakeFlatnotesServer` in this slice's tests/demo.
- * Same three-part shape `KiwixGateway` established, plus a write path
- * neither `KiwixGateway` nor `NewsGateway` needed:
+ * **real, bare Flatnotes instance** — not Project NOMAD's own (never
+ * verified, never seen) API surface. Rewritten 30 September 2026 in the
+ * same spirit as `KiwixGateway` (`docs/security.md` voce #97/#98): the
+ * previous version of this class called invented endpoints (`GET /api/notes`
+ * for a bulk listing, notes addressed by an invented `path` field) that
+ * `FakeFlatnotesServer` modeled but that real Flatnotes doesn't expose —
+ * verified against `dullage/flatnotes`'s own source on the `develop` branch
+ * (`server/main.py`, `server/notes/models.py`, `server/helpers.py`,
+ * `server/global_config.py`, fetched via `raw.githubusercontent.com`; no
+ * live instance reachable to verify against instead — `demo.flatnotes.io`
+ * is blocked by this session's network egress policy, so this is verified
+ * against source, not a running server's own `/docs`/OpenAPI spec).
  *
- * - `syncCatalog()` (`content://...`): mirrors `KiwixGateway.syncCatalog()`
- *   exactly — fetches FlatNotes' note list, publishes each one via
- *   `publishContent()` (mime type `text/markdown`, since FlatNotes stores
- *   notes as markdown), reports only new/changed entries on a re-sync. See
- *   that method's doc comment (same file's sibling) for the accepted
- *   "edited note accumulates a new content id, old one isn't deleted"
- *   limitation — identical here for the identical reason (content
- *   addressing has no notion of "this replaces that").
+ * **Real API actually used** (FastAPI backend, fields camelCase over the
+ * wire via `CustomBaseModel`'s `alias_generator`, despite snake_case
+ * Python internals):
+ * - `GET /api/notes/{title}` → `Note {title, content?, lastModified}`
+ * - `POST /api/notes` body `NoteCreate {title, content?}` → `Note`
+ * - `GET /api/search?term=&sort=score|title|lastModified&order=asc|desc&limit=`
+ *   → `SearchResult[] {title, lastModified, score?, titleHighlights?,
+ *   contentHighlights?, tagMatches?}`
+ *
+ * **Notes are addressed by title, not "path"** — the previous version of
+ * this class invented a `path` field that doesn't exist in the real API;
+ * every reference to it below has been renamed to `title` accordingly.
+ *
+ * **Architectural change forced by what's real, not a stylistic rewrite**:
+ * Flatnotes has **no endpoint that lists/enumerates every note** — confirmed
+ * against the source above (only `/api/notes/{title}`, `POST /api/notes`,
+ * `/api/search`, no bare `GET /api/notes`). The previous `syncCatalog()`
+ * (fetch every note up front, publish each via `publishContent()`) has
+ * therefore been **removed**, not adapted — same reasoning, same fate as
+ * `KiwixGateway.syncCatalog()`. `registerFetchService()` (`service://flatnotes-fetch`)
+ * is the mesh-exposed counterpart, mirroring `service://kiwix-fetch`
+ * exactly: a caller with a `title` (typically from a prior
+ * `service://flatnotes-search` result) turns it into retrievable content
+ * with one call, deliberately not automatic (a search nobody follows up on
+ * costs nothing).
+ *
+ * **Assumes the operator runs Flatnotes with `FLATNOTES_AUTH_TYPE=none`**
+ * (`server/global_config.py`'s `AuthType` enum: `none`/`read_only`/
+ * `password`/`totp`) — same unauthenticated-backend posture already taken
+ * for kiwix-serve/Ollama. This gateway never sends an `Authorization`
+ * header; against an instance configured for any other `AuthType` every
+ * call here would fail with `401`.
+ *
+ * Three-part shape `KiwixGateway` established, plus a write path neither
+ * `KiwixGateway` nor `NewsGateway` needed:
+ *
  * - `registerSearchService()` (`CALL service://...`): `service://flatnotes-search`,
- *   a live proxy to FlatNotes' own search endpoint, never cached — same
- *   shape as `service://kiwix-search`.
- * - `registerCreateService()` (`CALL service://...`, new — no existing
- *   gateway writes to NOMAD): `service://flatnotes-create`, a "shared
- *   notebook" a mesh node (e.g. a hiker's phone) can write to. Validates
- *   the payload defensively (`CLAUDE.md`: a service payload is exactly as
- *   untrusted as any network-sourced value), rate-limits per-caller and
- *   mesh-wide (same two-layer reasoning as `InternetGateway.checkRateLimit()` —
- *   `fromNodeId` isn't cryptographically authenticated, so a per-identity
- *   limit alone is trivially evaded by rotating fake source ids; the real
- *   cost here is a write to an external system, a more attractive abuse
- *   target than a read), then POSTs to FlatNotes and immediately publishes
- *   the resulting note as `content://` (reusing `syncCatalog()`'s own
- *   `publishedByPath` bookkeeping) so it's readable mesh-wide without
- *   waiting for the next sync.
+ *   a live proxy to Flatnotes' real `/api/search`, never cached.
+ * - `registerFetchService()` (`CALL service://...`, new): `service://flatnotes-fetch`,
+ *   see above.
+ * - `registerCreateService()` (`CALL service://...`): `service://flatnotes-create`,
+ *   a "shared notebook" a mesh node (e.g. a hiker's phone) can write to.
+ *   Validates the payload defensively (`CLAUDE.md`: a service payload is
+ *   exactly as untrusted as any network-sourced value), rate-limits
+ *   per-caller and mesh-wide (same two-layer reasoning as
+ *   `InternetGateway.checkRateLimit()` — `fromNodeId` isn't
+ *   cryptographically authenticated, so a per-identity limit alone is
+ *   trivially evaded by rotating fake source ids; the real cost here is a
+ *   write to an external system, a more attractive abuse target than a
+ *   read), then POSTs to Flatnotes and immediately publishes the resulting
+ *   note as `content://` so it's readable mesh-wide without waiting for a
+ *   `service://flatnotes-fetch` call.
  *
  * No SSRF guard needed here (unlike `InternetGateway`): the destination is
  * always this gateway's own fixed `baseUrl`, configured once by the
  * operator, never a caller-supplied URL.
  */
 export class FlatnotesGateway {
-  /** Same role as `KiwixGateway.publishedByPath` — last contentId published per note path, so `syncCatalog()`/`registerCreateService()` only report genuinely new/changed entries. Bounded (`MAX_TRACKED_NOTE_PATHS`) unlike Kiwix's twin — see that constant's doc comment for why. */
-  private readonly publishedByPath = new BoundedFifoMap<string, string>({ maxSize: MAX_TRACKED_NOTE_PATHS });
   private readonly maxRequestsPerPeerPerWindow: number;
   private readonly maxRequestsPerWindow: number;
   private readonly windowMs: number;
@@ -107,7 +119,7 @@ export class FlatnotesGateway {
 
   constructor(
     private readonly node: NomadNode,
-    /** Base URL of the FlatNotes HTTP API, e.g. `http://127.0.0.1:PORT` (a `FakeFlatnotesServer` in tests, a real FlatNotes instance in production). */
+    /** Base URL of a real Flatnotes instance, e.g. `http://127.0.0.1:PORT` (`FakeFlatnotesServer` in tests/demo). */
     private readonly baseUrl: string,
     options: FlatnotesGatewayOptions = {},
   ) {
@@ -121,54 +133,70 @@ export class FlatnotesGateway {
   }
 
   /**
-   * Fetches FlatNotes' current note list and publishes each one locally —
-   * see the class doc comment for the accepted "edited note accumulates a
-   * new content id" limitation, and `KiwixGateway.syncCatalog()`'s own
-   * (near-identical) doc comment for the full reasoning. Callable more than
-   * once; no automatic polling built in (same as `KiwixGateway`).
+   * Fetches one note by title (real `GET /api/notes/{title}`) and publishes
+   * it via `publishContent()` — mirrors `KiwixGateway.publishArticle()`
+   * exactly. Safe to call repeatedly for the same title: content addressing
+   * means an unchanged note republishes under the same `contentId` and is a
+   * cheap no-op downstream.
    */
-  async syncCatalog(): Promise<Array<{ path: string; contentId: string }>> {
-    const listRes = await fetch(`${this.baseUrl}/api/notes`);
-    if (!listRes.ok) {
-      throw new Error(`FlatNotes gateway: failed to list notes (HTTP ${listRes.status})`);
+  async fetchNote(title: string): Promise<{ title: string; contentId: string }> {
+    const res = await fetch(`${this.baseUrl}/api/notes/${encodeURIComponent(title)}`);
+    if (!res.ok) {
+      throw new Error(`FlatNotes: failed to fetch note '${title}' (HTTP ${res.status})`);
     }
-    const entries = (await listRes.json()) as Array<{ path: string; title: string }>;
-
-    const results = await mapWithConcurrency(entries, DEFAULT_SYNC_CONCURRENCY, async (entry) => {
-      const noteRes = await fetch(`${this.baseUrl}/api/notes/${encodeURIComponent(entry.path)}`);
-      if (!noteRes.ok) {
-        // FlatNotes, like NOMAD generally, isn't guaranteed stable between a listing and a fetch —
-        // same tolerance KiwixGateway.syncCatalog() already has for exactly this situation.
-        return undefined;
-      }
-      const note = (await noteRes.json()) as { path: string; title: string; content: string };
-      return this.publishNote(note.path, note.title, note.content);
-    });
-
-    const published: Array<{ path: string; contentId: string }> = [];
-    for (const result of results) {
-      if (result) published.push(result);
+    const note = (await res.json()) as { title?: unknown; content?: unknown };
+    if (typeof note.title !== "string" || typeof note.content !== "string") {
+      throw new Error(`FlatNotes: malformed note response for '${title}'`);
     }
-    return published;
+    return this.publishNote(note.title, note.content);
   }
 
-  /** Publishes one note and records it in `publishedByPath` — returns the published entry only if it's new or changed since the last publish of this same path, `undefined` otherwise (same "report only what actually changed" contract `syncCatalog()`'s return value has). Shared by `syncCatalog()` and `registerCreateService()` so a freshly-created note is immediately reflected the same way a synced one would be. */
-  private publishNote(path: string, title: string, content: string): { path: string; contentId: string } | undefined {
+  private publishNote(title: string, content: string): { title: string; contentId: string } {
     const metadata = this.node.publishContent(title, "text/markdown", Buffer.from(content, "utf8"));
-    if (this.publishedByPath.get(path) === metadata.contentId) return undefined; // unchanged since the last publish of this path
-    this.publishedByPath.set(path, metadata.contentId);
-    return { path, contentId: metadata.contentId };
+    return { title, contentId: metadata.contentId };
   }
 
-  /** Registers `service://flatnotes-search` — live proxy to FlatNotes' search endpoint on every call, never cached. Same shape as `KiwixGateway.registerSearchService()`. */
+  /**
+   * Registers `service://flatnotes-search` — every call proxies live to
+   * Flatnotes' real `/api/search?term=` endpoint, translating the result
+   * back into ARALD's shape. Never caches, same reasoning as `KiwixGateway`:
+   * a stale suggestion list is worse than a slow real one.
+   */
   registerSearchService(): void {
     this.node.registerService("service://flatnotes-search", "1.0.0", ["search"], async (payload) => {
       const { q } = payload as { q?: unknown };
       if (typeof q !== "string") throw new Error("service://flatnotes-search requires a string 'q' field");
 
-      const res = await fetch(`${this.baseUrl}/api/search?q=${encodeURIComponent(q)}`);
+      const res = await fetch(`${this.baseUrl}/api/search?term=${encodeURIComponent(q)}`);
       if (!res.ok) throw new Error(`FlatNotes search failed (HTTP ${res.status})`);
-      return { results: (await res.json()) as Array<{ path: string; title: string }> };
+      const raw = (await res.json()) as unknown;
+      if (!Array.isArray(raw)) throw new Error("FlatNotes search returned a malformed response");
+
+      // Skips (rather than throws on) any entry that isn't a plain object with a string title — a
+      // single malformed result must not lose every other legitimate one in the same response, same
+      // defensive posture as KiwixGateway.registerSearchService() (docs/security.md voce #97).
+      const results = raw
+        .filter((entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null && typeof entry.title === "string")
+        .map((e) => ({ title: e.title as string }));
+      return { results };
+    });
+  }
+
+  /**
+   * Registers `service://flatnotes-fetch` — the mesh-callable counterpart to
+   * `fetchNote()` (see this class's doc comment for the design this closes:
+   * a caller who found a `title` via `service://flatnotes-search` turns it
+   * into retrievable content). Synchronous from the caller's point of view:
+   * the response only arrives once the note has actually been fetched from
+   * Flatnotes and published locally.
+   */
+  registerFetchService(): void {
+    this.node.registerService("service://flatnotes-fetch", "1.0.0", ["fetch"], async (payload) => {
+      const { title } = payload as { title?: unknown };
+      if (typeof title !== "string" || title.length === 0) {
+        throw new Error("service://flatnotes-fetch requires a non-empty string 'title' field");
+      }
+      return this.fetchNote(title);
     });
   }
 
@@ -179,7 +207,7 @@ export class FlatnotesGateway {
     });
   }
 
-  private async handleCreate(payload: unknown, fromNodeId: string): Promise<{ path: string; contentId: string }> {
+  private async handleCreate(payload: unknown, fromNodeId: string): Promise<{ title: string; contentId: string }> {
     const { title, content } = validateCreateRequest(payload);
 
     this.checkRateLimit(fromNodeId);
@@ -190,14 +218,12 @@ export class FlatnotesGateway {
       body: JSON.stringify({ title, content }),
     });
     if (!res.ok) throw new Error(`FlatNotes note creation failed (HTTP ${res.status})`);
-    const note = (await res.json()) as { path: string; title: string; content: string };
+    const note = (await res.json()) as { title?: unknown; content?: unknown };
+    if (typeof note.title !== "string" || typeof note.content !== "string") {
+      throw new Error("FlatNotes: malformed response after note creation");
+    }
 
-    const published = this.publishNote(note.path, note.title, note.content);
-    // publishNote() only returns undefined for an *unchanged* path — a freshly created note always
-    // has a path FlatNotes just minted, so this can only happen if FlatNotes echoed back exactly the
-    // same path+content as something already synced, in which case reporting that existing entry is
-    // still a correct answer to "here's your note".
-    return published ?? { path: note.path, contentId: this.publishedByPath.get(note.path)! };
+    return this.publishNote(note.title, note.content);
   }
 
   /** Same two-layer reasoning as `InternetGateway.checkRateLimit()` — see that method's doc comment. */
@@ -225,7 +251,20 @@ export class FlatnotesGateway {
   }
 }
 
-/** Validates a `flatnotes-create` request payload defensively — never trusts its shape. Throws with a message safe to surface to the caller as-is. */
+/**
+ * Validates a `flatnotes-create` request payload defensively — never trusts
+ * its shape. Throws with a message safe to surface to the caller as-is.
+ *
+ * The auto-generated default title (when the caller omits one) used to be
+ * `Nota dalla mesh — ${new Date().toISOString()}` — an ISO timestamp
+ * contains `:`, one of the characters real Flatnotes rejects in a title
+ * (`INVALID_TITLE_CHARS`, `server/helpers.py`'s `is_valid_filename`): every
+ * mesh-originated note without an explicit title would have failed against
+ * a real instance with a 422 this gateway didn't anticipate (found while
+ * verifying the real API, not by the old `FakeFlatnotesServer`, which never
+ * modeled this restriction). Fixed by sanitizing the timestamp instead of
+ * guessing a different format is safe.
+ */
 function validateCreateRequest(payload: unknown): { title: string; content: string } {
   if (!payload || typeof payload !== "object") throw new Error("richiesta non valida: payload mancante");
   const { title, content } = payload as { title?: unknown; content?: unknown };
@@ -235,10 +274,17 @@ function validateCreateRequest(payload: unknown): { title: string; content: stri
   }
 
   if (title === undefined) {
-    return { title: `Nota dalla mesh — ${new Date().toISOString()}`, content };
+    // A fresh /g regex literal here, not the shared module-level INVALID_TITLE_CHARS: a global regex
+    // used with .test() elsewhere would carry lastIndex state between calls, silently alternating
+    // true/false on the same input across successive validations (a real, easy-to-miss JS pitfall).
+    const safeTimestamp = new Date().toISOString().replace(/[<>:"/\\|?*]/g, "-");
+    return { title: `Nota dalla mesh - ${safeTimestamp}`, content };
   }
   if (typeof title !== "string" || title.length === 0 || title.length > MAX_NOTE_TITLE_LENGTH) {
     throw new Error(`'title', if given, must be a non-empty string of at most ${MAX_NOTE_TITLE_LENGTH} characters`);
+  }
+  if (INVALID_TITLE_CHARS.test(title)) {
+    throw new Error(`'title' cannot include any of the following characters: <>:"/\\|?*`);
   }
   return { title, content };
 }

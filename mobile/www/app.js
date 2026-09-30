@@ -2240,7 +2240,7 @@ function renderNewsResult(container, value) {
   container.append(list);
 }
 
-/** Renders a service://flatnotes-search result (`{ results: [{path, title}] }`) as a readable list instead of raw JSON — same reasoning as renderNewsResult() above. */
+/** Renders a service://flatnotes-search result (`{ results: [{title}] }` — notes are addressed by title, not a "path") as a readable list instead of raw JSON — same reasoning as renderNewsResult() above. */
 function renderNoteSearchResult(container, value) {
   container.textContent = "";
   const results = Array.isArray(value && value.results) ? value.results : [];
@@ -2373,7 +2373,7 @@ function buildCallForm(service) {
         result.textContent = value.translatedText;
       } else if (isFlatnotesSearch) {
         renderNoteSearchResult(result, value);
-      } else if (isFlatnotesCreate && value && typeof value.path === "string") {
+      } else if (isFlatnotesCreate && value && typeof value.title === "string") {
         result.textContent = "";
         result.append(
           el("p", { textContent: "Nota salvata." }),
@@ -2844,9 +2844,9 @@ document.getElementById("create-group-form").addEventListener("submit", async (e
 // app has never heard of, e.g. one an operator registered locally) still gets a card, just with a
 // generic icon and a name derived from the raw id — "some card" beats "silently missing" for an
 // unrecognized-but-available service.
-const SERVICE_ICONS = { "service://ai": "sparkles", "service://kiwix-search": "book", "service://kiwix-fetch": "book", "service://news": "newspaper", "service://translation": "translate", "service://internet-fetch": "cloud", "service://flatnotes-search": "search", "service://flatnotes-create": "edit" };
+const SERVICE_ICONS = { "service://ai": "sparkles", "service://kiwix-search": "book", "service://kiwix-fetch": "book", "service://news": "newspaper", "service://translation": "translate", "service://internet-fetch": "cloud", "service://flatnotes-search": "search", "service://flatnotes-fetch": "search", "service://flatnotes-create": "edit" };
 const DEFAULT_SERVICE_ICON = "wrench";
-const SERVICE_LABELS = { "service://ai": "Assistente AI", "service://kiwix-search": "Enciclopedia", "service://kiwix-fetch": "Apri articolo enciclopedia", "service://news": "Notizie", "service://translation": "Traduttore", "service://internet-fetch": "Pagine da internet", "service://flatnotes-search": "Cerca nelle note", "service://flatnotes-create": "Scrivi una nota" };
+const SERVICE_LABELS = { "service://ai": "Assistente AI", "service://kiwix-search": "Enciclopedia", "service://kiwix-fetch": "Apri articolo enciclopedia", "service://news": "Notizie", "service://translation": "Traduttore", "service://internet-fetch": "Pagine da internet", "service://flatnotes-search": "Cerca nelle note", "service://flatnotes-fetch": "Apri una nota", "service://flatnotes-create": "Scrivi una nota" };
 
 /**
  * One-line, plain-language explanation shown under each service card — added after a UX audit found
@@ -2864,6 +2864,7 @@ const SERVICE_DESCRIPTIONS = {
   "service://translation": "Traduci un testo in un'altra lingua.",
   "service://internet-fetch": "Recupera una pagina o un feed da internet vero, se questa rete è collegata.",
   "service://flatnotes-search": "Cerca tra le note già scritte su questa rete.",
+  "service://flatnotes-fetch": "Apri una nota trovata con la ricerca (usa il titolo restituito da 'Cerca nelle note').",
   "service://flatnotes-create": "Scrivi una nota nel quaderno condiviso — sarà leggibile da chiunque sia connesso.",
 };
 

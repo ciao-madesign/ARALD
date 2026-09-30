@@ -41,7 +41,7 @@ Richiamo diretto da `docs/architecture.md` ("Un ARALD Card è quasi solo Connect
 
 ### Servizi via `gateway/nomad/` (solo su un host che fa girare i servizi sottostanti — quindi BOX/Portable)
 
-**Aggiornamento, 30 settembre 2026**: per Kiwix/AI, "i servizi sottostanti" non è più necessariamente Project NOMAD — `service-stack/docker-compose.yml` li avvia con le loro immagini Docker ufficiali pubbliche, indipendenti dal sorgente Project NOMAD (mai reso disponibile). Vedi `docs/next-steps.md`, "Indipendenza da Project NOMAD", per il dettaglio. Flatnotes resta per ora nello stato precedente (rimandato, non ancora verificato/aggiunto a `service-stack/`).
+**Aggiornamento, 30 settembre 2026**: "i servizi sottostanti" non è più necessariamente Project NOMAD per nessuno dei tre — Kiwix/AI/Flatnotes parlano tutti con le loro vere API dirette (`docs/security.md` voci #97/#98/#100). `service-stack/docker-compose.yml` avvia Kiwix/AI con le loro immagini Docker ufficiali pubbliche; Flatnotes può guadagnare la propria immagine ufficiale (`dullage/flatnotes`) come lavoro a sé, non ancora fatto. Vedi `docs/next-steps.md`, "Indipendenza da Project NOMAD", per il dettaglio.
 
 | Servizio | Cos'è | Flag (`gateway/nomad/cli.ts`) |
 |---|---|---|
@@ -50,7 +50,7 @@ Richiamo diretto da `docs/architecture.md` ("Un ARALD Card è quasi solo Connect
 | News/digest (`service://news`/`service://emergency-news`) | Ingestione RSS/Atom reale + riassunto generato dall'AI | `--news-url` |
 | Traduzione (`service://translation`) | Traduzione assistita, compone `service://ai` | (segue l'AI) |
 | Internet fetch curato (`service://internet-fetch`) | Accesso Internet allowlisted (kind `rss`/`text`), guardia SSRF | `--internet-fetch` + `--internet-allowed-hosts` |
-| Note collaborative (Flatnotes) (`service://flatnotes-search`/`-create`) | Note/documenti condivisi, scrivibili dalla mesh | `--flatnotes-url` |
+| Note collaborative (Flatnotes) (`service://flatnotes-search`/`-fetch`/`-create`) | Note/documenti condivisi, scrivibili dalla mesh — note identificate per titolo, non per un "path" (`docs/security.md` voce #100) | `--flatnotes-url` |
 
 ### Generi di contenuto pubblicabili via `content://` (nessun meccanismo nuovo — solo convenzione)
 
