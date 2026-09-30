@@ -2844,9 +2844,9 @@ document.getElementById("create-group-form").addEventListener("submit", async (e
 // app has never heard of, e.g. one an operator registered locally) still gets a card, just with a
 // generic icon and a name derived from the raw id — "some card" beats "silently missing" for an
 // unrecognized-but-available service.
-const SERVICE_ICONS = { "service://ai": "sparkles", "service://kiwix-search": "book", "service://news": "newspaper", "service://translation": "translate", "service://internet-fetch": "cloud", "service://flatnotes-search": "search", "service://flatnotes-create": "edit" };
+const SERVICE_ICONS = { "service://ai": "sparkles", "service://kiwix-search": "book", "service://kiwix-fetch": "book", "service://news": "newspaper", "service://translation": "translate", "service://internet-fetch": "cloud", "service://flatnotes-search": "search", "service://flatnotes-create": "edit" };
 const DEFAULT_SERVICE_ICON = "wrench";
-const SERVICE_LABELS = { "service://ai": "Assistente AI", "service://kiwix-search": "Enciclopedia", "service://news": "Notizie", "service://translation": "Traduttore", "service://internet-fetch": "Pagine da internet", "service://flatnotes-search": "Cerca nelle note", "service://flatnotes-create": "Scrivi una nota" };
+const SERVICE_LABELS = { "service://ai": "Assistente AI", "service://kiwix-search": "Enciclopedia", "service://kiwix-fetch": "Apri articolo enciclopedia", "service://news": "Notizie", "service://translation": "Traduttore", "service://internet-fetch": "Pagine da internet", "service://flatnotes-search": "Cerca nelle note", "service://flatnotes-create": "Scrivi una nota" };
 
 /**
  * One-line, plain-language explanation shown under each service card — added after a UX audit found
@@ -2859,6 +2859,7 @@ const SERVICE_LABELS = { "service://ai": "Assistente AI", "service://kiwix-searc
 const SERVICE_DESCRIPTIONS = {
   "service://ai": "Fai una domanda e ricevi una risposta dall'intelligenza artificiale di questa rete.",
   "service://kiwix-search": "Cerca in un'enciclopedia scaricata, consultabile anche senza internet.",
+  "service://kiwix-fetch": "Apri un articolo trovato con la ricerca (usa il percorso restituito da 'Enciclopedia').",
   "service://news": "Le ultime notizie raccolte da questa rete.",
   "service://translation": "Traduci un testo in un'altra lingua.",
   "service://internet-fetch": "Recupera una pagina o un feed da internet vero, se questa rete è collegata.",

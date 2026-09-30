@@ -21,13 +21,20 @@ import type { NomadNode } from "../../node/src/node.js";
  * (fetch every article up front, publish each via `publishContent()`) has
  * therefore been **removed**, not adapted: there is nothing for it to call.
  * The real, portable building block is `publishArticle(path)`, which
- * fetches and publishes **one already-known path** — an operator, or code
- * elsewhere that has learned a path some other way (e.g. a
- * `service://kiwix-search` result, or an operator-curated list), calls it
- * per article. Bulk pre-publishing an entire book's worth of content is not
- * possible against real Kiwix without either (a) an operator supplying the
- * full path list from outside this gateway, or (b) a different content
- * source entirely — a genuine open design question, not resolved here.
+ * fetches and publishes **one already-known path**.
+ *
+ * **How a path becomes known, resolved 30 September 2026**: `registerFetchService()`
+ * exposes `publishArticle()` to the mesh itself as `service://kiwix-fetch`
+ * — a caller who has a `path` (typically from a prior `service://kiwix-search`
+ * result, since that's the only way to discover one without an operator
+ * telling you) calls it, gets back a `contentId`, and retrieves the bytes
+ * through the normal `content://` cycle every other content source already
+ * uses. Deliberately **not** automatic: `registerSearchService()` itself
+ * does not publish anything, so a search that nobody follows up on never
+ * costs a Kiwix fetch. An operator can still pre-seed known-important
+ * paths at startup by calling `publishArticle()` directly (`cli.ts`'s own
+ * demo articles already do this) — the two paths (explicit operator seed,
+ * on-demand fetch after search) are complementary, not exclusive.
  */
 export class KiwixGateway {
   constructor(
@@ -118,11 +125,61 @@ export class KiwixGateway {
       return { results };
     });
   }
+
+  /**
+   * Registers `service://kiwix-fetch` — the mesh-callable counterpart to
+   * `publishArticle()` (see this class's doc comment for the design this
+   * closes: a caller who found a `path` via `service://kiwix-search`, or
+   * was simply told one, turns it into retrievable content). Synchronous
+   * from the caller's point of view: the response only arrives once the
+   * article has actually been fetched from Kiwix and published locally,
+   * so a `content://` query for the returned `contentId` immediately
+   * after is never a race against this call still being in flight.
+   *
+   * Same trust posture as every other service here: `path` is caller
+   * input, validated only for type/non-emptiness here — `publishArticle()`'s
+   * own `encodePathSegments()` is what rejects a `.`/`..` traversal segment
+   * before it ever reaches `kiwix-serve`, not this handler. That rejection
+   * is load-bearing specifically *because* this method exposes
+   * `publishArticle()` to any mesh peer for the first time (no trust gate on
+   * mesh services, unlike e.g. `sendRelayCommand()`) — previously only
+   * trusted operator code called it, so the gap was never reachable.
+   */
+  registerFetchService(): void {
+    this.node.registerService("service://kiwix-fetch", "1.0.0", ["fetch"], async (payload) => {
+      const { path } = payload as { path?: unknown };
+      if (typeof path !== "string" || path.length === 0) {
+        throw new Error("service://kiwix-fetch requires a non-empty string 'path' field");
+      }
+      return this.publishArticle(path);
+    });
+  }
 }
 
-/** Percent-encodes each `/`-separated segment independently, keeping `/` itself literal — encoding the whole string as one component would turn a legitimate nested ZIM path like `wiki/italia` into a single literal segment `wiki%2Fitalia`, which kiwix-serve would not resolve the same way. */
+/**
+ * Percent-encodes each `/`-separated segment independently, keeping `/`
+ * itself literal — encoding the whole string as one component would turn a
+ * legitimate nested ZIM path like `wiki/italia` into a single literal
+ * segment `wiki%2Fitalia`, which kiwix-serve would not resolve the same way.
+ *
+ * Rejects any segment that is exactly `.` or `..` (found by `code-review`,
+ * 30 September 2026, once `path` became reachable from any mesh caller via
+ * `service://kiwix-fetch`, not just trusted operator code): `encodeURIComponent`
+ * does not escape `.`, so a path like `../../secret` survived this function
+ * unchanged — and the WHATWG URL parser `fetch()` uses then resolves those
+ * dot-segments *before* the request is sent, escaping the `/content/{book}/`
+ * prefix entirely and reaching an arbitrary path on the kiwix-serve host,
+ * bypassing the `book` scoping this class's constructor doc comment relies
+ * on as a real boundary.
+ */
 function encodePathSegments(path: string): string {
-  return path.split("/").map(encodeURIComponent).join("/");
+  const segments = path.split("/");
+  for (const segment of segments) {
+    if (segment === "." || segment === "..") {
+      throw new Error(`Kiwix: path segment '${segment}' is not allowed in '${path}'`);
+    }
+  }
+  return segments.map(encodeURIComponent).join("/");
 }
 
 /** First string-valued field found among `keys`, in order — see `registerSearchService()`'s doc comment for why this defensive lookup exists instead of a single known field name. */

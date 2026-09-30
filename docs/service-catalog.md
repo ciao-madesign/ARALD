@@ -43,7 +43,7 @@ Richiamo diretto da `docs/architecture.md` ("Un ARALD Card è quasi solo Connect
 
 | Servizio | Cos'è | Flag (`gateway/nomad/cli.ts`) |
 |---|---|---|
-| Kiwix (`content://`+`service://kiwix-search`) | Wikipedia/Wikivoyage/altri archivi offline (ZIM) — **aggiornamento 30 settembre 2026**: parla direttamente con un vero `kiwix-serve`, non più con un'ipotetica API di Project NOMAD (mai verificata) — vedi `docs/next-steps.md`, "Ipotesi di indipendenza da Project NOMAD" | `--kiwix-url`/`--kiwix-book` |
+| Kiwix (`content://`+`service://kiwix-search`+`service://kiwix-fetch`) | Wikipedia/Wikivoyage/altri archivi offline (ZIM) — **aggiornamento 30 settembre 2026**: parla direttamente con un vero `kiwix-serve`, non più con un'ipotetica API di Project NOMAD (mai verificata); `service://kiwix-fetch` (nuovo) trasforma un `path` scoperto con `service://kiwix-search` in contenuto recuperabile via `content://`, senza bisogno di un endpoint di listing bulk che kiwix-serve non ha — vedi `docs/next-steps.md`, "Ipotesi di indipendenza da Project NOMAD" | `--kiwix-url`/`--kiwix-book` |
 | AI locale (`service://ai`) | Domande/risposte via Ollama | `--ai-url` |
 | News/digest (`service://news`/`service://emergency-news`) | Ingestione RSS/Atom reale + riassunto generato dall'AI | `--news-url` |
 | Traduzione (`service://translation`) | Traduzione assistita, compone `service://ai` | (segue l'AI) |

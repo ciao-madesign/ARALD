@@ -189,4 +189,121 @@ describe("Kiwix gateway (mocked, no Docker/real kiwix-serve)", () => {
       requester.node.callService("service://kiwix-search", { q: "qualsiasi" }, { timeoutMs: 2000 }),
     ).rejects.toThrow();
   });
+
+  it("service://kiwix-fetch publishes the requested article and returns a contentId immediately retrievable via the normal content-centric protocol", async () => {
+    fakeKiwix = new FakeKiwixServer({ book: BOOK });
+    fakeKiwix.addArticle({ path: "wiki/torino", title: "Torino", mimeType: "text/plain", body: "citta' piemontese" });
+    await fakeKiwix.start();
+
+    gateway = makeNode("gateway");
+    requester = makeNode("requester");
+    await Promise.all([gateway.node.start(), requester.node.start()]);
+    await requester.node.connect({ host: "127.0.0.1", port: gateway.transport.port });
+
+    const kiwixGateway = new KiwixGateway(gateway.node, `http://127.0.0.1:${fakeKiwix.port}`, BOOK);
+    kiwixGateway.registerFetchService();
+
+    const result = (await requester.node.callService("service://kiwix-fetch", { path: "wiki/torino" }, { timeoutMs: 2000 })) as {
+      path: string;
+      contentId: string;
+    };
+    expect(result.path).toBe("wiki/torino");
+
+    const data = await requester.node.getContent(result.contentId);
+    expect(data.toString("utf8")).toBe("citta' piemontese");
+  });
+
+  it("service://kiwix-fetch rejects with a clear error for a path Kiwix doesn't have, instead of hanging or crashing", async () => {
+    fakeKiwix = new FakeKiwixServer({ book: BOOK });
+    await fakeKiwix.start();
+
+    gateway = makeNode("gateway");
+    requester = makeNode("requester");
+    await Promise.all([gateway.node.start(), requester.node.start()]);
+    await requester.node.connect({ host: "127.0.0.1", port: gateway.transport.port });
+
+    const kiwixGateway = new KiwixGateway(gateway.node, `http://127.0.0.1:${fakeKiwix.port}`, BOOK);
+    kiwixGateway.registerFetchService();
+
+    await expect(
+      requester.node.callService("service://kiwix-fetch", { path: "wiki/does-not-exist" }, { timeoutMs: 2000 }),
+    ).rejects.toThrow();
+  });
+
+  it("service://kiwix-fetch rejects a non-string/empty 'path' instead of forwarding it to Kiwix", async () => {
+    fakeKiwix = new FakeKiwixServer({ book: BOOK });
+    await fakeKiwix.start();
+
+    gateway = makeNode("gateway");
+    requester = makeNode("requester");
+    await Promise.all([gateway.node.start(), requester.node.start()]);
+    await requester.node.connect({ host: "127.0.0.1", port: gateway.transport.port });
+
+    const kiwixGateway = new KiwixGateway(gateway.node, `http://127.0.0.1:${fakeKiwix.port}`, BOOK);
+    kiwixGateway.registerFetchService();
+
+    await expect(
+      requester.node.callService("service://kiwix-fetch", { path: 12345 }, { timeoutMs: 2000 }),
+    ).rejects.toThrow(/path/);
+    await expect(
+      requester.node.callService("service://kiwix-fetch", { path: "" }, { timeoutMs: 2000 }),
+    ).rejects.toThrow(/path/);
+  });
+
+  it("end-to-end: service://kiwix-search discovers a path, service://kiwix-fetch turns it into retrievable content — the intended usage pattern", async () => {
+    fakeKiwix = new FakeKiwixServer({ book: BOOK });
+    fakeKiwix.addArticle({ path: "wiki/venezia", title: "Venezia", mimeType: "text/plain", body: "citta' sull'acqua" });
+    await fakeKiwix.start();
+
+    gateway = makeNode("gateway");
+    requester = makeNode("requester");
+    await Promise.all([gateway.node.start(), requester.node.start()]);
+    await requester.node.connect({ host: "127.0.0.1", port: gateway.transport.port });
+
+    const kiwixGateway = new KiwixGateway(gateway.node, `http://127.0.0.1:${fakeKiwix.port}`, BOOK);
+    kiwixGateway.registerSearchService();
+    kiwixGateway.registerFetchService();
+
+    const searchResult = (await requester.node.callService("service://kiwix-search", { q: "venezia" }, { timeoutMs: 2000 })) as {
+      results: Array<{ path: string; title: string }>;
+    };
+    expect(searchResult.results).toEqual([{ path: "wiki/venezia", title: "Venezia" }]);
+
+    // Nothing published yet — search alone never fetches Kiwix content (this class's doc comment).
+    const foundPath = searchResult.results[0].path;
+    const fetchResult = (await requester.node.callService("service://kiwix-fetch", { path: foundPath }, { timeoutMs: 2000 })) as {
+      contentId: string;
+    };
+    const data = await requester.node.getContent(fetchResult.contentId);
+    expect(data.toString("utf8")).toBe("citta' sull'acqua");
+  });
+
+  it("publishArticle() rejects a '..' path segment instead of letting the URL parser escape the book prefix (regression, code-review)", async () => {
+    fakeKiwix = new FakeKiwixServer({ book: BOOK });
+    await fakeKiwix.start();
+
+    gateway = makeNode("gateway");
+    await gateway.node.start();
+    const kiwixGateway = new KiwixGateway(gateway.node, `http://127.0.0.1:${fakeKiwix.port}`, BOOK);
+
+    await expect(kiwixGateway.publishArticle("../../secret")).rejects.toThrow(/path segment/);
+    await expect(kiwixGateway.publishArticle("wiki/../../secret")).rejects.toThrow(/path segment/);
+  });
+
+  it("service://kiwix-fetch rejects a '..' traversal path from an untrusted mesh caller instead of reaching an arbitrary URL on the Kiwix host (regression, code-review)", async () => {
+    fakeKiwix = new FakeKiwixServer({ book: BOOK });
+    await fakeKiwix.start();
+
+    gateway = makeNode("gateway");
+    requester = makeNode("requester");
+    await Promise.all([gateway.node.start(), requester.node.start()]);
+    await requester.node.connect({ host: "127.0.0.1", port: gateway.transport.port });
+
+    const kiwixGateway = new KiwixGateway(gateway.node, `http://127.0.0.1:${fakeKiwix.port}`, BOOK);
+    kiwixGateway.registerFetchService();
+
+    await expect(
+      requester.node.callService("service://kiwix-fetch", { path: "../../secret" }, { timeoutMs: 2000 }),
+    ).rejects.toThrow(/path segment/);
+  });
 });

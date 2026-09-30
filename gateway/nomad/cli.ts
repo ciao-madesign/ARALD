@@ -160,6 +160,7 @@ async function main(): Promise<void> {
     }
   }
   kiwixGateway.registerSearchService();
+  kiwixGateway.registerFetchService();
 
   const aiGateway = new AiGateway(node, aiBaseUrl, aiModel);
   aiGateway.registerAiService();
@@ -246,7 +247,7 @@ async function main(): Promise<void> {
   console.log(`Listening on port: ${port}`);
   console.log(`Published ${published.length} article(s) from Kiwix:`);
   for (const entry of published) console.log(`  content://${entry.path} -> ${entry.contentId.slice(0, 16)}...`);
-  console.log(`Registered service://kiwix-search`);
+  console.log(`Registered service://kiwix-search and service://kiwix-fetch`);
   console.log(`Registered service://ai`);
 
   const shutdown = async (): Promise<void> => {
