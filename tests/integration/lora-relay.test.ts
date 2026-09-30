@@ -67,7 +67,7 @@ describe("NomadNode over a simulated LoRa transport", () => {
   });
 
   it("retrieves single-chunk content C holds that A never fetched or knew the location of", async () => {
-    const helloBytes = Buffer.from("hello nomad-net world, over LoRa");
+    const helloBytes = Buffer.from("hello arald world, over LoRa");
     const metadata = c.node.publishContent("hello.txt", "text/plain", helloBytes);
     expect(a.node.contentStore.has(metadata.contentId)).toBe(false);
 

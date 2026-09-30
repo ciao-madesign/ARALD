@@ -45,6 +45,7 @@ describe("NOMAD Hub Management API (mocked, no real Docker)", () => {
     actionRateLimitWindowMs?: number;
     maxActionsPerWindow?: number;
     capabilityStoragePath?: string;
+    shutdown?: () => Promise<void>;
   }): Promise<{
     password: string;
   }> {
@@ -71,8 +72,8 @@ describe("NOMAD Hub Management API (mocked, no real Docker)", () => {
 
   it("lists containers with name/state/health", async () => {
     const { password } = await setup();
-    fakeDocker!.addContainer({ id: "c1", name: "nomad-core", image: "nomad-net/core:latest", state: "running", health: "healthy" });
-    fakeDocker!.addContainer({ id: "c2", name: "nomad-kiwix", image: "nomad-net/kiwix:latest", state: "exited" });
+    fakeDocker!.addContainer({ id: "c1", name: "nomad-core", image: "nomad-core:latest", state: "running", health: "healthy" });
+    fakeDocker!.addContainer({ id: "c2", name: "nomad-kiwix", image: "nomad-kiwix:latest", state: "exited" });
 
     const res = await authedFetch(server!, "/api/hub/status", password);
     expect(res.status).toBe(200);
@@ -233,6 +234,18 @@ describe("NOMAD Hub Management API (mocked, no real Docker)", () => {
     expect(res.status).toBe(401);
   });
 
+  it("GET /api/hub/capabilities reports shutdownEnabled matching whether a shutdown function was configured, so the Control UI can hide/disable the button instead of guessing", async () => {
+    const { password: disabledPassword } = await setup();
+    const disabledRes = (await (await authedFetch(server!, "/api/hub/capabilities", disabledPassword)).json()) as { shutdownEnabled: boolean };
+    expect(disabledRes.shutdownEnabled).toBe(false);
+
+    await server!.stop();
+    await fakeDocker!.stop();
+    const { password: enabledPassword } = await setup({ shutdown: async () => {} });
+    const enabledRes = (await (await authedFetch(server!, "/api/hub/capabilities", enabledPassword)).json()) as { shutdownEnabled: boolean };
+    expect(enabledRes.shutdownEnabled).toBe(true);
+  });
+
   it("GET /api/hub/capabilities reports real, verifiable host facts — not fabricated ones", async () => {
     const { password } = await setup();
     const res = await authedFetch(server!, "/api/hub/capabilities", password);
@@ -294,5 +307,108 @@ describe("NOMAD Hub Management API (mocked, no real Docker)", () => {
     // For contrast: /api/hub/status *does* depend on Docker, and correctly degrades to 502 here.
     const statusRes = await authedFetch(server!, "/api/hub/status", password);
     expect(statusRes.status).toBe(502);
+  });
+
+  describe("POST /api/hub/shutdown", () => {
+    it("answers 403 and never calls the shutdown function when the host didn't opt in (no shutdown option configured — the default)", async () => {
+      const { password } = await setup();
+      const res = await authedFetch(server!, "/api/hub/shutdown", password, { method: "POST" });
+      expect(res.status).toBe(403);
+    });
+
+    it("answers 403 (never 429) on every repeated attempt when disabled — the enabled-check runs before the rate limit, so a disabled host never burns rate-limit budget it will never need", async () => {
+      const { password } = await setup({ maxActionsPerWindow: 2, actionRateLimitWindowMs: 60_000 });
+      for (let i = 0; i < 5; i++) {
+        const res = await authedFetch(server!, "/api/hub/shutdown", password, { method: "POST" });
+        expect(res.status).toBe(403);
+      }
+    });
+
+    it("requires the management password, same as every other endpoint", async () => {
+      await setup({ shutdown: async () => {} });
+      const res = await fetch(apiUrl(server!, "/api/hub/shutdown"), { method: "POST" });
+      expect(res.status).toBe(401);
+    });
+
+    it("calls the injected shutdown function and answers 200 when enabled", async () => {
+      let called = false;
+      const { password } = await setup({
+        shutdown: async () => {
+          called = true;
+        },
+      });
+      const res = await authedFetch(server!, "/api/hub/shutdown", password, { method: "POST" });
+      expect(res.status).toBe(200);
+      // The call itself is fire-and-forget (see management-server.ts's own doc comment on
+      // handleShutdown() for why) — give the microtask queue a turn before asserting.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(called).toBe(true);
+    });
+
+    it("answers 200 immediately even when the shutdown function never resolves — regression test for the response being sent before awaiting the actual shutdown, not after", async () => {
+      const { password } = await setup({ shutdown: () => new Promise(() => {}) }); // never resolves, simulates the host halting mid-command
+      const res = await authedFetch(server!, "/api/hub/shutdown", password, { method: "POST" });
+      expect(res.status).toBe(200);
+    });
+
+    it("a shutdown function that rejects doesn't crash the server or the already-sent response", async () => {
+      const { password } = await setup({ shutdown: async () => { throw new Error("sudo: a password is required"); } });
+      const res = await authedFetch(server!, "/api/hub/shutdown", password, { method: "POST" });
+      expect(res.status).toBe(200); // the response was already sent before the rejection
+
+      // Server must still be alive and answering normal requests afterwards.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const status = await authedFetch(server!, "/api/hub/status", password);
+      expect(status.status).toBe(200);
+    });
+
+    it("regression: two overlapping shutdown requests while the first is still in flight only actually invoke the shutdown function once", async () => {
+      let calls = 0;
+      let resolveFirst!: () => void;
+      const { password } = await setup({
+        shutdown: () =>
+          new Promise<void>((resolve) => {
+            calls++;
+            resolveFirst = resolve;
+          }),
+      });
+
+      const [first, second] = await Promise.all([
+        authedFetch(server!, "/api/hub/shutdown", password, { method: "POST" }),
+        authedFetch(server!, "/api/hub/shutdown", password, { method: "POST" }),
+      ]);
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200); // both acked — the caller only cares a shutdown is under way
+      expect(calls).toBe(1); // but only one real sudo/shutdown process was actually spawned
+
+      resolveFirst();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      // Once the in-flight one finishes, a genuinely new request is free to trigger another attempt
+      // (e.g. a retry after the first attempt somehow failed to actually halt the host).
+      await authedFetch(server!, "/api/hub/shutdown", password, { method: "POST" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(calls).toBe(2);
+    });
+
+    it("rate limit: rejects the (N+1)th shutdown attempt from the same caller within the window, same as container actions", async () => {
+      let calls = 0;
+      const { password } = await setup({
+        maxActionsPerWindow: 2,
+        actionRateLimitWindowMs: 60_000,
+        shutdown: async () => {
+          calls++;
+        },
+      });
+
+      for (let i = 0; i < 2; i++) {
+        const res = await authedFetch(server!, "/api/hub/shutdown", password, { method: "POST" });
+        expect(res.status).toBe(200);
+      }
+      const limited = await authedFetch(server!, "/api/hub/shutdown", password, { method: "POST" });
+      expect(limited.status).toBe(429);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(calls).toBe(2); // the 3rd, rate-limited request never reached the shutdown function
+    });
   });
 });

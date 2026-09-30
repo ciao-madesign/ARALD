@@ -64,9 +64,9 @@ describe("StaticPortalServer", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toMatch(/text\/html/);
     const body = await res.text();
-    expect(body).toContain('localStorage.setItem("nomadnet.gatewayUrl","http://192.168.1.50:8080")');
+    expect(body).toContain('localStorage.setItem("arald.gatewayUrl","http://192.168.1.50:8080")');
     // Injected right after <head>, before the page's own content — never replacing it.
-    expect(body.indexOf("<head>")).toBeLessThan(body.indexOf("nomadnet.gatewayUrl"));
+    expect(body.indexOf("<head>")).toBeLessThan(body.indexOf("arald.gatewayUrl"));
     expect(body).toContain("<title>t</title>");
   });
 
@@ -126,7 +126,7 @@ describe("StaticPortalServer", () => {
     await server.start();
 
     const body = await (await fetch(`${baseUrl()}/`)).text();
-    expect(body).toContain('localStorage.setItem("nomadnet.gatewayUrl","http://192.168.1.50:8080")');
+    expect(body).toContain('localStorage.setItem("arald.gatewayUrl","http://192.168.1.50:8080")');
   });
 
   it("never overrides a gatewayUrl the browser already saved (guarded client-side by the injected script, not the server)", async () => {
@@ -135,7 +135,7 @@ describe("StaticPortalServer", () => {
     server = new StaticPortalServer({ rootDir: root, gatewayUrl: "http://box.local:8080", port: 0 });
     await server.start();
     const body = await (await fetch(`${baseUrl()}/`)).text();
-    expect(body).toContain("if(!localStorage.getItem(\"nomadnet.gatewayUrl\"))");
+    expect(body).toContain("if(!localStorage.getItem(\"arald.gatewayUrl\"))");
   });
 });
 
@@ -154,11 +154,11 @@ describe("StaticPortalServer against the real mobile/www/ directory", () => {
     const base = `http://127.0.0.1:${server.port}`;
 
     const index = await (await fetch(`${base}/`)).text();
-    // Asserts the specific injected snippet, not just that the string "nomadnet.gatewayUrl" appears
+    // Asserts the specific injected snippet, not just that the string "arald.gatewayUrl" appears
     // somewhere — the latter would still pass even if injectGatewayUrl() silently no-op'd (found by
     // review), since that would leave the real file's own content untouched but unrelated to this
     // assertion either way; this checks the actual bootstrap this server is responsible for adding.
-    expect(index).toContain('localStorage.setItem("nomadnet.gatewayUrl","http://192.168.1.50:8080")');
+    expect(index).toContain('localStorage.setItem("arald.gatewayUrl","http://192.168.1.50:8080")');
     expect(index).toContain("app.js");
 
     expect((await fetch(`${base}/app.js`)).status).toBe(200);

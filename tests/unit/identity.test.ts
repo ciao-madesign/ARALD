@@ -37,7 +37,7 @@ describe("Identity", () => {
   });
 
   it("persists and reloads the same identity from disk", () => {
-    const dir = mkdtempSync(path.join(tmpdir(), "nomad-net-identity-"));
+    const dir = mkdtempSync(path.join(tmpdir(), "arald-identity-"));
     try {
       const original = Identity.loadOrCreate(dir);
       const reloaded = Identity.loadOrCreate(dir);
@@ -56,7 +56,7 @@ describe("Identity", () => {
     // fresh-directory branch (crash, power loss, disk full on a real device like an ARALD Box) —
     // the exact scenario --identity-dir was added to survive. Silently treating this as "absent"
     // would discard the still-recoverable private key and mint a fresh random identity instead.
-    const dir = mkdtempSync(path.join(tmpdir(), "nomad-net-identity-partial-"));
+    const dir = mkdtempSync(path.join(tmpdir(), "arald-identity-partial-"));
     try {
       const original = Identity.generate();
       writeFileSync(path.join(dir, "private.key"), original.exportRawPrivateKey(), { mode: 0o600 });

@@ -1,6 +1,7 @@
 import { DockerClient, DEFAULT_DOCKER_SOCKET_PATH } from "./docker-client.js";
 import { FakeDockerServer } from "./fake-docker-server.js";
 import { ManagementServer, generateManagementPassword } from "./management-server.js";
+import { executeSystemShutdown } from "./shutdown.js";
 
 /**
  * Local copy of `gateway/nomad/cli.ts`'s own `parseArgs()` (`--flag value`
@@ -52,8 +53,8 @@ async function main(): Promise<void> {
   let docker: DockerClient;
   if (args["fake-docker"] !== undefined) {
     fakeDocker = new FakeDockerServer();
-    fakeDocker.addContainer({ id: "demo-core", name: "nomad-hub-core-demo", image: "nomad-net/core:latest", state: "running", logLines: ["core avviato", "in ascolto sulla mesh"] });
-    fakeDocker.addContainer({ id: "demo-kiwix", name: "nomad-hub-kiwix-demo", image: "nomad-net/kiwix:latest", state: "exited", logLines: ["kiwix arrestato"] });
+    fakeDocker.addContainer({ id: "demo-core", name: "nomad-hub-core-demo", image: "nomad-core:latest", state: "running", logLines: ["core avviato", "in ascolto sulla mesh"] });
+    fakeDocker.addContainer({ id: "demo-kiwix", name: "nomad-hub-kiwix-demo", image: "nomad-kiwix:latest", state: "exited", logLines: ["kiwix arrestato"] });
     await fakeDocker.start();
     docker = new DockerClient({ host: "127.0.0.1", port: fakeDocker.port });
     console.log(`Fake Docker server (--fake-docker dato): 127.0.0.1:${fakeDocker.port}`);
@@ -66,7 +67,12 @@ async function main(): Promise<void> {
   const containerNamePrefix = args["container-prefix"];
   const capabilityStoragePath = args["capability-storage-path"];
   const host = args["host"];
-  const server = new ManagementServer(docker, { port, host, managementPassword, containerNamePrefix, capabilityStoragePath });
+  // Fail-closed by default (docs/next-steps.md, "Pulsante di spegnimento sicuro nella Web UI") — an
+  // operator must explicitly opt in, same reasoning as node/src/cli.ts's --allow-remote-reboot: this
+  // host may not even have the required sudoers grant configured, so the capability should not exist
+  // at all unless someone deliberately turned it on.
+  const hostShutdown = args["enable-shutdown"] !== undefined ? executeSystemShutdown : undefined;
+  const server = new ManagementServer(docker, { port, host, managementPassword, containerNamePrefix, capabilityStoragePath, shutdown: hostShutdown });
   await server.start();
 
   console.log("ARALD Hub Management API");
@@ -84,14 +90,19 @@ async function main(): Promise<void> {
     console.log("Nessun filtro container: ogni container del demone Docker e' gestibile da qui.");
   }
   console.log(`Profilo hardware su GET /api/hub/capabilities (storage riportato per: ${capabilityStoragePath ?? process.cwd()})`);
+  console.log(
+    hostShutdown
+      ? "Spegnimento remoto ABILITATO (--enable-shutdown): POST /api/hub/shutdown eseguirà davvero 'sudo shutdown -h now' su questo host."
+      : "Spegnimento remoto disabilitato (default) — passa --enable-shutdown per abilitarlo (richiede un permesso sudo specifico per l'utente di sistema, vedi nomad-hub/shutdown.ts).",
+  );
 
-  const shutdown = async (): Promise<void> => {
+  const shutdownProcess = async (): Promise<void> => {
     await server.stop();
     if (fakeDocker) await fakeDocker.stop();
     process.exit(0);
   };
-  process.on("SIGINT", () => void shutdown());
-  process.on("SIGTERM", () => void shutdown());
+  process.on("SIGINT", () => void shutdownProcess());
+  process.on("SIGTERM", () => void shutdownProcess());
 }
 
 main().catch((err) => {

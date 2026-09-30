@@ -4,8 +4,8 @@
 // keys, no imports from app.js — see hub-control.html's own top comment for the full boundary
 // reasoning (docs/deployment.md, "L'ARALD Hub come sistema portatile").
 
-const STORAGE_KEY_URL = "nomadhub.apiUrl";
-const STORAGE_KEY_PASSWORD = "nomadhub.managementPassword";
+const STORAGE_KEY_URL = "araldhub.apiUrl";
+const STORAGE_KEY_PASSWORD = "araldhub.managementPassword";
 const READ_TIMEOUT_MS = 8000;
 const ACTION_TIMEOUT_MS = 15000;
 const STATUS_POLL_MS = 4000;
@@ -136,16 +136,43 @@ function showDashboard() {
   pollTimer = setInterval(refreshStatus, STATUS_POLL_MS);
 }
 
+// Same "only the latest wins" token pattern loadLogs()/logsFetchToken already uses, for the same
+// reason (found by review): showDashboard() calls loadHostCapabilities() again on every "Cambia
+// Management API" reconnect, and nothing otherwise stops a slower response for the just-abandoned
+// host from landing after a faster response for the newly-connected one — which would silently
+// re-render stale host details and (worse) leave "Spegni host" enabled/disabled for the wrong host.
+let capabilitiesFetchToken = 0;
+
 /** `GET /api/hub/capabilities` — see capability-manager.ts (nomad-hub/) for what each field means and why gpu/npu/bluetooth/usb3 are always null rather than guessed. */
 async function loadHostCapabilities() {
+  const token = ++capabilitiesFetchToken;
   const details = document.getElementById("hub-host-details");
   try {
     const profile = await hubFetch("/api/hub/capabilities");
+    if (token !== capabilitiesFetchToken) return; // a newer request already answered
     renderHostCapabilities(profile);
   } catch (err) {
+    if (token !== capabilitiesFetchToken) return;
     details.textContent = "";
     details.append(el("dt", { textContent: "Errore" }), el("dd", { textContent: err.message }));
+    // Stays disabled (its HTML default) — this host's shutdownEnabled state is unknown when this
+    // call itself failed, so "safe to offer" can't be assumed.
   }
+}
+
+/**
+ * Toggles the "Spegni host" button/hint from `profile.shutdownEnabled` — found by review: without
+ * this, the button was always clickable even on a host started without --enable-shutdown, and a tap
+ * there produced a generic-looking "Spegnimento non riuscito" toast indistinguishable from a real
+ * failure. The button starts `disabled` in the HTML itself (fail-closed) until this runs at least once.
+ */
+function updateShutdownAvailability(shutdownEnabled) {
+  const button = document.getElementById("hub-shutdown-button");
+  const hint = document.getElementById("hub-shutdown-hint");
+  button.disabled = !shutdownEnabled;
+  hint.textContent = shutdownEnabled
+    ? 'Spegnimento sicuro (equivalente a "sudo shutdown -h now"): l\'host non sarà più raggiungibile finché non viene riacceso fisicamente.'
+    : "Non disponibile: questo processo non è stato avviato con --enable-shutdown.";
 }
 
 function capabilityRow(term, value) {
@@ -166,6 +193,7 @@ function renderHostCapabilities(profile) {
     capabilityRow("GPU / NPU / Bluetooth / USB3", "non rilevabile da qui — richiede strumenti specifici del sistema operativo"),
   ];
   for (const [dt, dd] of rows) details.append(dt, dd);
+  updateShutdownAvailability(Boolean(profile.shutdownEnabled));
 }
 
 function showSetup() {
@@ -276,6 +304,30 @@ async function runAction(container, verb) {
   }
 }
 
+/**
+ * POST /api/hub/shutdown — the one irreversible, host-wide action on this page (every container
+ * action above only affects one container, always recoverable with another action here). A native
+ * confirm() is the same guard already used for stop/restart above, not a weaker one: this endpoint
+ * is already gated by the management password (a local secret the operator holds, never propagated
+ * over the mesh), a materially higher bar than the mesh-wide relay-reboot command mirror-portal's
+ * two-step typed-confirmation dialog exists to protect against.
+ */
+async function shutdownHost() {
+  if (!window.confirm("Spegnere questo host? Non sarà più raggiungibile finché non viene riacceso fisicamente.")) return;
+  try {
+    await hubFetch("/api/hub/shutdown", { method: "POST" }, ACTION_TIMEOUT_MS);
+    showToast("Spegnimento avviato — l'host si spegnerà a breve.");
+    // Found by review: without this, refreshStatus()'s 4s poll kept hitting the dying/dead host
+    // afterwards, repainting the status-error banner every cycle — indistinguishable from a real
+    // ongoing failure, right after the reassuring success toast above.
+    clearInterval(pollTimer);
+    pollTimer = null;
+    setStatusError('Host in spegnimento — usa "Cambia Management API" per connetterti altrove.');
+  } catch (err) {
+    showToast("Spegnimento non riuscito: " + err.message, "alert");
+  }
+}
+
 // renderContainers() re-fires loadLogs() for the open panel on every render (the 4s poll, or right
 // after a start/stop/restart action) so an open panel stays live — but that means two loadLogs()
 // calls for the same still-open container can be in flight at once if the Management API is briefly
@@ -355,6 +407,8 @@ function init() {
       submitButton.querySelector(".btn-spinner").hidden = true;
     }
   });
+
+  document.getElementById("hub-shutdown-button").addEventListener("click", shutdownHost);
 
   document.getElementById("hub-change-gateway").addEventListener("click", () => {
     apiUrl = null;

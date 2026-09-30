@@ -35,7 +35,7 @@ describe("content-centric retrieval (A -> B -> C, content only on C)", () => {
   });
 
   it("retrieves single-chunk content that A never fetched or knew the location of", async () => {
-    const helloBytes = Buffer.from("hello nomad-net world");
+    const helloBytes = Buffer.from("hello arald world");
     const metadata = c.node.publishContent("hello.txt", "text/plain", helloBytes);
 
     expect(a.node.contentStore.has(metadata.contentId)).toBe(false);

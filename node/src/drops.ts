@@ -83,7 +83,7 @@ export function extractDropPayload(payload: unknown): DropPayload | undefined {
  * underlying content's `contentId` (a hash of the signed bytes, spec §24) —
  * unlike BitChat's `BoardPostPacket.postID` (a separately generated random
  * id, needed there because their wire format isn't itself content-addressed),
- * Nomad-Net already has a natural, unique, tamper-evident identifier for
+ * ARALD already has a natural, unique, tamper-evident identifier for
  * free. `author` is `ContentMetadata.publisherId` — cryptographically
  * authenticated by the content signature, never a claim inside the payload
  * itself. `expiresAt` mirrors `ContentMetadata.expiresAt` (set once, at

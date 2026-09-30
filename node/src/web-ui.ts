@@ -31,7 +31,7 @@ export interface WebUiOptions {
   /**
    * Self-declared, the same way `RelayPolicy`'s battery/charging state is
    * (relay-policy.ts) — this prototype has no real Internet connectivity
-   * probe, and spec §60's whole point is "Internet: OFFLINE / Nomad-Net:
+   * probe, and spec §60's whole point is "Internet: OFFLINE / ARALD:
    * ONLINE" as the experience to demonstrate, not something to detect.
    * Defaults to always reporting OFFLINE.
    */
@@ -303,13 +303,13 @@ interface PairingInfo {
   networkPassword: string;
   /** `host:port` a phone should connect to — present only when a public host could be resolved (explicit `publicHost` or auto-detected LAN IPv4), see `WebUiOptions.publicHost`. */
   address?: string;
-  /** `data:image/svg+xml;base64,...` — a scannable QR encoding `nomadnet://pair?h=<address>&n=<networkName>&p=<networkPassword>`, so the mobile app never needs any of the three typed manually. Present only when `address` is known and the pairing URI fits the encoder's capacity (`node/src/qrcode.ts`, ~272 bytes) — omitted, not an empty string, when either isn't true, so the client can tell "not offered" apart from "would be an empty image". */
+  /** `data:image/svg+xml;base64,...` — a scannable QR encoding `arald://pair?h=<address>&n=<networkName>&p=<networkPassword>`, so the mobile app never needs any of the three typed manually. Present only when `address` is known and the pairing URI fits the encoder's capacity (`node/src/qrcode.ts`, ~272 bytes) — omitted, not an empty string, when either isn't true, so the client can tell "not offered" apart from "would be an empty image". */
   qrDataUri?: string;
 }
 
-const PAIRING_URI_PREFIX = "nomadnet://pair?";
+const PAIRING_URI_PREFIX = "arald://pair?";
 
-/** `nomadnet://pair?h=<host:port>&n=<networkName>&p=<networkPassword>` — parsed back by the mobile app's QR scanner (`mobile/www/app.js`, `parsePairingUri()`), never interpreted by the OS (no intent filter registered, this scheme is only ever read by our own camera-scanning code, not "opened"). */
+/** `arald://pair?h=<host:port>&n=<networkName>&p=<networkPassword>` — parsed back by the mobile app's QR scanner (`mobile/www/app.js`, `parsePairingUri()`), never interpreted by the OS (no intent filter registered, this scheme is only ever read by our own camera-scanning code, not "opened"). */
 function buildPairingUri(address: string, networkName: string, networkPassword: string): string {
   const params = new URLSearchParams({ h: address, n: networkName, p: networkPassword });
   return PAIRING_URI_PREFIX + params.toString();

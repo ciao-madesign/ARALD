@@ -6,7 +6,7 @@ import { KiwixGateway } from "../../gateway/nomad/kiwix-gateway.js";
 import { computeContentId } from "../../node/src/content.js";
 
 /**
- * Spec §4, §37, `docs/next-steps.md` Option B: Nomad-Net treats Project
+ * Spec §4, §37, `docs/next-steps.md` Option B: ARALD treats Project
  * NOMAD as a local service provider, translating `content://...`/
  * `service://...` requests into NOMAD's own HTTP API. No Docker, no real
  * Project NOMAD instance — `FakeNomadServer` stands in for one, and the
