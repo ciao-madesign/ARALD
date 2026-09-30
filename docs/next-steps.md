@@ -118,16 +118,6 @@ La Fase 8 (mockup pixel-precisi in Figma di tutti i flussi — griglie/spaziatur
 
 ---
 
-### Pulsante di spegnimento sicuro nella Web UI — pianificato, non ancora implementato (28 settembre 2026)
-
-**Richiesta dell'utente**: poter spegnere in sicurezza il Box (equivalente a `sudo shutdown -h now` + attesa del filesystem sincronizzato) da un pulsante nell'interfaccia web, invece di doversi collegare via SSH ogni volta.
-
-**Decisione architetturale presa prima di iniziare (non ancora implementata)**: questo comando **non va aggiunto a `web-ui.ts`** — quell'interfaccia (stato/interazione della mesh, spec §59) è deliberatamente priva di qualunque accesso all'OS/Docker dell'host, stessa separazione già documentata per `nomad-hub/` contro l'app mobile (`CLAUDE.md`). Il posto corretto è **`nomad-hub/`** (ARALD Hub Management API, già pensata per amministrare l'host con una password propria separata da quella di rete della mesh) — non ancora attivo su questo prototipo Box.
-
-**Cosa servirebbe, quando si riprenderà**: un nuovo endpoint autenticato in `nomad-hub/management-server.ts`, un permesso `sudo` **specifico e limitato** al solo comando di spegnimento per l'utente di sistema (mai sudo generico), un pulsante nel pannello `mobile/www/hub-control.html`/`.js` esistente, test dedicati — stesso workflow a doppio check di ogni feature sostanziale di questo repository. Richiede prima di attivare `nomad-hub/` su questo Box (oggi gira solo il nodo ARALD base).
-
----
-
 ## Milestone/feature completate — pointer al dettaglio in `docs/security.md`
 
 Le Opzioni C-G furono scritte quando le rispettive milestone erano ancora aperte; oggi sono tutte ✅ complete e il loro stato reale vive in `docs/roadmap.md` — tenute qui solo come titolo + pointer:

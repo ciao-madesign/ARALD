@@ -28,6 +28,17 @@ export interface ManagementServerOptions {
   maxActionsPerWindow?: number;
   /** Filesystem path `GET /api/hub/capabilities`'s storage figures are reported for — defaults to this process's own working directory (`capability-manager.ts`'s own default) when unset. */
   capabilityStoragePath?: string;
+  /**
+   * Real host shutdown, wired in only when the operator explicitly opts in
+   * (`cli.ts`'s `--enable-shutdown`) — absent by default, same fail-closed
+   * posture as `node/src/cli.ts`'s `--allow-remote-reboot`. `POST
+   * /api/hub/shutdown` answers 403 when this is unset, rather than
+   * attempting a command that may not even be configured (sudoers) on this
+   * host. Injected instead of hardcoded to `shutdown.ts`'s real
+   * implementation so tests can substitute a fake that never actually
+   * touches the test runner's own OS.
+   */
+  shutdown?: () => Promise<void>;
 }
 
 /**
@@ -71,6 +82,8 @@ export class ManagementServer {
   private readonly actionRateLimitState = new BoundedFifoMap<string, RateWindow>({ maxSize: MAX_TRACKED_RATE_LIMIT_IPS });
   private readonly actionRateLimitWindowMs: number;
   private readonly maxActionsPerWindow: number;
+  /** See `handleShutdown()`'s own doc comment. */
+  private shutdownInFlight = false;
 
   constructor(
     private readonly docker: DockerClient,
@@ -128,7 +141,11 @@ export class ManagementServer {
       // Independent of Docker connectivity — unlike handleStatus(), this never touches this.docker:
       // reporting the host's own CPU/RAM/storage is useful diagnostic information precisely when
       // Docker itself is unreachable ("does this host even have enough RAM?"), not only when it's up.
-      sendJson(res, 200, getHardwareProfile({ storagePath: this.options.capabilityStoragePath }));
+      // shutdownEnabled is layered on here rather than folded into getHardwareProfile() itself: it's
+      // this server's own config (--enable-shutdown), not a hardware fact capability-manager.ts should
+      // know about — found by review: without it, the Control UI had no way to tell "not enabled on
+      // this host" apart from a real failure when POST /api/hub/shutdown answered 403.
+      sendJson(res, 200, { ...getHardwareProfile({ storagePath: this.options.capabilityStoragePath }), shutdownEnabled: this.options.shutdown !== undefined });
       return;
     }
 
@@ -140,6 +157,11 @@ export class ManagementServer {
         return;
       }
       await this.handleAction(req, res, id, actionMatch[2] as "start" | "stop" | "restart");
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/hub/shutdown") {
+      await this.handleShutdown(req, res);
       return;
     }
 
@@ -205,6 +227,49 @@ export class ManagementServer {
       const statusCode = err instanceof DockerApiError ? err.statusCode : 502;
       sendJson(res, statusCode, { error: (err as Error).message });
     }
+  }
+
+  /**
+   * `POST /api/hub/shutdown` — see `shutdown.ts`'s own doc comment for what
+   * actually runs. Answers *before* triggering the command, not after —
+   * `await`ing the shutdown first would risk the response never reaching
+   * the caller if the host halts before the socket has a chance to flush.
+   * Same "acknowledge, then let the side effect happen outside the response
+   * cycle" posture `node/src/node.ts`'s `sendRelayCommand()` documents for
+   * its own remote-reboot path (there via an emitted event; here via a
+   * same-process side effect not awaited by this handler).
+   *
+   * `shutdownInFlight` guards against spawning more than one real `sudo
+   * shutdown` process — found by review: the rate limit alone still allows
+   * up to `maxActionsPerWindow` requests through (a flaky-network retry, or
+   * an operator tapping the button a few times before the first response
+   * lands), each of which would otherwise fire its own independent
+   * `execFile` call. Always answers 200 regardless (the caller only cares
+   * that a shutdown is already under way, not which specific request caused
+   * it), same idempotent-ack spirit `whatsapp-relay/server.ts`'s dedup cache
+   * uses for a retried delivery.
+   */
+  private async handleShutdown(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.options.shutdown) {
+      sendJson(res, 403, { error: "spegnimento non abilitato su questo host (richiede --enable-shutdown all'avvio di nomad-hub)" });
+      return;
+    }
+    if (!this.checkActionRateLimit(req)) {
+      sendJson(res, 429, { error: "troppe azioni di controllo in poco tempo, riprova tra qualche secondo" });
+      return;
+    }
+    sendJson(res, 200, { ok: true });
+    if (this.shutdownInFlight) return;
+    this.shutdownInFlight = true;
+    this.options.shutdown()
+      .catch((err) => {
+        console.error("[nomad-hub] comando di spegnimento fallito:", err);
+      })
+      .finally(() => {
+        // Reset even after a failure — a failed sudo/shutdown attempt (e.g. transient) must not
+        // permanently lock out every future retry for the rest of this process's lifetime.
+        this.shutdownInFlight = false;
+      });
   }
 
   /** `GET /api/hub/containers/:id/logs?tail=N` — same `:id` resolution as `handleAction()`. Not rate-limited (unlike the control actions) — a read has no side effect worth bounding beyond `tail`'s own cap. */
