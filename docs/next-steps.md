@@ -121,6 +121,23 @@ Le opzioni sopra restano bloccate sui rispettivi prerequisiti ambientali **solo 
 
 **Cosa servirebbe, in linea di massima**: un servizio di discovery minimo (dove un nodo con Internet può registrare il proprio indirizzo raggiungibile, opt-in esplicito), un nuovo modo per `cli.ts` di risolvere un peer remoto tramite quel servizio invece del solo `--connect <ip:porta>` manuale, e una riflessione su attraversamento NAT per i nodi senza indirizzo pubblico/porta inoltrata (fuori scope per una prima versione, che potrebbe limitarsi a chi ha già un indirizzo raggiungibile). Nessun codice scritto finora, idea ancora da approfondire.
 
+### Nuovo giro di rifinimento UX — app mobile e portale, semplificazione e ammodernamento (proposto dall'utente, 30 settembre 2026)
+
+**Richiesta dell'utente**: l'app mobile e il portale risultano oggi troppo tecnici, con un eccesso di testo/descrizioni sempre visibili. Direzione preferita: tooltip e descrizioni "foldable" (pieghevoli/a scomparsa) al posto di testo sempre esposto, per un'interfaccia più libera e ariosa; pulsanti più snelli; valutare anche una divisione in tab/schede.
+
+**Diverso dal piano di audit UX/UI precedente** (Fasi 1-6 ✅ complete — `docs/security.md` voci #86-91 — Fase 7 saltata esplicitamente, Fase 8 "mockup pixel-precisi" rimandata al lancio della beta, vedi voce sotto): quel piano ha già semplificato molto (navigazione a 4 voci, "Le mie attività", feed unificato "Richiede attenzione ora", tabelle dense) ma non ha affrontato esplicitamente "troppo testo/troppo tecnico" come problema a sé — questo è un nuovo giro mirato proprio a quello, non una ripresa dello stesso piano. Le due iniziative potrebbero sovrapporsi in fase di pianificazione (es. la Fase 8 rimandata potrebbe assorbire parte di questo lavoro) — da decidere quando si riprenderà, non assunto qui.
+
+**Perimetro, da confermare in fase di pianificazione**: app mobile (`mobile/www/`) e il portale — `mirror-portal/` di sicuro (esplicitamente citato), eventualmente anche `local-portal/` e la Web UI del nodo (`node/src/web-ui.ts`) se rientrano nello stesso giudizio di "troppo tecnico" — non assunto qui, da chiarire con l'utente prima di iniziare.
+
+**Direzioni indicate dall'utente, da tradurre in un piano concreto quando si riprenderà**:
+- Tooltip al posto di spiegazioni testuali sempre visibili.
+- Descrizioni "foldable"/collassabili invece di blocchi di testo fissi.
+- Pulsanti più snelli (meno ingombranti, meno testo).
+- UI più libera e ariosa (più spazio bianco, meno densità visiva).
+- Valutare una divisione in tab/schede per organizzare i contenuti invece di liste verticali lunghe.
+
+**Nessun codice scritto, nessuna pianificazione di dettaglio fatta finora** — solo annotato come richiesto esplicitamente dall'utente. Da riprendere con lo stesso workflow di ogni feature sostanziale di questo repository (pianificazione condivisa prima di scrivere codice, poi il doppio check standard — implementazione, test, `code-review`, verifica dal vivo, doc, commit/push), quando l'utente darà il via.
+
 ### Mockup pixel-precisi (Figma) — rimandati al lancio della beta, dopo i field test
 
 Il piano di audit UX/UI (Artifact "ARALD — UX/UI Audit & Redesign Plan", mini-team di 4 ruoli, sezione 11) prevedeva 8 fasi. Le Fasi 1-6 sono **✅ complete** (dettaglio in `docs/security.md` voci #86-91: "Le mie attività", stato persistente SOS, migrazione token Waypoint, navigazione a 4 voci + Diagnostica, feed "Richiede attenzione ora" + conferma a due passi, tabella dati densa + badge di ruolo). La Fase 7 (Field User Test sui prototipi con utenti reali, Marco/Elena) è stata **saltata esplicitamente** (21 settembre 2026, decisione dell'utente — nessun utente reale disponibile in questo ambiente); il piano stesso la segnava come prerequisito per considerare chiusa qualunque fase precedente, quindi quel criterio resta consapevolmente non soddisfatto.
