@@ -363,6 +363,19 @@
               <option value="" disabled selected>Scegli una destinazione...</option>
             </select>
             <input id="send-external-delivery-password" type="password" placeholder="Password del canale" autocomplete="off" hidden>
+            <!-- Check-in rapido (docs/next-steps.md, "Pulsante dedicato Invia la mia posizione") — compila
+                 automaticamente posizione GPS + uno stato rapido invece di scrivere a mano nel campo testo
+                 sotto. Riusa la stessa destinazione/password del form: sono due varianti dello stesso invio
+                 "Consegna esterna differita", mai un SOS reale (quello resta il broadcast Bluetooth via
+                 #sos-button). type="button": non attivano la validazione/il submit del form. -->
+            <div class="quick-checkin-actions">
+              <button type="button" id="quick-checkin-ok">
+                <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-map-pin"></use></svg> Invia posizione — Tutto ok
+              </button>
+              <button type="button" id="quick-checkin-help">
+                <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-alert-circle"></use></svg> Invia posizione — Serve aiuto
+              </button>
+            </div>
             <textarea id="send-external-delivery-text" placeholder="Scrivi un messaggio..." rows="3"></textarea>
             <input id="send-external-delivery-file" type="file">
             <button type="submit">Invia</button>
