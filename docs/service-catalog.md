@@ -39,7 +39,9 @@ Richiamo diretto da `docs/architecture.md` ("Un ARALD Card è quasi solo Connect
 | Mappe offline | Tile MBTiles in sola lettura | `--map-file <percorso.mbtiles>` |
 | Interfaccia web locale | Dashboard di stato/ricerca/pairing telefono (spec §59) | `--web-port` |
 
-### Servizi via Project NOMAD (richiedono `gateway/nomad/`, solo su un host che fa girare NOMAD/i servizi sottostanti — quindi BOX/Portable)
+### Servizi via `gateway/nomad/` (solo su un host che fa girare i servizi sottostanti — quindi BOX/Portable)
+
+**Aggiornamento, 30 settembre 2026**: per Kiwix/AI, "i servizi sottostanti" non è più necessariamente Project NOMAD — `service-stack/docker-compose.yml` li avvia con le loro immagini Docker ufficiali pubbliche, indipendenti dal sorgente Project NOMAD (mai reso disponibile). Vedi `docs/next-steps.md`, "Indipendenza da Project NOMAD", per il dettaglio. Flatnotes resta per ora nello stato precedente (rimandato, non ancora verificato/aggiunto a `service-stack/`).
 
 | Servizio | Cos'è | Flag (`gateway/nomad/cli.ts`) |
 |---|---|---|

@@ -77,7 +77,8 @@ arald/
 ├─ tests/           unit/, integration/, network/ (vitest)
 ├─ tools/simulator/ simulatore di rete a scala (usato anche da `npm run simulate`)
 ├─ gateway/nomad/   gateway NOMAD: KiwixGateway, AiGateway, NewsGateway, TranslateGateway, InternetGateway, FlatnotesGateway — mockato, non nel workspace npm
-├─ nomad-hub/       ARALD Hub Management API: amministra Docker sull'host che esegue Project NOMAD — mai la mesh; non nel workspace npm, come gateway/nomad/
+├─ service-stack/   docker-compose.yml che avvia i backend reali di gateway/nomad/ (kiwix-serve, Ollama) con le loro immagini Docker ufficiali — sostituisce la dipendenza dal sorgente Project NOMAD per questi due servizi (30 settembre 2026); nessun codice, solo config — vedi service-stack/README.md e docs/next-steps.md, "Indipendenza da Project NOMAD"
+├─ nomad-hub/       ARALD Hub Management API: amministra Docker sull'host che esegue i servizi (Project NOMAD storicamente, service-stack/ da quando applicabile) — mai la mesh; non nel workspace npm, come gateway/nomad/
 ├─ mobile/          client mobile Capacitor verso un gateway — vedi mobile/README.md; mobile/ios/ ancora solo segnaposto; mobile/www/hub-control.html+.js è la Control UI (nomad-hub/), pagina separata da index.html/app.js
 ├─ arald-backend/   sincronizzazione Box → specchio Postgres (Emergency Portal) — vedi docs/emergency-portal.md
 ├─ local-portal/    dashboard operativa servita via LAN dal Box (Emergency Portal) — vedi docs/emergency-portal.md

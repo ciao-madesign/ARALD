@@ -15,6 +15,13 @@ Questo documento esiste per una ragione precisa: è facile leggere le sezioni 4-
 
 **ARALD tratta NOMAD come una "black box" dietro un gateway.** Non è previsto (nella prima fase) di modificare il codice di Project NOMAD.
 
+**Aggiornamento, 30 settembre 2026 — tre correzioni a questa tabella, scritta in fase di pianificazione iniziale prima che il codice reale esistesse**:
+
+- **Kiwix/Ollama restano "riusabili as-is", ma non più necessariamente *da* Project NOMAD**: `gateway/nomad/kiwix-gateway.ts`/`ai-gateway.ts` parlano con le vere API di `kiwix-serve`/Ollama direttamente (`docs/security.md` voce #97/#98), non con un'API di Project NOMAD — `service-stack/docker-compose.yml` (nuovo) li avvia con le loro immagini Docker ufficiali pubbliche, senza il sorgente Project NOMAD (mai reso disponibile). Vedi `docs/next-steps.md`, "Indipendenza da Project NOMAD", per la decisione.
+- **Mappe offline: questa riga non è mai stata accurata** — `node/src/map-tiles.ts` (`MbtilesReader`) è codice ex-novo di questo repository, legge un file `.mbtiles` locale via `node:sqlite`, **nessuna dipendenza da NOMAD, mai c'è stata**. Va spostata concettualmente nella sezione "Componenti interamente ex novo" sotto, non qui — lasciata nella tabella originale solo per non alterare la pianificazione storica, ma segnalata qui come scoperta, non come cambiamento.
+- **Qdrant/RAG, Kolibri, CyberChef, Command Center**: mai integrati in questo repository (nessun gateway li chiama) — restano voci di pianificazione originaria mai realizzate, non un fatto del codice attuale.
+- **FlatNotes**: `gateway/nomad/flatnotes-gateway.ts` esiste ma parla con un'API mai verificata contro il vero Flatnotes (stesso stato in cui si trovava Kiwix prima della voce #97) — rimandato per decisione esplicita dell'utente (30 settembre 2026), da riprendere con lo stesso trattamento di Kiwix/Ollama.
+
 ## Da BitChat — concetti architetturali di riferimento, NON codice riusabile as-is
 
 BitChat è scritto per un dominio applicativo diverso (messaggistica peer-to-peer via BLE) e in uno stack diverso da quello scelto per il primo prototipo ARALD (TypeScript/Node.js). Il riuso è **concettuale**: le idee vanno reimplementate nel contesto content-centric di ARALD.
