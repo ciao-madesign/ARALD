@@ -4,9 +4,9 @@ import { ManagementServer, generateManagementPassword } from "./management-serve
 import { executeSystemReboot, executeSystemShutdown } from "./host-power.js";
 
 /**
- * Local copy of `gateway/nomad/cli.ts`'s own `parseArgs()` (`--flag value`
+ * Local copy of `gateway/local-services/cli.ts`'s own `parseArgs()` (`--flag value`
  * or bare `--flag` → `"true"`) — duplicated rather than imported so
- * `nomad-hub/` has zero coupling to `gateway/nomad/`: see
+ * `nomad-hub/` has zero coupling to `gateway/local-services/`: see
  * `management-server.ts`'s class doc comment for the same reasoning
  * applied to `web-ui.ts`. This is a genuinely separate system (Docker/host
  * administration, never the mesh), not a variant of the NOMAD gateway.
@@ -31,7 +31,7 @@ function parseArgs(argv: string[]): Record<string, string> {
 /**
  * Entry point for the "NOMAD Management API" (`npm run hub`) —
  * `docs/deployment.md`'s "Il NOMAD Hub come sistema portatile", the
- * Docker/host-administration counterpart to `gateway/nomad/cli.ts`'s
+ * Docker/host-administration counterpart to `gateway/local-services/cli.ts`'s
  * mesh-facing NOMAD service gateway. Unlike every gateway there, this
  * never touches a `NomadNode`/the mesh at all — it only ever talks to a
  * Docker daemon (`DockerClient`) and serves `ManagementServer`'s HTTP API

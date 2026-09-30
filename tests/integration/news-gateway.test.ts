@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { NomadNode } from "../../node/src/node.js";
 import { TcpTransport } from "../../node/src/transports/tcp.js";
 import { computeContentId } from "../../node/src/content.js";
-import { NewsGateway, type NewsHeadline } from "../../gateway/nomad/news-gateway.js";
+import { NewsGateway, type NewsHeadline } from "../../gateway/local-services/news-gateway.js";
 
 /**
  * NewsGateway (spec §37, a third NOMAD sub-service alongside Kiwix/Ollama)

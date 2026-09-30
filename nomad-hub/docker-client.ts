@@ -46,7 +46,7 @@ export class DockerApiError extends Error {
  * needs (list/inspect/start/stop/restart/logs) — raw HTTP over the
  * daemon's Unix Domain Socket via `node:http`'s `socketPath` option, no
  * `dockerode`/SDK dependency. Same precedent as every gateway in
- * `gateway/nomad/` talking to *its* external backend with plain
+ * `gateway/local-services/` talking to *its* external backend with plain
  * `fetch`/`node:http` (`CLAUDE.md`: "nessuna dipendenza esterna senza
  * necessità reale") — the Docker Engine API is plain HTTP/JSON, and the
  * slice this project actually needs is small and stable, unlike a
@@ -58,7 +58,7 @@ export class DockerApiError extends Error {
  * `node/src/loopback-http-server.ts`, which guards against a hostile
  * mesh-facing client): the Docker daemon is a trusted local system this
  * code is a *client* of, not adversarial network input — the same trust
- * boundary every `gateway/nomad/*.ts` file already draws around its own
+ * boundary every `gateway/local-services/*.ts` file already draws around its own
  * `fetch()` calls to Kiwix/Ollama/FlatNotes.
  */
 export class DockerClient {

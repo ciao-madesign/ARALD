@@ -55,7 +55,7 @@ A working software prototype, not a mockup: core networking (identity, routing, 
 
 This project was previously developed under the working name "Nomad-Net". It has no connection to, and is not affiliated with, endorsed by, or sponsored by:
 
-- **[Project N.O.M.A.D.](https://github.com/Crosstalk-Solutions/project-nomad)** (Crosstalk Solutions LLC, Apache-2.0) — an offline-first knowledge/education server. ARALD's `gateway/nomad/` module can optionally talk to a Project NOMAD instance over plain HTTP (Kiwix, Ollama, and similar services it can expose), the same way it can talk to any other locally reachable service — no Project NOMAD source code is included in or derived from this repository.
+- **[Project N.O.M.A.D.](https://github.com/Crosstalk-Solutions/project-nomad)** (Crosstalk Solutions LLC, Apache-2.0) — an offline-first knowledge/education server that originally inspired this project's naming and service model. ARALD's `gateway/local-services/` module talks directly to each backend's own real HTTP API (Kiwix, Ollama, Flatnotes) — not to a Project NOMAD API — so it no longer depends on Project NOMAD as a package; a `docker-compose.yml` in `service-stack/` starts these backends with their own official Docker images. No Project NOMAD source code is or ever was included in or derived from this repository.
 - **[NomadNet](https://github.com/markqvist/NomadNet)** (Mark Qvist, GPL-3.0), built on **[Reticulum](https://github.com/markqvist/Reticulum)** and **[LXMF](https://github.com/markqvist/LXMF)** (Mark Qvist, modified MIT) — an off-grid encrypted mesh communications platform. No code from any of these three projects is used here; see [`docs/reuse-vs-new.md`](docs/reuse-vs-new.md) for the full review.
 
 The name comes from *araldo* — a herald, the messenger who carries word to the next stop, a fitting image for a store-and-forward network where every node can end up carrying a message further along.
@@ -82,7 +82,7 @@ arald/
 ├─ docs/            specification and technical documentation
 ├─ protocol/        shared protocol definitions — placeholder, no real code yet
 ├─ node/            the ARALD node runtime (identity, routing, content, transport, web UI) — the only package in the npm workspace
-├─ gateway/nomad/   ARALD <-> Project NOMAD translation layer (Kiwix/Ollama/news) — mocked against local fake servers, a separate project
+├─ gateway/local-services/   ARALD <-> local service providers (Kiwix, Ollama, Flatnotes, RSS news, ...) — talks to each backend's own real API directly, no Project NOMAD dependency; mocked against local fake servers in tests, a separate project
 ├─ nomad-hub/       Management API that administers Docker on whatever host runs Project NOMAD — a separate project, never the mesh
 ├─ mobile/          Capacitor app talking to a gateway (Wi-Fi/TCP, Step 1) — verified via browser; native Android build doesn't compile in this environment; iOS still a placeholder
 ├─ arald-backend/   one-shot sync script from a Box's local endpoints to a Postgres mirror (Neon) — a separate project

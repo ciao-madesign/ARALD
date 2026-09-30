@@ -196,7 +196,7 @@ describe("service discovery and invocation", () => {
     // withServiceTimeout() (node.ts) closes a gap the remote-invocation path never had: a handler
     // registered on *this* node used to be awaited with no timeout at all, silently ignoring
     // options.timeoutMs whenever the provider happened to be local rather than remote — exactly the
-    // topology gateway/nomad/cli.ts's demo sets up for service://ai + any of its consumers.
+    // topology gateway/local-services/cli.ts's demo sets up for service://ai + any of its consumers.
     const caller = makeNode("caller");
     nodes.push(caller.node);
     await caller.node.start();

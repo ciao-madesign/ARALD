@@ -23,7 +23,7 @@ export interface ManagementServerOptions {
   managementPassword: string;
   /** When set, every endpoint here only ever sees/acts on containers whose name starts with this prefix — an operator-chosen guardrail against managing the whole Docker daemon when only a subset (e.g. this NOMAD Hub's own containers) should be reachable. Applied uniformly in `listManagedContainers()`, the single choke point every handler below goes through — never just at the listing endpoint. */
   containerNamePrefix?: string;
-  /** Overrides for `checkActionRateLimit()`'s window — same reason every gateway in `gateway/nomad/` exposes its own rate-limit constants as options (tests need a window shorter than the production default to run in reasonable time). */
+  /** Overrides for `checkActionRateLimit()`'s window — same reason every gateway in `gateway/local-services/` exposes its own rate-limit constants as options (tests need a window shorter than the production default to run in reasonable time). */
   actionRateLimitWindowMs?: number;
   maxActionsPerWindow?: number;
   /** Filesystem path `GET /api/hub/capabilities`'s storage figures are reported for — defaults to this process's own working directory (`capability-manager.ts`'s own default) when unset. */
@@ -53,7 +53,7 @@ export interface ManagementServerOptions {
  * `capability-manager.ts` (`GET /api/hub/capabilities`, independent of
  * Docker connectivity). This directory is named `nomad-hub/` because it
  * manages a host running Project NOMAD — same naming logic as
- * `gateway/nomad/`, not a leftover of this project's own former name
+ * `gateway/local-services/`, not a leftover of this project's own former name
  * ("Nomad-Net", renamed ARALD on 4 September 2026 — see
  * `docs/due-diligence-naming-2026-09-04.md`). That said, whether ARALD
  * keeps depending on Project NOMAD at all is an open question, not a
@@ -61,7 +61,7 @@ export interface ManagementServerOptions {
  * Project NOMAD" for a live reconsideration of this exact dependency;
  * this file's references to it reflect the current state, not a
  * permanent architectural commitment. Deliberately **not** part of
- * `node/src/`/`gateway/nomad/`: this never touches the mesh (`NomadNode`)
+ * `node/src/`/`gateway/local-services/`: this never touches the mesh (`NomadNode`)
  * at all, so it can't be reached by a mesh guest the way `service://...`
  * calls or `WebUiServer` endpoints can — see `nomad-hub/`'s own top-level
  * doc comment (`cli.ts`) for the full boundary reasoning.

@@ -6,7 +6,7 @@ import { StaticPortalServer } from "./static-server.js";
  * Local copy of `nomad-hub/cli.ts`'s own `parseArgs()` — duplicated rather
  * than imported so `local-portal/` has zero coupling to `nomad-hub/`
  * (which administers Docker, a genuinely unrelated system) or
- * `gateway/nomad/` (same reasoning `nomad-hub/cli.ts`'s own copy of this
+ * `gateway/local-services/` (same reasoning `nomad-hub/cli.ts`'s own copy of this
  * function already documents).
  */
 function parseArgs(argv: string[]): Record<string, string> {

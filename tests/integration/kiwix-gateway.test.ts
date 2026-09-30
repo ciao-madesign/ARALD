@@ -2,8 +2,8 @@ import { createServer, type Server } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import { NomadNode } from "../../node/src/node.js";
 import { TcpTransport } from "../../node/src/transports/tcp.js";
-import { FakeKiwixServer } from "../../gateway/nomad/fake-kiwix-server.js";
-import { KiwixGateway } from "../../gateway/nomad/kiwix-gateway.js";
+import { FakeKiwixServer } from "../../gateway/local-services/fake-kiwix-server.js";
+import { KiwixGateway } from "../../gateway/local-services/kiwix-gateway.js";
 import { computeContentId } from "../../node/src/content.js";
 
 /**

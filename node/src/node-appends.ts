@@ -207,7 +207,7 @@ const DEFAULT_MAX_NODE_APPENDS = 256;
  * (`routing.ts`'s `decideForward()` already stops forwarding once a unicast
  * packet reaches its destination — nothing in this class needs to enforce
  * that separately). Same architectural placement as `Drops`/`LocationRegistry`
- * — pure mesh-adjacent local state, `node/src/`, not `gateway/nomad/`.
+ * — pure mesh-adjacent local state, `node/src/`, not `gateway/local-services/`.
  *
  * **`trustRank`-based eviction, added for "Pezzo 2" (`docs/security.md`
  * voce #82) — this class's original premise no longer holds unconditionally.**

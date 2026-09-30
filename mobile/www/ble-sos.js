@@ -42,7 +42,7 @@ export const MAX_SOS_MESSAGE_LENGTH = 4000;
 
 /** Same fixed content name every emergency beacon uses — node/src/emergency-beacon.ts's
  * EMERGENCY_BEACON_CONTENT_NAME, duplicated here for the same no-bundler reason SERVICE_ICONS is
- * duplicated between gateway/nomad/ and mobile/www/ (see CLAUDE.md). */
+ * duplicated between gateway/local-services/ and mobile/www/ (see CLAUDE.md). */
 const EMERGENCY_BEACON_CONTENT_NAME = "emergency-beacon";
 
 /** Mirrors node/src/packet.ts's Priority.EMERGENCY (0) and DEFAULT_TTL (8) — the exact values a real

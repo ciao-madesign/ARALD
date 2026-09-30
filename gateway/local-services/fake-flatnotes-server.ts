@@ -25,7 +25,7 @@ export interface FakeFlatnote {
 }
 
 export interface FakeFlatnotesServerOptions {
-  /** Port to listen on; 0 (default) lets the OS assign one, same convention as the rest of `gateway/nomad/`. */
+  /** Port to listen on; 0 (default) lets the OS assign one, same convention as the rest of `gateway/local-services/`. */
   port?: number;
   host?: string;
   /** Simulated per-request delay in ms — same purpose as `FakeKiwixServer`'s `latencyMs`. */

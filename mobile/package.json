@@ -2,7 +2,7 @@
   "name": "arald-mobile",
   "private": true,
   "version": "0.1.0",
-  "description": "Lightweight mobile client for ARALD talking to an existing gateway (Step 1, Wi-Fi/TCP) — docs/next-steps.md Option H, roadmap Milestone 9. Not part of the root npm workspace, same precedent as gateway/nomad/ and tools/simulator/.",
+  "description": "Lightweight mobile client for ARALD talking to an existing gateway (Step 1, Wi-Fi/TCP) — docs/next-steps.md Option H, roadmap Milestone 9. Not part of the root npm workspace, same precedent as gateway/local-services/ and tools/simulator/.",
   "scripts": {
     "sync": "cap sync",
     "android": "cap run android",

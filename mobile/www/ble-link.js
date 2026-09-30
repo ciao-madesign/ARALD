@@ -2,7 +2,7 @@
 // phone's side — a browser-compatible port of node/src/packet.ts's newline-JSON framing and
 // node/src/transports/simulated-link.ts's fragmentation/reassembly, duplicated by necessity: there is
 // no bundler in mobile/www/, so no static `import` from node/src/ is possible (same reason
-// SERVICE_ICONS/SERVICE_LABELS are duplicated by hand between gateway/nomad/ and mobile/www/, see
+// SERVICE_ICONS/SERVICE_LABELS are duplicated by hand between gateway/local-services/ and mobile/www/, see
 // CLAUDE.md). This file is the "pipe" logic only — it does not decide what packets the app sends over
 // a Clip connection yet; see mobile/www/ble-client.js for the plugin-driven scan/connect/GATT
 // orchestration built on top of it, and mobile/README.md for what's tested here versus written to

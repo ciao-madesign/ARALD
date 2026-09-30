@@ -28,7 +28,7 @@ export class BodyTooLargeError extends Error {}
  * a hostile or broken client — any other stream failure rejects with the
  * original error unchanged. Shared for the same reason `sendJson()` is:
  * this exact body-reading loop (with the same `BodyTooLargeError` split)
- * showed up first in `gateway/nomad/fake-ollama-server.ts` (voce #10, for
+ * showed up first in `gateway/local-services/fake-ollama-server.ts` (voce #10, for
  * `POST /api/generate`) and then again in `WebUiServer` (for `POST
  * /api/call`, spec §59 mobile pairing).
  *
@@ -86,7 +86,7 @@ export function readRequestBody(req: IncomingMessage, maxBytes: number, timeoutM
 /**
  * Shared `start()`/`stop()`/`port`-getter boilerplate for a small,
  * local-only HTTP server — used by `WebUiServer` (spec §59) and, in
- * `gateway/nomad/`, `FakeNomadServer` (test/demo infrastructure standing
+ * `gateway/local-services/`, `FakeNomadServer` (test/demo infrastructure standing
  * in for a real Project NOMAD instance). Extracted after this exact
  * ~30-line bootstrap sequence (listen, resolve the actually-bound port,
  * close-as-a-promise) showed up twice — same reasoning `bounded-map.ts`

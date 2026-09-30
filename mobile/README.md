@@ -1,6 +1,6 @@
 # mobile/
 
-Client mobile leggero per ARALD — **Passo 1** del piano in `docs/next-steps.md` Opzione H (roadmap Milestone 9): un'app che si connette via Wi-Fi/TCP a un nodo ARALD gateway già esistente, senza reimplementare il protocollo sul telefono. Non è nel workspace npm della radice, stesso precedente di `gateway/nomad/` e `tools/simulator/`.
+Client mobile leggero per ARALD — **Passo 1** del piano in `docs/next-steps.md` Opzione H (roadmap Milestone 9): un'app che si connette via Wi-Fi/TCP a un nodo ARALD gateway già esistente, senza reimplementare il protocollo sul telefono. Non è nel workspace npm della radice, stesso precedente di `gateway/local-services/` e `tools/simulator/`.
 
 **Decisioni prese con l'utente** (vedi `docs/next-steps.md` Opzione H per il ragionamento completo): client leggero verso un gateway, non un nodo completo; framework ibrido ([Capacitor](https://capacitorjs.com/)), non nativo puro — adeguato perché il telefono si connette *a* un gateway (ruolo BLE centrale, quando arriverà il Passo 2) e non deve mai farsi scoprire da altri telefoni (ruolo periferica, che l'ibrido supporta male).
 

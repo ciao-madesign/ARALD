@@ -1,10 +1,10 @@
 # `service-stack/` — stack Docker indipendente da Project NOMAD
 
-Avvia i backend reali che `gateway/nomad/` interroga via HTTP — **kiwix-serve**, **Ollama** e **Flatnotes** — usando le loro immagini Docker ufficiali e pubbliche, senza alcuna dipendenza dal sorgente di Project NOMAD (un progetto esterno, mai reso disponibile in questo ambiente, che la specifica stessa definisce "non dichiarato stabile", spec §4).
+Avvia i backend reali che `gateway/local-services/` interroga via HTTP — **kiwix-serve**, **Ollama** e **Flatnotes** — usando le loro immagini Docker ufficiali e pubbliche, senza alcuna dipendenza dal sorgente di Project NOMAD (un progetto esterno, mai reso disponibile in questo ambiente, che la specifica stessa definisce "non dichiarato stabile", spec §4).
 
 ## Perché questo file esiste
 
-`gateway/nomad/kiwix-gateway.ts`, `ai-gateway.ts` e `flatnotes-gateway.ts` parlano tutti con le vere API dei rispettivi backend (`docs/security.md` voce #97/#98/#100, 30 settembre 2026) — non con un'API inventata da Project NOMAD. Questo significa che **qualunque istanza reale** di questi tre programmi funziona, comunque sia stata avviata: non serve il pacchetto "Project NOMAD" nel suo insieme, solo i programmi open source che ci sono effettivamente sotto. `docker-compose.yml` in questa cartella li avvia tutti con le loro immagini ufficiali:
+`gateway/local-services/kiwix-gateway.ts`, `ai-gateway.ts` e `flatnotes-gateway.ts` parlano tutti con le vere API dei rispettivi backend (`docs/security.md` voce #97/#98/#100, 30 settembre 2026) — non con un'API inventata da Project NOMAD. Questo significa che **qualunque istanza reale** di questi tre programmi funziona, comunque sia stata avviata: non serve il pacchetto "Project NOMAD" nel suo insieme, solo i programmi open source che ci sono effettivamente sotto. `docker-compose.yml` in questa cartella li avvia tutti con le loro immagini ufficiali:
 
 | Servizio | Immagine | Fonte verificata |
 |---|---|---|
@@ -30,4 +30,4 @@ docker exec arald-ollama ollama pull llama3.2   # o il modello scelto
 npm run gateway:demo -- --kiwix-url http://127.0.0.1:8080 --kiwix-book <nome-libro> --ai-url http://127.0.0.1:11434 --ai-model llama3.2 --flatnotes-url http://127.0.0.1:8081
 ```
 
-`<nome-libro>` è il nome che kiwix-serve deriva dal file ZIM caricato (verificabile interrogando l'istanza avviata, es. la sua pagina di ricerca) — nessun default corretto per ogni caso, `gateway/nomad/cli.ts` non ne indovina uno (`--kiwix-book`, default `"wiki"`, quasi certamente da sovrascrivere con un file reale).
+`<nome-libro>` è il nome che kiwix-serve deriva dal file ZIM caricato (verificabile interrogando l'istanza avviata, es. la sua pagina di ricerca) — nessun default corretto per ogni caso, `gateway/local-services/cli.ts` non ne indovina uno (`--kiwix-book`, default `"wiki"`, quasi certamente da sovrascrivere con un file reale).

@@ -2203,7 +2203,7 @@ function setCallSubmitBusy(submit, busy, idleLabel, idleIcon) {
   }
 }
 
-/** Mirrors gateway/nomad/translate-gateway.ts's SUPPORTED_LANGUAGES — kept in sync by hand, same accepted situation as SERVICE_ICONS/SERVICE_LABELS below (mobile/www and gateway/nomad are separate runtimes with no shared import path). */
+/** Mirrors gateway/local-services/translate-gateway.ts's SUPPORTED_LANGUAGES — kept in sync by hand, same accepted situation as SERVICE_ICONS/SERVICE_LABELS below (mobile/www and gateway/local-services are separate runtimes with no shared import path). */
 const TRANSLATE_LANGUAGES = { it: "Italiano", en: "Inglese", de: "Tedesco", fr: "Francese", es: "Spagnolo" };
 
 /** Content-types this app knows how to name for a human instead of showing a raw MIME string. */

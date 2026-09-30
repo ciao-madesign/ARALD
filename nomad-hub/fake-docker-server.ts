@@ -3,7 +3,7 @@ import { LoopbackHttpServer, sendJson } from "../node/src/loopback-http-server.j
 
 /**
  * Stands in for a real Docker Engine API for tests/demo — same reasoning
- * as every other `Fake*Server` in `gateway/nomad/`, models only the
+ * as every other `Fake*Server` in `gateway/local-services/`, models only the
  * subset of endpoints `DockerClient` actually calls
  * (`GET /containers/json`, `GET /containers/:id/json`,
  * `POST /containers/:id/{start,stop,restart}`, `GET /containers/:id/logs`),

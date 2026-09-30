@@ -11,7 +11,7 @@
     "test:watch": "vitest",
     "build": "npm run build -w node",
     "simulate": "tsx tools/simulator/cli.ts",
-    "gateway:demo": "tsx gateway/nomad/cli.ts",
+    "gateway:demo": "tsx gateway/local-services/cli.ts",
     "hub": "tsx nomad-hub/cli.ts",
     "portal:sync": "tsx arald-backend/sync.ts",
     "portal:local": "tsx local-portal/cli.ts",

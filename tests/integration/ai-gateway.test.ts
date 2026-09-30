@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { NomadNode } from "../../node/src/node.js";
 import { TcpTransport } from "../../node/src/transports/tcp.js";
-import { FakeOllamaServer } from "../../gateway/nomad/fake-ollama-server.js";
-import { AiGateway } from "../../gateway/nomad/ai-gateway.js";
+import { FakeOllamaServer } from "../../gateway/local-services/fake-ollama-server.js";
+import { AiGateway } from "../../gateway/local-services/ai-gateway.js";
 
 /**
  * Spec §37's own worked example: "un dispositivo poco potente chiede alla

@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { afterEach, describe, expect, it } from "vitest";
 import { NomadNode } from "../../node/src/node.js";
 import { TcpTransport } from "../../node/src/transports/tcp.js";
-import { NewsGateway, type NewsHeadline } from "../../gateway/nomad/news-gateway.js";
+import { NewsGateway, type NewsHeadline } from "../../gateway/local-services/news-gateway.js";
 
 /**
  * `service://emergency-news` (spec's "P0", `docs/next-steps.md` Opzione I —

@@ -433,7 +433,7 @@ const DEFAULT_DELIVERY_TIMEOUT_MS = 10_000;
 export async function attemptExternalDeliveryPost(entry: QueuedExternalDelivery, timeoutMs: number = DEFAULT_DELIVERY_TIMEOUT_MS): Promise<boolean> {
   // Difesa in profondità (CLAUDE.md) contro un errore di configurazione dell'admin (es. un URL
   // interno incollato per sbaglio nel file destinations.json) — stessa guardia SSRF già usata in
-  // ingresso da gateway/nomad/internet-gateway.ts, qui riusata in uscita. Ricontrollata ad ogni
+  // ingresso da gateway/local-services/internet-gateway.ts, qui riusata in uscita. Ricontrollata ad ogni
   // tentativo (non solo all'avvio) perché l'URL vive in un file che può cambiare tra un riavvio e
   // l'altro senza che questo modulo lo sappia in anticipo.
   let url: URL;

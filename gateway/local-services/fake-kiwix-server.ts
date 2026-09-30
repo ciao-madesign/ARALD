@@ -21,7 +21,7 @@ export interface FakeKiwixArticle {
 }
 
 export interface FakeKiwixServerOptions {
-  /** Port to listen on; 0 (default) lets the OS assign one, same convention as the rest of `gateway/nomad/`. */
+  /** Port to listen on; 0 (default) lets the OS assign one, same convention as the rest of `gateway/local-services/`. */
   port?: number;
   host?: string;
   /** ZIM book name this fake serves under — must match what `KiwixGateway` is constructed with. */

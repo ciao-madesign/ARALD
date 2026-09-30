@@ -261,7 +261,7 @@ const DEFAULT_MAX_RELAYS = 512;
  * by whoever installs a relay, plus a dynamic online/last-seen state this
  * class derives itself from real mesh connectivity. Same architectural
  * placement as `LocationRegistry`/`Drops` — pure mesh-adjacent local state,
- * `node/src/`, never `gateway/nomad/`/`nomad-hub/` (this never talks to
+ * `node/src/`, never `gateway/local-services/`/`nomad-hub/` (this never talks to
  * Project NOMAD or Docker).
  *
  * **Two real differences from `LocationRegistry`, both deliberate:**

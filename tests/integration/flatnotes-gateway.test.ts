@@ -2,8 +2,8 @@ import { createServer, type Server } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import { NomadNode } from "../../node/src/node.js";
 import { TcpTransport } from "../../node/src/transports/tcp.js";
-import { FakeFlatnotesServer } from "../../gateway/nomad/fake-flatnotes-server.js";
-import { FlatnotesGateway } from "../../gateway/nomad/flatnotes-gateway.js";
+import { FakeFlatnotesServer } from "../../gateway/local-services/fake-flatnotes-server.js";
+import { FlatnotesGateway } from "../../gateway/local-services/flatnotes-gateway.js";
 import { computeContentId } from "../../node/src/content.js";
 import { MAX_MESSAGE_TEXT_LENGTH } from "../../node/src/message-history.js";
 

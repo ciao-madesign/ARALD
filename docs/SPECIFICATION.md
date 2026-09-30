@@ -670,7 +670,7 @@ Il primo MVP **non** deve avere: LoRa, routing sofisticato, AI distribuita, sinc
 6. **BLE**: nuovo transport (`node/src/transports/ble.ts`) dietro la stessa interfaccia `Transport`, routing invariato.
 7. **Smartphone**: prima app mobile con node identity, peer discovery, connection, search, content request, cache, relay di base.
 8. **NOMAD node**: installazione di Project NOMAD su Linux/Debian via Docker.
-9. **Gateway** (`gateway/nomad/`): traduce richieste ARALD in richieste API NOMAD (es. `GET content://wiki/italia` → Kiwix, `CALL service://ai` → servizio AI).
+9. **Gateway** (`gateway/local-services/`): traduce richieste ARALD in richieste API NOMAD (es. `GET content://wiki/italia` → Kiwix, `CALL service://ai` → servizio AI).
 10. **Test offline completo**: Internet OFF, NOMAD + Node + BLE mesh, A cerca un contenuto presente su NOMAD e lo ottiene attraverso la mesh — primo MVP completo.
 
 ## 72–74. Fasi successive

@@ -13,7 +13,7 @@ import { EncryptionIdentity } from "../node/src/encryption.js";
  * like any other private key.
  *
  * Identical to `whatsapp-relay/keypair.ts` — duplicated rather than shared,
- * same reasoning `gateway/nomad/` and `nomad-hub/` already apply to their
+ * same reasoning `gateway/local-services/` and `nomad-hub/` already apply to their
  * own independent fake-server patterns: two ~20-line copies in unrelated,
  * independently-run folders cost less than a new shared package would.
  */

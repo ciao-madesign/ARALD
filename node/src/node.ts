@@ -504,7 +504,7 @@ export const MAX_NODE_APPEND_TTL_MS = 72 * 60 * 60 * 1000;
 
 /**
  * Default cap on a single "Consegna esterna differita" submission's raw ciphertext size — same order
- * of magnitude as `DEFAULT_MAX_RESPONSE_BYTES` in `gateway/nomad/internet-gateway.ts`, a reasonable
+ * of magnitude as `DEFAULT_MAX_RESPONSE_BYTES` in `gateway/local-services/internet-gateway.ts`, a reasonable
  * starting point for a report/file, never a hard requirement. Exported (same reasoning as
  * `DEFAULT_DROP_TTL_MS`/`DEFAULT_NODE_APPEND_TTL_MS` above): `mirror-portal/lib/mesh-signing.ts`
  * vendors its own copy for "Pezzo 3" (`docs/security.md` voce #84), and

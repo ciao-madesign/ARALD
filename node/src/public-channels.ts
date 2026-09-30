@@ -17,7 +17,7 @@ export interface ChannelMessage {
    * without invalidating `verifyContentSignature()` — a display-ordering
    * spoof, not a text/identity forgery, but still worth closing since it's
    * free to. Embedding the timestamp in the signed bytes themselves (same
-   * precedent as `NewsHeadline.publishedAt`, `gateway/nomad/news-gateway.ts`)
+   * precedent as `NewsHeadline.publishedAt`, `gateway/local-services/news-gateway.ts`)
    * makes it exactly as trustworthy as `text`/`author`.
    */
   timestamp: number;

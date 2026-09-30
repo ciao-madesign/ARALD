@@ -3,7 +3,7 @@
 # Sostituisce il piano precedente ("Ubuntu+Docker+Project NOMAD" descritto
 # in docs/deployment.md fino al 30 settembre 2026), che richiedeva il
 # sorgente Docker di Project NOMAD (mai reso disponibile, progetto esterno
-# "non dichiarato stabile", spec §4). `gateway/nomad/kiwix-gateway.ts`,
+# "non dichiarato stabile", spec §4). `gateway/local-services/kiwix-gateway.ts`,
 # `ai-gateway.ts` e `flatnotes-gateway.ts` parlano già con le vere API dei
 # rispettivi backend (docs/security.md voce #97/#98/#100) — non con un'API
 # NOMAD — quindi qualunque istanza reale di questi tre programmi, comunque
@@ -30,7 +30,7 @@ services:
     volumes:
       - ./data/zim:/data:ro
     # '*.zim' fa servire a kiwix-serve ogni file ZIM presente in ./data/zim,
-    # un "libro" per file (il nome usato da --kiwix-book di gateway/nomad/cli.ts
+    # un "libro" per file (il nome usato da --kiwix-book di gateway/local-services/cli.ts
     # è quello che kiwix-serve deriva dal file — verificare con l'endpoint
     # /search o i log del container quale nome esatto usare).
     command: ["*.zim"]
@@ -45,7 +45,7 @@ services:
       - ./data/ollama:/root/.ollama
     # Nessun modello incluso nell'immagine: dopo l'avvio, un operatore deve
     # scaricarne uno (`docker exec arald-ollama ollama pull <modello>`,
-    # coerente con --ai-model di gateway/nomad/cli.ts, default "llama3.2")
+    # coerente con --ai-model di gateway/local-services/cli.ts, default "llama3.2")
     # prima che service://ai risponda con qualcosa di reale.
 
   flatnotes:
