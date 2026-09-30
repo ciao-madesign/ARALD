@@ -19,7 +19,7 @@ Richiamo diretto da `docs/architecture.md` ("Un ARALD Card è quasi solo Connect
 |---|---|
 | **ARALD Card / Fixed Relay / Mobile Relay** (`docs/beacon.md`) | Nessun servizio applicativo — solo instradamento pacchetti (Connectivity pura). Partecipa comunque al protocollo mesh: può originare/relayare un SOS, comparire nel Registro relay con la propria telemetria. Nessun Docker, nessun NOMAD. |
 | **Un `NomadNode` qualunque** (RPi nodo permanente, PC di sviluppo, smartphone) | Tutti i servizi **mesh-native** della prima tabella sotto — nessuno richiede Docker/Project NOMAD, sono tutti built-in in `node/src/`. |
-| **ARALD Box / ARALD Portable** (`docs/deployment.md`, "due deployment target paritetici" — **stessa lista di servizi per entrambi**, la differenza è solo hardware/packaging, non capacità software) | Tutto quanto sopra **più** i servizi che richiedono Project NOMAD via Docker (seconda tabella sotto) — sono gli unici due target hardware di questo progetto pensati per far girare NOMAD. |
+| **ARALD Box / ARALD Portable** (`docs/deployment.md`, "due deployment target paritetici" — **stessa lista di servizi per entrambi**, la differenza è solo hardware/packaging, non capacità software) | Tutto quanto sopra **più** i servizi che richiedono `gateway/local-services/` via Docker (seconda tabella sotto — Kiwix/Ollama/Flatnotes, indipendenti da Project NOMAD, `service-stack/`) — sono gli unici due target hardware di questo progetto pensati per far girare questi backend. |
 
 ## Catalogo servizi
 
