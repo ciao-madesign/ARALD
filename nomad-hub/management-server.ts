@@ -29,16 +29,20 @@ export interface ManagementServerOptions {
   /** Filesystem path `GET /api/hub/capabilities`'s storage figures are reported for — defaults to this process's own working directory (`capability-manager.ts`'s own default) when unset. */
   capabilityStoragePath?: string;
   /**
-   * Real host shutdown, wired in only when the operator explicitly opts in
-   * (`cli.ts`'s `--enable-shutdown`) — absent by default, same fail-closed
-   * posture as `node/src/cli.ts`'s `--allow-remote-reboot`. `POST
-   * /api/hub/shutdown` answers 403 when this is unset, rather than
-   * attempting a command that may not even be configured (sudoers) on this
-   * host. Injected instead of hardcoded to `shutdown.ts`'s real
-   * implementation so tests can substitute a fake that never actually
-   * touches the test runner's own OS.
+   * Real host shutdown/reboot, wired in only when the operator explicitly
+   * opts in (`cli.ts`'s `--enable-shutdown`/`--enable-reboot` — two
+   * independent flags, same "two independent opt-ins" pattern
+   * `node/src/cli.ts`'s `--trust-admin`/`--allow-remote-reboot` already
+   * uses for its own remote-reboot command) — both absent by default,
+   * fail-closed. `POST /api/hub/shutdown`/`POST /api/hub/reboot` answer 403
+   * when the corresponding option is unset, rather than attempting a
+   * command that may not even be configured (sudoers) on this host.
+   * Injected instead of hardcoded to `host-power.ts`'s real implementations
+   * so tests can substitute a fake that never actually touches the test
+   * runner's own OS.
    */
   shutdown?: () => Promise<void>;
+  reboot?: () => Promise<void>;
 }
 
 /**
@@ -82,8 +86,14 @@ export class ManagementServer {
   private readonly actionRateLimitState = new BoundedFifoMap<string, RateWindow>({ maxSize: MAX_TRACKED_RATE_LIMIT_IPS });
   private readonly actionRateLimitWindowMs: number;
   private readonly maxActionsPerWindow: number;
-  /** See `handleShutdown()`'s own doc comment. */
-  private shutdownInFlight = false;
+  /**
+   * Shared between `handleShutdown()`/`handleReboot()` — see either's own
+   * doc comment. Deliberately one flag for both, not two independent ones:
+   * a shutdown and a reboot racing each other (e.g. an operator tapping
+   * both in quick succession, unsure which finished registering) must not
+   * both spawn a real command — only whichever gets there first should.
+   */
+  private powerActionInFlight = false;
 
   constructor(
     private readonly docker: DockerClient,
@@ -141,11 +151,16 @@ export class ManagementServer {
       // Independent of Docker connectivity — unlike handleStatus(), this never touches this.docker:
       // reporting the host's own CPU/RAM/storage is useful diagnostic information precisely when
       // Docker itself is unreachable ("does this host even have enough RAM?"), not only when it's up.
-      // shutdownEnabled is layered on here rather than folded into getHardwareProfile() itself: it's
-      // this server's own config (--enable-shutdown), not a hardware fact capability-manager.ts should
-      // know about — found by review: without it, the Control UI had no way to tell "not enabled on
-      // this host" apart from a real failure when POST /api/hub/shutdown answered 403.
-      sendJson(res, 200, { ...getHardwareProfile({ storagePath: this.options.capabilityStoragePath }), shutdownEnabled: this.options.shutdown !== undefined });
+      // shutdownEnabled/rebootEnabled are layered on here rather than folded into getHardwareProfile()
+      // itself: they're this server's own config (--enable-shutdown/--enable-reboot), not a hardware
+      // fact capability-manager.ts should know about — found by review (for shutdownEnabled first):
+      // without it, the Control UI had no way to tell "not enabled on this host" apart from a real
+      // failure when POST /api/hub/shutdown answered 403.
+      sendJson(res, 200, {
+        ...getHardwareProfile({ storagePath: this.options.capabilityStoragePath }),
+        shutdownEnabled: this.options.shutdown !== undefined,
+        rebootEnabled: this.options.reboot !== undefined,
+      });
       return;
     }
 
@@ -162,6 +177,11 @@ export class ManagementServer {
 
     if (req.method === "POST" && url.pathname === "/api/hub/shutdown") {
       await this.handleShutdown(req, res);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/hub/reboot") {
+      await this.handleReboot(req, res);
       return;
     }
 
@@ -230,28 +250,36 @@ export class ManagementServer {
   }
 
   /**
-   * `POST /api/hub/shutdown` — see `shutdown.ts`'s own doc comment for what
-   * actually runs. Answers *before* triggering the command, not after —
-   * `await`ing the shutdown first would risk the response never reaching
-   * the caller if the host halts before the socket has a chance to flush.
-   * Same "acknowledge, then let the side effect happen outside the response
-   * cycle" posture `node/src/node.ts`'s `sendRelayCommand()` documents for
-   * its own remote-reboot path (there via an emitted event; here via a
-   * same-process side effect not awaited by this handler).
+   * `POST /api/hub/shutdown`/`POST /api/hub/reboot` — shared by
+   * `handleShutdown()`/`handleReboot()` below, which differ only in which
+   * configured action they pass in. See `host-power.ts`'s own doc comment
+   * for what actually runs (and its explicit caveat that whether services
+   * come back up after a reboot is a host-configuration matter this
+   * repository doesn't control). Answers *before* triggering the command,
+   * not after — `await`ing it first would risk the response never reaching
+   * the caller if the host halts/reboots before the socket has a chance to
+   * flush. Same "acknowledge, then let the side effect happen outside the
+   * response cycle" posture `node/src/node.ts`'s `sendRelayCommand()`
+   * documents for its own remote-reboot-over-mesh path (there via an
+   * emitted event; here via a same-process side effect not awaited by this
+   * handler).
    *
-   * `shutdownInFlight` guards against spawning more than one real `sudo
-   * shutdown` process — found by review: the rate limit alone still allows
-   * up to `maxActionsPerWindow` requests through (a flaky-network retry, or
-   * an operator tapping the button a few times before the first response
-   * lands), each of which would otherwise fire its own independent
-   * `execFile` call. Always answers 200 regardless (the caller only cares
-   * that a shutdown is already under way, not which specific request caused
-   * it), same idempotent-ack spirit `whatsapp-relay/server.ts`'s dedup cache
-   * uses for a retried delivery.
+   * `powerActionInFlight` guards against spawning more than one real `sudo
+   * shutdown`/`sudo shutdown -r` process — found by review (for shutdown
+   * alone, before reboot existed): the rate limit alone still allows up to
+   * `maxActionsPerWindow` requests through (a flaky-network retry, or an
+   * operator tapping a button a few times before the first response lands),
+   * each of which would otherwise fire its own independent `execFile` call.
+   * Shared between both actions (see the field's own doc comment) rather
+   * than one flag each, so a shutdown and a reboot racing each other can't
+   * both go through either. Always answers 200 regardless of whether this
+   * particular call was the one that actually triggered the action (the
+   * caller only cares that one is under way), same idempotent-ack spirit
+   * `whatsapp-relay/server.ts`'s dedup cache uses for a retried delivery.
    */
-  private async handleShutdown(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!this.options.shutdown) {
-      sendJson(res, 403, { error: "spegnimento non abilitato su questo host (richiede --enable-shutdown all'avvio di nomad-hub)" });
+  private async handlePowerAction(req: IncomingMessage, res: ServerResponse, action: (() => Promise<void>) | undefined, disabledMessage: string, label: string): Promise<void> {
+    if (!action) {
+      sendJson(res, 403, { error: disabledMessage });
       return;
     }
     if (!this.checkActionRateLimit(req)) {
@@ -259,17 +287,25 @@ export class ManagementServer {
       return;
     }
     sendJson(res, 200, { ok: true });
-    if (this.shutdownInFlight) return;
-    this.shutdownInFlight = true;
-    this.options.shutdown()
+    if (this.powerActionInFlight) return;
+    this.powerActionInFlight = true;
+    action()
       .catch((err) => {
-        console.error("[nomad-hub] comando di spegnimento fallito:", err);
+        console.error(`[nomad-hub] comando di ${label} fallito:`, err);
       })
       .finally(() => {
         // Reset even after a failure — a failed sudo/shutdown attempt (e.g. transient) must not
         // permanently lock out every future retry for the rest of this process's lifetime.
-        this.shutdownInFlight = false;
+        this.powerActionInFlight = false;
       });
+  }
+
+  private async handleShutdown(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    await this.handlePowerAction(req, res, this.options.shutdown, "spegnimento non abilitato su questo host (richiede --enable-shutdown all'avvio di nomad-hub)", "spegnimento");
+  }
+
+  private async handleReboot(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    await this.handlePowerAction(req, res, this.options.reboot, "riavvio non abilitato su questo host (richiede --enable-reboot all'avvio di nomad-hub)", "riavvio");
   }
 
   /** `GET /api/hub/containers/:id/logs?tail=N` — same `:id` resolution as `handleAction()`. Not rate-limited (unlike the control actions) — a read has no side effect worth bounding beyond `tail`'s own cap. */

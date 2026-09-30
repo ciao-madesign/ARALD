@@ -140,7 +140,8 @@ function showDashboard() {
 // reason (found by review): showDashboard() calls loadHostCapabilities() again on every "Cambia
 // Management API" reconnect, and nothing otherwise stops a slower response for the just-abandoned
 // host from landing after a faster response for the newly-connected one — which would silently
-// re-render stale host details and (worse) leave "Spegni host" enabled/disabled for the wrong host.
+// re-render stale host details and (worse) leave "Spegni host"/"Riavvia host" enabled/disabled for
+// the wrong host.
 let capabilitiesFetchToken = 0;
 
 /** `GET /api/hub/capabilities` — see capability-manager.ts (nomad-hub/) for what each field means and why gpu/npu/bluetooth/usb3 are always null rather than guessed. */
@@ -155,24 +156,32 @@ async function loadHostCapabilities() {
     if (token !== capabilitiesFetchToken) return;
     details.textContent = "";
     details.append(el("dt", { textContent: "Errore" }), el("dd", { textContent: err.message }));
-    // Stays disabled (its HTML default) — this host's shutdownEnabled state is unknown when this
-    // call itself failed, so "safe to offer" can't be assumed.
+    // Both power buttons stay disabled (their HTML default) — this host's shutdownEnabled/
+    // rebootEnabled state is unknown when this call itself failed, so "safe to offer" can't be assumed.
   }
 }
 
 /**
- * Toggles the "Spegni host" button/hint from `profile.shutdownEnabled` — found by review: without
- * this, the button was always clickable even on a host started without --enable-shutdown, and a tap
- * there produced a generic-looking "Spegnimento non riuscito" toast indistinguishable from a real
- * failure. The button starts `disabled` in the HTML itself (fail-closed) until this runs at least once.
+ * Toggles the "Spegni host"/"Riavvia host" buttons/hints from
+ * `profile.shutdownEnabled`/`profile.rebootEnabled` — found by review (for shutdown, before reboot
+ * existed): without this, a button was always clickable even on a host started without the matching
+ * --enable-* flag, and a tap there produced a generic-looking failure toast indistinguishable from a
+ * real one. Both buttons start `disabled` in the HTML itself (fail-closed) until this runs once.
  */
-function updateShutdownAvailability(shutdownEnabled) {
-  const button = document.getElementById("hub-shutdown-button");
-  const hint = document.getElementById("hub-shutdown-hint");
-  button.disabled = !shutdownEnabled;
-  hint.textContent = shutdownEnabled
+function updatePowerActionAvailability(shutdownEnabled, rebootEnabled) {
+  const shutdownButton = document.getElementById("hub-shutdown-button");
+  const shutdownHint = document.getElementById("hub-shutdown-hint");
+  shutdownButton.disabled = !shutdownEnabled;
+  shutdownHint.textContent = shutdownEnabled
     ? 'Spegnimento sicuro (equivalente a "sudo shutdown -h now"): l\'host non sarà più raggiungibile finché non viene riacceso fisicamente.'
     : "Non disponibile: questo processo non è stato avviato con --enable-shutdown.";
+
+  const rebootButton = document.getElementById("hub-reboot-button");
+  const rebootHint = document.getElementById("hub-reboot-hint");
+  rebootButton.disabled = !rebootEnabled;
+  rebootHint.textContent = rebootEnabled
+    ? 'Riavvio sicuro (equivalente a "sudo shutdown -r now"): utile per problemi bloccanti che richiedono un riavvio. Se i servizi di questo host non sono configurati per ripartire da soli, potrebbe restare irraggiungibile — verifica separatamente prima di affidartici.'
+    : "Non disponibile: questo processo non è stato avviato con --enable-reboot.";
 }
 
 function capabilityRow(term, value) {
@@ -193,7 +202,7 @@ function renderHostCapabilities(profile) {
     capabilityRow("GPU / NPU / Bluetooth / USB3", "non rilevabile da qui — richiede strumenti specifici del sistema operativo"),
   ];
   for (const [dt, dd] of rows) details.append(dt, dd);
-  updateShutdownAvailability(Boolean(profile.shutdownEnabled));
+  updatePowerActionAvailability(Boolean(profile.shutdownEnabled), Boolean(profile.rebootEnabled));
 }
 
 function showSetup() {
@@ -305,27 +314,48 @@ async function runAction(container, verb) {
 }
 
 /**
- * POST /api/hub/shutdown — the one irreversible, host-wide action on this page (every container
- * action above only affects one container, always recoverable with another action here). A native
- * confirm() is the same guard already used for stop/restart above, not a weaker one: this endpoint
- * is already gated by the management password (a local secret the operator holds, never propagated
- * over the mesh), a materially higher bar than the mesh-wide relay-reboot command mirror-portal's
- * two-step typed-confirmation dialog exists to protect against.
+ * Shared by shutdownHost()/rebootHost() below — both are irreversible, host-wide actions on this
+ * page (every container action above only affects one container, always recoverable with another
+ * action here). A native confirm() is the same guard already used for stop/restart above, not a
+ * weaker one: this endpoint is already gated by the management password (a local secret the operator
+ * holds, never propagated over the mesh), a materially higher bar than the mesh-wide relay-reboot
+ * command mirror-portal's two-step typed-confirmation dialog exists to protect against.
  */
-async function shutdownHost() {
-  if (!window.confirm("Spegnere questo host? Non sarà più raggiungibile finché non viene riacceso fisicamente.")) return;
+async function performHostPowerAction(path, confirmMessage, startedToast, statusMessage, failureLabel) {
+  if (!window.confirm(confirmMessage)) return;
   try {
-    await hubFetch("/api/hub/shutdown", { method: "POST" }, ACTION_TIMEOUT_MS);
-    showToast("Spegnimento avviato — l'host si spegnerà a breve.");
-    // Found by review: without this, refreshStatus()'s 4s poll kept hitting the dying/dead host
-    // afterwards, repainting the status-error banner every cycle — indistinguishable from a real
-    // ongoing failure, right after the reassuring success toast above.
+    await hubFetch(path, { method: "POST" }, ACTION_TIMEOUT_MS);
+    showToast(startedToast);
+    // Found by review (originally for shutdown alone, before reboot existed): without this,
+    // refreshStatus()'s 4s poll kept hitting the dying/dead host afterwards, repainting the
+    // status-error banner every cycle — indistinguishable from a real ongoing failure, right after
+    // the reassuring success toast above.
     clearInterval(pollTimer);
     pollTimer = null;
-    setStatusError('Host in spegnimento — usa "Cambia Management API" per connetterti altrove.');
+    setStatusError(statusMessage);
   } catch (err) {
-    showToast("Spegnimento non riuscito: " + err.message, "alert");
+    showToast(failureLabel + " non riuscito: " + err.message, "alert");
   }
+}
+
+async function shutdownHost() {
+  await performHostPowerAction(
+    "/api/hub/shutdown",
+    "Spegnere questo host? Non sarà più raggiungibile finché non viene riacceso fisicamente.",
+    "Spegnimento avviato — l'host si spegnerà a breve.",
+    'Host in spegnimento — usa "Cambia Management API" per connetterti altrove.',
+    "Spegnimento",
+  );
+}
+
+async function rebootHost() {
+  await performHostPowerAction(
+    "/api/hub/reboot",
+    "Riavviare questo host? Non sarà raggiungibile per qualche minuto.",
+    "Riavvio avviato — l'host si riavvierà a breve.",
+    'Host in riavvio — ricontrolla tra qualche minuto, o usa "Cambia Management API" per connetterti altrove nel frattempo.',
+    "Riavvio",
+  );
 }
 
 // renderContainers() re-fires loadLogs() for the open panel on every render (the 4s poll, or right
@@ -408,6 +438,7 @@ function init() {
     }
   });
 
+  document.getElementById("hub-reboot-button").addEventListener("click", rebootHost);
   document.getElementById("hub-shutdown-button").addEventListener("click", shutdownHost);
 
   document.getElementById("hub-change-gateway").addEventListener("click", () => {

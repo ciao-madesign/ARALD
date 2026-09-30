@@ -1075,6 +1075,21 @@ li.skel-row { display: flex; flex-direction: column; }
 #hub-host-details dt { color: var(--muted); font-size: 0.78em; }
 #hub-host-details dd { margin: 0.1em 0 0; font-size: 0.9em; }
 
+/* Stile neutro (bordo, non riempito), non il rosso distruttivo di .hub-shutdown-button sotto — un
+   riavvio è normalmente recuperabile da solo se l'host è configurato per far ripartire i servizi al
+   boot (nessuna garanzia data da questo codice, vedi docs/security.md voce #96), diversamente da uno
+   spegnimento che richiede sempre un intervento fisico per tornare online: la differenza di colore
+   riflette una reale differenza di severità, non un'estetica arbitraria. Stessa border/background
+   neutra di .hub-row-actions button, qui a piena larghezza per coerenza visiva con lo spegnimento. */
+.hub-reboot-button {
+  margin-top: 0.9em; width: 100%; display: flex; align-items: center; justify-content: center; gap: 0.5em;
+  border-radius: 0.5em; padding: 0.6em 1em; border: 1px solid var(--border); background: var(--bg); color: var(--ink); font-weight: 600;
+}
+.hub-reboot-button:active { transform: scale(0.98); }
+.hub-reboot-button:not(:disabled):hover { background: var(--off-soft); }
+.hub-reboot-button:disabled { opacity: 0.45; cursor: default; }
+.hub-reboot-button .icon { width: 1.1em; height: 1.1em; }
+
 /* Stessa palette d'emergenza/distruttiva di .sos-send-button (--bad) — l'unica azione irreversibile
    di questa pagina, merita lo stesso trattamento visivo dell'unica azione irreversibile dell'app
    principale, non un rosso inventato a parte. */
