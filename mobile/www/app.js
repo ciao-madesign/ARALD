@@ -5,10 +5,10 @@
 // Icons referenced via iconEl() point at static <symbol> ids defined once in index.html — never
 // built from network data, so they carry no such risk.
 
-const STORAGE_KEY_URL = "nomadnet.gatewayUrl";
-const STORAGE_KEY_PASSWORD = "nomadnet.networkPassword";
-const STORAGE_KEY_CONTACT_NAMES = "nomadnet.contactNames";
-const STORAGE_KEY_INTRO_SEEN = "nomadnet.introSeen";
+const STORAGE_KEY_URL = "arald.gatewayUrl";
+const STORAGE_KEY_PASSWORD = "arald.networkPassword";
+const STORAGE_KEY_CONTACT_NAMES = "arald.contactNames";
+const STORAGE_KEY_INTRO_SEEN = "arald.introSeen";
 const MAX_CONTACT_NAME_LENGTH = 40;
 
 /**
@@ -62,7 +62,7 @@ function setContactName(nodeId, name) {
   }
 }
 
-const STORAGE_KEY_ACTIVITY_LOG = "nomadnet.activityLog";
+const STORAGE_KEY_ACTIVITY_LOG = "arald.activityLog";
 const MAX_ACTIVITY_LOG_ENTRIES = 50;
 
 /**
@@ -143,11 +143,11 @@ function renderActivityLog() {
 // actually invoking anything. handleCall() (node/src/web-ui.ts) checks the password before it looks
 // at serviceId, so the response to this probe is 401 for a wrong password and something else (404,
 // since this id is obviously unknown) for a correct one — that's the only distinction this reads.
-const PROBE_SERVICE_ID = "__nomadnet_setup_probe__";
+const PROBE_SERVICE_ID = "__arald_setup_probe__";
 
 // Matches the URI node/src/web-ui.ts's GET /api/pairing builds and QR-encodes (buildPairingUri()) —
 // keep in sync if that format ever changes.
-const PAIRING_URI_PREFIX = "nomadnet://pair?";
+const PAIRING_URI_PREFIX = "arald://pair?";
 
 /**
  * Parses a scanned QR payload back into {host, password}, or null if it isn't one of ours. The `n`

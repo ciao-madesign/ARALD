@@ -11,7 +11,7 @@ import { Identity } from "../../node/src/identity.js";
 
 describe("ContentStore", () => {
   it("derives the content id as sha256 of the payload", () => {
-    const data = Buffer.from("hello nomad-net");
+    const data = Buffer.from("hello arald");
     const store = new ContentStore();
     const metadata = store.put("hello.txt", "text/plain", data);
     expect(metadata.contentId).toBe(computeContentId(data));

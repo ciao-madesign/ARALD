@@ -71,8 +71,8 @@ describe("NOMAD Hub Management API (mocked, no real Docker)", () => {
 
   it("lists containers with name/state/health", async () => {
     const { password } = await setup();
-    fakeDocker!.addContainer({ id: "c1", name: "nomad-core", image: "nomad-net/core:latest", state: "running", health: "healthy" });
-    fakeDocker!.addContainer({ id: "c2", name: "nomad-kiwix", image: "nomad-net/kiwix:latest", state: "exited" });
+    fakeDocker!.addContainer({ id: "c1", name: "nomad-core", image: "nomad-core:latest", state: "running", health: "healthy" });
+    fakeDocker!.addContainer({ id: "c2", name: "nomad-kiwix", image: "nomad-kiwix:latest", state: "exited" });
 
     const res = await authedFetch(server!, "/api/hub/status", password);
     expect(res.status).toBe(200);

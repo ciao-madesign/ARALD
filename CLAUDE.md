@@ -35,6 +35,7 @@ Il piano d'insieme originario (milestone 0-20 + i follow-up post-audit) è compl
 | Deployment target (ARALD Box/Portable), pilot per scenario d'uso | [`docs/deployment.md`](docs/deployment.md) |
 | Catalogo servizi (mesh-native + NOMAD-backed), pacchetti pre-confezionati per caso d'uso | [`docs/service-catalog.md`](docs/service-catalog.md) |
 | Cosa è riusato da Project NOMAD/BitChat vs. costruito ex novo | [`docs/reuse-vs-new.md`](docs/reuse-vs-new.md) |
+| Appunto grezzo di spunti/migliorie notati confrontando ARALD con repository esterni (analisi a comando, non un monitoraggio automatico) | [`docs/external-inspiration.md`](docs/external-inspiration.md) |
 
 **Leggi la voce/il documento pertinente prima di toccare il codice corrispondente** — spiegano non solo cosa è stato fatto ma perché, inclusi i bug trovati dalla revisione prima di considerare ogni voce conclusa.
 
@@ -69,9 +70,9 @@ Non saltare il passaggio di code-review nemmeno quando il codice "sembra ovviame
 ## Struttura del repository
 
 ```
-nomad-net/
+arald/
 ├─ docs/            specifica (SPECIFICATION.md) e documentazione tecnica
-├─ node/src/        nomad-node: il runtime di rete (unico package con codice reale)
+├─ node/src/        arald-node: il runtime di rete (unico package con codice reale)
 ├─ tests/           unit/, integration/, network/ (vitest)
 ├─ tools/simulator/ simulatore di rete a scala (usato anche da `npm run simulate`)
 ├─ gateway/nomad/   gateway NOMAD: KiwixGateway, AiGateway, NewsGateway, TranslateGateway, InternetGateway, FlatnotesGateway — mockato, non nel workspace npm

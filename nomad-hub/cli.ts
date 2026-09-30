@@ -52,8 +52,8 @@ async function main(): Promise<void> {
   let docker: DockerClient;
   if (args["fake-docker"] !== undefined) {
     fakeDocker = new FakeDockerServer();
-    fakeDocker.addContainer({ id: "demo-core", name: "nomad-hub-core-demo", image: "nomad-net/core:latest", state: "running", logLines: ["core avviato", "in ascolto sulla mesh"] });
-    fakeDocker.addContainer({ id: "demo-kiwix", name: "nomad-hub-kiwix-demo", image: "nomad-net/kiwix:latest", state: "exited", logLines: ["kiwix arrestato"] });
+    fakeDocker.addContainer({ id: "demo-core", name: "nomad-hub-core-demo", image: "nomad-core:latest", state: "running", logLines: ["core avviato", "in ascolto sulla mesh"] });
+    fakeDocker.addContainer({ id: "demo-kiwix", name: "nomad-hub-kiwix-demo", image: "nomad-kiwix:latest", state: "exited", logLines: ["kiwix arrestato"] });
     await fakeDocker.start();
     docker = new DockerClient({ host: "127.0.0.1", port: fakeDocker.port });
     console.log(`Fake Docker server (--fake-docker dato): 127.0.0.1:${fakeDocker.port}`);

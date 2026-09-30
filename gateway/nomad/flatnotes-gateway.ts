@@ -58,7 +58,7 @@ interface RateWindow {
 }
 
 /**
- * Translates Nomad-Net's abstract APIs (spec §37) into HTTP calls against a
+ * Translates ARALD's abstract APIs (spec §37) into HTTP calls against a
  * FlatNotes instance (Project NOMAD component, spec §4/
  * `docs/SPECIFICATION.md:102`, `docs/reuse-vs-new.md`: "Esiste,
  * containerizzato → Consumato tramite gateway") — a real Docker+NOMAD

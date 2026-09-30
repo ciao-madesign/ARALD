@@ -4,8 +4,8 @@
 // keys, no imports from app.js — see hub-control.html's own top comment for the full boundary
 // reasoning (docs/deployment.md, "L'ARALD Hub come sistema portatile").
 
-const STORAGE_KEY_URL = "nomadhub.apiUrl";
-const STORAGE_KEY_PASSWORD = "nomadhub.managementPassword";
+const STORAGE_KEY_URL = "araldhub.apiUrl";
+const STORAGE_KEY_PASSWORD = "araldhub.managementPassword";
 const READ_TIMEOUT_MS = 8000;
 const ACTION_TIMEOUT_MS = 15000;
 const STATUS_POLL_MS = 4000;
