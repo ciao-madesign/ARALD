@@ -2,6 +2,7 @@ import { DockerClient, DEFAULT_DOCKER_SOCKET_PATH } from "./docker-client.js";
 import { FakeDockerServer } from "./fake-docker-server.js";
 import { ManagementServer, generateManagementPassword } from "./management-server.js";
 import { executeSystemReboot, executeSystemShutdown } from "./host-power.js";
+import { startWifiGattServer, type WifiGattServerHandle } from "./wifi-gatt-server.js";
 
 /**
  * Local copy of `gateway/local-services/cli.ts`'s own `parseArgs()` (`--flag value`
@@ -77,6 +78,23 @@ async function main(): Promise<void> {
   const server = new ManagementServer(docker, { port, host, managementPassword, containerNamePrefix, capabilityStoragePath, shutdown: hostShutdown, reboot: hostReboot });
   await server.start();
 
+  // Registrati subito dopo che il server HTTP è in ascolto, PRIMA del tentativo di avvio del server
+  // GATT sotto (found by code review): `wifiGattServer` è dichiarata `let` e chiusa per riferimento,
+  // quindi `shutdownProcess()` vede sempre il suo valore più recente al momento della chiamata, anche
+  // se questi gestori sono registrati prima che quella variabile venga assegnata. Se non fosse così, un
+  // Ctrl-C ricevuto mentre `startWifiGattServer()` è ancora in corso (fino a `STARTUP_TIMEOUT_MS`)
+  // cadrebbe sul comportamento di default di Node (uscita immediata, senza `server.stop()`/pulizia del
+  // fake Docker) invece del percorso di arresto pulito previsto.
+  let wifiGattServer: WifiGattServerHandle | undefined;
+  const shutdownProcess = async (): Promise<void> => {
+    await server.stop();
+    if (fakeDocker) await fakeDocker.stop();
+    if (wifiGattServer) await wifiGattServer.stop();
+    process.exit(0);
+  };
+  process.on("SIGINT", () => void shutdownProcess());
+  process.on("SIGTERM", () => void shutdownProcess());
+
   console.log("ARALD Hub Management API");
   const boundHost = host ?? "127.0.0.1";
   console.log(`Ascolto su: http://${boundHost}:${server.port}`);
@@ -103,13 +121,21 @@ async function main(): Promise<void> {
       : "Riavvio remoto disabilitato (default) — passa --enable-reboot per abilitarlo (stesso permesso sudo di --enable-shutdown, vedi nomad-hub/host-power.ts).",
   );
 
-  const shutdownProcess = async (): Promise<void> => {
-    await server.stop();
-    if (fakeDocker) await fakeDocker.stop();
-    process.exit(0);
-  };
-  process.on("SIGINT", () => void shutdownProcess());
-  process.on("SIGTERM", () => void shutdownProcess());
+  // Fail-closed opt-in, come --enable-shutdown/--enable-reboot sopra — ma qui il fallimento è atteso
+  // e non fatale anche quando l'operatore lo ha richiesto esplicitamente: questa capacità richiede un
+  // vero BlueZ/D-Bus di sistema con un adattatore Bluetooth (assente per costruzione in questo
+  // sandbox, verificato — mai assunto disponibile su un host qualunque). Un fallimento qui non deve
+  // mai impedire al resto della Hub Management API di partire normalmente.
+  if (args["enable-wifi-provisioning"] !== undefined) {
+    try {
+      wifiGattServer = await startWifiGattServer();
+      console.log("Provisioning Wi-Fi via Bluetooth ABILITATO (--enable-wifi-provisioning): server GATT BlueZ avviato e in ascolto.");
+    } catch (err) {
+      console.error(
+        `Provisioning Wi-Fi via Bluetooth: avvio del server GATT fallito (${err instanceof Error ? err.message : String(err)}) — probabilmente BlueZ/D-Bus non è disponibile su questo host, o non ha un adattatore Bluetooth. Il resto della Hub Management API continua a funzionare normalmente.`,
+      );
+    }
+  }
 }
 
 main().catch((err) => {

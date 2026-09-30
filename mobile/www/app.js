@@ -1133,6 +1133,68 @@ document.getElementById("scan-qr").addEventListener("click", () => {
 });
 document.getElementById("scanner-cancel").addEventListener("click", stopScanner);
 
+// Provisioning Wi-Fi via Bluetooth per il Box (docs/next-steps.md) — feature-gated sulla presenza del
+// plugin Bluetooth, stesso schema già usato per #ble-relay-panel/#sos-button in ble-client.js (qui
+// però sulla schermata di setup, non nella dashboard: questo flusso serve *prima* che il telefono si
+// sia mai collegato a un gateway). Logica reale in ble-wifi-provisioning.js — vedi il suo header per
+// cosa è verificato qui (nulla, contro hardware vero) e perché.
+function bleWifiProvisioningPlugin() {
+  return window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BluetoothLe;
+}
+
+if (bleWifiProvisioningPlugin()) {
+  document.getElementById("wifi-provisioning-open").hidden = false;
+}
+
+document.getElementById("wifi-provisioning-open").addEventListener("click", () => {
+  document.getElementById("wifi-provisioning-panel").hidden = false;
+  document.getElementById("wifi-provisioning-status").classList.remove("error");
+  document.getElementById("wifi-provisioning-status").textContent = "";
+  document.getElementById("wifi-provisioning-ssid").focus();
+});
+
+document.getElementById("wifi-provisioning-cancel").addEventListener("click", () => {
+  document.getElementById("wifi-provisioning-panel").hidden = true;
+});
+
+document.getElementById("wifi-provisioning-send").addEventListener("click", async () => {
+  const ssidInput = document.getElementById("wifi-provisioning-ssid");
+  const passwordInput = document.getElementById("wifi-provisioning-password");
+  const sendButton = document.getElementById("wifi-provisioning-send");
+  const status = document.getElementById("wifi-provisioning-status");
+
+  const ssid = ssidInput.value.trim();
+  const password = passwordInput.value;
+  if (!ssid || !password) {
+    status.classList.add("error");
+    status.textContent = "Inserisci nome rete e password.";
+    return;
+  }
+
+  sendButton.disabled = true;
+  status.classList.remove("error");
+  try {
+    const result = await window.AraldBleWifiProvisioning.provisionWifiOverBluetooth(
+      { ssid, password },
+      { onStatus: (text) => { status.textContent = text; } },
+    );
+    if (result.status === "connected") {
+      status.textContent = "Il Box si è collegato alla rete Wi-Fi.";
+      vibrate(15);
+      showToast("Wi-Fi del Box configurato", "wifi");
+      passwordInput.value = "";
+    } else {
+      status.classList.add("error");
+      status.textContent = "Il Box non si è collegato: " + result.reason;
+    }
+  } catch (err) {
+    status.classList.add("error");
+    status.textContent = "Errore: " + err.message;
+  } finally {
+    sendButton.disabled = false;
+  }
+});
+
 document.getElementById("forget-network").addEventListener("click", () => {
   localStorage.removeItem(STORAGE_KEY_URL);
   localStorage.removeItem(STORAGE_KEY_PASSWORD);
