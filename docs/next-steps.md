@@ -38,6 +38,24 @@ Riferimento: [`docs/roadmap.md`](./roadmap.md) per lo stato di tutte le mileston
 
 **Versione simulata — ✅ fatta, aggiornata 30 settembre 2026**: `KiwixGateway` non punta più a un'ipotetica API di Project NOMAD (mai verificata) ma alla vera API di un `kiwix-serve` nudo, verificata con accesso web reale — vedi "Ipotesi di indipendenza da Project NOMAD" sotto, che ha di fatto risolto parte di questa opzione per Kiwix. `AiGateway` verificato contro `FakeOllamaServer` locale (ora con `model` obbligatorio, allineato alla vera API Ollama). **Resta bloccata solo la verifica contro istanze reali** — nessun ambiente Docker/kiwix-serve/Ollama disponibile in questa sessione.
 
+### Ponte verso Meshtastic — accessorio opzionale, fase successiva alla validazione dei prototipi (proposto dall'utente, 30 settembre 2026)
+
+**Non una milestone core**: a differenza delle Opzioni sopra, questo è pensato esplicitamente come **accessorio** del progetto — utile per chi vorrà dotare il proprio Box/Portable/Fixed Relay di una **seconda antenna LoRa dedicata a questo solo scopo**, non un requisito per usare ARALD. Verrà sviluppato **su un branch dedicato separato**, non sul branch di lavoro principale, proprio per la sua natura di componente opzionale/staccabile dal core — merge solo quando maturo.
+
+**Perché non ora**: subordinato al completamento della fase di validazione dei prototipi attuali (mesh reale, Box, Card) — non ha senso investire in un ponte verso un ecosistema esterno prima che il nucleo ARALD sia validato sul campo. Candidato per una fase successiva, non pianificato a breve termine.
+
+**Idea**: un gateway che riceve/traduce pacchetti Meshtastic (LoRa) verso le strutture dati ARALD e viceversa — dettaglio del design discusso con l'utente (livello radio, protocollo, mapping, fiducia) in `docs/external-inspiration.md`. Punti chiave:
+- **Vincolo hardware esplicito — subordinato alla presenza di un'antenna dedicata**: richiede un secondo radio LoRa fisico sul nodo-ponte, sintonizzato sui parametri di modulazione di Meshtastic (banda/SF/coding rate del loro preset — da verificare contro `meshtastic/firmware`/documentazione ufficiale prima di implementare, non assunti qui). Il radio ARALD esistente resta dedicato alla propria mesh; **senza questa seconda antenna il ponte non è utilizzabile** — non è un'opzione software pura.
+- Decodifica del `MeshPacket` (protobuf pubblico) reimplementata da zero — nessun riuso di codice Meshtastic (GPL-3.0), stesso trattamento già riservato in `docs/reuse-vs-new.md`.
+- Mapping proposto: `TEXT_MESSAGE_APP` → `PublicChannels`/`Drops`; `POSITION_APP` → `LocationRegistry` (fiducia minima); `ALERT_APP`/`GROUPALARM_APP` → `EmergencyBeacons` (si incastra bene: `emergency-beacon.ts` è già senza `trustRank`, un'identità mai vista è il caso atteso per un SOS).
+- Non implementa l'interfaccia `Transport` esistente (non è un link punto-a-punto) — stesso trattamento architetturale di `transports/beacon-broadcast.ts`, un modulo a sé wired su `NomadNode` con un hook dedicato.
+
+**Prerequisiti**: (1) validazione dei prototipi completata, (2) hardware reale — un secondo radio LoRa dedicato sul nodo-ponte, non disponibile in questo ambiente. **Stato: non pianificata a breve, accessorio per una fase successiva.**
+
+**Rischi principali**: parametri di modulazione Meshtastic da verificare con fonte primaria prima di iniziare (non assunti); un pacchetto tradotto entra sempre a fiducia nulla/minima, va marcato chiaramente come fonte esterna non verificata nell'interfaccia utente per non confonderlo con un peer ARALD autenticato.
+
+**Sforzo relativo**: **medio-alto** — hardware aggiuntivo nel loop, reimplementazione di un parser protobuf minimo, ma la logica di traduzione verso le strutture dati ARALD riusa componenti già esistenti (content/drops/beacon/location).
+
 ### Connettività Bluetooth lato gateway/Clip (Opzione H, Passo 2)
 
 Lato telefono (scan/connect/handshake verso una ARALD Clip/Cover, logica di protocollo unit-testata): fatto, `docs/security.md` voce #62. **Prerequisito ancora aperto**: un dispositivo con hardware BLE reale dal lato gateway/Clip che parli ARALD — stesso blocco dell'Opzione A, nessuna verifica end-to-end possibile finché non è disponibile.
@@ -58,33 +76,50 @@ Le opzioni sopra restano bloccate sui rispettivi prerequisiti ambientali **solo 
 
 ## Candidato aperto e pianificato, non ancora implementato
 
-### Terzo/quarto/quinto esempio di "consegna esterna differita" (pianificato, confermato dall'utente, 21 settembre 2026)
+### Pulsante dedicato "Invia la mia posizione" per il check-in verso un webhook — non ancora implementato
 
-Dopo `whatsapp-relay/` (`docs/security.md` voce #79) ed `email-relay/` (voce #85), pianificate con l'utente le tre destinazioni rimaste tra i sei esempi concreti discussi in origine: **post su un canale/bot** (es. Slack/Telegram), **check-in di posizione** verso un servizio di coordinamento esterno, **upload di un report/foto** su una piattaforma esterna.
+Terzo/quarto/quinto esempio di "consegna esterna differita" — post su un canale/bot, check-in di posizione, upload di un report/foto (pianificati con l'utente il 21 settembre 2026) — coperti da un solo relay generico costruito il 29 settembre 2026: `webhook-relay/` (`docs/security.md` voce #94, `docs/service-catalog.md`). L'upload di file/foto non ha richiesto nulla di nuovo lato mobile — il pannello "Invia a un'organizzazione" accetta già un file allegato oggi.
 
-**Osservazione emersa in fase di pianificazione**: le tre sono la stessa meccanica di fondo — un invio HTTP verso un indirizzo web configurato dall'operatore — quindi il piano concordato è costruire **un solo relay generico "a webhook"** invece di tre relay separati, sullo stesso pattern indipendente di `whatsapp-relay/`/`email-relay/` (fuori mesh, fuori workspace npm).
+**Resta aperto solo un rifinimento UX lato mobile, non backend**: per il check-in di posizione è consigliato un pulsante dedicato "Invia la mia posizione" che compili automaticamente le coordinate GPS (plugin Geolocation già in uso altrove nell'app, voce #44) più uno stato rapido ("Tutto ok"/"Serve aiuto"), invece di scrivere a mano nel campo testo esistente del pannello "Invia a un'organizzazione". Nessun codice scritto per questo rifinimento finora — da riprendere in una sessione futura con lo stesso workflow a doppio check, solo se/quando richiesto dall'utente.
 
-**Tre decisioni raccolte con l'utente, tutte confermate**:
-1. Un relay generico unico per i tre casi, non tre relay separati.
-2. Corpo della richiesta HTTP verso il servizio esterno: JSON semplice (testo o file codificato dentro), stesso principio degli altri due relay — niente parser multipart/form-data da scrivere a mano.
-3. Autenticazione verso il servizio esterno: un token fisso configurato una tantum dall'operatore (stesso principio della password SMTP di `email-relay/`) — copre la maggior parte dei servizi reali (Slack, Zapier, API generiche); niente di più sofisticato, perché il servizio esterno reale non è ancora noto.
+### Installer/wizard "ARALD Portable" software-puro — proposto dall'utente il 29 settembre 2026, piano tecnico rivalutato e confermato il 30 settembre 2026, non ancora implementato
 
-**Lato mobile**: per l'upload di file/foto (il terzo di questi tre esempi) non serve nulla di nuovo — il pannello "Invia a un'organizzazione" accetta già un file allegato oggi. Per il check-in di posizione è consigliato un pulsante dedicato "Invia la mia posizione" che compila automaticamente le coordinate GPS (plugin Geolocation già in uso altrove nell'app, voce #44) più uno stato rapido ("Tutto ok"/"Serve aiuto"), invece di scrivere a mano nel campo testo esistente.
-
-**Nessun codice scritto finora** — piano confermato dall'utente, in attesa di essere ripreso in una sessione futura con lo stesso workflow a doppio check di ogni voce precedente.
-
-### Installer/wizard "ARALD Portable" software-puro — proposto dall'utente, 29 settembre 2026, non ancora implementato
-
-**Idea**: distribuire il solo runtime mesh (`node/src/` — `NomadNode`/`cli.ts`/`web-ui.ts`, nessuna dipendenza da Docker o Project NOMAD) come pacchetto installabile per un utente non tecnico: scarica/riceve un pacchetto, lo installa sul proprio SSD esterno (o direttamente sul proprio PC), un breve wizard di configurazione iniziale, pronto all'uso — variante **Wi-Fi-only**, nessun hardware radio richiesto (il kit LoRa resta un componente opzionale per chi vuole portata lunga, vedi `docs/deployment.md`, "Chiarimento terminologico... due significati di ARALD Portable").
+**Idea**: distribuire il solo runtime mesh (`node/src/` — `NomadNode`/`cli.ts`/`web-ui.ts`, nessuna dipendenza da Docker o Project NOMAD) come pacchetto installabile per un utente non tecnico — variante **Wi-Fi-only**, nessun hardware radio richiesto (il kit LoRa resta un componente opzionale per chi vuole portata lunga, vedi `docs/deployment.md`, "Chiarimento terminologico... due significati di ARALD Portable").
 
 **Perché non è bloccata come le Opzioni A/B sopra**: a differenza del "Bootstrap/packaging del ARALD Hub" (Docker+Project NOMAD, `docs/deployment.md`, tuttora bloccato da prerequisiti esterni), questo pacchetto confeziona solo codice già reale e testato in questo repository — nessun Docker, nessun sorgente NOMAD, nessun hardware radio necessario per la variante base.
 
-**Cosa manca**:
-1. Un vero step di packaging — oggi si esegue solo via `npm run dev -w node --` da riga di comando; da valutare uno script di installazione/bundle eseguibile per Windows/macOS/Linux.
-2. Un wizard di primo avvio (nome nodo, password di rete, directory dati/SSD, avvio automatico) — non esiste ancora, oggi la configurazione è solo tramite i flag di `cli.ts`.
-3. Verifica end-to-end con un utente non tecnico che segue solo le istruzioni del pacchetto, senza assistenza — non ancora fatta.
+**Decisione presa il 30 settembre 2026, esplicitamente dell'utente**: forma "app" (installer nativo, gira in background mentre il PC resta utilizzabile normalmente), **non** un'immagine avviabile da SSD/USB — alternativa valutata e scartata (avrebbe reso il PC un'appliance dedicata finché acceso da quella chiavetta, un trade-off di forma-prodotto giudicato peggiore per questo caso).
 
-**Effetto collaterale utile per la campagna Kickstarter**: costo di produzione ~0€ per il progetto nella variante Wi-Fi-only — discusso con l'utente come possibile reward a basso costo in fase di definizione della campagna (29 settembre 2026).
+**Piano tecnico concreto, punto per punto**:
+
+1. **Packaging — Node SEA (Single Executable Applications)**, la feature nativa di Node 20+: zero nuove dipendenze esterne (coerente con la convenzione del repository), un binario autonomo per piattaforma che include già il runtime Node — l'utente non deve avere Node installato. Build separate per `win-x64`, `macos-x64`, `macos-arm64`, `linux-x64`, `linux-arm64`, via matrice CI (GitHub Actions), non da una singola macchina. **Limite noto di questo ambiente**: qui è costruibile e verificabile solo il binario Linux — Windows/macOS richiedono build e verifica sulle rispettive piattaforme reali, stesso tipo di limite già documentato per la build Android nativa (`CLAUDE.md`).
+2. **Persistenza in background** — nessun tray icon nativo per la v1 (eviterebbe Electron o binding nativi solo per quello, costo/complessità sproporzionati rispetto al beneficio). Ogni piattaforma registra l'avvio automatico col proprio meccanismo nativo: LaunchAgent su macOS, Task Scheduler/servizio su Windows, systemd user unit su Linux — stesso principio già validato sul Box reale (`--identity-dir` + avvio persistente via systemd), solo esteso a tre piattaforme.
+3. **Wizard di primo avvio** — nessuna UI nuova da costruire: l'installer, al primo avvio, apre il browser di sistema puntato sulla pagina di setup **già esistente** in `web-ui.ts` (stesso pairing Wi-Fi-style con QR già costruito per altri ruoli). Da lì in poi quella stessa pagina resta il pannello di controllo, niente app nativa con interfaccia propria da mantenere. Si incastra con la proposta "file di configurazione per `cli.ts`" già annotata in `docs/external-inspiration.md`: il wizard scriverebbe quel file invece dei soli flag.
+4. **Directory dati** — una directory standard per OS scelta in automatico dal wizard (`~/.arald/` o l'equivalente `AppData`/`Application Support`), con un'opzione avanzata per chi vuole comunque puntare a un disco esterno. Non più legata a un SSD esterno come nella formulazione originale, dato che la forma scelta è "app" non "immagine avviabile".
+5. **Verifica end-to-end con un utente non tecnico** — resta bloccata, nessun utente reale disponibile in questo ambiente, stesso limite di ogni verifica "sul campo" di questo repository.
+6. **Effetto Kickstarter** — framing "costo di produzione ~0€" resta pulito con questa forma (zero hardware da procurarsi, solo scaricare ed eseguire) — anzi migliora rispetto all'ipotesi immagine-avviabile, che avrebbe comunque richiesto un SSD/chiavetta propria.
+
+### Provisioning Wi-Fi via Bluetooth per un Box senza cavo Ethernet — emerso da una domanda dell'utente, 30 settembre 2026, non ancora implementato
+
+**Priorità: alta** — a differenza della voce sotto, questa blocca un percorso d'acquisto reale (chi riceve un Box senza avere un cavo Ethernet a disposizione) per il prodotto hardware di punta, non solo un caso limite di una feature già funzionante.
+
+**Il problema**: il Box (Orange Pi 4 Pro) non ha schermo né tastiera. Oggi, sul prototipo reale, collegarlo per la prima volta al Wi-Fi di casa/rifugio si fa via SSH + `nmcli` da un operatore tecnico (`docs/riavvio-box-prototipo.md`) — non un'esperienza da consumatore. Senza un cavo Ethernet per il primo collegamento, un utente non tecnico resterebbe bloccato.
+
+**Idea**: il telefono si collega al Box via Bluetooth (che non richiede alcuna rete già presente — è un link diretto dispositivo-dispositivo) e gli passa in un solo scambio nome/password del Wi-Fi di casa, una tantum. Il Box si collega da solo alla rete indicata. Riuso di infrastruttura già esistente: il Box ha Bluetooth 5.4 di fabbrica; il lato telefono sa già parlare Bluetooth con dispositivi ARALD (`mobile/www/ble-client.js`/`ble-link.js`, già usato per il pairing con la Card). Manca lo scambio specifico "credenziali Wi-Fi" e il lato Box che le riceve e le applica (wrapper su `nmcli`, con lo stesso principio di comando limitato e specifico già usato per `nomad-hub/host-power.ts` — mai una shell generica).
+
+**Alternativa scartata come soluzione unica**: il Box crea una propria rete Wi-Fi (come un piccolo router) invece di collegarsi a quella di casa — pattern già documentato per lo scenario rifugio (`docs/guida-hardware-rifugio.md`, hostapd/dnsmasq + il redirect captive-portal già presente in `web-ui.ts`). Resta valida come opzione per chi non ha proprio nessuna rete Wi-Fi esistente da usare, ma non risolve da sola il caso "il Box deve anche uscire su Internet per i propri servizi" — a quel punto serve comunque un modo per farlo uscire in rete, il problema si sposta ma non si risolve.
+
+**Cosa manca**: (1) un piccolo servizio Bluetooth lato Box che riceve `{ssid, password}` e li applica via `nmcli` con permessi limitati allo scopo, (2) l'estensione lato app per lo scambio (nuova schermata di pairing, prima ancora del pairing di rete già esistente), (3) verifica end-to-end su hardware reale — non disponibile in questo ambiente.
+
+### Coda SOS persistente sul telefono, in attesa di un peer BLE — emerso da una domanda dell'utente, 30 settembre 2026, non ancora implementato
+
+**Priorità: media** — migliora un caso limite di una feature già funzionante (l'SOS via Bluetooth dal telefono, voce #65), non blocca un percorso d'acquisto/onboarding.
+
+**Stato attuale, verificato nel codice**: `mobile/www/ble-client.js`'s `sendEmergencyBeaconViaRelay()` attiva il relay Bluetooth del telefono se non è già attivo, poi ripete l'invio dell'SOS per `SOS_BROADCAST_REPEAT_COUNT` volte a intervalli brevi (pochi secondi in tutto) — cattura un peer che si connette subito dopo il tap, ma se nessuno è a portata in quella finestra, l'SOS non resta in attesa oltre.
+
+**Idea**: tenere l'SOS "pronto" e farlo partire automaticamente il momento in cui il telefono incrocia un qualunque dispositivo ARALD via Bluetooth, anche minuti o ore dopo — non solo nella finestra immediata dopo il tap. Coerente con l'obiettivo dichiarato del progetto di sfruttare qualunque canale disponibile, incluso "il primo che capita, quando capita".
+
+**Cosa servirebbe**: una coda locale sul telefono (persistita, sopravvive alla chiusura dell'app) con l'SOS già costruito e firmato (`ble-sos.js`), un listener sulla scoperta di nuovi peer Bluetooth che, se la coda non è vuota, tenta l'invio subito; un modo per l'utente di vedere "SOS in attesa di essere trasmesso" invece del solo "SOS trasmesso" attuale, e di annullarlo. Da progettare: per quanto tempo tenerlo in coda (batteria/rilevanza del messaggio scadono), e se ripetere l'invio anche dopo il primo successo (un solo peer raggiunto non garantisce che il messaggio arrivi a un Emergency Node reale, la mesh sottostante gestisce già l'inoltro una volta entrato, ma vale la pena chiarirlo esplicitamente quando si progetterà).
 
 ### Ipotesi di indipendenza da Project NOMAD — Kiwix/Ollama diretti (29-30 settembre 2026, Kiwix riscritto e verificato via codice, decisione su NOMAD nel suo insieme ancora aperta)
 
@@ -131,16 +166,6 @@ La Fase 8 (mockup pixel-precisi in Figma di tutti i flussi — griglie/spaziatur
 **Osservazione originale (25 settembre 2026), ancora rilevante in parte**: un IP fisso impostato *sul dispositivo stesso* (come fatto ora) evita la collisione con quel dispositivo specifico, ma **non è equivalente a una riserva DHCP sul router** — resta teoricamente possibile che il router assegni lo stesso indirizzo a un altro dispositivo in futuro via DHCP, visto che il router non sa che quell'indirizzo è "preso".
 
 **Direzione già decisa, ancora da eseguire quando comodo (rifinimento, non più bloccante)**: una prenotazione DHCP (static lease) sul router, basata sul MAC address dell'interfaccia Wi-Fi del prototipo — elimina anche il rischio residuo sopra. Da verificare che l'indirizzo riservato sia fuori dal range dinamico del pool (o che il router gestisca correttamente le riserve al suo interno).
-
----
-
-### Pulsante di spegnimento sicuro nella Web UI — pianificato, non ancora implementato (28 settembre 2026)
-
-**Richiesta dell'utente**: poter spegnere in sicurezza il Box (equivalente a `sudo shutdown -h now` + attesa del filesystem sincronizzato) da un pulsante nell'interfaccia web, invece di doversi collegare via SSH ogni volta.
-
-**Decisione architetturale presa prima di iniziare (non ancora implementata)**: questo comando **non va aggiunto a `web-ui.ts`** — quell'interfaccia (stato/interazione della mesh, spec §59) è deliberatamente priva di qualunque accesso all'OS/Docker dell'host, stessa separazione già documentata per `nomad-hub/` contro l'app mobile (`CLAUDE.md`). Il posto corretto è **`nomad-hub/`** (ARALD Hub Management API, già pensata per amministrare l'host con una password propria separata da quella di rete della mesh) — non ancora attivo su questo prototipo Box.
-
-**Cosa servirebbe, quando si riprenderà**: un nuovo endpoint autenticato in `nomad-hub/management-server.ts`, un permesso `sudo` **specifico e limitato** al solo comando di spegnimento per l'utente di sistema (mai sudo generico), un pulsante nel pannello `mobile/www/hub-control.html`/`.js` esistente, test dedicati — stesso workflow a doppio check di ogni feature sostanziale di questo repository. Richiede prima di attivare `nomad-hub/` su questo Box (oggi gira solo il nodo ARALD base).
 
 ---
 

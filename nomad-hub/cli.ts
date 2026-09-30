@@ -1,6 +1,7 @@
 import { DockerClient, DEFAULT_DOCKER_SOCKET_PATH } from "./docker-client.js";
 import { FakeDockerServer } from "./fake-docker-server.js";
 import { ManagementServer, generateManagementPassword } from "./management-server.js";
+import { executeSystemReboot, executeSystemShutdown } from "./host-power.js";
 
 /**
  * Local copy of `gateway/nomad/cli.ts`'s own `parseArgs()` (`--flag value`
@@ -66,7 +67,14 @@ async function main(): Promise<void> {
   const containerNamePrefix = args["container-prefix"];
   const capabilityStoragePath = args["capability-storage-path"];
   const host = args["host"];
-  const server = new ManagementServer(docker, { port, host, managementPassword, containerNamePrefix, capabilityStoragePath });
+  // Fail-closed by default (docs/next-steps.md, "Pulsante di spegnimento sicuro nella Web UI"), two
+  // independent opt-ins — an operator can enable shutdown without reboot or vice versa, same
+  // reasoning as node/src/cli.ts's --trust-admin/--allow-remote-reboot pair: this host may not even
+  // have the required sudoers grant configured for either, so neither capability should exist at all
+  // unless someone deliberately turned it on.
+  const hostShutdown = args["enable-shutdown"] !== undefined ? executeSystemShutdown : undefined;
+  const hostReboot = args["enable-reboot"] !== undefined ? executeSystemReboot : undefined;
+  const server = new ManagementServer(docker, { port, host, managementPassword, containerNamePrefix, capabilityStoragePath, shutdown: hostShutdown, reboot: hostReboot });
   await server.start();
 
   console.log("ARALD Hub Management API");
@@ -84,14 +92,24 @@ async function main(): Promise<void> {
     console.log("Nessun filtro container: ogni container del demone Docker e' gestibile da qui.");
   }
   console.log(`Profilo hardware su GET /api/hub/capabilities (storage riportato per: ${capabilityStoragePath ?? process.cwd()})`);
+  console.log(
+    hostShutdown
+      ? "Spegnimento remoto ABILITATO (--enable-shutdown): POST /api/hub/shutdown eseguirà davvero 'sudo shutdown -h now' su questo host."
+      : "Spegnimento remoto disabilitato (default) — passa --enable-shutdown per abilitarlo (richiede un permesso sudo specifico per l'utente di sistema, vedi nomad-hub/host-power.ts).",
+  );
+  console.log(
+    hostReboot
+      ? "Riavvio remoto ABILITATO (--enable-reboot): POST /api/hub/reboot eseguirà davvero 'sudo shutdown -r now' su questo host. Se i servizi (nomad-hub incluso) non ripartono da soli al boot, questo processo non tornerà raggiungibile senza intervento manuale — verificalo separatamente, non è qualcosa che questo codice può garantire."
+      : "Riavvio remoto disabilitato (default) — passa --enable-reboot per abilitarlo (stesso permesso sudo di --enable-shutdown, vedi nomad-hub/host-power.ts).",
+  );
 
-  const shutdown = async (): Promise<void> => {
+  const shutdownProcess = async (): Promise<void> => {
     await server.stop();
     if (fakeDocker) await fakeDocker.stop();
     process.exit(0);
   };
-  process.on("SIGINT", () => void shutdown());
-  process.on("SIGTERM", () => void shutdown());
+  process.on("SIGINT", () => void shutdownProcess());
+  process.on("SIGTERM", () => void shutdownProcess());
 }
 
 main().catch((err) => {

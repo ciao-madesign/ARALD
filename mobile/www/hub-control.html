@@ -29,6 +29,7 @@
     <g id="hub-icon-alert"><path d="M10.3 3.9 1.9 18a2 2 0 0 0 1.7 3h16.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9.5" x2="12" y2="13.5"/><circle cx="12" cy="17" r="1" fill="currentColor" stroke="none"/></g>
     <g id="hub-icon-back"><polyline points="15 18 9 12 15 6"/></g>
     <g id="hub-icon-wrench"><path d="M14.5 6.4a4 4 0 1 1-5.4 5.4L3 18l3 3 6.2-6.1a4 4 0 0 1 5.4-5.4l-3 3-2-2z"/></g>
+    <g id="hub-icon-power"><line x1="12" y1="2" x2="12" y2="12"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></g>
   </defs>
 </svg>
 
@@ -71,6 +72,16 @@
       <h2>Host</h2>
       <p class="hint">Hardware della macchina su cui gira questa Management API — indipendente da Docker, disponibile anche se il demone non risponde.</p>
       <dl id="hub-host-details"></dl>
+      <button type="button" id="hub-reboot-button" class="hub-reboot-button" disabled>
+        <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#hub-icon-refresh"></use></svg>
+        Riavvia host
+      </button>
+      <p id="hub-reboot-hint" class="hint">Verifica in corso…</p>
+      <button type="button" id="hub-shutdown-button" class="hub-shutdown-button" disabled>
+        <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#hub-icon-power"></use></svg>
+        Spegni host
+      </button>
+      <p id="hub-shutdown-hint" class="hint">Verifica in corso…</p>
     </section>
 
     <h2>Container</h2>
