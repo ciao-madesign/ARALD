@@ -38,6 +38,24 @@ Riferimento: [`docs/roadmap.md`](./roadmap.md) per lo stato di tutte le mileston
 
 **Versione simulata — ✅ fatta** (`docs/security.md` voci #9/#10): `KiwixGateway`/`AiGateway` verificati contro `FakeNomadServer`/`FakeOllamaServer` locali, stesso adapter e stesso protocollo esposto che punterebbe a un'istanza reale quando disponibile — **resta bloccata solo la forma Docker/Project NOMAD reale**.
 
+### Ponte verso Meshtastic — accessorio opzionale, fase successiva alla validazione dei prototipi (proposto dall'utente, 30 settembre 2026)
+
+**Non una milestone core**: a differenza delle Opzioni sopra, questo è pensato esplicitamente come **accessorio** del progetto — utile per chi vorrà dotare il proprio Box/Portable/Fixed Relay di una **seconda antenna LoRa dedicata a questo solo scopo**, non un requisito per usare ARALD. Verrà sviluppato **su un branch dedicato separato**, non sul branch di lavoro principale, proprio per la sua natura di componente opzionale/staccabile dal core — merge solo quando maturo.
+
+**Perché non ora**: subordinato al completamento della fase di validazione dei prototipi attuali (mesh reale, Box, Card) — non ha senso investire in un ponte verso un ecosistema esterno prima che il nucleo ARALD sia validato sul campo. Candidato per una fase successiva, non pianificato a breve termine.
+
+**Idea**: un gateway che riceve/traduce pacchetti Meshtastic (LoRa) verso le strutture dati ARALD e viceversa — dettaglio del design discusso con l'utente (livello radio, protocollo, mapping, fiducia) in `docs/external-inspiration.md`. Punti chiave:
+- **Vincolo hardware esplicito — subordinato alla presenza di un'antenna dedicata**: richiede un secondo radio LoRa fisico sul nodo-ponte, sintonizzato sui parametri di modulazione di Meshtastic (banda/SF/coding rate del loro preset — da verificare contro `meshtastic/firmware`/documentazione ufficiale prima di implementare, non assunti qui). Il radio ARALD esistente resta dedicato alla propria mesh; **senza questa seconda antenna il ponte non è utilizzabile** — non è un'opzione software pura.
+- Decodifica del `MeshPacket` (protobuf pubblico) reimplementata da zero — nessun riuso di codice Meshtastic (GPL-3.0), stesso trattamento già riservato in `docs/reuse-vs-new.md`.
+- Mapping proposto: `TEXT_MESSAGE_APP` → `PublicChannels`/`Drops`; `POSITION_APP` → `LocationRegistry` (fiducia minima); `ALERT_APP`/`GROUPALARM_APP` → `EmergencyBeacons` (si incastra bene: `emergency-beacon.ts` è già senza `trustRank`, un'identità mai vista è il caso atteso per un SOS).
+- Non implementa l'interfaccia `Transport` esistente (non è un link punto-a-punto) — stesso trattamento architetturale di `transports/beacon-broadcast.ts`, un modulo a sé wired su `NomadNode` con un hook dedicato.
+
+**Prerequisiti**: (1) validazione dei prototipi completata, (2) hardware reale — un secondo radio LoRa dedicato sul nodo-ponte, non disponibile in questo ambiente. **Stato: non pianificata a breve, accessorio per una fase successiva.**
+
+**Rischi principali**: parametri di modulazione Meshtastic da verificare con fonte primaria prima di iniziare (non assunti); un pacchetto tradotto entra sempre a fiducia nulla/minima, va marcato chiaramente come fonte esterna non verificata nell'interfaccia utente per non confonderlo con un peer ARALD autenticato.
+
+**Sforzo relativo**: **medio-alto** — hardware aggiuntivo nel loop, reimplementazione di un parser protobuf minimo, ma la logica di traduzione verso le strutture dati ARALD riusa componenti già esistenti (content/drops/beacon/location).
+
 ### Connettività Bluetooth lato gateway/Clip (Opzione H, Passo 2)
 
 Lato telefono (scan/connect/handshake verso una ARALD Clip/Cover, logica di protocollo unit-testata): fatto, `docs/security.md` voce #62. **Prerequisito ancora aperto**: un dispositivo con hardware BLE reale dal lato gateway/Clip che parli ARALD — stesso blocco dell'Opzione A, nessuna verifica end-to-end possibile finché non è disponibile.
