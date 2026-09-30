@@ -7,7 +7,7 @@ import type { WhatsAppCloudConfig } from "./whatsapp-client.js";
 
 /**
  * Entry point (`npm run whatsapp-relay -- --config relay.json`, mirrors
- * `nomad-hub`'s `--fake-docker`/`gateway/nomad`'s demo `cli.ts`). Reads a
+ * `nomad-hub`'s `--fake-docker`/`gateway/local-services`'s demo `cli.ts`). Reads a
  * JSON config, resolves/persists one X25519 key pair per destination
  * (`keypair.ts`), starts `WhatsAppRelayServer`, and prints the exact
  * `--external-delivery-destinations` entry an admin needs to paste into

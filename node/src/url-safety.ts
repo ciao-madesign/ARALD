@@ -3,7 +3,7 @@ import { lookup } from "node:dns/promises";
 
 /**
  * Best-effort SSRF guard — originally written for every `kind`
- * `gateway/nomad/internet-gateway.ts` (`InternetGateway`) offers (applied
+ * `gateway/local-services/internet-gateway.ts` (`InternetGateway`) offers (applied
  * *before* any outbound fetch, regardless of `kind`-specific checks — a
  * `kind: "rss"` request has no domain allowlist, since `parseFeed()` itself
  * is the content-shape barrier for that kind, so this is the only thing
@@ -12,12 +12,12 @@ import { lookup } from "node:dns/promises";
  * classic SSRF, found while designing that gateway: even a *rejected* fetch
  * (wrong content shape, wrong host) still means a real outbound TCP
  * connection was attempted from the operator's own network), moved here from
- * `gateway/nomad/` so `node/src/external-delivery.ts` (voce successiva,
+ * `gateway/local-services/` so `node/src/external-delivery.ts` (voce successiva,
  * `docs/security.md`) can reuse it for its own outbound POST to an
  * admin-configured URL — a second, independent caller with the same defense-
  * in-depth need (a typo in an admin-provided URL should never turn into an
  * accidental internal request), never NOMAD-specific to begin with.
- * `gateway/nomad/internet-gateway.ts` imports it from here unchanged.
+ * `gateway/local-services/internet-gateway.ts` imports it from here unchanged.
  *
  * Checks, in order: only `http`/`https` schemes; if the hostname is a literal
  * IP, reject it directly if it falls in a private/loopback/link-local/reserved

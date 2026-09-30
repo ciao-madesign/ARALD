@@ -32,7 +32,7 @@ type ConnState = "greeted" | "authenticated" | "mail" | "rcpt" | "data";
 
 /**
  * Stands in for a real SMTP server (`smtp-client.ts`) — same role as
- * `gateway/nomad/fake-ollama-server.ts`/`whatsapp-relay/fake-whatsapp-cloud-server.ts`
+ * `gateway/local-services/fake-ollama-server.ts`/`whatsapp-relay/fake-whatsapp-cloud-server.ts`
  * for their own backends: a small, deterministic double just faithful
  * enough to exercise `sendEmail()`'s exact command sequence end to end,
  * never a real mail server. Implements only what that one client actually

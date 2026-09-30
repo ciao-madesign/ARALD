@@ -78,7 +78,7 @@ const DEFAULT_MAX_REPORTS = 256;
  * (`NomadNode`) toward this specific node. Same architectural placement as
  * `Groups`/`PublicChannels`/`MessageHistory` — pure mesh-internal state, not
  * an adapter to something external, so it lives in `node/src/`, not
- * `gateway/nomad/`.
+ * `gateway/local-services/`.
  *
  * **Retention, by explicit user decision**: only the single latest report
  * per reporter — `record()` overwrites the previous entry for the same

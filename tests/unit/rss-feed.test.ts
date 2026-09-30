@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseFeed, MAX_FEED_BYTES } from "../../gateway/nomad/rss-feed.js";
+import { parseFeed, MAX_FEED_BYTES } from "../../gateway/local-services/rss-feed.js";
 
 describe("parseFeed — RSS 2.0", () => {
   it("parses a well-formed feed's channel metadata and items", () => {

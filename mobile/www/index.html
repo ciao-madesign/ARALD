@@ -85,6 +85,31 @@
       </button>
       <p id="setup-error" class="error" role="alert" aria-live="assertive" hidden></p>
     </form>
+
+    <!-- Provisioning Wi-Fi via Bluetooth (docs/next-steps.md, "Provisioning Wi-Fi via Bluetooth per un
+         Box senza cavo Ethernet") — per un Box appena acceso e senza ancora alcuna rete: a differenza
+         del modulo "Connetti" sopra, non richiede che il gateway sia già raggiungibile via Wi-Fi/LAN.
+         Nascosto finché window.Capacitor.Plugins.BluetoothLe non è disponibile — stesso
+         feature-gating già usato per #ble-relay-panel/#sos-button (ble-client.js). Deliberatamente
+         minimale (un pannello inline, non una passata di design) — vedi
+         mobile/www/ble-wifi-provisioning.js per la logica reale, mai verificata contro hardware vero
+         in questo ambiente. -->
+    <button type="button" id="wifi-provisioning-open" class="link-button" hidden>
+      <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-wifi"></use></svg> Configura il Wi-Fi del Box via Bluetooth
+    </button>
+    <div id="wifi-provisioning-panel" class="panel" hidden>
+      <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-wifi"></use></svg> Wi-Fi del Box via Bluetooth</h2>
+      <p class="hint">Per un Box nuovo o senza cavo Ethernet: avvicina il telefono al Box (Bluetooth acceso su entrambi) e invia qui la rete Wi-Fi a cui deve collegarsi.</p>
+      <label for="wifi-provisioning-ssid">Nome rete (SSID)</label>
+      <input id="wifi-provisioning-ssid" type="text" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <label for="wifi-provisioning-password">Password Wi-Fi</label>
+      <input id="wifi-provisioning-password" type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <div class="sos-panel-actions">
+        <button type="button" id="wifi-provisioning-cancel" class="link-button">Annulla</button>
+        <button type="button" id="wifi-provisioning-send" class="call-submit">Invia al Box</button>
+      </div>
+      <p id="wifi-provisioning-status" class="muted" role="status" aria-live="polite"></p>
+    </div>
   </div>
 </section>
 
@@ -539,6 +564,12 @@
 <script src="vendor/nacl.js"></script>
 <script type="module" src="ble-identity.js"></script>
 <script type="module" src="ble-sos.js"></script>
+<!-- Vero modulo ES come ble-link.js/ecc sopra (window.AraldBleWifiProvisioning come ponte verso
+     app.js, uno script classico sotto) — vedi ble-wifi-provisioning.js's own header. Dopo
+     ble-link.js/vendor/nacl.js (di cui usa rispettivamente base64ToBytes()/bytesToBase64() e il
+     globale nacl), ma solo dentro corpi funzione mai a livello di script, stesso motivo di
+     ble-identity.js sopra: l'ordine stretto non è tecnicamente necessario, mantenuto per coerenza. -->
+<script type="module" src="ble-wifi-provisioning.js"></script>
 
 <!-- mapview.js prima di app.js: app.js chiama fetchMapInfo()/renderMapAvailability() (definite in
      mapview.js) in modo sincrono dal proprio codice di avvio (showDashboard() -> refreshAll(), per

@@ -7,7 +7,7 @@ import { TcpTransport } from "../../node/src/transports/tcp.js";
  * `service://internet-fetch` (`InternetGateway`) — "Internet senza Internet",
  * discussione con l'utente 25 agosto 2026 (`docs/next-steps.md`). Il test
  * server locale gira per forza su loopback (127.0.0.1), che la guardia
- * anti-SSRF reale (`node/src/url-safety.ts`, spostata lì da `gateway/nomad/`
+ * anti-SSRF reale (`node/src/url-safety.ts`, spostata lì da `gateway/local-services/`
  * per essere riusata anche da `external-delivery.ts` — testata a parte in
  * `tests/unit/url-safety.test.ts`) rifiuterebbe sempre — qui viene quindi
  * mockata a `true` per la maggior parte dei test (che verificano la logica
@@ -18,7 +18,7 @@ import { TcpTransport } from "../../node/src/transports/tcp.js";
 
 vi.mock("../../node/src/url-safety.js", () => ({ isPubliclyRoutableUrl: vi.fn(async () => true) }));
 
-const { InternetGateway } = await import("../../gateway/nomad/internet-gateway.js");
+const { InternetGateway } = await import("../../gateway/local-services/internet-gateway.js");
 
 const VALID_RSS = `<?xml version="1.0"?><rss version="2.0"><channel><title>Test</title><item><title>Notizia</title><link>https://example.test/1</link><guid>1</guid><pubDate>Mon, 01 Jan 2026 00:00:00 GMT</pubDate></item></channel></rss>`;
 
@@ -286,7 +286,7 @@ describe("service://internet-fetch — the real SSRF guard is actually wired in 
   it("rejects a request targeting a private IPv4 literal, without needing a real network fetch", async () => {
     vi.doUnmock("../../node/src/url-safety.js");
     vi.resetModules();
-    const { InternetGateway: RealInternetGateway } = await import("../../gateway/nomad/internet-gateway.js");
+    const { InternetGateway: RealInternetGateway } = await import("../../gateway/local-services/internet-gateway.js");
 
     gatewayNode = makeNode("gateway");
     await gatewayNode.node.start();
@@ -307,7 +307,7 @@ describe("service://internet-fetch — the real SSRF guard is actually wired in 
     // limiter itself, never even reaching the guard a second time.
     vi.doUnmock("../../node/src/url-safety.js");
     vi.resetModules();
-    const { InternetGateway: RealInternetGateway } = await import("../../gateway/nomad/internet-gateway.js");
+    const { InternetGateway: RealInternetGateway } = await import("../../gateway/local-services/internet-gateway.js");
 
     gatewayNode = makeNode("gateway");
     await gatewayNode.node.start();

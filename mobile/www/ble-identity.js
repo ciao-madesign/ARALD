@@ -23,7 +23,7 @@
 
 /**
  * SHA-256 (FIPS 180-4), written from scratch — same precedent as node/src/qrcode.ts's from-scratch
- * QR encoder and gateway/nomad/rss-feed.ts's from-scratch RSS/Atom parser, not a vendored library
+ * QR encoder and gateway/local-services/rss-feed.ts's from-scratch RSS/Atom parser, not a vendored library
  * like nacl.js: unlike Ed25519 signing, SHA-256 has no secret key material and no malleability
  * concerns — a bug here would just produce a wrong digest (caught immediately by
  * `verifyContentSignature()`/`computeContentId()` mismatching on the receiving NomadNode, never a

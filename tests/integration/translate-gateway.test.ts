@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { NomadNode } from "../../node/src/node.js";
 import { TcpTransport } from "../../node/src/transports/tcp.js";
-import { AiGateway } from "../../gateway/nomad/ai-gateway.js";
-import { FakeOllamaServer } from "../../gateway/nomad/fake-ollama-server.js";
-import { registerTranslateService, MAX_TRANSLATE_TEXT_CHARS } from "../../gateway/nomad/translate-gateway.js";
+import { AiGateway } from "../../gateway/local-services/ai-gateway.js";
+import { FakeOllamaServer } from "../../gateway/local-services/fake-ollama-server.js";
+import { registerTranslateService, MAX_TRANSLATE_TEXT_CHARS } from "../../gateway/local-services/translate-gateway.js";
 
 /**
- * `service://translation` (gateway/nomad/translate-gateway.ts) composes
+ * `service://translation` (gateway/local-services/translate-gateway.ts) composes
  * `service://ai` purely through `node.callService()`, exactly like
  * `NewsGateway.generateDigest()` (docs/security.md voce #37, mirrored here
  * — see tests/integration/news-digest.test.ts for the sibling test file
@@ -39,7 +39,7 @@ describe("service://translation (registerTranslateService, composes service://ai
 
     gatewayNode = makeNode("gateway");
     await gatewayNode.node.start();
-    new AiGateway(gatewayNode.node, `http://127.0.0.1:${fakeOllama.port}`).registerAiService();
+    new AiGateway(gatewayNode.node, `http://127.0.0.1:${fakeOllama.port}`, "test-model").registerAiService();
     registerTranslateService(gatewayNode.node);
     return gatewayNode.node;
   }

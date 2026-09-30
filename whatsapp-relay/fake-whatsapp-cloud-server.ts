@@ -16,7 +16,7 @@ export interface ReceivedWhatsAppMessage {
 
 /**
  * Stands in for Meta's WhatsApp Business Cloud API (`whatsapp-client.ts`) —
- * same role and shape as `gateway/nomad/fake-ollama-server.ts` for Ollama:
+ * same role and shape as `gateway/local-services/fake-ollama-server.ts` for Ollama:
  * a small, deterministic double just faithful enough to prove
  * `whatsapp-client.ts`'s round trip end-to-end, never a real deployment
  * target. `setNextFailure()` lets a test simulate a rejected send (bad

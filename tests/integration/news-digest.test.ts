@@ -2,9 +2,9 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NomadNode } from "../../node/src/node.js";
 import { TcpTransport } from "../../node/src/transports/tcp.js";
-import { NewsGateway } from "../../gateway/nomad/news-gateway.js";
-import { AiGateway } from "../../gateway/nomad/ai-gateway.js";
-import { FakeOllamaServer } from "../../gateway/nomad/fake-ollama-server.js";
+import { NewsGateway } from "../../gateway/local-services/news-gateway.js";
+import { AiGateway } from "../../gateway/local-services/ai-gateway.js";
+import { FakeOllamaServer } from "../../gateway/local-services/fake-ollama-server.js";
 
 /**
  * `NewsGateway.generateDigest()` (docs/next-steps.md Opzione I, pezzo 3 —
@@ -118,7 +118,7 @@ describe("NewsGateway.generateDigest() (composes service://news with service://a
 
     gatewayNode = makeNode("gateway");
     await gatewayNode.node.start();
-    new AiGateway(gatewayNode.node, `http://127.0.0.1:${fakeOllama.port}`).registerAiService();
+    new AiGateway(gatewayNode.node, `http://127.0.0.1:${fakeOllama.port}`, "test-model").registerAiService();
     gateway = new NewsGateway(gatewayNode.node, started.url);
   }
 
@@ -152,7 +152,7 @@ describe("NewsGateway.generateDigest() (composes service://news with service://a
     await gateway!.generateDigest();
 
     // FakeOllamaServer records every prompt it actually received (its own fixture capability,
-    // gateway/nomad/fake-ollama-server.ts) — no need to intercept fetch() to see what generateDigest()
+    // gateway/local-services/fake-ollama-server.ts) — no need to intercept fetch() to see what generateDigest()
     // composed and sent.
     expect(fakeOllama!.prompts).toHaveLength(1);
     expect(fakeOllama!.lastPrompt).toContain(headline1.title);

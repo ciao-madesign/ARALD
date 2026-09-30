@@ -9,7 +9,7 @@ Due cose distinte, da non confondere:
 1. **Il catalogo servizi** (sotto) — ogni cosa che un nodo *può* offrire alla mesh, oggi disponibile nel codice o pianificata.
 2. **I pacchetti per caso d'uso** (in fondo) — una raccomandazione di *default* su cosa attivare/pre-caricare per un contesto tipico (alpino, emergenza, ONG, ecc.).
 
-**Nessuno dei due è un vincolo tecnico.** Non esiste nel codice alcun meccanismo che "blocchi" un servizio fuori dal pacchetto scelto — ogni flag di `cli.ts`/`gateway/nomad/cli.ts` resta indipendente dagli altri, un operatore può attivarli in qualunque combinazione. I pacchetti sono un punto di partenza sensato per chi non vuole/deve decidere da zero, non un catalogo chiuso: un admin aggiunge, rimuove o mescola liberamente.
+**Nessuno dei due è un vincolo tecnico.** Non esiste nel codice alcun meccanismo che "blocchi" un servizio fuori dal pacchetto scelto — ogni flag di `cli.ts`/`gateway/local-services/cli.ts` resta indipendente dagli altri, un operatore può attivarli in qualunque combinazione. I pacchetti sono un punto di partenza sensato per chi non vuole/deve decidere da zero, non un catalogo chiuso: un admin aggiunge, rimuove o mescola liberamente.
 
 ## Asse Compute: chi può ospitare cosa
 
@@ -19,7 +19,7 @@ Richiamo diretto da `docs/architecture.md` ("Un ARALD Card è quasi solo Connect
 |---|---|
 | **ARALD Card / Fixed Relay / Mobile Relay** (`docs/beacon.md`) | Nessun servizio applicativo — solo instradamento pacchetti (Connectivity pura). Partecipa comunque al protocollo mesh: può originare/relayare un SOS, comparire nel Registro relay con la propria telemetria. Nessun Docker, nessun NOMAD. |
 | **Un `NomadNode` qualunque** (RPi nodo permanente, PC di sviluppo, smartphone) | Tutti i servizi **mesh-native** della prima tabella sotto — nessuno richiede Docker/Project NOMAD, sono tutti built-in in `node/src/`. |
-| **ARALD Box / ARALD Portable** (`docs/deployment.md`, "due deployment target paritetici" — **stessa lista di servizi per entrambi**, la differenza è solo hardware/packaging, non capacità software) | Tutto quanto sopra **più** i servizi che richiedono Project NOMAD via Docker (seconda tabella sotto) — sono gli unici due target hardware di questo progetto pensati per far girare NOMAD. |
+| **ARALD Box / ARALD Portable** (`docs/deployment.md`, "due deployment target paritetici" — **stessa lista di servizi per entrambi**, la differenza è solo hardware/packaging, non capacità software) | Tutto quanto sopra **più** i servizi che richiedono `gateway/local-services/` via Docker (seconda tabella sotto — Kiwix/Ollama/Flatnotes, indipendenti da Project NOMAD, `service-stack/`) — sono gli unici due target hardware di questo progetto pensati per far girare questi backend. |
 
 ## Catalogo servizi
 
@@ -39,16 +39,18 @@ Richiamo diretto da `docs/architecture.md` ("Un ARALD Card è quasi solo Connect
 | Mappe offline | Tile MBTiles in sola lettura | `--map-file <percorso.mbtiles>` |
 | Interfaccia web locale | Dashboard di stato/ricerca/pairing telefono (spec §59) | `--web-port` |
 
-### Servizi via Project NOMAD (richiedono Docker + `gateway/nomad/`, solo su un host che fa girare NOMAD — quindi BOX/Portable)
+### Servizi via `gateway/local-services/` (solo su un host che fa girare i servizi sottostanti — quindi BOX/Portable)
 
-| Servizio | Cos'è | Flag (`gateway/nomad/cli.ts`) |
+**Aggiornamento, 30 settembre 2026**: "i servizi sottostanti" non è più necessariamente Project NOMAD per nessuno dei tre — Kiwix/AI/Flatnotes parlano tutti con le loro vere API dirette (`docs/security.md` voci #97/#98/#100). `service-stack/docker-compose.yml` avvia Kiwix/AI con le loro immagini Docker ufficiali pubbliche; Flatnotes può guadagnare la propria immagine ufficiale (`dullage/flatnotes`) come lavoro a sé, non ancora fatto. Vedi `docs/next-steps.md`, "Indipendenza da Project NOMAD", per il dettaglio.
+
+| Servizio | Cos'è | Flag (`gateway/local-services/cli.ts`) |
 |---|---|---|
-| Kiwix (`content://`+`service://kiwix-search`) | Wikipedia/Wikivoyage/altri archivi offline (ZIM) | `--nomad-url` |
+| Kiwix (`content://`+`service://kiwix-search`+`service://kiwix-fetch`) | Wikipedia/Wikivoyage/altri archivi offline (ZIM) — **aggiornamento 30 settembre 2026**: parla direttamente con un vero `kiwix-serve`, non più con un'ipotetica API di Project NOMAD (mai verificata); `service://kiwix-fetch` (nuovo) trasforma un `path` scoperto con `service://kiwix-search` in contenuto recuperabile via `content://`, senza bisogno di un endpoint di listing bulk che kiwix-serve non ha — vedi `docs/next-steps.md`, "Ipotesi di indipendenza da Project NOMAD" | `--kiwix-url`/`--kiwix-book` |
 | AI locale (`service://ai`) | Domande/risposte via Ollama | `--ai-url` |
 | News/digest (`service://news`/`service://emergency-news`) | Ingestione RSS/Atom reale + riassunto generato dall'AI | `--news-url` |
 | Traduzione (`service://translation`) | Traduzione assistita, compone `service://ai` | (segue l'AI) |
 | Internet fetch curato (`service://internet-fetch`) | Accesso Internet allowlisted (kind `rss`/`text`), guardia SSRF | `--internet-fetch` + `--internet-allowed-hosts` |
-| Note collaborative (Flatnotes) (`service://flatnotes-search`/`-create`) | Note/documenti condivisi, scrivibili dalla mesh | `--flatnotes-url` |
+| Note collaborative (Flatnotes) (`service://flatnotes-search`/`-fetch`/`-create`) | Note/documenti condivisi, scrivibili dalla mesh — note identificate per titolo, non per un "path" (`docs/security.md` voce #100) | `--flatnotes-url` |
 
 ### Generi di contenuto pubblicabili via `content://` (nessun meccanismo nuovo — solo convenzione)
 
@@ -154,4 +156,4 @@ I sette pacchetti sopra non sono esaustivi — sono i contesti già documentati 
 
 ## Principio finale
 
-Questo documento descrive **raccomandazioni**, non un meccanismo di provisioning automatico — non esiste (e non è pianificato) alcuno script che "installi il pacchetto X" da solo. Ogni servizio si attiva con il proprio flag CLI già esistente (`node/src/cli.ts`, `gateway/nomad/cli.ts`), ogni contenuto si pubblica con gli strumenti già esistenti (`publishContent()`, l'interfaccia web, ecc.). Il valore di questo documento è dare a chi prepara un deployment un punto di partenza sensato invece di dover riscoprire da zero "cosa serve per un rifugio" — mai un limite a cosa può fare.
+Questo documento descrive **raccomandazioni**, non un meccanismo di provisioning automatico — non esiste (e non è pianificato) alcuno script che "installi il pacchetto X" da solo. Ogni servizio si attiva con il proprio flag CLI già esistente (`node/src/cli.ts`, `gateway/local-services/cli.ts`), ogni contenuto si pubblica con gli strumenti già esistenti (`publishContent()`, l'interfaccia web, ecc.). Il valore di questo documento è dare a chi prepara un deployment un punto di partenza sensato invece di dover riscoprire da zero "cosa serve per un rifugio" — mai un limite a cosa può fare.

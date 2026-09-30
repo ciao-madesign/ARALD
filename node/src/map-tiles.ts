@@ -47,11 +47,11 @@ export interface MbtilesMetadata {
  * ours — see that discussion for why MBTiles+raster was chosen over a
  * vector-tile stack this project would have to style itself).
  *
- * Lives in `node/src/`, not `gateway/nomad/`: this is a purely local file
+ * Lives in `node/src/`, not `gateway/local-services/`: this is a purely local file
  * the operator supplies, never mesh-fed data nor an adapter to an external
  * NOMAD/internet backend — same reasoning already applied to
  * `location-registry.ts`/`groups.ts`. `web-ui.ts` (the only caller) cannot
- * import from `gateway/nomad/` at all regardless (one-way dependency
+ * import from `gateway/local-services/` at all regardless (one-way dependency
  * documented in `CLAUDE.md`).
  *
  * Uses Node's built-in `node:sqlite` (`DatabaseSync`) — no new external

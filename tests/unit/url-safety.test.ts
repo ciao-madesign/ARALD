@@ -2,9 +2,9 @@ import { describe, expect, it, vi, afterEach } from "vitest";
 
 /**
  * `isPubliclyRoutableUrl()` (`node/src/url-safety.ts`, moved here from
- * `gateway/nomad/` so `external-delivery.ts` could reuse it — see that
+ * `gateway/local-services/` so `external-delivery.ts` could reuse it — see that
  * file's own header comment) — the SSRF guard shared by both `kind`s of
- * `service://internet-fetch` (`gateway/nomad/internet-gateway.ts`) and by
+ * `service://internet-fetch` (`gateway/local-services/internet-gateway.ts`) and by
  * the outbound POST in `external-delivery.ts`. Domain-name resolution is
  * mocked (`node:dns/promises`) so these tests are deterministic and don't
  * depend on real DNS/network being reachable from this sandbox (it isn't,

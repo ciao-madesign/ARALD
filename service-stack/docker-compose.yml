@@ -1,0 +1,72 @@
+# Stack di servizi indipendente da Project NOMAD — Kiwix + Ollama + Flatnotes.
+#
+# Sostituisce il piano precedente ("Ubuntu+Docker+Project NOMAD" descritto
+# in docs/deployment.md fino al 30 settembre 2026), che richiedeva il
+# sorgente Docker di Project NOMAD (mai reso disponibile, progetto esterno
+# "non dichiarato stabile", spec §4). `gateway/local-services/kiwix-gateway.ts`,
+# `ai-gateway.ts` e `flatnotes-gateway.ts` parlano già con le vere API dei
+# rispettivi backend (docs/security.md voce #97/#98/#100) — non con un'API
+# NOMAD — quindi qualunque istanza reale di questi tre programmi, comunque
+# avviata, funziona. Questo file li avvia con le loro immagini Docker
+# ufficiali e pubbliche, indipendenti da Project NOMAD: nessun sorgente
+# esterno da procurarsi.
+#
+# Non verificato in questo ambiente: nessun demone Docker raggiungibile
+# in questa sessione (`docker info` fallisce, "no such file or
+# directory" sul socket) — sintassi/porte/volumi verificati contro la
+# documentazione ufficiale di ciascun progetto (vedi service-stack/README.md
+# per le fonti), mai un `docker compose up` reale. Popolare `./data/zim/`
+# con file ZIM reali e scaricare modelli Ollama (`ollama pull ...`) resta
+# lavoro dell'operatore — bring-up fisico, mai un passo di questo file
+# (CLAUDE.md, "Priorità per chi riprende questo lavoro").
+
+services:
+  kiwix-serve:
+    image: ghcr.io/kiwix/kiwix-serve:latest
+    container_name: arald-kiwix-serve
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data/zim:/data:ro
+    # '*.zim' fa servire a kiwix-serve ogni file ZIM presente in ./data/zim,
+    # un "libro" per file (il nome usato da --kiwix-book di gateway/local-services/cli.ts
+    # è quello che kiwix-serve deriva dal file — verificare con l'endpoint
+    # /search o i log del container quale nome esatto usare).
+    command: ["*.zim"]
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: arald-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./data/ollama:/root/.ollama
+    # Nessun modello incluso nell'immagine: dopo l'avvio, un operatore deve
+    # scaricarne uno (`docker exec arald-ollama ollama pull <modello>`,
+    # coerente con --ai-model di gateway/local-services/cli.ts, default "llama3.2")
+    # prima che service://ai risponda con qualcosa di reale.
+
+  flatnotes:
+    image: dullage/flatnotes:latest
+    container_name: arald-flatnotes
+    restart: unless-stopped
+    ports:
+      # Porta interna del container fissa a 8080 (verificato contro il vero
+      # README del progetto) — mappata su 8081 sull'host per non collidere
+      # con la 8080 già usata da kiwix-serve sopra.
+      - "8081:8080"
+    environment:
+      # FlatnotesGateway non gestisce alcun login/token (docs/security.md
+      # voce #100) — assume esplicitamente un'istanza senza autenticazione,
+      # stessa postura già presa per kiwix-serve/Ollama (nessuno dei tre ha
+      # un meccanismo di autenticazione proprio verso ARALD). Un valore
+      # diverso da "none" farebbe fallire ogni chiamata con 401.
+      FLATNOTES_AUTH_TYPE: "none"
+    volumes:
+      - ./data/flatnotes:/data
+      # Indice di ricerca separato dalle note vere e proprie (esempio
+      # ufficiale del progetto) — evitare di doverlo ricostruire ogni volta
+      # che si tocca ./data/flatnotes a mano.
+      - ./data/flatnotes-index:/data/.flatnotes

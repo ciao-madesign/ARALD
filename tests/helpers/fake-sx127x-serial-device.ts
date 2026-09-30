@@ -29,7 +29,7 @@ const FIFO_SIZE = 256;
  * `LoraSerialTransport`'s serial bridge protocol
  * (`node/src/transports/sx127x-bridge-protocol.ts`) — never shipped in
  * `node/src/`, unlike `nomad-hub/fake-docker-server.ts`/
- * `gateway/nomad/fake-ollama-server.ts`: those exist as CLI-selectable
+ * `gateway/local-services/fake-ollama-server.ts`: those exist as CLI-selectable
  * stand-ins a demo can run against instead of the real backend, a real use
  * case this doesn't have (nobody demos ARALD against a pretend radio chip).
  * This exists purely to validate `LoraSerialTransport`'s register/FIFO

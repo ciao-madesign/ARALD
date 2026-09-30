@@ -1,6 +1,6 @@
 import { NomadNode } from "../../node/src/node.js";
 import { TcpTransport } from "../../node/src/transports/tcp.js";
-import { FakeNomadServer } from "./fake-nomad-server.js";
+import { FakeKiwixServer } from "./fake-kiwix-server.js";
 import { KiwixGateway } from "./kiwix-gateway.js";
 import { FakeOllamaServer } from "./fake-ollama-server.js";
 import { AiGateway } from "./ai-gateway.js";
@@ -20,7 +20,9 @@ const NEWS_DIGEST_INTERVAL_MS = 15 * 60 * 1000;
  * Default `maxContentStoreEntries` for this gateway's `NomadNode` (spec
  * §57 resource limits) — deliberately well above `content.ts`'s own
  * conservative default (256, sized for a generic mesh node's opportunistic
- * cache) since a gateway *is* its catalog: `KiwixGateway.syncCatalog()` and
+ * cache) since a gateway *is* its catalog: `KiwixGateway.publishArticle()`
+ * (called once per known path — see `KiwixGateway`'s own doc comment for
+ * why there's no bulk sync against real Kiwix) and
  * `NewsGateway.startAutoSync()` both publish real content on an ongoing
  * basis, and this node's own published entries only ever compete with each
  * other for eviction once the store is full (`node.ts`'s
@@ -74,9 +76,9 @@ function parseArgs(argv: string[]): Record<string, string> {
 
 /**
  * Manual/demo entry point (`npm run gateway:demo` — see root package.json):
- * runs a NomadNode with the NOMAD gateway attached, backed by a
- * `FakeNomadServer` seeded with a couple of demo articles unless
- * `--nomad-url` points at a real Project NOMAD/Kiwix instance instead, plus
+ * runs a NomadNode with the Kiwix gateway attached, backed by a
+ * `FakeKiwixServer` seeded with a couple of demo articles unless
+ * `--kiwix-url` points at a real bare `kiwix-serve` instance instead, plus
  * an `AiGateway` backed by a `FakeOllamaServer` seeded with a couple of
  * canned answers unless `--ai-url` points at a real Ollama instance
  * instead. `NewsGateway` has no fake fallback (`docs/security.md`) — only
@@ -92,27 +94,34 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const port = Number(args.port ?? 9101);
 
-  let fakeServer: FakeNomadServer | undefined;
-  let nomadBaseUrl = args["nomad-url"];
-  if (!nomadBaseUrl) {
-    fakeServer = new FakeNomadServer();
-    fakeServer.addArticle({
+  const kiwixBook = args["kiwix-book"] ?? "wiki";
+  // Only meaningful against the fake below — real Kiwix has no bulk-listing endpoint to discover
+  // paths from (KiwixGateway's own doc comment), so a real --kiwix-url gets nothing auto-published.
+  let demoArticlePaths: string[] = [];
+
+  let fakeKiwix: FakeKiwixServer | undefined;
+  let kiwixBaseUrl = args["kiwix-url"];
+  if (!kiwixBaseUrl) {
+    demoArticlePaths = ["wiki/italia", "wiki/rifugio-alpino"];
+    fakeKiwix = new FakeKiwixServer({ book: kiwixBook });
+    fakeKiwix.addArticle({
       path: "wiki/italia",
       title: "Italia",
       mimeType: "text/plain",
       body: "L'Italia e' una repubblica parlamentare in Europa meridionale.",
     });
-    fakeServer.addArticle({
+    fakeKiwix.addArticle({
       path: "wiki/rifugio-alpino",
       title: "Rifugio alpino",
       mimeType: "text/plain",
       body: "Un rifugio alpino e' una struttura ricettiva in alta montagna, spesso raggiungibile solo a piedi.",
     });
-    await fakeServer.start();
-    nomadBaseUrl = `http://127.0.0.1:${fakeServer.port}`;
-    console.log(`Fake NOMAD server (no --nomad-url given): ${nomadBaseUrl}`);
+    await fakeKiwix.start();
+    kiwixBaseUrl = `http://127.0.0.1:${fakeKiwix.port}`;
+    console.log(`Fake Kiwix server (no --kiwix-url given): ${kiwixBaseUrl}`);
   }
 
+  const aiModel = args["ai-model"] ?? "llama3.2";
   let fakeOllama: FakeOllamaServer | undefined;
   let aiBaseUrl = args["ai-url"];
   if (!aiBaseUrl) {
@@ -125,12 +134,17 @@ async function main(): Promise<void> {
     console.log(`Fake Ollama server (no --ai-url given): ${aiBaseUrl}`);
   }
 
+  // Only meaningful against the fake below — real Flatnotes has no bulk-listing endpoint to discover
+  // titles from (FlatnotesGateway's own doc comment), same reasoning as demoArticlePaths above.
+  let demoNoteTitles: string[] = [];
+
   let fakeFlatnotes: FakeFlatnotesServer | undefined;
   let flatnotesBaseUrl = args["flatnotes-url"];
   if (!flatnotesBaseUrl) {
+    demoNoteTitles = ["Benvenuto", "Regole del rifugio"];
     fakeFlatnotes = new FakeFlatnotesServer();
-    fakeFlatnotes.addNote({ path: "benvenuto", title: "Benvenuto", content: "Questo e' un quaderno condiviso: chiunque puo' leggere o aggiungere una nota." });
-    fakeFlatnotes.addNote({ path: "regole-rifugio", title: "Regole del rifugio", content: "Silenzio dopo le 22, spegnere le luci comuni, richiudere il cancello." });
+    fakeFlatnotes.addNote({ title: "Benvenuto", content: "Questo e' un quaderno condiviso: chiunque puo' leggere o aggiungere una nota." });
+    fakeFlatnotes.addNote({ title: "Regole del rifugio", content: "Silenzio dopo le 22, spegnere le luci comuni, richiudere il cancello." });
     await fakeFlatnotes.start();
     flatnotesBaseUrl = `http://127.0.0.1:${fakeFlatnotes.port}`;
     console.log(`Fake FlatNotes server (no --flatnotes-url given): ${flatnotesBaseUrl}`);
@@ -141,11 +155,19 @@ async function main(): Promise<void> {
   node.addTransport(new TcpTransport(node.nodeId, port));
   await node.start();
 
-  const kiwixGateway = new KiwixGateway(node, nomadBaseUrl);
-  const published = await kiwixGateway.syncCatalog();
+  const kiwixGateway = new KiwixGateway(node, kiwixBaseUrl, kiwixBook);
+  const published: Array<{ path: string; contentId: string }> = [];
+  for (const path of demoArticlePaths) {
+    try {
+      published.push(await kiwixGateway.publishArticle(path));
+    } catch (err) {
+      console.error(`failed to publish demo article '${path}':`, err);
+    }
+  }
   kiwixGateway.registerSearchService();
+  kiwixGateway.registerFetchService();
 
-  const aiGateway = new AiGateway(node, aiBaseUrl);
+  const aiGateway = new AiGateway(node, aiBaseUrl, aiModel);
   aiGateway.registerAiService();
 
   // service://translation composes service://ai via node.callService() (translate-gateway.ts),
@@ -160,10 +182,18 @@ async function main(): Promise<void> {
     maxRequestsPerWindow: parsePositiveInt(args["flatnotes-max-requests-global"], 60, "flatnotes-max-requests-global"),
     windowMs: parsePositiveInt(args["flatnotes-window-ms"], 60_000, "flatnotes-window-ms"),
   });
-  const publishedNotes = await flatnotesGateway.syncCatalog();
+  const publishedNotes: Array<{ title: string; contentId: string }> = [];
+  for (const title of demoNoteTitles) {
+    try {
+      publishedNotes.push(await flatnotesGateway.fetchNote(title));
+    } catch (err) {
+      console.error(`failed to publish demo note '${title}':`, err);
+    }
+  }
   flatnotesGateway.registerSearchService();
+  flatnotesGateway.registerFetchService();
   flatnotesGateway.registerCreateService();
-  console.log(`Published ${publishedNotes.length} note(s) from FlatNotes, registered service://flatnotes-search and service://flatnotes-create`);
+  console.log(`Published ${publishedNotes.length} note(s) from FlatNotes, registered service://flatnotes-search, service://flatnotes-fetch and service://flatnotes-create`);
 
   let newsGateway: NewsGateway | undefined;
   const newsFeedUrl = args["news-url"];
@@ -228,16 +258,16 @@ async function main(): Promise<void> {
   console.log("ARALD Gateway (Project NOMAD)");
   console.log(`Node ID: ${node.nodeId}`);
   console.log(`Listening on port: ${port}`);
-  console.log(`Published ${published.length} article(s) from NOMAD:`);
+  console.log(`Published ${published.length} article(s) from Kiwix:`);
   for (const entry of published) console.log(`  content://${entry.path} -> ${entry.contentId.slice(0, 16)}...`);
-  console.log(`Registered service://kiwix-search`);
+  console.log(`Registered service://kiwix-search and service://kiwix-fetch`);
   console.log(`Registered service://ai`);
 
   const shutdown = async (): Promise<void> => {
     newsGateway?.stopAutoSync();
     newsGateway?.stopDigestAutoRefresh();
     await node.stop();
-    if (fakeServer) await fakeServer.stop();
+    if (fakeKiwix) await fakeKiwix.stop();
     if (fakeOllama) await fakeOllama.stop();
     if (fakeFlatnotes) await fakeFlatnotes.stop();
     process.exit(0);

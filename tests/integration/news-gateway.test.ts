@@ -3,13 +3,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { NomadNode } from "../../node/src/node.js";
 import { TcpTransport } from "../../node/src/transports/tcp.js";
 import { computeContentId } from "../../node/src/content.js";
-import { NewsGateway, type NewsHeadline } from "../../gateway/nomad/news-gateway.js";
+import { NewsGateway, type NewsHeadline } from "../../gateway/local-services/news-gateway.js";
 
 /**
  * NewsGateway (spec §37, a third NOMAD sub-service alongside Kiwix/Ollama)
  * deliberately has no shipped fake server (docs/security.md) — unlike
- * ai-gateway.test.ts/nomad-gateway.test.ts, which reuse a product-like
- * FakeOllamaServer/FakeNomadServer class, this test stands up its own
+ * ai-gateway.test.ts/kiwix-gateway.test.ts, which reuse a product-like
+ * FakeOllamaServer/FakeKiwixServer class, this test stands up its own
  * minimal, test-local HTTP responder directly (`node:http`, no shared
  * abstraction) purely to exercise NewsGateway's own logic — never exported,
  * never presented as a demo-ready mock of a real news backend. It serves

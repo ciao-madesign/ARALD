@@ -8,13 +8,13 @@ import { ManagementServer } from "../../nomad-hub/management-server.js";
  * `ManagementServer`/`DockerClient` (`nomad-hub/`) — the NOMAD Hub's
  * Docker/host-administration API (`docs/deployment.md`, "Il NOMAD Hub come
  * sistema portatile"). Mocked against `FakeDockerServer` the same way every
- * `gateway/nomad/*.ts` gateway is mocked against its own `Fake*Server` (no
+ * `gateway/local-services/*.ts` gateway is mocked against its own `Fake*Server` (no
  * real Docker reachable in the automated test environment this suite runs
  * in by default — see `docs/security.md`'s entry for this component for
  * the separate manual verification done against a real local `dockerd`
  * while designing `DockerClient`'s log-demuxing/status-code handling).
  *
- * Unlike every `gateway/nomad/` test file, this never touches a `NomadNode`
+ * Unlike every `gateway/local-services/` test file, this never touches a `NomadNode`
  * — `ManagementServer` doesn't join the mesh at all, so these tests talk to
  * it via plain `fetch()`, the same way a real operator's phone would.
  */

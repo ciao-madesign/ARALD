@@ -1,19 +1,19 @@
+import { createServer, type Server } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import { NomadNode } from "../../node/src/node.js";
 import { TcpTransport } from "../../node/src/transports/tcp.js";
-import { FakeFlatnotesServer } from "../../gateway/nomad/fake-flatnotes-server.js";
-import { FlatnotesGateway } from "../../gateway/nomad/flatnotes-gateway.js";
+import { FakeFlatnotesServer } from "../../gateway/local-services/fake-flatnotes-server.js";
+import { FlatnotesGateway } from "../../gateway/local-services/flatnotes-gateway.js";
 import { computeContentId } from "../../node/src/content.js";
 import { MAX_MESSAGE_TEXT_LENGTH } from "../../node/src/message-history.js";
 
 /**
- * `service://flatnotes-search`/`service://flatnotes-create` (`FlatnotesGateway`)
- * — FlatNotes is a real Project NOMAD component (spec §4,
- * `docs/SPECIFICATION.md:102`), mocked the same way Kiwix/Ollama are (no
- * Docker, no real instance reachable from this sandbox): `FakeFlatnotesServer`
- * stands in. Mirrors `nomad-gateway.test.ts`'s structure for the read/sync
- * side, plus dedicated coverage for the write path (`registerCreateService()`)
- * that no earlier gateway needed.
+ * Spec §4, §37: ARALD treats Flatnotes (a real, bare Flatnotes instance —
+ * not Project NOMAD's own unverified API surface, see `FlatnotesGateway`'s
+ * own doc comment for why this changed 30 September 2026) as a local
+ * "shared notebook" service provider. No Docker, no real Flatnotes instance
+ * — `FakeFlatnotesServer` stands in, modeling the confirmed real endpoints
+ * (`/api/notes/{title}`, `/api/notes`, `/api/search?term=`).
  */
 
 function makeNode(displayName: string): { node: NomadNode; transport: TcpTransport } {
@@ -35,7 +35,7 @@ function waitFor(predicate: () => boolean, timeoutMs = 2000, intervalMs = 15): P
   });
 }
 
-describe("FlatNotes gateway (mocked, no Docker/real FlatNotes)", () => {
+describe("Flatnotes gateway (mocked, no Docker/real Flatnotes)", () => {
   let fakeFlatnotes: FakeFlatnotesServer | undefined;
   let gateway: ReturnType<typeof makeNode> | undefined;
   let requester: ReturnType<typeof makeNode> | undefined;
@@ -47,9 +47,9 @@ describe("FlatNotes gateway (mocked, no Docker/real FlatNotes)", () => {
     requester = undefined;
   });
 
-  it("publishes FlatNotes' catalog so a remote node retrieves a real note through the standard content-centric protocol", async () => {
+  it("fetchNote() fetches one real note from Flatnotes so a remote node retrieves it through the standard content-centric protocol", async () => {
     fakeFlatnotes = new FakeFlatnotesServer();
-    fakeFlatnotes.addNote({ path: "benvenuto", title: "Benvenuto", content: "Questo e' un quaderno condiviso." });
+    fakeFlatnotes.addNote({ title: "Benvenuto", content: "Questo e' un quaderno condiviso." });
     await fakeFlatnotes.start();
 
     gateway = makeNode("gateway");
@@ -58,56 +58,42 @@ describe("FlatNotes gateway (mocked, no Docker/real FlatNotes)", () => {
     await requester.node.connect({ host: "127.0.0.1", port: gateway.transport.port });
 
     const flatnotesGateway = new FlatnotesGateway(gateway.node, `http://127.0.0.1:${fakeFlatnotes.port}`);
-    const published = await flatnotesGateway.syncCatalog();
-    expect(published).toHaveLength(1);
+    const published = await flatnotesGateway.fetchNote("Benvenuto");
 
     const expectedContentId = computeContentId(Buffer.from("Questo e' un quaderno condiviso.", "utf8"));
-    expect(published[0]).toEqual({ path: "benvenuto", contentId: expectedContentId });
+    expect(published).toEqual({ title: "Benvenuto", contentId: expectedContentId });
 
     expect(requester.node.contentStore.has(expectedContentId)).toBe(false);
     const data = await requester.node.getContent(expectedContentId);
     expect(data.toString("utf8")).toBe("Questo e' un quaderno condiviso.");
   });
 
-  it("syncCatalog() tolerates a note FlatNotes lists but fails to actually serve", async () => {
+  it("fetchNote() throws a clear error for a title Flatnotes doesn't have, instead of publishing garbage", async () => {
     fakeFlatnotes = new FakeFlatnotesServer();
-    fakeFlatnotes.addNote({ path: "ok", title: "OK", content: "questa esiste davvero" });
-    fakeFlatnotes.addBrokenListing({ path: "sparita", title: "Sparita" });
     await fakeFlatnotes.start();
-
     gateway = makeNode("gateway");
     await gateway.node.start();
     const flatnotesGateway = new FlatnotesGateway(gateway.node, `http://127.0.0.1:${fakeFlatnotes.port}`);
 
-    const published = await flatnotesGateway.syncCatalog();
-    expect(published.map((p) => p.path)).toEqual(["ok"]);
+    await expect(flatnotesGateway.fetchNote("non esiste")).rejects.toThrow(/HTTP 404/);
   });
 
-  it("syncCatalog() only reports new or changed entries on a second call, not everything again", async () => {
+  it("fetchNote() republishing the same unchanged title is a cheap no-op downstream (same contentId, content addressing)", async () => {
     fakeFlatnotes = new FakeFlatnotesServer();
-    fakeFlatnotes.addNote({ path: "a", title: "A", content: "prima nota" });
-    fakeFlatnotes.addNote({ path: "b", title: "B", content: "seconda nota" });
+    fakeFlatnotes.addNote({ title: "Regole", content: "silenzio dopo le 22" });
     await fakeFlatnotes.start();
-
     gateway = makeNode("gateway");
     await gateway.node.start();
     const flatnotesGateway = new FlatnotesGateway(gateway.node, `http://127.0.0.1:${fakeFlatnotes.port}`);
 
-    const first = await flatnotesGateway.syncCatalog();
-    expect(first.map((p) => p.path).sort()).toEqual(["a", "b"]);
-
-    const second = await flatnotesGateway.syncCatalog();
-    expect(second).toEqual([]);
-
-    fakeFlatnotes.addNote({ path: "a", title: "A", content: "prima nota, aggiornata" });
-    const third = await flatnotesGateway.syncCatalog();
-    expect(third.map((p) => p.path)).toEqual(["a"]);
-    expect(third[0].contentId).not.toBe(first.find((p) => p.path === "a")!.contentId);
+    const first = await flatnotesGateway.fetchNote("Regole");
+    const second = await flatnotesGateway.fetchNote("Regole");
+    expect(second.contentId).toBe(first.contentId);
   });
 
-  it("service://flatnotes-search proxies live to FlatNotes on every call, reflecting a catalog change between two calls rather than a cached snapshot", async () => {
+  it("service://flatnotes-search proxies live to Flatnotes' real /api/search on every call, reflecting a catalog change between two calls rather than a cached snapshot", async () => {
     fakeFlatnotes = new FakeFlatnotesServer();
-    fakeFlatnotes.addNote({ path: "meteo", title: "Bollettino meteo", content: "sereno" });
+    fakeFlatnotes.addNote({ title: "Bollettino meteo", content: "sereno" });
     await fakeFlatnotes.start();
 
     gateway = makeNode("gateway");
@@ -119,18 +105,46 @@ describe("FlatNotes gateway (mocked, no Docker/real FlatNotes)", () => {
     flatnotesGateway.registerSearchService();
 
     const firstResult = (await requester.node.callService("service://flatnotes-search", { q: "meteo" }, { timeoutMs: 2000 })) as {
-      results: Array<{ path: string; title: string }>;
+      results: Array<{ title: string }>;
     };
-    expect(firstResult.results).toEqual([{ path: "meteo", title: "Bollettino meteo" }]);
+    expect(firstResult.results).toEqual([{ title: "Bollettino meteo" }]);
 
-    fakeFlatnotes.addNote({ path: "valanghe", title: "Rischio valanghe", content: "moderato" });
+    fakeFlatnotes.addNote({ title: "Rischio valanghe", content: "moderato" });
     const secondResult = (await requester.node.callService("service://flatnotes-search", { q: "rischio" }, { timeoutMs: 2000 })) as {
-      results: Array<{ path: string; title: string }>;
+      results: Array<{ title: string }>;
     };
-    expect(secondResult.results).toEqual([{ path: "valanghe", title: "Rischio valanghe" }]);
+    expect(secondResult.results).toEqual([{ title: "Rischio valanghe" }]);
   });
 
-  it("service://flatnotes-search rejects the caller with a clear error when FlatNotes is unreachable, instead of hanging or crashing", async () => {
+  it("service://flatnotes-search skips a malformed (null) result entry instead of failing the whole call (regression, same defensive pattern as KiwixGateway)", async () => {
+    let rawServer: Server | undefined;
+    try {
+      rawServer = createServer((req, res) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify([null, { title: "Roma" }]));
+      });
+      await new Promise<void>((resolve) => rawServer!.listen(0, "127.0.0.1", resolve));
+      const address = rawServer.address();
+      const rawPort = typeof address === "object" && address ? address.port : 0;
+
+      gateway = makeNode("gateway");
+      requester = makeNode("requester");
+      await Promise.all([gateway.node.start(), requester.node.start()]);
+      await requester.node.connect({ host: "127.0.0.1", port: gateway.transport.port });
+
+      const flatnotesGateway = new FlatnotesGateway(gateway.node, `http://127.0.0.1:${rawPort}`);
+      flatnotesGateway.registerSearchService();
+
+      const result = (await requester.node.callService("service://flatnotes-search", { q: "roma" }, { timeoutMs: 2000 })) as {
+        results: Array<{ title: string }>;
+      };
+      expect(result.results).toEqual([{ title: "Roma" }]);
+    } finally {
+      if (rawServer) await new Promise<void>((resolve) => rawServer!.close(() => resolve()));
+    }
+  });
+
+  it("service://flatnotes-search rejects the caller with a clear error when Flatnotes is unreachable, instead of hanging or crashing", async () => {
     fakeFlatnotes = new FakeFlatnotesServer();
     await fakeFlatnotes.start();
     const unreachableUrl = `http://127.0.0.1:${fakeFlatnotes.port}`;
@@ -150,7 +164,120 @@ describe("FlatNotes gateway (mocked, no Docker/real FlatNotes)", () => {
     ).rejects.toThrow();
   });
 
-  it("service://flatnotes-create writes a note to FlatNotes and immediately publishes it as retrievable content", async () => {
+  it("service://flatnotes-fetch publishes the requested note and returns a contentId immediately retrievable via the normal content-centric protocol", async () => {
+    fakeFlatnotes = new FakeFlatnotesServer();
+    fakeFlatnotes.addNote({ title: "Torino", content: "citta' piemontese" });
+    await fakeFlatnotes.start();
+
+    gateway = makeNode("gateway");
+    requester = makeNode("requester");
+    await Promise.all([gateway.node.start(), requester.node.start()]);
+    await requester.node.connect({ host: "127.0.0.1", port: gateway.transport.port });
+
+    const flatnotesGateway = new FlatnotesGateway(gateway.node, `http://127.0.0.1:${fakeFlatnotes.port}`);
+    flatnotesGateway.registerFetchService();
+
+    const result = (await requester.node.callService("service://flatnotes-fetch", { title: "Torino" }, { timeoutMs: 2000 })) as {
+      title: string;
+      contentId: string;
+    };
+    expect(result.title).toBe("Torino");
+
+    const data = await requester.node.getContent(result.contentId);
+    expect(data.toString("utf8")).toBe("citta' piemontese");
+  });
+
+  it("service://flatnotes-fetch rejects with a clear error for a title Flatnotes doesn't have, instead of hanging or crashing", async () => {
+    fakeFlatnotes = new FakeFlatnotesServer();
+    await fakeFlatnotes.start();
+
+    gateway = makeNode("gateway");
+    requester = makeNode("requester");
+    await Promise.all([gateway.node.start(), requester.node.start()]);
+    await requester.node.connect({ host: "127.0.0.1", port: gateway.transport.port });
+
+    const flatnotesGateway = new FlatnotesGateway(gateway.node, `http://127.0.0.1:${fakeFlatnotes.port}`);
+    flatnotesGateway.registerFetchService();
+
+    await expect(
+      requester.node.callService("service://flatnotes-fetch", { title: "non esiste" }, { timeoutMs: 2000 }),
+    ).rejects.toThrow();
+  });
+
+  it("service://flatnotes-fetch rejects a non-string/empty 'title' instead of forwarding it to Flatnotes", async () => {
+    fakeFlatnotes = new FakeFlatnotesServer();
+    await fakeFlatnotes.start();
+
+    gateway = makeNode("gateway");
+    requester = makeNode("requester");
+    await Promise.all([gateway.node.start(), requester.node.start()]);
+    await requester.node.connect({ host: "127.0.0.1", port: gateway.transport.port });
+
+    const flatnotesGateway = new FlatnotesGateway(gateway.node, `http://127.0.0.1:${fakeFlatnotes.port}`);
+    flatnotesGateway.registerFetchService();
+
+    await expect(
+      requester.node.callService("service://flatnotes-fetch", { title: 12345 }, { timeoutMs: 2000 }),
+    ).rejects.toThrow(/title/);
+    await expect(
+      requester.node.callService("service://flatnotes-fetch", { title: "" }, { timeoutMs: 2000 }),
+    ).rejects.toThrow(/title/);
+  });
+
+  it("end-to-end: service://flatnotes-search discovers a title, service://flatnotes-fetch turns it into retrievable content — the intended usage pattern", async () => {
+    fakeFlatnotes = new FakeFlatnotesServer();
+    fakeFlatnotes.addNote({ title: "Venezia", content: "citta' sull'acqua" });
+    await fakeFlatnotes.start();
+
+    gateway = makeNode("gateway");
+    requester = makeNode("requester");
+    await Promise.all([gateway.node.start(), requester.node.start()]);
+    await requester.node.connect({ host: "127.0.0.1", port: gateway.transport.port });
+
+    const flatnotesGateway = new FlatnotesGateway(gateway.node, `http://127.0.0.1:${fakeFlatnotes.port}`);
+    flatnotesGateway.registerSearchService();
+    flatnotesGateway.registerFetchService();
+
+    const searchResult = (await requester.node.callService("service://flatnotes-search", { q: "venezia" }, { timeoutMs: 2000 })) as {
+      results: Array<{ title: string }>;
+    };
+    expect(searchResult.results).toEqual([{ title: "Venezia" }]);
+
+    const foundTitle = searchResult.results[0].title;
+    const fetchResult = (await requester.node.callService("service://flatnotes-fetch", { title: foundTitle }, { timeoutMs: 2000 })) as {
+      contentId: string;
+    };
+    const data = await requester.node.getContent(fetchResult.contentId);
+    expect(data.toString("utf8")).toBe("citta' sull'acqua");
+  });
+
+  it("service://flatnotes-fetch rejects cleanly when a title found by a prior search has since been deleted, instead of hanging or crashing (search-then-404 race)", async () => {
+    fakeFlatnotes = new FakeFlatnotesServer();
+    fakeFlatnotes.addBrokenTitle("Sparita");
+    await fakeFlatnotes.start();
+
+    gateway = makeNode("gateway");
+    requester = makeNode("requester");
+    await Promise.all([gateway.node.start(), requester.node.start()]);
+    await requester.node.connect({ host: "127.0.0.1", port: gateway.transport.port });
+
+    const flatnotesGateway = new FlatnotesGateway(gateway.node, `http://127.0.0.1:${fakeFlatnotes.port}`);
+    flatnotesGateway.registerSearchService();
+    flatnotesGateway.registerFetchService();
+
+    // Flatnotes' search index isn't guaranteed to stay in lockstep with a note being deleted
+    // in between — same tolerance KiwixGateway needs for its own search-then-fetch cycle.
+    const searchResult = (await requester.node.callService("service://flatnotes-search", { q: "sparita" }, { timeoutMs: 2000 })) as {
+      results: Array<{ title: string }>;
+    };
+    expect(searchResult.results).toEqual([{ title: "Sparita" }]);
+
+    await expect(
+      requester.node.callService("service://flatnotes-fetch", { title: "Sparita" }, { timeoutMs: 2000 }),
+    ).rejects.toThrow(/HTTP 404/);
+  });
+
+  it("service://flatnotes-create writes a note to Flatnotes and immediately publishes it as retrievable content", async () => {
     fakeFlatnotes = new FakeFlatnotesServer();
     await fakeFlatnotes.start();
 
@@ -166,19 +293,19 @@ describe("FlatNotes gateway (mocked, no Docker/real FlatNotes)", () => {
       "service://flatnotes-create",
       { title: "Passaggio del 30 agosto", content: "Bel sentiero, poca acqua all'ultima fontana." },
       { timeoutMs: 2000 },
-    )) as { path: string; contentId: string };
+    )) as { title: string; contentId: string };
 
-    expect(result.path).toBe("passaggio-del-30-agosto");
+    expect(result.title).toBe("Passaggio del 30 agosto");
     const bytes = await requester.node.getContent(result.contentId);
     expect(bytes.toString("utf8")).toBe("Bel sentiero, poca acqua all'ultima fontana.");
 
-    // Actually landed on the (fake) FlatNotes backend, not just published locally.
-    const backendRes = await fetch(`http://127.0.0.1:${fakeFlatnotes.port}/api/notes/${result.path}`);
+    // Actually landed on the (fake) Flatnotes backend, not just published locally.
+    const backendRes = await fetch(`http://127.0.0.1:${fakeFlatnotes.port}/api/notes/${encodeURIComponent(result.title)}`);
     expect(backendRes.ok).toBe(true);
     expect(await backendRes.json()).toMatchObject({ title: "Passaggio del 30 agosto" });
   });
 
-  it("service://flatnotes-create defaults the title when omitted", async () => {
+  it("service://flatnotes-create defaults the title when omitted, using a filesystem-safe timestamp (regression: the old ISO-timestamp default contained ':', rejected by real Flatnotes)", async () => {
     fakeFlatnotes = new FakeFlatnotesServer();
     await fakeFlatnotes.start();
     gateway = makeNode("gateway");
@@ -186,12 +313,28 @@ describe("FlatNotes gateway (mocked, no Docker/real FlatNotes)", () => {
     const flatnotesGateway = new FlatnotesGateway(gateway.node, `http://127.0.0.1:${fakeFlatnotes.port}`);
     flatnotesGateway.registerCreateService();
 
+    // Before the fix, this would reject with "FlatNotes note creation failed (HTTP 422)" — the fake
+    // server now enforces the same invalid-filename-character check real Flatnotes does.
     const result = (await gateway.node.callService("service://flatnotes-create", { content: "solo testo, nessun titolo" })) as {
-      path: string;
+      title: string;
       contentId: string;
     };
+    expect(result.title).not.toMatch(/[<>:"/\\|?*]/);
     const bytes = await gateway.node.getContent(result.contentId);
     expect(bytes.toString("utf8")).toBe("solo testo, nessun titolo");
+  });
+
+  it("rejects an explicit title containing a character real Flatnotes forbids, instead of surfacing a confusing backend HTTP error", async () => {
+    fakeFlatnotes = new FakeFlatnotesServer();
+    await fakeFlatnotes.start();
+    gateway = makeNode("gateway");
+    await gateway.node.start();
+    const flatnotesGateway = new FlatnotesGateway(gateway.node, `http://127.0.0.1:${fakeFlatnotes.port}`);
+    flatnotesGateway.registerCreateService();
+
+    await expect(
+      gateway.node.callService("service://flatnotes-create", { title: "note: con due punti", content: "testo valido" }),
+    ).rejects.toThrow(/title.*cannot include/);
   });
 
   it("rejects a malformed create payload before ever attempting a write: missing content, empty content, content over the length cap, title over its own cap", async () => {
@@ -212,9 +355,12 @@ describe("FlatNotes gateway (mocked, no Docker/real FlatNotes)", () => {
     ).rejects.toThrow(/title/);
     await expect(gateway.node.callService("service://flatnotes-create", null)).rejects.toThrow(/payload mancante/);
 
-    // None of the rejected attempts above should have reached the (fake) backend.
-    const listRes = await fetch(`http://127.0.0.1:${fakeFlatnotes.port}/api/notes`);
-    expect(await listRes.json()).toEqual([]);
+    // None of the rejected attempts above should have reached the (fake) backend — checked via
+    // service://flatnotes-search with a term that would match anything actually written, since real
+    // Flatnotes has no bulk-listing endpoint to check against directly (same reasoning as
+    // FlatnotesGateway's own doc comment on why syncCatalog() was removed).
+    const searchRes = await fetch(`http://127.0.0.1:${fakeFlatnotes.port}/api/search?term=a`);
+    expect(await searchRes.json()).toEqual([]);
   });
 
   it("rate limit: rejects the (N+1)th create request from the same caller within the window", async () => {
@@ -288,42 +434,28 @@ describe("FlatNotes gateway (mocked, no Docker/real FlatNotes)", () => {
     await expect(gateway.node.callService("service://flatnotes-create", { content: "prima nota valida" })).resolves.toBeDefined();
   });
 
-  it("publishedByPath stays bounded even after syncing far more distinct note paths than its cap", async () => {
-    // Regression: found by review — unlike KiwixGateway's identically-named field (whose growth is
-    // capped by a finite operator-owned NOMAD catalog), this gateway's publishedByPath is also fed
-    // by service://flatnotes-create, which any mesh peer within its rate-limit budget can call
-    // indefinitely with distinct content. Proof it's actually bounded (same technique as
-    // news-gateway.test.ts's "publishedById stays bounded..."): sync one note, then sync well past
-    // MAX_TRACKED_NOTE_PATHS (4096, flatnotes-gateway.ts) more distinct paths, then re-sync with
-    // nothing changed — if publishedByPath were unbounded, the very first note would still be
-    // recognized as unchanged and omitted from the result; since it's FIFO-bounded, its entry has
-    // necessarily been evicted, so it comes back as "changed" again.
-    const TOTAL_NEW_PATHS = 4200; // > MAX_TRACKED_NOTE_PATHS (4096)
+  it("fetchNote() stays correct across many distinct titles in a row — no shared per-title bookkeeping to go stale (regression, code-review: the old publishedByTitle map was dead write-only state after syncCatalog() was removed, deleted rather than kept as an unused liability)", async () => {
+    const TOTAL_TITLES = 200;
     fakeFlatnotes = new FakeFlatnotesServer();
-    fakeFlatnotes.addNote({ path: "prima-nota", title: "Prima nota", content: "contenuto originale" });
+    fakeFlatnotes.addNote({ title: "Prima nota", content: "contenuto originale" });
     await fakeFlatnotes.start();
 
     gateway = makeNode("gateway");
     await gateway.node.start();
     const flatnotesGateway = new FlatnotesGateway(gateway.node, `http://127.0.0.1:${fakeFlatnotes.port}`);
 
-    const first = await flatnotesGateway.syncCatalog();
-    expect(first.map((p) => p.path)).toEqual(["prima-nota"]);
+    const first = await flatnotesGateway.fetchNote("Prima nota");
 
-    for (let i = 0; i < TOTAL_NEW_PATHS; i++) {
-      fakeFlatnotes.addNote({ path: `nota-${i}`, title: `Nota ${i}`, content: `contenuto ${i}` });
+    for (let i = 0; i < TOTAL_TITLES; i++) {
+      fakeFlatnotes.addNote({ title: `Nota ${i}`, content: `contenuto ${i}` });
+      const fetched = await flatnotesGateway.fetchNote(`Nota ${i}`);
+      expect(fetched.title).toBe(`Nota ${i}`);
     }
-    const second = await flatnotesGateway.syncCatalog();
-    expect(second).toHaveLength(TOTAL_NEW_PATHS); // "prima-nota" unchanged, correctly not re-reported yet
 
-    // Nothing changed at FlatNotes since the second sync — if publishedByPath had grown unbounded
-    // (the bug this test guards against), it would still remember every path including "prima-nota",
-    // and this third sync would report zero changes. The guaranteed property is boundedness, not an
-    // exact eviction count: a full re-sync past the cap can cascade into re-reporting more than just
-    // the truly-evicted entries (see MAX_TRACKED_NOTE_PATHS's doc comment for why), so this only
-    // asserts the smoking gun — "prima-nota" (inserted before the cap-busting batch, so the first
-    // entry any bounded FIFO would evict) comes back as "changed", proving its entry didn't survive.
-    const third = await flatnotesGateway.syncCatalog();
-    expect(third.map((p) => p.path)).toContain("prima-nota");
-  }, 30000);
+    // Re-fetching the very first title still works identically after fetching 200 others in between —
+    // content addressing alone (ContentStore, already bounded/tested generically elsewhere) is what
+    // guarantees this, not any gateway-local state.
+    const refetched = await flatnotesGateway.fetchNote("Prima nota");
+    expect(refetched.contentId).toBe(first.contentId);
+  });
 });

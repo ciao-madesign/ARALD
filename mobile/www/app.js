@@ -1133,6 +1133,68 @@ document.getElementById("scan-qr").addEventListener("click", () => {
 });
 document.getElementById("scanner-cancel").addEventListener("click", stopScanner);
 
+// Provisioning Wi-Fi via Bluetooth per il Box (docs/next-steps.md) — feature-gated sulla presenza del
+// plugin Bluetooth, stesso schema già usato per #ble-relay-panel/#sos-button in ble-client.js (qui
+// però sulla schermata di setup, non nella dashboard: questo flusso serve *prima* che il telefono si
+// sia mai collegato a un gateway). Logica reale in ble-wifi-provisioning.js — vedi il suo header per
+// cosa è verificato qui (nulla, contro hardware vero) e perché.
+function bleWifiProvisioningPlugin() {
+  return window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BluetoothLe;
+}
+
+if (bleWifiProvisioningPlugin()) {
+  document.getElementById("wifi-provisioning-open").hidden = false;
+}
+
+document.getElementById("wifi-provisioning-open").addEventListener("click", () => {
+  document.getElementById("wifi-provisioning-panel").hidden = false;
+  document.getElementById("wifi-provisioning-status").classList.remove("error");
+  document.getElementById("wifi-provisioning-status").textContent = "";
+  document.getElementById("wifi-provisioning-ssid").focus();
+});
+
+document.getElementById("wifi-provisioning-cancel").addEventListener("click", () => {
+  document.getElementById("wifi-provisioning-panel").hidden = true;
+});
+
+document.getElementById("wifi-provisioning-send").addEventListener("click", async () => {
+  const ssidInput = document.getElementById("wifi-provisioning-ssid");
+  const passwordInput = document.getElementById("wifi-provisioning-password");
+  const sendButton = document.getElementById("wifi-provisioning-send");
+  const status = document.getElementById("wifi-provisioning-status");
+
+  const ssid = ssidInput.value.trim();
+  const password = passwordInput.value;
+  if (!ssid || !password) {
+    status.classList.add("error");
+    status.textContent = "Inserisci nome rete e password.";
+    return;
+  }
+
+  sendButton.disabled = true;
+  status.classList.remove("error");
+  try {
+    const result = await window.AraldBleWifiProvisioning.provisionWifiOverBluetooth(
+      { ssid, password },
+      { onStatus: (text) => { status.textContent = text; } },
+    );
+    if (result.status === "connected") {
+      status.textContent = "Il Box si è collegato alla rete Wi-Fi.";
+      vibrate(15);
+      showToast("Wi-Fi del Box configurato", "wifi");
+      passwordInput.value = "";
+    } else {
+      status.classList.add("error");
+      status.textContent = "Il Box non si è collegato: " + result.reason;
+    }
+  } catch (err) {
+    status.classList.add("error");
+    status.textContent = "Errore: " + err.message;
+  } finally {
+    sendButton.disabled = false;
+  }
+});
+
 document.getElementById("forget-network").addEventListener("click", () => {
   localStorage.removeItem(STORAGE_KEY_URL);
   localStorage.removeItem(STORAGE_KEY_PASSWORD);
@@ -2203,7 +2265,7 @@ function setCallSubmitBusy(submit, busy, idleLabel, idleIcon) {
   }
 }
 
-/** Mirrors gateway/nomad/translate-gateway.ts's SUPPORTED_LANGUAGES — kept in sync by hand, same accepted situation as SERVICE_ICONS/SERVICE_LABELS below (mobile/www and gateway/nomad are separate runtimes with no shared import path). */
+/** Mirrors gateway/local-services/translate-gateway.ts's SUPPORTED_LANGUAGES — kept in sync by hand, same accepted situation as SERVICE_ICONS/SERVICE_LABELS below (mobile/www and gateway/local-services are separate runtimes with no shared import path). */
 const TRANSLATE_LANGUAGES = { it: "Italiano", en: "Inglese", de: "Tedesco", fr: "Francese", es: "Spagnolo" };
 
 /** Content-types this app knows how to name for a human instead of showing a raw MIME string. */
@@ -2240,7 +2302,7 @@ function renderNewsResult(container, value) {
   container.append(list);
 }
 
-/** Renders a service://flatnotes-search result (`{ results: [{path, title}] }`) as a readable list instead of raw JSON — same reasoning as renderNewsResult() above. */
+/** Renders a service://flatnotes-search result (`{ results: [{title}] }` — notes are addressed by title, not a "path") as a readable list instead of raw JSON — same reasoning as renderNewsResult() above. */
 function renderNoteSearchResult(container, value) {
   container.textContent = "";
   const results = Array.isArray(value && value.results) ? value.results : [];
@@ -2373,7 +2435,7 @@ function buildCallForm(service) {
         result.textContent = value.translatedText;
       } else if (isFlatnotesSearch) {
         renderNoteSearchResult(result, value);
-      } else if (isFlatnotesCreate && value && typeof value.path === "string") {
+      } else if (isFlatnotesCreate && value && typeof value.title === "string") {
         result.textContent = "";
         result.append(
           el("p", { textContent: "Nota salvata." }),
@@ -2844,9 +2906,9 @@ document.getElementById("create-group-form").addEventListener("submit", async (e
 // app has never heard of, e.g. one an operator registered locally) still gets a card, just with a
 // generic icon and a name derived from the raw id — "some card" beats "silently missing" for an
 // unrecognized-but-available service.
-const SERVICE_ICONS = { "service://ai": "sparkles", "service://kiwix-search": "book", "service://news": "newspaper", "service://translation": "translate", "service://internet-fetch": "cloud", "service://flatnotes-search": "search", "service://flatnotes-create": "edit" };
+const SERVICE_ICONS = { "service://ai": "sparkles", "service://kiwix-search": "book", "service://kiwix-fetch": "book", "service://news": "newspaper", "service://translation": "translate", "service://internet-fetch": "cloud", "service://flatnotes-search": "search", "service://flatnotes-fetch": "search", "service://flatnotes-create": "edit" };
 const DEFAULT_SERVICE_ICON = "wrench";
-const SERVICE_LABELS = { "service://ai": "Assistente AI", "service://kiwix-search": "Enciclopedia", "service://news": "Notizie", "service://translation": "Traduttore", "service://internet-fetch": "Pagine da internet", "service://flatnotes-search": "Cerca nelle note", "service://flatnotes-create": "Scrivi una nota" };
+const SERVICE_LABELS = { "service://ai": "Assistente AI", "service://kiwix-search": "Enciclopedia", "service://kiwix-fetch": "Apri articolo enciclopedia", "service://news": "Notizie", "service://translation": "Traduttore", "service://internet-fetch": "Pagine da internet", "service://flatnotes-search": "Cerca nelle note", "service://flatnotes-fetch": "Apri una nota", "service://flatnotes-create": "Scrivi una nota" };
 
 /**
  * One-line, plain-language explanation shown under each service card — added after a UX audit found
@@ -2859,10 +2921,12 @@ const SERVICE_LABELS = { "service://ai": "Assistente AI", "service://kiwix-searc
 const SERVICE_DESCRIPTIONS = {
   "service://ai": "Fai una domanda e ricevi una risposta dall'intelligenza artificiale di questa rete.",
   "service://kiwix-search": "Cerca in un'enciclopedia scaricata, consultabile anche senza internet.",
+  "service://kiwix-fetch": "Apri un articolo trovato con la ricerca (usa il percorso restituito da 'Enciclopedia').",
   "service://news": "Le ultime notizie raccolte da questa rete.",
   "service://translation": "Traduci un testo in un'altra lingua.",
   "service://internet-fetch": "Recupera una pagina o un feed da internet vero, se questa rete è collegata.",
   "service://flatnotes-search": "Cerca tra le note già scritte su questa rete.",
+  "service://flatnotes-fetch": "Apri una nota trovata con la ricerca (usa il titolo restituito da 'Cerca nelle note').",
   "service://flatnotes-create": "Scrivi una nota nel quaderno condiviso — sarà leggibile da chiunque sia connesso.",
 };
 
