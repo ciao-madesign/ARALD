@@ -1,20 +1,15 @@
-# Stack di servizi indipendente da Project NOMAD — Kiwix + Ollama.
+# Stack di servizi indipendente da Project NOMAD — Kiwix + Ollama + Flatnotes.
 #
 # Sostituisce il piano precedente ("Ubuntu+Docker+Project NOMAD" descritto
 # in docs/deployment.md fino al 30 settembre 2026), che richiedeva il
 # sorgente Docker di Project NOMAD (mai reso disponibile, progetto esterno
-# "non dichiarato stabile", spec §4). `gateway/nomad/kiwix-gateway.ts` e
-# `gateway/nomad/ai-gateway.ts` parlano già con le vere API di kiwix-serve
-# e Ollama (docs/security.md voce #97) — non con un'API NOMAD — quindi
-# qualunque istanza di questi due programmi, comunque avviata, funziona.
-# Questo file la avvia con due immagini Docker ufficiali e pubbliche,
-# indipendenti da Project NOMAD: nessun sorgente esterno da procurarsi.
-#
-# Flatnotes deliberatamente NON incluso qui (decisione esplicita
-# dell'utente, 30 settembre 2026): la sua API è verificata solo su carta,
-# `FlatnotesGateway` va prima riscritto con lo stesso trattamento già dato
-# a Kiwix/Ollama (docs/next-steps.md) — va aggiunto a questo file in quel
-# momento, non prima.
+# "non dichiarato stabile", spec §4). `gateway/nomad/kiwix-gateway.ts`,
+# `ai-gateway.ts` e `flatnotes-gateway.ts` parlano già con le vere API dei
+# rispettivi backend (docs/security.md voce #97/#98/#100) — non con un'API
+# NOMAD — quindi qualunque istanza reale di questi tre programmi, comunque
+# avviata, funziona. Questo file li avvia con le loro immagini Docker
+# ufficiali e pubbliche, indipendenti da Project NOMAD: nessun sorgente
+# esterno da procurarsi.
 #
 # Non verificato in questo ambiente: nessun demone Docker raggiungibile
 # in questa sessione (`docker info` fallisce, "no such file or
@@ -52,3 +47,26 @@ services:
     # scaricarne uno (`docker exec arald-ollama ollama pull <modello>`,
     # coerente con --ai-model di gateway/nomad/cli.ts, default "llama3.2")
     # prima che service://ai risponda con qualcosa di reale.
+
+  flatnotes:
+    image: dullage/flatnotes:latest
+    container_name: arald-flatnotes
+    restart: unless-stopped
+    ports:
+      # Porta interna del container fissa a 8080 (verificato contro il vero
+      # README del progetto) — mappata su 8081 sull'host per non collidere
+      # con la 8080 già usata da kiwix-serve sopra.
+      - "8081:8080"
+    environment:
+      # FlatnotesGateway non gestisce alcun login/token (docs/security.md
+      # voce #100) — assume esplicitamente un'istanza senza autenticazione,
+      # stessa postura già presa per kiwix-serve/Ollama (nessuno dei tre ha
+      # un meccanismo di autenticazione proprio verso ARALD). Un valore
+      # diverso da "none" farebbe fallire ogni chiamata con 401.
+      FLATNOTES_AUTH_TYPE: "none"
+    volumes:
+      - ./data/flatnotes:/data
+      # Indice di ricerca separato dalle note vere e proprie (esempio
+      # ufficiale del progetto) — evitare di doverlo ricostruire ogni volta
+      # che si tocca ./data/flatnotes a mano.
+      - ./data/flatnotes-index:/data/.flatnotes
