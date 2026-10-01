@@ -155,7 +155,7 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
 /* :not([hidden]) — an ID selector's specificity otherwise beats the UA stylesheet's own
    [hidden] { display: none } rule, so an unguarded `display: flex` here would keep this screen
    visible even after app.js sets the hidden attribute to switch to the dashboard. */
-#setup-screen:not([hidden]) {
+#setup-screen:not([hidden]), #setup-success:not([hidden]) {
   min-height: 100vh;
   display: flex;
   align-items: center;
@@ -173,7 +173,12 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
 }
 .setup-card .lede { color: var(--muted); font-size: 0.92em; margin-bottom: 1.5em; }
 .setup-card code { background: var(--off-soft); padding: 0.1em 0.35em; border-radius: 0.25em; }
-#setup-form { display: flex; flex-direction: column; gap: 0.4em; }
+/* :not([hidden]) — same ID-selector-beats-the-UA-stylesheet reason as #setup-screen above. Became a
+   real bug (not just latent) with the wizard choice screen (voce #109): #setup-form now actually
+   toggles `hidden` via showSetupScreen()/the choice cards, where before this rule was written the
+   form was never hidden at all — found live with Playwright, the choice cards and the form rendered
+   stacked on top of each other instead of one replacing the other. */
+#setup-form:not([hidden]) { display: flex; flex-direction: column; gap: 0.4em; }
 #setup-form label { font-size: 0.82em; color: var(--muted); margin-top: 0.6em; }
 /* Generic one-line explanation, reused throughout the dashboard (search scope, panel subtitles,
    service descriptions) after a UX audit found the setup screen was the ONLY place in the app that
@@ -257,7 +262,49 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
 .link-button .icon { width: 1em; height: 1em; }
 .link-button:active { opacity: 0.6; }
 #setup-form #change-address { margin-top: 0.9em; align-self: center; }
-#setup-form #scan-qr { margin-top: 0.9em; align-self: center; }
+#setup-form #choice-back { margin-bottom: 0.8em; }
+
+/* Wizard "come vuoi connetterti?" (docs/ux-ui-design-system.md) — tre scelte grandi, icona+titolo+
+   sottotitolo breve invece del modulo denso che stava qui prima (indirizzo+password+QR+Bluetooth
+   tutti visibili insieme). Un vero <button>, non un div con onClick (accessibile da tastiera/lettore
+   di schermo per costruzione, CLAUDE.md). */
+/* :not([hidden]) on both — same reason as #setup-form above, found by the same Playwright check:
+   #choice-qr/#choice-wifi-provisioning start `hidden` in markup (feature-gated), and #setup-choice
+   itself is toggled by showSetupScreen() — an unguarded class/ID `display` here wins the cascade tie
+   against the UA [hidden]{display:none} rule and keeps a "hidden" card visible and stacked on top of
+   whatever should have replaced it. */
+#setup-choice:not([hidden]) { display: flex; flex-direction: column; gap: 0.7em; }
+.choice-card:not([hidden]) { display: flex; }
+.choice-card {
+  align-items: center; gap: 0.9em; text-align: left;
+  background: var(--card); border: 1.5px solid var(--border); border-radius: 1em;
+  padding: 1em; color: var(--ink);
+  transition: border-color 150ms var(--ease), transform 100ms var(--ease);
+}
+.choice-card:active { transform: scale(0.98); }
+.choice-card:hover { border-color: var(--signal); }
+/* Il percorso consigliato (QR) — stesso verde "segnale disponibile" usato ovunque nell'app per
+   indicare una via buona/raggiungibile, mai l'ambra --accent (riservata al singolo bottone "faro"
+   del modulo sotto, voce #50 — una scelta tra percorsi non è "l'unico impegno che conta ora"). */
+.choice-card.choice-best { border-color: var(--signal); background: var(--signal-soft); }
+.choice-ring {
+  width: 2.6em; height: 2.6em; border-radius: 50%; flex: none;
+  background: var(--off-soft); color: var(--ink);
+  display: flex; align-items: center; justify-content: center;
+}
+.choice-best .choice-ring { background: var(--signal); color: var(--signal-ink); }
+.choice-text { display: flex; flex-direction: column; gap: 0.15em; min-width: 0; }
+.choice-title { font-weight: 700; font-size: 0.98em; display: flex; align-items: center; gap: 0.5em; }
+.choice-badge { font-size: 0.65em; background: var(--signal); color: var(--signal-ink); padding: 0.15em 0.5em; border-radius: 999px; font-weight: 700; letter-spacing: 0.02em; }
+.choice-sub { font-size: 0.8em; color: var(--muted); }
+.choice-arrow { margin-left: auto; color: var(--muted); flex: none; width: 1.1em; height: 1.1em; }
+
+/* Conferma "Connesso!" — stesso trattamento "faro" verde del resto dell'app per un esito positivo. */
+.success-ring {
+  width: 4em; height: 4em; border-radius: 50%; background: var(--signal); color: var(--signal-ink);
+  display: flex; align-items: center; justify-content: center; margin: 0 auto 0.8em;
+}
+.success-ring .icon { width: 2.1em; height: 2.1em; }
 
 /* display must be set for width/height to apply to a <span> (inline boxes ignore sizing) — and
    guarded by :not([hidden]) for the same reason as above, since both spans start `hidden`. */

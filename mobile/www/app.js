@@ -1059,18 +1059,39 @@ function addressFieldNeeded() {
   return !gatewayUrl;
 }
 
+/**
+ * True until the user picks a path on the "come vuoi connetterti?" wizard screen (`#setup-choice`,
+ * docs/ux-ui-design-system.md) — only meaningful while `addressFieldNeeded()` is also true (a
+ * returning user, address already known, always skips straight to the password-only form, same as
+ * before this voice). Reset to `false` by each choice card's own handler and by `goToSetupChoice()`;
+ * reset back to `true` whenever the gateway is forgotten (`#forget-network`) so a fresh setup shows
+ * the wizard again instead of remembering a choice from a previous, now-irrelevant pairing.
+ */
+let setupChoiceDismissed = false;
+
 function showSetupScreen(errorMessage) {
   document.getElementById("setup-screen").hidden = false;
   document.getElementById("dashboard-screen").hidden = true;
+  document.getElementById("setup-success").hidden = true;
+  clearTimeout(setupSuccessTimer);
   clearInterval(refreshTimer);
   closeChatPanel();
   closeChannelPanel();
   closeGroupPanel();
 
   const needsAddress = addressFieldNeeded();
+  const showChoice = needsAddress && !setupChoiceDismissed;
+  document.getElementById("setup-choice").hidden = !showChoice;
+  document.getElementById("setup-form").hidden = showChoice;
+  // Never left open across a fresh showSetupScreen() call — this function is never invoked while
+  // that panel is the active, in-progress view (its own flow has its own status text, never routes
+  // back through here), so unconditionally closing it here is always safe, not just when resetting.
+  document.getElementById("wifi-provisioning-panel").hidden = true;
+
   document.getElementById("address-field").hidden = !needsAddress;
   document.getElementById("gateway-input").required = needsAddress;
   document.getElementById("change-address").hidden = needsAddress;
+  document.getElementById("choice-back").hidden = !needsAddress;
   if (!needsAddress) {
     document.getElementById("gateway-input").value = gatewayUrl.replace(/^https?:\/\//, "");
   }
@@ -1092,8 +1113,17 @@ function showSetupScreen(errorMessage) {
   // Focus the first field the user actually needs to fill — helps keyboard/screen-reader users land
   // ready to type instead of having to find the input themselves, and matters more here than on a
   // typical form because this runs every time setup re-appears (e.g. after a password rejection).
-  const target = document.getElementById(needsAddress ? "gateway-input" : "password-input");
-  if (document.activeElement !== target) target.focus({ preventScroll: true });
+  // Skipped while the choice screen itself is showing — there is nothing to type yet.
+  if (!showChoice) {
+    const target = document.getElementById(needsAddress ? "gateway-input" : "password-input");
+    if (document.activeElement !== target) target.focus({ preventScroll: true });
+  }
+}
+
+/** Shared by "Cambia metodo" (both inside the manual form and inside the Bluetooth Wi-Fi panel) — returns to the wizard's first screen instead of leaving the user on a blank card with nothing visible. */
+function goToSetupChoice() {
+  setupChoiceDismissed = false;
+  showSetupScreen();
 }
 
 function setPasswordToggleState(showing) {
@@ -1109,6 +1139,16 @@ function setConnectSubmitBusy(busy) {
   btn.disabled = busy;
   btn.querySelector(".btn-label").textContent = busy ? "Connessione..." : "Connetti";
   btn.querySelector(".btn-spinner").hidden = !busy;
+  // "Cambia metodo" torna al wizard via goToSetupChoice() -> showSetupScreen(), che ricalcola
+  // showChoice da addressFieldNeeded() — ma il submit handler ha già mutato gatewayUrl al candidato
+  // PRIMA di questo await (found by code-review): un tap qui mentre quella richiesta è ancora in
+  // volo farebbe rimbalzare la UI al wizard mentre la richiesta scade comunque in background, per poi
+  // far saltare l'utente alla dashboard per una connessione da cui era appena tornato indietro, o
+  // scrivere un errore su un #setup-error ormai nascosto. Disabilitato per tutta la stessa finestra
+  // del bottone "Connetti", stesso principio già usato per setSendExternalDeliveryBusy()/
+  // gatewaySosAttempt altrove in questo file — mai due percorsi che toccano lo stesso stato di rete
+  // in corsa tra loro.
+  document.getElementById("choice-back").disabled = busy;
 }
 
 document.getElementById("toggle-password").addEventListener("click", () => {
@@ -1124,6 +1164,43 @@ document.getElementById("change-address").addEventListener("click", () => {
   document.getElementById("gateway-input").required = true;
   document.getElementById("change-address").hidden = true;
   document.getElementById("gateway-input").focus({ preventScroll: true });
+});
+
+document.getElementById("choice-manual").addEventListener("click", () => {
+  setupChoiceDismissed = true;
+  document.getElementById("setup-choice").hidden = true;
+  document.getElementById("setup-form").hidden = false;
+  document.getElementById("choice-back").hidden = false;
+  document.getElementById("gateway-input").focus({ preventScroll: true });
+});
+
+document.getElementById("choice-back").addEventListener("click", goToSetupChoice);
+
+/**
+ * "Connesso!" (docs/ux-ui-design-system.md §8 applicato al pairing) — una schermata di conferma
+ * breve tra "Connetti" riuscito e la dashboard vera e propria, invece di saltare direttamente da un
+ * modulo a tutt'altra schermata densa senza alcun feedback intermedio. Si chiude da sola dopo
+ * SETUP_SUCCESS_AUTO_CONTINUE_MS, o subito se l'utente tocca "Vai alla rete" — entrambe le vie
+ * finiscono nello stesso showDashboard() già esistente, nessuna duplicazione della logica reale.
+ */
+const SETUP_SUCCESS_AUTO_CONTINUE_MS = 1800;
+let setupSuccessTimer = null;
+
+function showSetupSuccess(networkName) {
+  document.getElementById("setup-screen").hidden = true;
+  document.getElementById("setup-success-network").textContent = networkName;
+  document.getElementById("setup-success").hidden = false;
+  clearTimeout(setupSuccessTimer);
+  setupSuccessTimer = setTimeout(() => {
+    document.getElementById("setup-success").hidden = true;
+    showDashboard();
+  }, SETUP_SUCCESS_AUTO_CONTINUE_MS);
+}
+
+document.getElementById("setup-success-continue").addEventListener("click", () => {
+  clearTimeout(setupSuccessTimer);
+  document.getElementById("setup-success").hidden = true;
+  showDashboard();
 });
 
 document.getElementById("setup-form").addEventListener("submit", async (event) => {
@@ -1172,7 +1249,7 @@ document.getElementById("setup-form").addEventListener("submit", async (event) =
   localStorage.setItem(STORAGE_KEY_URL, gatewayUrl);
   localStorage.setItem(STORAGE_KEY_PASSWORD, networkPassword);
   vibrate(12);
-  showDashboard();
+  showSetupSuccess(status.networkName);
 });
 
 // ---------- QR scanner ----------
@@ -1187,7 +1264,7 @@ document.getElementById("setup-form").addEventListener("submit", async (event) =
 // itself (see mobile/README.md) — parsePairingUri() above is covered by feeding it synthetic input
 // directly, independent of whether a camera or detector is present.
 const hasBarcodeDetector = "BarcodeDetector" in window;
-if (hasBarcodeDetector) document.getElementById("scan-qr").hidden = false;
+if (hasBarcodeDetector) document.getElementById("choice-qr").hidden = false;
 
 let scannerStream = null;
 let scannerRafId = null;
@@ -1210,6 +1287,16 @@ function stopScanner() {
 }
 
 function applyScannedPairing(pairing) {
+  // Reveals the manual form (prefilled, normally skipped by the QR path) and marks the wizard's
+  // choice step dismissed *before* submitting — found necessary while wiring this up: without it, a
+  // failed connection attempt (wrong/stale QR, gateway unreachable) would call showSetupScreen() with
+  // an error, which recomputes showChoice from setupChoiceDismissed and would bounce the user back to
+  // "come vuoi connetterti?" instead of showing the error on the prefilled form where they can see
+  // and fix what went wrong.
+  setupChoiceDismissed = true;
+  document.getElementById("setup-choice").hidden = true;
+  document.getElementById("setup-form").hidden = false;
+  document.getElementById("choice-back").hidden = false;
   document.getElementById("address-field").hidden = false;
   document.getElementById("gateway-input").required = true;
   document.getElementById("change-address").hidden = true;
@@ -1268,7 +1355,7 @@ async function startScanner() {
   scanLoop().catch(() => {});
 }
 
-document.getElementById("scan-qr").addEventListener("click", () => {
+document.getElementById("choice-qr").addEventListener("click", () => {
   startScanner().catch(() => {});
 });
 document.getElementById("scanner-cancel").addEventListener("click", stopScanner);
@@ -1283,19 +1370,22 @@ function bleWifiProvisioningPlugin() {
 }
 
 if (bleWifiProvisioningPlugin()) {
-  document.getElementById("wifi-provisioning-open").hidden = false;
+  document.getElementById("choice-wifi-provisioning").hidden = false;
 }
 
-document.getElementById("wifi-provisioning-open").addEventListener("click", () => {
+document.getElementById("choice-wifi-provisioning").addEventListener("click", () => {
+  setupChoiceDismissed = true;
+  document.getElementById("setup-choice").hidden = true;
   document.getElementById("wifi-provisioning-panel").hidden = false;
   document.getElementById("wifi-provisioning-status").classList.remove("error");
   document.getElementById("wifi-provisioning-status").textContent = "";
   document.getElementById("wifi-provisioning-ssid").focus();
 });
 
-document.getElementById("wifi-provisioning-cancel").addEventListener("click", () => {
-  document.getElementById("wifi-provisioning-panel").hidden = true;
-});
+// "Cambia metodo" sul pannello Bluetooth — torna al wizard invece di limitarsi a nascondere il
+// pannello (che prima di questa voce lasciava l'utente su una card vuota, senza alcuna via visibile
+// per riprovare con un metodo diverso).
+document.getElementById("wifi-provisioning-cancel").addEventListener("click", goToSetupChoice);
 
 document.getElementById("wifi-provisioning-send").addEventListener("click", async () => {
   const ssidInput = document.getElementById("wifi-provisioning-ssid");
@@ -1341,6 +1431,7 @@ document.getElementById("forget-network").addEventListener("click", () => {
   gatewayUrl = "";
   networkPassword = "";
   document.getElementById("gateway-input").value = ""; // showSetupScreen() only writes this field when an address is already known — a full reset has none, so it must be cleared here explicitly or a stale address would linger from before the reset
+  setupChoiceDismissed = false; // una rete dimenticata è un setup da zero — mostra di nuovo "come vuoi connetterti?", non l'ultimo metodo scelto per una rete che non esiste più
   showSetupScreen();
 });
 
