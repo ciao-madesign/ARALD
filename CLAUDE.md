@@ -37,6 +37,7 @@ Il piano d'insieme originario (milestone 0-20 + i follow-up post-audit) è compl
 | Catalogo servizi (mesh-native + NOMAD-backed), pacchetti pre-confezionati per caso d'uso | [`docs/service-catalog.md`](docs/service-catalog.md) |
 | Cosa è riusato da Project NOMAD/BitChat vs. costruito ex novo | [`docs/reuse-vs-new.md`](docs/reuse-vs-new.md) |
 | Appunto grezzo di spunti/migliorie notati confrontando ARALD con repository esterni (analisi a comando, non un monitoraggio automatico) | [`docs/external-inspiration.md`](docs/external-inspiration.md) |
+| Specifica UX/UI per il nuovo giro di rifinimento (icone, stati, legenda, gerarchia, mappa-centrica, Operational/Configuration) — mobile, Mirror Portal, Web UI del nodo | [`docs/ux-ui-design-system.md`](docs/ux-ui-design-system.md) |
 
 **Leggi la voce/il documento pertinente prima di toccare il codice corrispondente** — spiegano non solo cosa è stato fatto ma perché, inclusi i bug trovati dalla revisione prima di considerare ogni voce conclusa.
 
