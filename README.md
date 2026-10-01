@@ -1,6 +1,6 @@
 # ARALD
 
-**A network that works where the internet doesn't.**
+**No connection. Still connected.**
 
 ARALD lets phones, small radio devices, and local computers share content, messages, and services directly with each other — no cell towers, no Wi-Fi router, no satellite link. Requests hop from device to device until they reach an answer, and sync automatically the moment a connection becomes available.
 
