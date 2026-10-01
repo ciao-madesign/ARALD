@@ -57,6 +57,25 @@ Il vincolo dimensionale del Watch costituisce un nuovo elemento di valutazione d
 
 La scelta deve essere presa esplicitamente dopo la validazione e non assunta come conseguenza automatica di questa proposta.
 
+#### 3bis. Requisito: contenitore commerciale esistente prima di un'enclosure proprietaria (1 ottobre 2026, aggiunto dall'utente)
+
+Coerente con la filosofia di riuso di ARALD (stessa logica già applicata a MCU/radio: riusare componenti esistenti, concentrare lo sviluppo su elettronica/firmware/rete invece che reinventare un componente meccanico che il mercato offre già): il primo prototipo Watch dovrebbe **valutare un contenitore commerciale IP67 esistente prima di progettare un'enclosure proprietaria**.
+
+**Candidato proposto: Takachi SMW-50W** — verificato con ricerca web reale in questa sessione (due fonti indipendenti concordanti), non assunto: Takachi lo commercializza letteralmente come **"IP67 SMARTWATCH TYPE ENCLOSURE"** (serie SMW) — pensato esattamente per questo uso, non un contenitore generico riadattato.
+
+| Campo | Valore (verificato) |
+|---|---|
+| Dimensioni esterne | 44 × 50 × 13,8 mm |
+| Dimensioni interne | 23,9 × 26,9 × 10,4 mm |
+| Grado di protezione | IP67 (1m di profondità / 30 min) |
+| Materiale | ABS/ASA |
+| Peso | 30,5 g |
+| Colore | Off-white |
+
+**Perché è un candidato credibile**: abbastanza piccolo da rendere credibile un Watch da polso, abbastanza grande da lasciare margine per batteria + PCB + display — a differenza di un contenitore generico, è già pensato per questo bilanciamento.
+
+**Prossimo passo concreto, prima di fissare qualunque dimensione del Watch**: verificare se XIAO ESP32-S3 + Wio-SX1262 (impilati) + Li-Po 3,7V ~500mAh + display entrano davvero nel volume interno disponibile, usando le dimensioni **reali** dei singoli componenti (non solo quelle dell'enclosure). **Osservazione onesta, non verificata in questa sessione**: l'altezza interna di soli **10,4mm** è probabilmente il vincolo più stretto di tutto il contenitore — uno stack XIAO+Wio ha tipicamente più di pochi millimetri di spessore già da solo, prima di aggiungere batteria e display sopra — va controllato con i datasheet reali dei tre componenti prima di considerare la SMW-50W una scelta **confermata**, non solo plausibile. Se l'altezza non basta, resta comunque un riferimento dimensionale utile per calibrare l'ordine di grandezza di un'enclosure proprietaria.
+
 #### 4. Obiettivo del Watch
 
 Creare un dispositivo da polso dedicato ad ARALD che permetta di: visualizzare l'ora; visualizzare lo stato della rete ARALD; ricevere e mostrare messaggi; segnalare eventi SOS; inviare un SOS tramite pulsante fisico; fornire feedback tramite LED e, se introdotto, vibrazione; mantenere la comunicazione LoRa autonoma dallo smartphone; opzionalmente acquisire e trasmettere la posizione GPS/GNSS. Il Watch deve rimanere un **terminale ARALD minimale**, non uno smartwatch general purpose.
