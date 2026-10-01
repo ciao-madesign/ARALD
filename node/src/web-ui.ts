@@ -138,14 +138,22 @@ export interface WebUiOptions {
    * an operator role, gated by that node's own network password, not
    * exposed to the general guest-facing gateway by default. When true,
    * `networkPassword` is required (the constructor throws otherwise).
-   * **Read-only** — unlike `exposeRelayRegistry`, there is no
-   * `POST /api/emergency-beacons`: a SOS only ever arrives from the mesh
-   * itself (`NomadNode.sendEmergencyBeacon()`/`considerEmergencyBeacon()`),
-   * never from an HTTP client, so there is nothing to write here. An
-   * operator's reply reuses the ordinary 1:1 messaging endpoints
-   * (`POST /api/messages`, voce #36) addressed to the sighting's own
-   * `deviceId` — no dedicated endpoint needed, the beacon is already
-   * reachable like any other peer via store-and-forward.
+   *
+   * **Read-only, gated by this flag alone** — seeing *every* sighting this
+   * node has observed is the operator-only capability described above.
+   * `POST /api/emergency-beacons` (voce #107, `CLAUDE.md`) is a *separate*,
+   * ordinary write path instead — gated the same way as every other
+   * guest-facing action (`allowServiceCalls && networkPassword`, same as
+   * `POST /api/messages`/`POST /api/location-report`), **never** by this
+   * flag: a phone originating its own SOS through this gateway must not
+   * require the gateway to have opted into exposing every sighting it has
+   * observed to begin with — that would make raising an SOS depend on an
+   * unrelated operator-role configuration, backwards from the goal of
+   * reaching the mesh through as many channels as possible. An operator's
+   * reply reuses the ordinary 1:1 messaging endpoints (`POST /api/messages`,
+   * voce #36) addressed to the sighting's own `deviceId` — no dedicated
+   * reply endpoint needed, the beacon is already reachable like any other
+   * peer via store-and-forward.
    */
   exposeEmergencyBeacons?: boolean;
   /**
@@ -1042,6 +1050,10 @@ export class WebUiServer {
       }
       if (url.pathname === "/api/relay-command") {
         void this.handleSendRelayCommand(req, res);
+        return;
+      }
+      if (url.pathname === "/api/emergency-beacons") {
+        void this.handlePostEmergencyBeacon(req, res);
         return;
       }
       if (url.pathname === "/api/external-delivery") {
@@ -2302,7 +2314,8 @@ export class WebUiServer {
    * #3, the Emergency Node view). Same 404-then-401 gating posture as
    * `handleGetLocationRegistry()`/`handleGetRelayRegistry()`, on
    * `exposeEmergencyBeacons` instead — see that option's own doc comment
-   * for why there is no write counterpart here.
+   * for why `handlePostEmergencyBeacon()` below is gated differently, not
+   * on this same flag.
    */
   private handleGetEmergencyBeacons(req: IncomingMessage, res: ServerResponse): void {
     if (!this.exposeEmergencyBeacons || !this.networkPassword) {
@@ -2315,6 +2328,95 @@ export class WebUiServer {
       return;
     }
     sendJson(res, 200, this.node.emergencyBeacons.list());
+  }
+
+  /**
+   * `POST /api/emergency-beacons` (voce #107) — lets a paired phone originate an SOS *through this
+   * gateway*, a second independent channel alongside the phone's own Bluetooth relay
+   * (`mobile/www/ble-client.js`'s `sendEmergencyBeaconViaRelay()`/coda persistente, voce #106):
+   * explicit requirement from the user, "SOS sempre persistente su ogni canale possibile, il primo
+   * che funziona libera l'SOS" — a phone already on the same Wi-Fi/LAN as a paired gateway reaches
+   * the mesh through it instantly, without ever needing a Bluetooth peer. No separate "Internet
+   * channel" is needed on top of this: if the gateway itself has real Internet access
+   * (`docs/deployment.md`), the SOS already benefits from it the moment `sendEmergencyBeacon()`'s
+   * ordinary `CONTENT_ANNOUNCE` flood reaches an Emergency Node/Box with Internet — the same mesh
+   * propagation every other piece of content-centric traffic already gets, not a new code path.
+   *
+   * Gated exactly like every other guest-facing write (`allowServiceCalls && networkPassword`, same
+   * as `handleSendMessage()`/`handleShareLocation()`) — **never** `exposeEmergencyBeacons`: that flag
+   * is the operator-only capability of seeing *every* sighting this node has observed (see its own
+   * doc comment), an unrelated and much broader thing than a guest phone raising its own SOS through
+   * whatever gateway it happens to be paired to. Tying this write to that flag would make "can I send
+   * an SOS at all" depend on whether this particular gateway opted into an operator role — backwards
+   * from the goal of maximizing reachability.
+   *
+   * `sendEmergencyBeacon()` (`node.ts`) already validates every field and enforces its own anti-flood
+   * budget (`MAX_EMERGENCY_BEACON_PER_WINDOW`) — this handler only validates the JSON body's shape
+   * (same thin-wrapper convention as `handleSendNodeAppend()`/`handleCreateDrop()` above), then maps
+   * the one thrown error that isn't a client input mistake (the rate limit) to 429, everything else
+   * to 400 — same split those handlers already use.
+   */
+  private async handlePostEmergencyBeacon(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.allowServiceCalls || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+
+    let raw: Buffer;
+    try {
+      raw = await readRequestBody(req, MAX_MESSAGE_BODY_BYTES, MAX_CALL_BODY_READ_MS);
+    } catch (err) {
+      if (res.writableEnded || res.destroyed) return; // connection already gone — nothing to answer
+      if (err instanceof BodyTooLargeError) {
+        sendJson(res, 413, { error: "request body too large" });
+      } else if (err instanceof Error && err.message.includes("timed out")) {
+        sendJson(res, 408, { error: "timed out waiting for the request body" });
+      } else {
+        sendJson(res, 400, { error: "failed to read request body" });
+      }
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = raw.length === 0 ? {} : JSON.parse(raw.toString("utf8"));
+    } catch {
+      sendJson(res, 400, { error: "malformed JSON body" });
+      return;
+    }
+
+    const body = parsed as { message?: unknown; lat?: unknown; lon?: unknown } | null;
+    const message = body?.message;
+    if (message !== undefined && typeof message !== "string") {
+      sendJson(res, 400, { error: "'message' must be a string" });
+      return;
+    }
+    const lat = body?.lat;
+    if (lat !== undefined && typeof lat !== "number") {
+      sendJson(res, 400, { error: "'lat' must be a number" });
+      return;
+    }
+    const lon = body?.lon;
+    if (lon !== undefined && typeof lon !== "number") {
+      sendJson(res, 400, { error: "'lon' must be a number" });
+      return;
+    }
+
+    try {
+      const sighting = this.node.sendEmergencyBeacon({ message, lat, lon });
+      sendJson(res, 200, { beaconContentId: sighting.beaconContentId });
+    } catch (err) {
+      // sendEmergencyBeacon()'s own validation throws for a rejected input (bad message/lat/lon —
+      // 400) and an exhausted anti-flood budget (429) — distinguished by message content, same
+      // convention handleSendNodeAppend() already uses above.
+      const msg = (err as Error).message;
+      sendJson(res, msg.includes("too many emergency beacons") ? 429 : 400, { error: msg });
+    }
   }
 
   /**

@@ -110,8 +110,8 @@ function recordActivity(type, label, status) {
 
 const ACTIVITY_TYPE_LABELS = { message: "Messaggio", "external-delivery": "Invio a un'organizzazione", drop: "Bacheca", channel: "Canale", sos: "SOS" };
 const ACTIVITY_STATUS_TEXT = { sent: "Inviato", queued: "In coda — verrà inoltrato appena c'è un vicino nelle vicinanze", published: "Pubblicato" };
-/** Overrides ACTIVITY_STATUS_TEXT for a (type, status) pair that reads better as its own dedicated phrase than as a generic verb + type label (docs/security.md voce #87, Fase 2 dell'audit UX/UI; "queued" aggiunto dalla coda SOS persistente, docs/next-steps.md) — "SOS trasmesso" è una conferma diretta e rassicurante per l'unica azione dove conta di più, invece del generico "Inviato"; "in attesa di trasmissione" nomina esplicitamente il comportamento automatico della coda invece del testo generico pensato per un pacchetto unicast già instradato. */
-const ACTIVITY_STATUS_TEXT_OVERRIDE = { sos: { sent: "SOS trasmesso", queued: "In attesa di trasmissione — verrà inviato al primo dispositivo ARALD incrociato" } };
+/** Overrides ACTIVITY_STATUS_TEXT for a (type, status) pair that reads better as its own dedicated phrase than as a generic verb + type label (docs/security.md voce #87, Fase 2 dell'audit UX/UI; "queued" aggiunto dalla coda SOS persistente, docs/next-steps.md voci #106/#107) — "SOS trasmesso" è una conferma diretta e rassicurante per l'unica azione dove conta di più, invece del generico "Inviato"; "in attesa di trasmissione" nomina esplicitamente il comportamento automatico della coda multi-canale (gateway o Bluetooth, il primo che funziona) invece del testo generico pensato per un pacchetto unicast già instradato. */
+const ACTIVITY_STATUS_TEXT_OVERRIDE = { sos: { sent: "SOS trasmesso", queued: "In attesa di trasmissione — verrà inviato appena un canale sarà disponibile (gateway o Bluetooth)" } };
 
 function activityStatusText(type, status) {
   const override = ACTIVITY_STATUS_TEXT_OVERRIDE[type];
@@ -440,6 +440,43 @@ async function createDrop({ text, lat, lon, label, kind }) {
     throw err;
   }
   return body.drop;
+}
+
+/**
+ * POST /api/emergency-beacons (node/src/web-ui.ts, voce #107) — il canale "gateway" della coda SOS
+ * persistente (`mobile/www/sos-queue.js`/`ble-client.js`, voci #106/#107): se il telefono è appaiato e
+ * il gateway è raggiungibile via Wi-Fi/LAN, chiede a quel `NomadNode` di originare l'SOS con la *propria*
+ * identità — un canale indipendente dal burst Bluetooth (`ble-client.js`'s `tryBleSosBurst()`), più
+ * veloce quando disponibile e che raggiunge la mesh (ed eventualmente Internet, se quel gateway ce l'ha
+ * — nessun canale "internet" separato, è la stessa propagazione mesh di qualunque altro contenuto) senza
+ * aspettare alcun peer Bluetooth.
+ *
+ * A differenza di ogni altro helper POST di questo file, **non chiama mai `handlePasswordRejected()`**
+ * su un 401 — rilancia e basta, lasciando al chiamante (`ble-client.js`'s orchestrazione multi-canale)
+ * decidere: un fallimento di *questo* canale (password cambiata nel frattempo, gateway irraggiungibile,
+ * qualunque errore) non deve mai interrompere il pairing solo perché un tentativo SOS in background non
+ * è andato a buon fine — un altro canale deve comunque avere la sua occasione, e il pairing stesso resta
+ * valido per tutto il resto dell'app.
+ */
+async function trySendEmergencyBeaconViaGateway({ message, lat, lon }) {
+  if (!gatewayUrl || !networkPassword) throw new Error("nessun gateway appaiato");
+  const res = await fetchWithTimeout(
+    apiUrl("/api/emergency-beacons"),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + networkPassword },
+      body: JSON.stringify({ message, lat, lon }),
+    },
+    CALL_TIMEOUT_MS,
+  );
+  let body;
+  try {
+    body = await res.json();
+  } catch {
+    throw new Error("risposta non valida dal gateway (HTTP " + res.status + ")");
+  }
+  if (!res.ok) throw new Error(body.error || "HTTP " + res.status);
+  return body.beaconContentId;
 }
 
 /**
@@ -3195,6 +3232,13 @@ async function refreshAll() {
     await refreshContent();
     firstLoadDone = true;
     setDashboardError();
+    // Coda SOS persistente, canale gateway (voce #107) — questo stesso ciclo che ha appena raggiunto
+    // con successo il gateway è il segnale più economico che quel canale è di nuovo disponibile ORA:
+    // nessun timer nuovo, si aggancia al polling già esistente invece di aggiungerne uno proprio
+    // (stessa disciplina "scadenza pigra, mai uno sweep in background" di sos-queue.js, applicata qui
+    // al ritentativo). Fire-and-forget — `tryFlushPendingSosViaGateway()` (ble-client.js) non lancia
+    // mai e non deve mai bloccare il refresh della dashboard.
+    if (typeof tryFlushPendingSosViaGateway === "function") tryFlushPendingSosViaGateway();
   } catch (err) {
     if (cycleId !== refreshCycleId) return;
     setDashboardError("Gateway non raggiungibile: " + err.message);

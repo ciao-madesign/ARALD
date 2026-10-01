@@ -21,7 +21,7 @@
 //
 // AMBITO: il telefono relaya pacchetti altrui (nessuna interpretazione/UI per SOS/chat/drop ricevuti
 // via relay — resta esplicitamente fuori scope, `docs/security.md` voce #65) **e**, da questo pezzo
-// in avanti, ne origina uno proprio — un SOS (`sendEmergencyBeaconViaRelay()` sotto). Due identità
+// in avanti, ne origina uno proprio — un SOS (`sendSos()` sotto). Due identità
 // distinte e deliberatamente diverse coesistono in questo file: `relaySessionNodeId` resta
 // un'etichetta usa-e-getta rigenerata a ogni sessione di relay, usata solo per instradare pacchetti
 // altrui (mai per firmare nulla); l'identità Ed25519 vera e persistente
@@ -67,7 +67,7 @@ const HELLO_TIMEOUT_MS = 5000;
  */
 const SCAN_REFRESH_INTERVAL_MS = 30000;
 
-/** Same defaults as node/src/node.ts's DEFAULT_BEACON_BROADCAST_REPEAT_COUNT/_INTERVAL_MS — see `sendEmergencyBeaconViaRelay()`'s own comment for why an SOS is repeated on a timer instead of sent once. */
+/** Same defaults as node/src/node.ts's DEFAULT_BEACON_BROADCAST_REPEAT_COUNT/_INTERVAL_MS — see `tryBleSosBurst()`'s own comment for why an SOS is repeated on a timer instead of sent once. */
 const SOS_BROADCAST_REPEAT_COUNT = 5;
 const SOS_BROADCAST_REPEAT_INTERVAL_MS = 2000;
 
@@ -87,20 +87,8 @@ let pendingQueue = null;
 /** Map<deviceId, { peerNodeId: string|null, reassembler: FragmentReassembler, identifyResolvers: {resolve,reject}|null }> — una entry per ogni connessione, riservata (vedi handleScanResult()) prima ancora che plugin.connect() sia stato chiamato, per evitare una doppia connessione allo stesso device da due risultati di scansione ravvicinati. */
 let connections = new Map();
 let scanRefreshTimer = null;
-/** `setTimeout` handles for an in-flight `sendEmergencyBeaconViaRelay()`'s scheduled repeats (voce #65) — tracked so `deactivateRelay()` can cancel them, same discipline `node.ts`'s `pendingBeaconRepeats` already applies for the exact same reason: without this, a repeat could still fire after the relay (and its connections) has already been torn down. */
+/** `setTimeout` handles for an in-flight `tryBleSosBurst()`'s scheduled repeats (voce #65) — tracked so `deactivateRelay()` can cancel them, same discipline `node.ts`'s `pendingBeaconRepeats` already applies for the exact same reason: without this, a repeat could still fire after the relay (and its connections) has already been torn down. */
 let pendingSosTimers = new Set();
-/**
- * Evita un doppio report di successo per lo stesso SOS (trovato dalla revisione) — scenario: un peer
- * completa l'identificazione a metà dell'attesa dell'8 secondi di `sendEmergencyBeaconViaRelay()`,
- * `tryFlushPendingSos()` lo consegna e già registra "SOS trasmesso" (attività, toast, vibrazione); se
- * `sendEmergencyBeaconViaRelay()` ricontrollasse `connections` da sola al termine dell'attesa
- * troverebbe comunque quello stesso peer ancora identificato e riporterebbe un secondo, ridondante
- * "inviato" per il medesimo SOS. Impostato da `tryFlushPendingSos()` con l'id del pacchetto appena
- * consegnato; `sendEmergencyBeaconViaRelay()` lo consuma (e lo azzera) se corrisponde al *proprio*
- * pacchetto — tenuto per id, non un semplice booleano, così la risoluzione di un SOS diverso (più
- * recente) non viene mai scambiata per quella del proprio.
- */
-let resolvedSosOutcome = null;
 
 /**
  * Contatori di attività relay (pezzo 3, `docs/security.md` voce successiva) — quanti pacchetti
@@ -109,7 +97,7 @@ let resolvedSosOutcome = null;
  * numero di contenuti relayati, non il contenuto vero e proprio". Popolati solo in
  * `handleNotification()`, solo per pacchetti classificati da `window.AraldBleRelay.classifyRelayedPacket()`
  * (allowlist — vedi quel commento) — mai per un SOS originato da questo stesso telefono
- * (`sendEmergencyBeaconViaRelay()` non tocca questi contatori: è origine, non relay-di-terzi, già
+ * (`tryBleSosBurst()` non tocca questi contatori: è origine, non relay-di-terzi, già
  * visibile altrove nell'UI tramite lo stato del pannello SOS). Azzerati a ogni attivazione del relay
  * (`activateRelay()`), stessa vita di `seenCache`/`pendingQueue` — nessuna persistenza tra sessioni.
  */
@@ -168,18 +156,18 @@ function setBleRelayStatus(text, isError) {
 }
 
 /**
- * Riflette lo stato della coda SOS persistente (`window.AraldBleSosQueue`) sull'interfaccia: un
- * piccolo punto rosso su `#sos-button` (visibile anche a pannello chiuso — trovato necessario, non un
+ * Riflette lo stato della coda SOS persistente (`window.AraldSosQueue`, `sos-queue.js`) sull'interfaccia:
+ * un piccolo punto rosso su `#sos-button` (visibile anche a pannello chiuso — trovato necessario, non un
  * dettaglio solo del pannello: l'utente deve accorgersi che un SOS è ancora in attesa senza doverlo
  * riaprire) più il blocco informativo `#sos-pending` dentro il pannello stesso. Chiamata da ogni punto
  * che può cambiare lo stato della coda (dopo un `savePendingSos()`/`clearPendingSos()`, all'apertura
  * del pannello, al caricamento dello script) — mai da un timer proprio, coerente con la scadenza pigra
- * di `ble-sos-queue.js`'s `loadPendingSos()` che questa funzione stessa invoca.
+ * di `sos-queue.js`'s `loadPendingSos()` che questa funzione stessa invoca.
  */
 function renderPendingSosUi() {
   const button = document.getElementById("sos-button");
-  if (!button || typeof window.AraldBleSosQueue === "undefined") return;
-  const pending = window.AraldBleSosQueue.loadPendingSos();
+  if (!button || typeof window.AraldSosQueue === "undefined") return;
+  const pending = window.AraldSosQueue.loadPendingSos();
   button.classList.toggle("has-pending", Boolean(pending));
 
   const block = document.getElementById("sos-pending");
@@ -319,11 +307,12 @@ function forwardPacket(plugin, fromDeviceId, packet) {
 }
 
 /**
- * Il cuore della coda SOS persistente (docs/next-steps.md) — chiamata da `handleNotification()` ogni
- * volta che un nuovo peer (`deviceId`) completa l'identificazione (HELLO ricevuto) mentre il relay è
- * attivo, cioè esattamente il momento "il telefono incrocia un dispositivo ARALD" descritto lì. Se
- * c'è un SOS in attesa (sopravvissuto anche a un riavvio dell'app — `window.AraldBleSosQueue.loadPendingSos()`
- * legge da `localStorage`, scadenza pigra inclusa), tenta di consegnarlo.
+ * Il canale Bluetooth della coda SOS persistente, lato "scoperta di un peer" (docs/next-steps.md,
+ * voci #106/#107) — chiamata da `handleNotification()` ogni volta che un nuovo peer (`deviceId`)
+ * completa l'identificazione (HELLO ricevuto) mentre il relay è attivo, cioè esattamente il momento
+ * "il telefono incrocia un dispositivo ARALD" descritto lì. Se c'è un SOS in attesa (sopravvissuto
+ * anche a un riavvio dell'app — `window.AraldSosQueue.loadPendingSos()` legge da `localStorage`,
+ * scadenza pigra inclusa), tenta di consegnarlo.
  *
  * **La coda viene svuotata e il successo riportato solo dopo una scrittura GATT realmente riuscita
  * verso `deviceId`** (trovato dalla revisione: la prima versione chiamava `forwardPacket()`, sempre
@@ -335,22 +324,22 @@ function forwardPacket(plugin, fromDeviceId, packet) {
  * altrove in questo file), a ogni *altro* peer già identificato — `deviceId` passato come
  * `fromDeviceId` così non viene scritto una seconda volta sullo stesso device appena servito.
  *
- * Rimosso dalla coda non appena consegnato: da quel momento la propagazione ulteriore spetta ai nodi
- * reali della mesh, non a questo telefono — mai ritrasmesso di nuovo al peer successivo (stesso
- * principio di "store-and-forward:handed-off" lato Node, `node.ts`). Imposta `resolvedSosOutcome` così
- * un `sendEmergencyBeaconViaRelay()` ancora in attesa del proprio burst per lo stesso pacchetto non
- * riporti un secondo, ridondante successo (vedi il commento su quella variabile).
+ * `window.AraldSosQueue.claimSosSuccess(packetId)` è l'arbitro condiviso con ogni altro canale (il
+ * burst Bluetooth immediato di `sendSos()`, il canale gateway di `tryGatewaySosChannel()`/
+ * `tryFlushPendingSosViaGateway()`, voce #107): restituisce `false` se un altro canale ha già
+ * consegnato e segnalato questo stesso SOS nel frattempo (stesso pacchetto, id confrontato), nel qual
+ * caso questa funzione non deve ripetere la segnalazione (attività/toast/vibrazione) — trovato
+ * necessario con un solo canale (#106), ancora più rilevante ora che sono più di uno.
  *
- * `seenCache.markSeen()` è ripetuto qui anche se `sendEmergencyBeaconViaRelay()` lo aveva già fatto al
- * momento dell'invio originale: se l'app è stata chiusa e riaperta nel frattempo, `seenCache` è
- * un'istanza nuova (azzerata a ogni `activateRelay()`, mai persistita) e non conterrebbe ancora
- * l'id di questo pacchetto — ripeterlo è idempotente (`SeenCache.markSeen()`, ble-relay.js) e garantisce
- * che il pacchetto non venga ri-processato se mai rimbalzasse indietro da un peer che lo relaya a sua
- * volta.
+ * `seenCache.markSeen()` è ripetuto qui anche se il tentativo originale lo aveva già fatto: se l'app è
+ * stata chiusa e riaperta nel frattempo, `seenCache` è un'istanza nuova (azzerata a ogni
+ * `activateRelay()`, mai persistita) e non conterrebbe ancora l'id di questo pacchetto — ripeterlo è
+ * idempotente (`SeenCache.markSeen()`, ble-relay.js) e garantisce che il pacchetto non venga
+ * ri-processato se mai rimbalzasse indietro da un peer che lo relaya a sua volta.
  */
 async function tryFlushPendingSos(plugin, deviceId) {
-  if (typeof window.AraldBleSosQueue === "undefined") return; // modulo non caricato — guardia difensiva, stesso schema di renderPendingSosUi()
-  const pending = window.AraldBleSosQueue.loadPendingSos();
+  if (typeof window.AraldSosQueue === "undefined") return; // modulo non caricato — guardia difensiva, stesso schema di renderPendingSosUi()
+  const pending = window.AraldSosQueue.loadPendingSos();
   if (!pending) return;
 
   seenCache.markSeen(pending.packet.id);
@@ -359,10 +348,9 @@ async function tryFlushPendingSos(plugin, deviceId) {
   } catch {
     return; // non consegnato — resta in coda, ritentato al prossimo peer identificato
   }
-
   forwardPacket(plugin, deviceId, pending.packet);
-  window.AraldBleSosQueue.clearPendingSos();
-  resolvedSosOutcome = { packetId: pending.packet.id, outcome: "sent" };
+
+  if (!window.AraldSosQueue.claimSosSuccess(pending.packet.id)) return; // un altro canale lo ha già consegnato/segnalato nel frattempo
   renderPendingSosUi();
   recordActivity("sos", undefined, "sent");
   showToast("SOS trasmesso", "alert-circle");
@@ -415,7 +403,7 @@ function handleNotification(plugin, deviceId, event) {
   // Conta *cosa* passa (pezzo 3), mai il contenuto — vedi il commento su classifyRelayedPacket() in
   // ble-relay.js per la postura allowlist. Solo per pacchetti altrui: questa funzione gestisce
   // esclusivamente notifiche in arrivo da una connessione, mai un SOS che questo telefono origina
-  // (quello passa da sendEmergencyBeaconViaRelay() -> forwardPacket() direttamente, senza mai
+  // (quello passa da tryBleSosBurst() -> forwardPacket() direttamente, senza mai
   // transitare da qui).
   const classification = window.AraldBleRelay.classifyRelayedPacket(decision.forwardPacket);
   if (classification) {
@@ -610,7 +598,7 @@ async function activateRelay() {
   } catch (err) {
     // Trovato dalla revisione: senza questo, un fallimento qui (Bluetooth spento, permesso negato)
     // lasciava `relayActive` bloccato a true per sempre — non solo il gestore del toggle (che aveva
-    // già il proprio reset ridondante, ora rimosso) ma anche `sendEmergencyBeaconViaRelay()` (che non
+    // già il proprio reset ridondante, ora rimosso) ma anche `tryBleSosBurst()` (che non
     // ce l'aveva affatto) avrebbero poi saltato una riattivazione reale a ogni chiamata successiva,
     // inviando su una `connections` map vuota e riportando un falso successo. Il reset vive qui, non
     // in ogni singolo chiamante, così ogni chiamante presente e futuro lo eredita gratis.
@@ -630,10 +618,10 @@ async function activateRelay() {
  * prima di questa voce (#64) `deactivateRelay()` era l'unica funzione a scrivere su stato condiviso
  * (`connections`/`seenCache`/`pendingQueue`/`relaySessionNodeId`) senza mai controllare la propria
  * sessione — innocuo finché `activateRelay()` aveva un solo chiamante sincronizzato (il gestore del
- * toggle, disabilitato mentre in corso). `sendEmergencyBeaconViaRelay()` è un secondo chiamante di
+ * toggle, disabilitato mentre in corso). `tryBleSosBurst()` è un secondo chiamante di
  * `activateRelay()` non protetto da quello stesso mutex: se l'utente disattiva il relay e poi preme
  * SOS mentre `deactivateRelay()` è ancora a metà dei propri `await` di disconnessione,
- * `sendEmergencyBeaconViaRelay()` può far ripartire una nuova sessione (nuovo `connections`/
+ * `tryBleSosBurst()` può far ripartire una nuova sessione (nuovo `connections`/
  * `seenCache`/ecc.) *prima* che la vecchia `deactivateRelay()` raggiunga la propria coda — che,
  * senza questo controllo, cancellerebbe/azzererebbe lo stato della sessione nuova e già viva, non
  * più quello della sessione vecchia a cui si riferiva.
@@ -674,7 +662,7 @@ async function deactivateRelay() {
     }
   }
 
-  if (sessionId !== relaySessionId) return; // una sessione più recente è già partita (es. sendEmergencyBeaconViaRelay() ha riattivato) — non toccare il suo stato live
+  if (sessionId !== relaySessionId) return; // una sessione più recente è già partita (es. tryBleSosBurst() ha riattivato) — non toccare il suo stato live
   connections.clear();
   seenCache = null;
   pendingQueue = null;
@@ -686,62 +674,40 @@ async function deactivateRelay() {
 }
 
 /**
- * Costruisce e invia un SOS reale — non più solo relayare pacchetti altrui (voce #63), il telefono ne
- * origina uno proprio (voce #65, `docs/security.md`), chiudendo l'asimmetria "relaya ma non origina".
- * A differenza di `relaySessionNodeId` (un'etichetta usa-e-getta, mai una vera identità), il SOS è
- * firmato con una vera chiave Ed25519 (`window.AraldBleIdentity.loadOrCreateIdentity()`) — necessario
- * perché `verifyContentSignature()` (lato mesh, `node/src/node.ts`) scarta senza pietà qualunque
- * contenuto non firmato davvero, non appena tocca un `NomadNode` reale lungo il percorso: senza una
- * firma vera un SOS avrebbe portata zero oltre la bolla Bluetooth locale del telefono, vedi
- * `docs/security.md` voce #65 per il ragionamento completo.
+ * Canale Bluetooth della coda SOS persistente — il burst immediato ripetuto `SOS_BROADCAST_REPEAT_COUNT`
+ * volte ogni `SOS_BROADCAST_REPEAT_INTERVAL_MS` (stessi valori di `DEFAULT_BEACON_BROADCAST_REPEAT_COUNT`/
+ * `_INTERVAL_MS` lato Node) verso ogni peer Bluetooth connesso e identificato, riusando `forwardPacket()`
+ * col suo stesso percorso broadcast — `fromDeviceId` impostato a un sentinella che non combacia mai con
+ * un vero deviceId così nessun peer viene escluso. Un broadcast non connesso non ha canale di risposta,
+ * "ripeti, non fingere un ACK", stessa reasoning già accettata per `sendEmergencyBeacon()` lato Node;
+ * questo cattura anche un peer che si connette nei secondi immediatamente successivi al tap, perché ogni
+ * ripetizione ricalcola `connections` al momento dell'invio, non una sola volta all'inizio.
  *
- * Se il relay non è ancora attivo, lo attiva prima — un SOS non deve richiedere all'utente di aver
- * già acceso il relay come passo separato, coerente con l'obiettivo di massimizzare la portata senza
- * ostacoli. Il pacchetto viene costruito una sola volta (stesso `packet.id` per ogni ripetizione,
- * stesso motivo di `sendEmergencyBeacon()`/`buildContentAnnouncePacket()` lato Node: `SeenCache` deve
- * riconoscerle come lo stesso evento, non un secondo SOS distinto), marcato subito come "visto" nel
- * proprio `seenCache` (stesso motivo di `originate()` lato mesh: se rimbalza indietro da un peer che
- * lo relaya a sua volta, non va ri-processato), poi inviato subito a ogni peer connesso e identificato
- * — riusando `forwardPacket()` col suo stesso percorso broadcast (nessuna nuova logica di invio),
- * `fromDeviceId` impostato a un sentinella che non combacia mai con un vero deviceId così nessun peer
- * viene escluso. Ripetuto `SOS_BROADCAST_REPEAT_COUNT` volte ogni `SOS_BROADCAST_REPEAT_INTERVAL_MS`
- * (stessi valori di `DEFAULT_BEACON_BROADCAST_REPEAT_COUNT`/`_INTERVAL_MS` lato Node) — un broadcast
- * non connesso non ha canale di risposta, "ripeti, non fingere un ACK", stessa reasoning già accettata
- * lì; questo cattura anche un peer che si connette nei secondi immediatamente successivi al tap,
- * perché ogni ripetizione ricalcola `connections` al momento dell'invio, non una sola volta all'inizio.
+ * Attiva il relay Bluetooth se non è già attivo (un SOS non deve richiedere all'utente di averlo già
+ * acceso come passo separato) — se il plugin non è disponibile o l'attivazione fallisce, risolve a
+ * `false` invece di lanciare: è solo *uno* dei canali che `sendSos()` fa correre in parallelo, un suo
+ * fallimento non deve mai interrompere l'altro.
  *
- * **Nessun vero rate limiting anti-flood qui** (a differenza di `MAX_EMERGENCY_BEACON_PER_WINDOW`
- * lato Node) — dichiarato esplicitamente come limite accettato: un livello client-side non potrebbe
- * comunque impedire a un chiamante determinato di aggirarlo, la vera difesa vive a valle nella mesh
- * reale. L'unica protezione qui è di UX (il bottone resta disabilitato durante l'invio,
- * `#sos-button`), non di sicurezza.
- *
- * **Coda SOS persistente** (docs/next-steps.md, "Coda SOS persistente sul telefono, in attesa di un
- * peer BLE"): il pacchetto appena costruito viene persistito (`window.AraldBleSosQueue.savePendingSos()`,
- * `localStorage` — sopravvive a una chiusura dell'app) *prima* del burst immediato sotto, non dopo —
- * così anche un fallimento a metà burst (relay disattivato nel frattempo, app chiusa) lascia comunque
- * l'SOS in coda invece di perderlo. Se al termine del burst esiste almeno un peer identificato
- * (`conn.peerNodeId !== null`), lo trattiamo come "consegnato alla mesh" (stesso principio di
- * `floodExcept()` lato Node — "store-and-forward:handed-off" vs "queued", `CLAUDE.md`) e lo rimuoviamo
- * dalla coda: da quel momento la propagazione ulteriore spetta ai nodi reali della mesh, non a questo
- * telefono. Se nessun peer era presente, resta in coda — `handleNotification()` la trasmetterà da sola
- * al primo HELLO completato in futuro (`tryFlushPendingSos()` sotto), anche minuti o ore dopo, anche
- * dopo un riavvio dell'app. Il valore di ritorno (`true` = consegnato subito, `false` = rimasto in
- * coda) lascia al chiamante (il gestore del bottone SOS) la scelta del testo/stato onesto da mostrare,
- * stesso vocabolario "sent"/"queued" già usato da `recordActivity()` per gli altri invii (app.js).
+ * Risolve a `true` solo se, al termine del burst, esiste almeno un peer già connesso e identificato
+ * (`conn.peerNodeId !== null`) — **nota di onestà**: questo è "un peer era identificato", non "la
+ * scrittura è riuscita per davvero" (a differenza di `tryFlushPendingSos()`, che invece attende l'esito
+ * reale di ogni singola scrittura GATT verso un peer appena incrociato) — stesso standard "nessun vero
+ * ack, mai fingerne uno" già accettato per il burst immediato prima che esistesse una coda persistente,
+ * non irrobustito qui per restare nello scope della voce che introduce il canale gateway (#107), non
+ * una revisione del burst immediato pre-esistente.
  */
-async function sendEmergencyBeaconViaRelay({ message, lat, lon } = {}) {
+async function tryBleSosBurst(packet) {
   const plugin = bleRelayPlugin();
-  if (!plugin) throw new Error("Bluetooth non disponibile su questo dispositivo.");
-
-  if (!relayActive) await activateRelay();
-  if (!relayActive) throw new Error("impossibile attivare il relay Bluetooth"); // activateRelay() può essere stato superato da una disattivazione nel frattempo
-
-  const identity = window.AraldBleIdentity.loadOrCreateIdentity();
-  const packet = window.AraldBleSos.buildEmergencyBeaconPacket({ message, lat, lon }, identity);
+  if (!plugin) return false;
+  if (!relayActive) {
+    try {
+      await activateRelay();
+    } catch {
+      return false;
+    }
+  }
+  if (!relayActive) return false; // activateRelay() può essere stato superato da una disattivazione nel frattempo
   seenCache.markSeen(packet.id);
-  window.AraldBleSosQueue.savePendingSos(packet);
-  renderPendingSosUi();
 
   const sessionId = relaySessionId;
   const sendOnce = () => {
@@ -757,39 +723,146 @@ async function sendEmergencyBeaconViaRelay({ message, lat, lon } = {}) {
     pendingSosTimers.add(timer);
   }
 
-  // Attende l'ultima ripetizione prima di risolvere, così il chiamante (il gestore del bottone SOS)
-  // sa quando può riabilitare l'interfaccia — non un ack di consegna reale (non esiste in un
+  // Attende l'ultima ripetizione prima di risolvere — non un ack di consegna reale (non esiste in un
   // broadcast non connesso), solo "ho finito di provare".
   await new Promise((resolve) => setTimeout(resolve, (SOS_BROADCAST_REPEAT_COUNT - 1) * SOS_BROADCAST_REPEAT_INTERVAL_MS));
+  return [...connections.values()].some((conn) => conn.peerNodeId !== null);
+}
 
-  // Trovato dalla revisione: se un peer completa l'identificazione DURANTE questa attesa,
-  // `tryFlushPendingSos()` (handleNotification()) può aver già consegnato e ripulito questo stesso SOS
-  // nel frattempo — in tal caso riporta direttamente quel suo esito invece di ricontrollare
-  // `connections` da sola, che troverebbe comunque quel peer ancora identificato e dichiarerebbe un
-  // secondo, ridondante successo (doppia voce in "Le mie attività", doppio toast/vibrazione) per il
-  // medesimo SOS. Il confronto per `packetId` garantisce che non sia invece la risoluzione di un SOS
-  // più recente (un secondo tap su "Invia SOS" mentre questo burst era ancora in attesa).
-  if (resolvedSosOutcome && resolvedSosOutcome.packetId === packet.id) {
-    const outcome = resolvedSosOutcome.outcome;
-    resolvedSosOutcome = null;
-    return outcome === "sent";
-  }
+/**
+ * Guardia di rientranza condivisa per il canale gateway (trovato dalla revisione) — a differenza del
+ * canale Bluetooth (deduplicato lato mesh dallo stesso `packet.id` via `SeenCache`), ogni chiamata a
+ * `node.sendEmergencyBeacon()` lato server costruisce un SOS firmato *nuovo e distinto* (nuovo
+ * `contentId`/timestamp): due richieste sovrapposte per lo stesso SOS in coda pubblicherebbero due
+ * sighting reali e separati per la stessa emergenza (oltre a consumare due unità del budget anti-flood
+ * `MAX_EMERGENCY_BEACON_PER_WINDOW` per un solo tap), anche se `claimSosSuccess()` evita comunque un
+ * secondo *report* lato UI — il problema è a monte, non solo nella notifica. Scenario reale: `sendSos()`
+ * avvia `tryGatewaySosChannel()`, e prima che quella risposta arrivi (gateway lento, non il timeout)
+ * `app.js`'s `refreshAll()` (ogni 5s) chiama `tryFlushPendingSosViaGateway()` per lo stesso SOS ancora
+ * in coda — stessa classe di bug già risolta per `node.ts`'s `attemptExternalDeliveries()`/
+ * `externalDeliveryAttemptInFlight` (voce #70, `CLAUDE.md`), riproposta qui per il canale gateway.
+ * Un secondo chiamante mentre una richiesta è già in corso ne attende semplicemente l'esito invece di
+ * avviarne una propria — corretto perché, finché la coda ha un solo slot, due chiamate sovrapposte sono
+ * sempre per lo stesso SOS in attesa.
+ */
+let gatewaySosAttempt = null;
 
-  // Nessuno ha già risolto questo SOS durante l'attesa — handedOff dipende solo da un peer che era
-  // già connesso e identificato PRIMA di questo burst (raggiunto direttamente da sendOnce() sopra),
-  // mai da un'identificazione avvenuta durante l'attesa (quel caso sarebbe già rientrato nel ramo sopra).
-  // Nota di onestà (sollevata dalla revisione): a differenza di `tryFlushPendingSos()` sopra, che aspetta
-  // davvero l'esito della scrittura GATT prima di dichiarare successo, questo ramo eredita lo standard
-  // già accettato dal burst immediato pre-esistente a questa voce — "un peer era identificato" non "la
-  // scrittura è riuscita", stesso principio "nessun vero ack, mai fingerne uno" già dichiarato più sopra
-  // in questo file. Non irrobustito qui per restare nello scope di questa voce (coda SOS persistente),
-  // non una revisione del comportamento già accettato del burst immediato.
-  const handedOff = [...connections.values()].some((conn) => conn.peerNodeId !== null);
-  if (handedOff) {
-    window.AraldBleSosQueue.clearPendingSos();
-    renderPendingSosUi();
+/**
+ * Canale gateway della coda SOS persistente (voce #107, `app.js`'s `trySendEmergencyBeaconViaGateway()`,
+ * `node/src/web-ui.ts`'s `POST /api/emergency-beacons`) — se il telefono è appaiato e il gateway è
+ * raggiungibile, gli chiede di originare l'SOS con la propria identità. Mai un throw: `false` per
+ * qualunque fallimento (nessun gateway appaiato, password errata, rete non raggiungibile, errore del
+ * gateway) — è solo *uno* dei canali in corsa in `sendSos()`, il suo fallimento non deve mai impedire
+ * all'altro di proseguire né propagarsi come un errore generale dell'invio SOS. Vedi `gatewaySosAttempt`
+ * sopra per la guardia di rientranza condivisa con `tryFlushPendingSosViaGateway()`.
+ */
+async function tryGatewaySosChannel({ message, lat, lon }) {
+  if (typeof trySendEmergencyBeaconViaGateway !== "function") return false;
+  if (gatewaySosAttempt) {
+    return gatewaySosAttempt.then(
+      () => true,
+      () => false,
+    );
   }
-  return handedOff;
+  const attempt = trySendEmergencyBeaconViaGateway({ message, lat, lon });
+  gatewaySosAttempt = attempt;
+  try {
+    await attempt;
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (gatewaySosAttempt === attempt) gatewaySosAttempt = null;
+  }
+}
+
+/**
+ * Orchestratore della coda SOS persistente, su ogni canale disponibile (docs/next-steps.md, voci
+ * #106/#107 — "SOS sempre persistente su ogni canale possibile, il primo che funziona libera l'SOS",
+ * richiesta esplicita dell'utente). Non più solo relayare pacchetti altrui (voce #63): il telefono ne
+ * origina uno proprio, chiudendo l'asimmetria "relaya ma non origina" — firmato con una vera chiave
+ * Ed25519 (`window.AraldBleIdentity.loadOrCreateIdentity()`, a differenza di `relaySessionNodeId`, mai
+ * una vera identità), necessario perché `verifyContentSignature()` (lato mesh, `node/src/node.ts`)
+ * scarta senza pietà qualunque contenuto non firmato davvero: senza una firma vera un SOS via Bluetooth
+ * avrebbe portata zero oltre la bolla locale del telefono (`docs/security.md` voce #65). Il pacchetto
+ * Bluetooth viene costruito una sola volta (stesso `packet.id` per ogni ripetizione, stesso motivo di
+ * `sendEmergencyBeacon()`/`buildContentAnnouncePacket()` lato Node: `SeenCache` deve riconoscerle come
+ * lo stesso evento, non un secondo SOS distinto) — il canale gateway non lo riusa affatto, costruisce la
+ * propria richiesta dai soli `message`/`lat`/`lon`, firmata lato server con l'identità del gateway.
+ *
+ * **Nessun vero rate limiting anti-flood lato client** (a differenza di `MAX_EMERGENCY_BEACON_PER_WINDOW`
+ * lato Node, applicato comunque una volta che il canale gateway raggiunge quel `NomadNode`) — dichiarato
+ * esplicitamente come limite accettato: un livello client-side non potrebbe comunque impedire a un
+ * chiamante determinato di aggirarlo. L'unica protezione qui è di UX (il bottone resta disabilitato
+ * durante l'invio, `#sos-button`), non di sicurezza.
+ *
+ * **Coda SOS persistente**: l'intera voce (pacchetto Bluetooth + `message`/`lat`/`lon` grezzi per un
+ * eventuale ritentativo gateway successivo) viene persistita (`window.AraldSosQueue.savePendingSos()`,
+ * `localStorage` — sopravvive a una chiusura dell'app) *prima* di far correre i canali, non dopo — così
+ * anche un fallimento di entrambi a metà tentativo (relay disattivato nel frattempo, app chiusa) lascia
+ * comunque l'SOS in coda invece di perderlo. I due canali corrono in parallelo via `raceFirstSuccess()`
+ * — il primo che ha successo "libera" l'SOS (lo rimuove dalla coda); se nessuno dei due riesce ORA,
+ * resta in coda: `handleNotification()`/`tryFlushPendingSos()` la trasmetteranno al primo peer Bluetooth
+ * futuro, `app.js`'s `tryFlushPendingSosViaGateway()` (agganciata al polling periodico già esistente del
+ * gateway) ritenterà quel canale appena il gateway torna raggiungibile — anche minuti o ore dopo, anche
+ * dopo un riavvio dell'app.
+ *
+ * Restituisce una delle tre stringhe che il chiamante (il gestore del bottone SOS) usa per scegliere il
+ * testo/stato onesto da mostrare, stesso vocabolario "sent"/"queued" già usato da `recordActivity()` per
+ * gli altri invii (app.js):
+ * - `"sent"` — consegnato ORA da uno dei due canali, nessun altro lo ha già segnalato nel frattempo.
+ * - `"claimed-elsewhere"` — consegnato ORA, ma `window.AraldSosQueue.claimSosSuccess()` ha trovato che
+ *   un canale indipendente (`tryFlushPendingSos()` su un nuovo peer Bluetooth, o un ritentativo gateway
+ *   periodico) lo aveva già consegnato e segnalato (attività/toast/vibrazione) mentre questa stessa
+ *   chiamata era ancora in attesa — trovato dalla revisione (voce #106, rilevante ancora di più con più
+ *   di un canale): senza questo controllo il chiamante ripeterebbe una segnalazione già fatta.
+ * - `"queued"` — nessun canale ha avuto successo ora, resta in coda.
+ */
+async function sendSos({ message, lat, lon } = {}) {
+  const identity = window.AraldBleIdentity.loadOrCreateIdentity();
+  const packet = window.AraldBleSos.buildEmergencyBeaconPacket({ message, lat, lon }, identity);
+  window.AraldSosQueue.savePendingSos({ packet, message, lat, lon });
+  renderPendingSosUi();
+
+  const won = await window.AraldSosQueue.raceFirstSuccess([tryGatewaySosChannel({ message, lat, lon }), tryBleSosBurst(packet)]);
+  if (!won) return "queued";
+
+  if (!window.AraldSosQueue.claimSosSuccess(packet.id)) return "claimed-elsewhere";
+  renderPendingSosUi();
+  return "sent";
+}
+
+/**
+ * Ritentativo periodico del canale gateway per un SOS già in coda (voce #107) — chiamata da `app.js`'s
+ * `refreshAll()` ogni volta che il suo stesso poll al gateway ha successo, non da un timer proprio:
+ * quel successo è di per sé il segnale più economico che il gateway è di nuovo raggiungibile ORA,
+ * stessa disciplina "scadenza pigra, mai uno sweep in background" già applicata da `sos-queue.js`
+ * all'intera coda. Mai lanciata, mai attesa dal chiamante — un fallimento (ancora nessun gateway, lo
+ * stesso errore di prima) non deve mai bloccare il refresh della dashboard.
+ *
+ * Ricostruisce la richiesta dai soli `message`/`lat`/`lon` persistiti (mai dal pacchetto Bluetooth,
+ * che questo canale non riusa — vedi il commento di `sendSos()`). Passa da `tryGatewaySosChannel()`
+ * (non direttamente da `trySendEmergencyBeaconViaGateway()`) per condividerne la guardia di rientranza
+ * (`gatewaySosAttempt`, vedi il suo commento) — senza questo, una `sendSos()` ancora in attesa della
+ * propria chiamata gateway e questo stesso ritentativo periodico potrebbero avviare due richieste HTTP
+ * sovrapposte per il medesimo SOS, pubblicando due sighting reali e distinti per una sola emergenza
+ * (trovato dalla revisione). Usa lo stesso arbitro condiviso `claimSosSuccess()` di ogni altro canale:
+ * se nel frattempo il canale Bluetooth ha già consegnato lo stesso SOS (o un tap più recente lo ha
+ * sostituito in coda), questo ritentativo non segnala nulla.
+ */
+async function tryFlushPendingSosViaGateway() {
+  if (typeof window.AraldSosQueue === "undefined") return;
+  const pending = window.AraldSosQueue.loadPendingSos();
+  if (!pending) return;
+
+  const delivered = await tryGatewaySosChannel({ message: pending.message, lat: pending.lat, lon: pending.lon });
+  if (!delivered) return; // ancora irraggiungibile/rifiutato — resta in coda, ritentato al prossimo ciclo
+
+  if (!window.AraldSosQueue.claimSosSuccess(pending.packet.id)) return; // un altro canale lo ha già consegnato/segnalato nel frattempo
+  renderPendingSosUi();
+  recordActivity("sos", undefined, "sent");
+  showToast("SOS trasmesso", "alert-circle");
+  vibrate([30, 50, 30, 50, 30]);
 }
 
 const bleRelayPanel = document.getElementById("ble-relay-panel");
@@ -818,7 +891,7 @@ if (bleRelayPanel) {
       renderRelayPeers();
     } catch (err) {
       // Nessun reset di relayActive qui — activateRelay() lo fa già da sé su un proprio fallimento
-      // (vedi il suo commento), così ogni chiamante (questo gestore e sendEmergencyBeaconViaRelay())
+      // (vedi il suo commento), così ogni chiamante (questo gestore e tryBleSosBurst())
       // eredita lo stesso comportamento senza doverlo ripetere.
       setBleRelayStatus("Errore: " + err.message, true);
     } finally {
@@ -829,8 +902,14 @@ if (bleRelayPanel) {
 
 const sosButton = document.getElementById("sos-button");
 if (sosButton) {
-  // Stesso feature-gating di #ble-relay-panel sopra — un SOS via Bluetooth non ha senso senza il plugin.
-  sosButton.hidden = !bleRelayPlugin();
+  // A differenza di #ble-relay-panel sopra (feature-gated sul plugin, un relay Bluetooth non ha senso
+  // senza), #sos-button NON è più condizionato alla sola presenza del plugin Bluetooth (voce #107): il
+  // canale gateway (`app.js`'s `trySendEmergencyBeaconViaGateway()`) funziona indipendentemente da esso,
+  // ed è sempre disponibile qui — questo bottone vive dentro #dashboard-screen, raggiungibile solo dopo
+  // il pairing. Nasconderlo quando il plugin manca avrebbe reso l'intera funzione SOS invisibile su
+  // qualunque telefono/browser senza quel plugin, anche se il canale gateway avrebbe funzionato da solo
+  // (bug reale trovato eseguendo la verifica end-to-end di questa voce, mai da un test automatico: nulla
+  // in questo file aveva mai coperto la visibilità condizionale del bottone stesso).
   renderPendingSosUi(); // riflette subito un'eventuale coda SOS sopravvissuta a una chiusura dell'app
 
   const sosPanel = document.getElementById("sos-panel");
@@ -841,7 +920,7 @@ if (sosButton) {
   sosButton.addEventListener("click", () => {
     sosPanel.hidden = !sosPanel.hidden;
     if (!sosPanel.hidden) {
-      renderPendingSosUi(); // ricontrolla al momento dell'apertura — scadenza pigra, vedi ble-sos-queue.js
+      renderPendingSosUi(); // ricontrolla al momento dell'apertura — scadenza pigra, vedi sos-queue.js
       sosMessage.focus();
     }
   });
@@ -857,8 +936,9 @@ if (sosButton) {
     sosPendingCancel.addEventListener("click", () => {
       // Nessuna conferma nativa qui (a differenza di #sos-send sotto): annullare un SOS già in coda è
       // un'azione reversibile nel senso che pratica — un nuovo tap su "Invia SOS" lo rimette subito in
-      // coda — mentre il bottone di invio vero innesca un broadcast reale, da proteggere con window.confirm().
-      window.AraldBleSosQueue.clearPendingSos();
+      // coda — mentre il bottone di invio vero innesca un broadcast/una richiesta reale, da proteggere
+      // con window.confirm().
+      window.AraldSosQueue.clearPendingSos();
       renderPendingSosUi();
       showToast("SOS in coda annullato", "x");
     });
@@ -868,7 +948,7 @@ if (sosButton) {
     // Unica conferma nativa — previene un tap accidentale senza aggiungere passi in un'emergenza
     // reale (nessun modulo di conferma custom esiste già in mobile/www/ da riusare, stesso ragionamento
     // già applicato a hub-control.js per Ferma/Riavvia).
-    if (!window.confirm("Inviare una richiesta di soccorso (SOS) ai dispositivi Bluetooth nelle vicinanze?")) return;
+    if (!window.confirm("Inviare una richiesta di soccorso (SOS)?")) return;
 
     sosSend.disabled = true;
     sosStatus.classList.remove("error");
@@ -886,19 +966,36 @@ if (sosButton) {
         // nessuna posizione — il SOS parte comunque
       }
       const message = sosMessage.value.trim() || undefined;
-      // handedOff distingue onestamente "consegnato a un vicino durante il burst immediato" da
-      // "rimasto in coda, verrà trasmesso da solo al primo dispositivo incrociato" (coda SOS
-      // persistente, docs/next-steps.md) — mai "consegnato" in nessuno dei due casi: a broadcast
-      // Bluetooth burst has no delivery confirmation of any kind, see recordActivity()'s own doc
-      // comment (app.js) for why "sent"/"queued" are the strongest honest claims here.
-      const handedOff = await sendEmergencyBeaconViaRelay({ message, lat, lon });
-      recordActivity("sos", undefined, handedOff ? "sent" : "queued");
-      sosStatus.textContent = handedOff ? "SOS inviato." : "Nessun dispositivo nelle vicinanze — l'SOS resta in attesa, verrà trasmesso automaticamente appena ne viene incrociato uno.";
-      vibrate([30, 50, 30, 50, 30]);
-      showToast(handedOff ? "SOS inviato" : "SOS in coda", "alert-circle");
+      // L'esito di sendSos() distingue onestamente "consegnato ORA da un canale" da "già consegnato e
+      // segnalato da un altro canale mentre questo era ancora in attesa" da "rimasto in coda, un canale
+      // qualsiasi lo trasmetterà da solo appena disponibile" (coda SOS persistente su ogni canale
+      // possibile, docs/next-steps.md voci #106/#107) — mai "consegnato" in senso di conferma end-to-end
+      // reale in nessuno dei tre casi, vedi recordActivity()'s own doc comment (app.js) per perché
+      // "sent"/"queued" restano le affermazioni oneste più forti possibili qui.
+      const outcome = await sendSos({ message, lat, lon });
       sosMessage.value = "";
       renderPendingSosUi();
-      if (handedOff) sosPanel.hidden = true; // se resta in coda, il pannello rimane aperto a mostrare lo stato appena scritto in #sos-status invece di nasconderlo subito
+      if (outcome === "queued") {
+        recordActivity("sos", undefined, "queued");
+        sosStatus.textContent = "Nessun canale disponibile ora — l'SOS resta in attesa, verrà trasmesso automaticamente appena un gateway o un dispositivo Bluetooth saranno raggiungibili.";
+        vibrate([30, 50, 30, 50, 30]);
+        showToast("SOS in coda", "alert-circle");
+        // Il pannello resta aperto per mostrare lo stato appena scritto in #sos-status invece di
+        // nasconderlo subito — a differenza dei due rami sotto, qui l'operatore potrebbe voler sapere
+        // di più (es. riprovare dopo aver avvicinato il telefono a un altro dispositivo).
+      } else if (outcome === "claimed-elsewhere") {
+        // Un altro canale (es. un peer Bluetooth appena incrociato, o un ritentativo gateway periodico)
+        // ha già consegnato e segnalato questo stesso SOS — attività/toast/vibrazione già mostrati da
+        // quel percorso, qui si aggiorna solo il testo locale del pannello, senza ripetere la notifica.
+        sosStatus.textContent = "SOS inviato.";
+        sosPanel.hidden = true;
+      } else {
+        recordActivity("sos", undefined, "sent");
+        sosStatus.textContent = "SOS inviato.";
+        vibrate([30, 50, 30, 50, 30]);
+        showToast("SOS inviato", "alert-circle");
+        sosPanel.hidden = true;
+      }
     } catch (err) {
       sosStatus.classList.add("error");
       sosStatus.textContent = "Errore: " + err.message;

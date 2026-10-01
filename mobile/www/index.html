@@ -90,7 +90,8 @@
          Box senza cavo Ethernet") — per un Box appena acceso e senza ancora alcuna rete: a differenza
          del modulo "Connetti" sopra, non richiede che il gateway sia già raggiungibile via Wi-Fi/LAN.
          Nascosto finché window.Capacitor.Plugins.BluetoothLe non è disponibile — stesso
-         feature-gating già usato per #ble-relay-panel/#sos-button (ble-client.js). Deliberatamente
+         feature-gating già usato per #ble-relay-panel (ble-client.js; #sos-button non più, voce #107:
+         il suo canale gateway funziona indipendentemente dal plugin Bluetooth). Deliberatamente
          minimale (un pannello inline, non una passata di design) — vedi
          mobile/www/ble-wifi-provisioning.js per la logica reale, mai verificata contro hardware vero
          in questo ambiente. -->
@@ -203,12 +204,13 @@
       <div id="node-label" class="mono muted"></div>
     </div>
     <div class="header-actions">
-      <!-- Nascosto finché window.Capacitor.Plugins.BluetoothLe non è disponibile (ble-client.js) —
-           stesso feature-gating di #ble-relay-panel (ora in Diagnostica): un SOS via Bluetooth non ha
-           senso senza quel plugin. Niente trattamento "faro" (riservato a due soli bottoni in tutta
-           l'app, voce #50) — colore d'emergenza (--bad, già usato per #emergency-beacons) per
-           distinguerlo visivamente senza aggiungere una terza eccezione a quella disciplina. -->
-      <button type="button" id="sos-button" class="icon-button sos-button" aria-label="Invia un SOS" hidden>
+      <!-- Sempre visibile dentro #dashboard-screen (voce #107 — a differenza di #ble-relay-panel, non
+           più condizionato alla sola presenza del plugin Bluetooth: il canale gateway della coda SOS
+           persistente, ble-client.js's sendSos(), funziona indipendentemente da esso). Niente
+           trattamento "faro" (riservato a due soli bottoni in tutta l'app, voce #50) — colore
+           d'emergenza (--bad, già usato per #emergency-beacons) per distinguerlo visivamente senza
+           aggiungere una terza eccezione a quella disciplina. -->
+      <button type="button" id="sos-button" class="icon-button sos-button" aria-label="Invia un SOS">
         <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-alert-circle"></use></svg>
       </button>
       <button type="button" id="show-intro" class="icon-button" aria-label="Cosa posso fare qui?">
@@ -225,14 +227,16 @@
        Ferma/Riavvia — nessun pattern di conferma custom esiste già in mobile/www/ da riusare). -->
   <div id="sos-panel" class="panel sos-panel" hidden>
     <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-alert-circle"></use></svg> Invia un SOS</h2>
-    <!-- Coda SOS persistente (docs/next-steps.md) — mostrato solo se ble-client.js's renderPendingSosUi()
-         trova un SOS già in attesa (sopravvissuto anche a una chiusura dell'app): nessuna nuova
-         trasmissione è richiesta qui, l'SOS riparte da solo al primo dispositivo Bluetooth incrociato. -->
+    <!-- Coda SOS persistente, su ogni canale disponibile (docs/next-steps.md, voci #106/#107) —
+         mostrato solo se ble-client.js's renderPendingSosUi() trova un SOS già in attesa (sopravvissuto
+         anche a una chiusura dell'app): nessuna nuova trasmissione è richiesta qui, l'SOS riparte da
+         solo non appena un canale qualsiasi diventa disponibile (un dispositivo Bluetooth incrociato, o
+         il gateway a cui questo telefono è appaiato). -->
     <div id="sos-pending" class="sos-pending" hidden>
-      <p><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-alert-circle"></use></svg> SOS in attesa di trasmissione (in coda <span id="sos-pending-since"></span>) — verrà inviato automaticamente al primo dispositivo ARALD Bluetooth incrociato.</p>
+      <p><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-alert-circle"></use></svg> SOS in attesa di trasmissione (in coda <span id="sos-pending-since"></span>) — verrà inviato automaticamente appena un canale sarà disponibile (gateway o dispositivo Bluetooth).</p>
       <button type="button" id="sos-pending-cancel" class="link-button">Annulla SOS in coda</button>
     </div>
-    <p class="hint">Invia una richiesta di soccorso ai dispositivi ARALD Bluetooth nelle vicinanze — Clip, altri telefoni, relay. Un messaggio è facoltativo, ma puoi inviare subito anche senza scriverlo.</p>
+    <p class="hint">Invia una richiesta di soccorso attraverso ogni canale disponibile — il gateway a cui sei collegato, e i dispositivi ARALD Bluetooth nelle vicinanze (Clip, altri telefoni, relay). Un messaggio è facoltativo, ma puoi inviare subito anche senza scriverlo.</p>
     <textarea id="sos-message" placeholder="Descrivi la situazione (facoltativo)..." rows="3" maxlength="4000"></textarea>
     <div class="sos-panel-actions">
       <button type="button" id="sos-cancel" class="link-button">Annulla</button>
@@ -584,11 +588,13 @@
 <script src="vendor/nacl.js"></script>
 <script type="module" src="ble-identity.js"></script>
 <script type="module" src="ble-sos.js"></script>
-<!-- Vero modulo ES come ble-sos.js sopra (window.AraldBleSosQueue come ponte verso ble-client.js) —
-     coda SOS persistente, docs/next-steps.md "Coda SOS persistente sul telefono, in attesa di un peer
-     BLE". Nessuna dipendenza da ble-sos.js/ble-identity.js (solo da localStorage), quindi l'ordine
-     stretto con quelli non è necessario — dopo per coerenza con l'ordine "i moduli SOS insieme". -->
-<script type="module" src="ble-sos-queue.js"></script>
+<!-- Vero modulo ES come ble-sos.js sopra (window.AraldSosQueue come ponte verso ble-client.js/app.js) —
+     coda SOS persistente su ogni canale disponibile, docs/next-steps.md voci #106/#107. Senza prefisso
+     `ble-` (rinominato da ble-sos-queue.js in questa stessa voce): non contiene nulla di specifico al
+     Bluetooth, solo persistenza/validazione/scadenza condivisa da ogni canale. Nessuna dipendenza da
+     ble-sos.js/ble-identity.js (solo da localStorage), quindi l'ordine stretto con quelli non è
+     necessario — dopo per coerenza con l'ordine "i moduli SOS insieme". -->
+<script type="module" src="sos-queue.js"></script>
 <!-- Vero modulo ES come ble-link.js/ecc sopra (window.AraldBleWifiProvisioning come ponte verso
      app.js, uno script classico sotto) — vedi ble-wifi-provisioning.js's own header. Dopo
      ble-link.js/vendor/nacl.js (di cui usa rispettivamente base64ToBytes()/bytesToBase64() e il
