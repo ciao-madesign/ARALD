@@ -6,11 +6,23 @@ import type { DatabaseSync as DatabaseSyncType, StatementSync } from "node:sqlit
 // this project's Node 22.22.2), but this project's pinned Vite (5.4.21, vitest.config.ts) predates
 // `node:sqlite` being added to Vite's list of known Node builtins — a static `import` of it makes
 // Vite try to resolve "sqlite" as an npm package instead of a builtin and fail the whole test file.
-// `createRequire()` is a runtime call Vite's static import analysis never touches, sidestepping the
-// issue entirely without needing to alter the shared vitest config for one still-experimental
-// builtin. Only the type import above (erased at compile time, never reaches Vite at all) still
-// looks like an ordinary `node:sqlite` reference.
-const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as { DatabaseSync: typeof DatabaseSyncType };
+// A runtime `require()` call (never a literal `require("node:sqlite")`/`import("node:sqlite")`, always
+// through this indirection) is what Vite's static import analysis never touches, sidestepping the
+// issue entirely without needing to alter the shared vitest config for one still-experimental builtin.
+// Only the type import above (erased at compile time, never reaches Vite at all) still looks like an
+// ordinary `node:sqlite` reference.
+//
+// `typeof require !== "undefined" ? require : createRequire(import.meta.url)` — not just
+// `createRequire(import.meta.url)` alone (found necessary by `packaging/build-sea.ts`, ARALD
+// Portable's Node SEA build): `import.meta.url` is empty once this file is bundled into a single
+// CommonJS file for packaging (esbuild's own documented limitation — "import.meta is not available
+// with the cjs output format"), which made `createRequire(undefined)` throw at the very first line any
+// bundled build ever executed, long before reaching any code that actually needed map tiles. A bundled
+// CommonJS context already has a real, working `require` in scope, so this checks for that first and
+// only falls back to `createRequire(import.meta.url)` in the genuine ESM context (`tsx`/`node
+// dist/cli.js`) that still needs it.
+const dynamicRequire: NodeJS.Require = typeof require !== "undefined" ? require : createRequire(import.meta.url);
+const { DatabaseSync } = dynamicRequire("node:sqlite") as { DatabaseSync: typeof DatabaseSyncType };
 
 /**
  * Raster tile formats this reader understands well enough to serve over

@@ -1,0 +1,57 @@
+# Builds "ARALD Portable" (packaging/README.md, docs/next-steps.md "Installer/wizard ARALD Portable
+# software-puro") for all 5 target platform/arch combinations. packaging/build-sea.ts never
+# cross-compiles — each runner builds only for its own platform/arch, using its own real Node.js
+# binary, exactly the way the script has been verified to work in this repository's own dev
+# environment (Linux x64). The macOS/Windows legs of this workflow are UNVERIFIED by this repository's
+# own development process (no macOS/Windows host available there) — this file itself has never been
+# run on GitHub's real runners, written to the best of available documentation, same disclosed honesty
+# as every other cross-platform claim in this codebase (CLAUDE.md).
+#
+# `ubuntu-24.04-arm` (Linux arm64) verified via GitHub's own changelog to be a real, generally
+# available hosted runner label as of this writing — not assumed.
+name: Build ARALD Portable
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "portable-v*"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            artifact-name: arald-portable-linux-x64
+          - os: ubuntu-24.04-arm
+            artifact-name: arald-portable-linux-arm64
+          - os: macos-13 # Intel (x64)
+            artifact-name: arald-portable-macos-x64
+          - os: macos-14 # Apple Silicon (arm64)
+            artifact-name: arald-portable-macos-arm64
+          - os: windows-latest
+            artifact-name: arald-portable-windows-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build ARALD Portable
+        run: npx tsx packaging/build-sea.ts
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: |
+            packaging/build/arald-portable
+            packaging/build/arald-portable.exe
+          if-no-files-found: ignore # each OS leg produces only one of the two filenames above

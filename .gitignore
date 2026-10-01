@@ -8,3 +8,4 @@ coverage/
 .next/
 mirror-portal/.env.local
 *.tsbuildinfo
+packaging/build/

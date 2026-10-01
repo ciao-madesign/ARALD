@@ -1,6 +1,5 @@
-import { readFileSync } from "node:fs";
-import { autoDetect } from "@serialport/bindings-cpp";
-import { SerialPortStream } from "@serialport/stream";
+import { mkdirSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { NomadNode } from "./node.js";
 import { Identity } from "./identity.js";
 import type { Transport } from "./transport.js";
@@ -11,6 +10,9 @@ import { WebUiServer, generateNetworkPassword } from "./web-ui.js";
 import { MbtilesReader } from "./map-tiles.js";
 import { TrustLevel } from "./trust.js";
 import { MAX_DEVICE_CLASS_LENGTH } from "./encryption.js";
+import { resolveDataDir } from "./data-dir.js";
+import { loadOrCreatePortableConfig } from "./portable-config.js";
+import { openInBrowser } from "./open-browser.js";
 import {
   MAX_EXTERNAL_DELIVERY_DESTINATION_ID_LENGTH,
   MAX_EXTERNAL_DELIVERY_LABEL_LENGTH,
@@ -144,6 +146,39 @@ function parseCodingRateDenominatorFlag(rawValue: string | undefined): 5 | 6 | 7
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+
+  // "ARALD Portable" software-puro (docs/next-steps.md, packaging/README.md) — the one flag the
+  // packaged installer's own entry point always passes: fills in the handful of flags below (never
+  // overwriting one the operator *did* pass explicitly — `??=` only ever fills a gap, same
+  // flags-override-config precedence every config-file-reading tool uses) from a config file persisted
+  // once in an OS-conventional per-user data directory, so a non-technical user never has to type a
+  // single flag themselves, on this run or any later one. `--data-dir`/`--config` let an advanced user
+  // override where that lives; neither implies `--portable` on its own.
+  //
+  // `=== "true"` (not `!== undefined`) — found by code review: this is a pure on/off switch with no
+  // value of its own to carry, same convention every other such switch in this file already uses
+  // (`--allow-remote-reboot`/`--allow-service-calls`/etc., all `=== "true"`), unlike `--trust-admin`/
+  // `--identity-dir` above (which *do* take a meaningful value, hence `!== undefined`). The first
+  // version used `!== undefined`, which — being a string-based parser with no real boolean type —
+  // made `--portable false` turn portable mode *on*, the opposite of what it looks like it does.
+  //
+  // `args["allow-service-calls"] ??= "true"` is what actually turns on the mobile Wi-Fi-style pairing
+  // page this whole feature exists to open a browser onto (`needsNetworkPassword` below reads exactly
+  // this flag) — without it, the wizard would open a browser onto a page with no pairing info at all.
+  let portableFirstRun = false;
+  if (args["portable"] === "true") {
+    const dataDir = args["data-dir"] ?? resolveDataDir();
+    mkdirSync(dataDir, { recursive: true });
+    const configPath = args["config"] ?? path.join(dataDir, "config.json");
+    const { config, created } = loadOrCreatePortableConfig(configPath, dataDir);
+    portableFirstRun = created;
+    args["identity-dir"] ??= config.identityDir;
+    args.port ??= String(config.port);
+    args["web-port"] ??= String(config.webPort);
+    args["network-password"] ??= config.networkPassword;
+    args["allow-service-calls"] ??= "true";
+  }
+
   const port = Number(args.port ?? 9001);
   const displayName = args.id ?? `NODE-${port}`;
 
@@ -260,6 +295,15 @@ async function main(): Promise<void> {
     );
     const codingRateDenominator = parseCodingRateDenominatorFlag(args["lora-coding-rate-denominator"]);
 
+    // Dynamic, not a top-level import (found necessary for `packaging/` — ARALD Portable's Node SEA
+    // build, `packaging/README.md`): `@serialport/bindings-cpp` ships a native compiled addon, which a
+    // bundler/SEA cannot embed the way it embeds plain JS. Loading it only here, inside the one branch
+    // that actually needs it, means the Wi-Fi-only portable build never has to resolve this module at
+    // all unless an operator explicitly asks for `--lora-serial-port` on it (which it doesn't support —
+    // see `packaging/README.md`), while every other invocation of this file (`tsx`/`node dist/cli.js`,
+    // the only ones a real LoRa deployment ever uses) behaves identically to a static import.
+    const { autoDetect } = await import("@serialport/bindings-cpp");
+    const { SerialPortStream } = await import("@serialport/stream");
     const stream = new SerialPortStream({ binding: autoDetect(), path: serialPortPath, baudRate });
     let loraTransport: Transport;
     if (loraChip === "sx1262") {
@@ -512,6 +556,15 @@ async function main(): Promise<void> {
     await webUi.start();
     const webHost = args["web-host"] ?? "127.0.0.1";
     console.log(`Web UI: http://${webHost}:${webUi.port}`);
+    // Opens a browser straight onto the page above, never only because `--portable` was passed (an
+    // operator restarting an already-set-up portable install every day doesn't want a new browser tab
+    // every time) — only on the genuine first run (`portableFirstRun`, `loadOrCreatePortableConfig()`
+    // just created the config file), or whenever `--open-browser` is explicitly given, independent of
+    // `--portable` entirely — e.g. to let an installer's "Apri ARALD" menu entry reopen the control
+    // panel later without redoing the whole wizard.
+    if (portableFirstRun || args["open-browser"] === "true") {
+      openInBrowser(`http://${webHost}:${webUi.port}`);
+    }
     if (needsNetworkPassword) {
       console.log(`Mobile network name: ${networkName}`);
       console.log(`Mobile network password: ${networkPassword}`);
