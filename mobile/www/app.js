@@ -110,8 +110,8 @@ function recordActivity(type, label, status) {
 
 const ACTIVITY_TYPE_LABELS = { message: "Messaggio", "external-delivery": "Invio a un'organizzazione", drop: "Bacheca", channel: "Canale", sos: "SOS" };
 const ACTIVITY_STATUS_TEXT = { sent: "Inviato", queued: "In coda — verrà inoltrato appena c'è un vicino nelle vicinanze", published: "Pubblicato" };
-/** Overrides ACTIVITY_STATUS_TEXT for a (type, status) pair that reads better as its own dedicated phrase than as a generic verb + type label (docs/security.md voce #87, Fase 2 dell'audit UX/UI) — today only SOS's "sent": "SOS trasmesso" is a direct, reassuring confirmation of the one action where that matters most, instead of the same generic "Inviato" every other row uses. */
-const ACTIVITY_STATUS_TEXT_OVERRIDE = { sos: { sent: "SOS trasmesso" } };
+/** Overrides ACTIVITY_STATUS_TEXT for a (type, status) pair that reads better as its own dedicated phrase than as a generic verb + type label (docs/security.md voce #87, Fase 2 dell'audit UX/UI; "queued" aggiunto dalla coda SOS persistente, docs/next-steps.md) — "SOS trasmesso" è una conferma diretta e rassicurante per l'unica azione dove conta di più, invece del generico "Inviato"; "in attesa di trasmissione" nomina esplicitamente il comportamento automatico della coda invece del testo generico pensato per un pacchetto unicast già instradato. */
+const ACTIVITY_STATUS_TEXT_OVERRIDE = { sos: { sent: "SOS trasmesso", queued: "In attesa di trasmissione — verrà inviato al primo dispositivo ARALD incrociato" } };
 
 function activityStatusText(type, status) {
   const override = ACTIVITY_STATUS_TEXT_OVERRIDE[type];

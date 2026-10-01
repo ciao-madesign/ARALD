@@ -225,6 +225,13 @@
        Ferma/Riavvia — nessun pattern di conferma custom esiste già in mobile/www/ da riusare). -->
   <div id="sos-panel" class="panel sos-panel" hidden>
     <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-alert-circle"></use></svg> Invia un SOS</h2>
+    <!-- Coda SOS persistente (docs/next-steps.md) — mostrato solo se ble-client.js's renderPendingSosUi()
+         trova un SOS già in attesa (sopravvissuto anche a una chiusura dell'app): nessuna nuova
+         trasmissione è richiesta qui, l'SOS riparte da solo al primo dispositivo Bluetooth incrociato. -->
+    <div id="sos-pending" class="sos-pending" hidden>
+      <p><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-alert-circle"></use></svg> SOS in attesa di trasmissione (in coda <span id="sos-pending-since"></span>) — verrà inviato automaticamente al primo dispositivo ARALD Bluetooth incrociato.</p>
+      <button type="button" id="sos-pending-cancel" class="link-button">Annulla SOS in coda</button>
+    </div>
     <p class="hint">Invia una richiesta di soccorso ai dispositivi ARALD Bluetooth nelle vicinanze — Clip, altri telefoni, relay. Un messaggio è facoltativo, ma puoi inviare subito anche senza scriverlo.</p>
     <textarea id="sos-message" placeholder="Descrivi la situazione (facoltativo)..." rows="3" maxlength="4000"></textarea>
     <div class="sos-panel-actions">
@@ -577,6 +584,11 @@
 <script src="vendor/nacl.js"></script>
 <script type="module" src="ble-identity.js"></script>
 <script type="module" src="ble-sos.js"></script>
+<!-- Vero modulo ES come ble-sos.js sopra (window.AraldBleSosQueue come ponte verso ble-client.js) —
+     coda SOS persistente, docs/next-steps.md "Coda SOS persistente sul telefono, in attesa di un peer
+     BLE". Nessuna dipendenza da ble-sos.js/ble-identity.js (solo da localStorage), quindi l'ordine
+     stretto con quelli non è necessario — dopo per coerenza con l'ordine "i moduli SOS insieme". -->
+<script type="module" src="ble-sos-queue.js"></script>
 <!-- Vero modulo ES come ble-link.js/ecc sopra (window.AraldBleWifiProvisioning come ponte verso
      app.js, uno script classico sotto) — vedi ble-wifi-provisioning.js's own header. Dopo
      ble-link.js/vendor/nacl.js (di cui usa rispettivamente base64ToBytes()/bytesToBase64() e il

@@ -861,6 +861,22 @@ li.skel-row { display: flex; flex-direction: column; }
 .sos-send-button:active { transform: scale(0.97); }
 .sos-send-button:disabled { opacity: 0.6; }
 
+/* Coda SOS persistente (docs/next-steps.md, "Coda SOS persistente sul telefono, in attesa di un peer
+   BLE") — un piccolo punto rosso sul bottone collassato #sos-button (visibile anche a pannello
+   chiuso, mai solo dentro di esso: l'utente deve accorgersene senza doverlo riaprire) più un blocco
+   informativo dentro il pannello stesso quando aperto, con il proprio bottone "Annulla". */
+.sos-button.has-pending { position: relative; }
+.sos-button.has-pending::after {
+  content: ""; position: absolute; top: 0.3em; right: 0.3em; width: 0.6em; height: 0.6em;
+  border-radius: 50%; background: var(--bad); border: 1.5px solid var(--surface);
+}
+.sos-pending {
+  margin-bottom: 0.8em; padding: 0.7em 0.8em; border-radius: 0.5em; border: 1px dashed var(--bad);
+  background: var(--surface);
+}
+.sos-pending p { display: flex; align-items: flex-start; gap: 0.5em; margin: 0 0 0.5em; color: var(--bad); font-weight: 600; }
+.sos-pending .icon { flex: none; margin-top: 0.1em; }
+
 /* Check-in rapido dentro #send-external-delivery-form (docs/next-steps.md) — due varianti dello stesso
    invio "Consegna esterna differita", mai il broadcast SOS reale (che resta #sos-button/.sos-panel
    sopra): #quick-checkin-help riusa comunque lo stesso colore d'emergenza (--bad) di .sos-send-button
