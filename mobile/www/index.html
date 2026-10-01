@@ -53,6 +53,42 @@
 
 <a id="skip-link" class="visually-hidden-focusable" href="#dashboard-main">Vai al contenuto</a>
 
+<!-- Bivio di primo avvio (docs/next-steps.md, "Wizard di primo avvio per chi scarica solo l'app e/o
+     acquista una Card"): mostrato una sola volta per dispositivo (STORAGE_KEY_WELCOME_DONE in app.js),
+     prima ancora del wizard del gateway — un utente che ha solo una Card, senza alcun Box, non deve
+     mai essere costretto ad attraversare un modulo di connessione a un gateway che non possiede.
+     "Hai una Card?" non cambia alcuna funzionalità (il canale SOS via Bluetooth, ble-client.js's
+     tryBleSosBurst(), funziona già oggi senza alcun gateway appaiato) — serve solo a personalizzare la
+     guida iniziale più avanti. "Hai un gateway?" è la vera diramazione: sì entra nel wizard esistente
+     (#setup-choice), no va direttamente alla dashboard ridotta (showDashboard() calcola la modalità da
+     gatewayUrl, vedi app.js). -->
+<section id="welcome-screen" hidden>
+  <div class="setup-card">
+    <div class="setup-mark"><svg viewBox="0 0 24 24" class="icon icon-lg" aria-hidden="true"><use href="#icon-waypoint"></use></svg></div>
+    <h1>Benvenuto in ARALD</h1>
+    <p class="lede">Prima di iniziare, due domande veloci.</p>
+
+    <div class="qblock">
+      <p class="qtitle"><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-plug"></use></svg> Hai una Card ARALD?</p>
+      <div class="optrow" role="group" aria-label="Hai una Card ARALD?">
+        <button type="button" class="optbtn" id="welcome-card-si" aria-pressed="false">Sì</button>
+        <button type="button" class="optbtn" id="welcome-card-no" aria-pressed="false">No</button>
+      </div>
+    </div>
+
+    <div class="qblock">
+      <p class="qtitle"><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-wifi"></use></svg> Hai un gateway (Box o Portable) a cui connetterti ora?</p>
+      <div class="optrow" role="group" aria-label="Hai un gateway a cui connetterti ora?">
+        <button type="button" class="optbtn" id="welcome-gateway-si" aria-pressed="false">Sì</button>
+        <button type="button" class="optbtn" id="welcome-gateway-no" aria-pressed="false">No</button>
+      </div>
+    </div>
+
+    <button type="button" id="welcome-continue" class="primary-action" style="width: 100%;" disabled>Continua</button>
+    <p class="hint" style="text-align: center;">Puoi cambiare idea in qualsiasi momento</p>
+  </div>
+</section>
+
 <section id="setup-screen">
   <div class="setup-card">
     <div class="setup-mark"><svg viewBox="0 0 24 24" class="icon icon-lg" aria-hidden="true"><use href="#icon-waypoint"></use></svg></div>
@@ -293,6 +329,41 @@
   </div>
 
   <main id="dashboard-main" tabindex="-1">
+    <!-- Dashboard ridotta (docs/next-steps.md, "Wizard di primo avvio per chi scarica solo l'app e/o
+         acquista una Card") — mostrata al posto delle 4 viste sotto quando questo dispositivo non ha
+         (ancora) un gateway appaiato (showDashboard() in app.js calcola la modalità da gatewayUrl, ogni
+         volta, nessun flag separato persistito). Solo ciò che funziona davvero senza un gateway: SOS
+         (il bottone resta nell'header sopra, sempre presente), il relay Bluetooth (#ble-relay-panel,
+         spostato qui da #diagnostics-overlay per la durata di questa modalità — stesso pannello, stessa
+         logica di ble-client.js, mai duplicato), e un invito sempre visibile a collegarne uno in futuro.
+         #reduced-relay-slot riceve #ble-relay-panel via placeBleRelayPanelForMode() (app.js). -->
+    <div id="reduced-home" hidden>
+      <div class="statusbar-reduced">
+        <span class="statusbar-reduced-dot"><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-wifi"></use></svg></span>
+        <div>
+          <div class="statusbar-reduced-title">Solo Bluetooth</div>
+          <div class="statusbar-reduced-sub">Nessun gateway collegato — SOS e relay funzionano comunque</div>
+        </div>
+      </div>
+
+      <div id="reduced-relay-slot"></div>
+
+      <div class="panel reduced-invite">
+        <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-wifi"></use></svg> Hai anche un Box?</h2>
+        <p class="hint">Collegalo per avere contenuti, chat e servizi, oltre a SOS e relay.</p>
+        <button type="button" id="reduced-connect-gateway" class="primary-action" style="width: 100%;">Collega un gateway →</button>
+      </div>
+
+      <details class="legendwrap">
+        <summary><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-help-circle"></use></svg> Legenda</summary>
+        <div class="legendgrid">
+          <div class="legenditem"><span class="legend-dot legend-dot-good"></span>Online</div>
+          <div class="legenditem"><span class="legend-dot legend-dot-off"></span>Offline</div>
+          <div class="legenditem"><span class="legend-dot legend-dot-bad"></span>Emergenza</div>
+        </div>
+      </details>
+    </div>
+
     <!-- 4 viste (Fase 4 dell'audit UX/UI, docs/next-steps.md): #tab-home/#tab-comunica/#tab-activity
          mostrate/nascoste da switchTab() (app.js) in base al bottone attivo in #bottom-nav sotto; "Mappa"
          non è una quinta vista ma apre direttamente #map-overlay sopra (openMapOverlay(), già esistente).

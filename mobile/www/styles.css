@@ -155,7 +155,7 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
 /* :not([hidden]) — an ID selector's specificity otherwise beats the UA stylesheet's own
    [hidden] { display: none } rule, so an unguarded `display: flex` here would keep this screen
    visible even after app.js sets the hidden attribute to switch to the dashboard. */
-#setup-screen:not([hidden]), #setup-success:not([hidden]) {
+#setup-screen:not([hidden]), #setup-success:not([hidden]), #welcome-screen:not([hidden]) {
   min-height: 100vh;
   display: flex;
   align-items: center;
@@ -305,6 +305,72 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
   display: flex; align-items: center; justify-content: center; margin: 0 auto 0.8em;
 }
 .success-ring .icon { width: 2.1em; height: 2.1em; }
+
+/* Bivio "Hai una Card?"/"Hai un gateway?" (#welcome-screen) — due domande sì/no, un vero <button>
+   ciascuna (toggle via aria-pressed, stesso schema di #toggle-password), mai un radio nascosto: qui
+   serve leggere lo stato da JS per abilitare "Continua" solo a entrambe risposte, non solo un
+   cambio di vista puramente visivo come nei wizard precedenti. */
+.qblock { margin-bottom: 1.3em; }
+.qtitle { display: flex; align-items: center; gap: 0.5em; font-weight: 700; font-size: 0.92em; margin: 0 0 0.6em; }
+.optrow { display: flex; gap: 0.6em; }
+.optbtn {
+  flex: 1; padding: 0.75em; border-radius: 0.7em; border: 1.5px solid var(--border);
+  background: var(--card); font-weight: 700; font-size: 0.92em; color: var(--muted);
+  transition: border-color 150ms var(--ease), background-color 150ms var(--ease), color 150ms var(--ease);
+}
+.optbtn[aria-pressed="true"] { border-color: var(--signal); background: var(--signal-soft); color: var(--signal); }
+
+/* Bottone pieno "verde" (--signal), non il trattamento "faro"/beacon — quello resta riservato a
+   esattamente due bottoni in tutta l'app (#setup-form button[type="submit"], .call-form .call-submit,
+   voce #50) e `#welcome-continue`/`#reduced-connect-gateway` non sono né l'uno né l'altro. Trovato dalla
+   revisione: usare `class="call-submit"` qui non violerebbe solo quella disciplina se funzionasse — in
+   realtà non fa nulla, perché ogni regola `.call-submit` reale in questo foglio è scoperta solo sotto
+   `.call-form`/`.chat-compose` (nessuna regola bare `.call-submit` esiste), quindi questi due bottoni
+   sarebbero renderizzati come `<button>` nativi non stilizzati. Stesso principio già usato per
+   `.sos-send-button`/`.hub-shutdown-button`: una classe propria con un vero sfondo, non una classe
+   riusata che in questo contesto non stila nulla. */
+.primary-action {
+  display: flex; align-items: center; justify-content: center; gap: 0.5em;
+  border: none; border-radius: 0.7em; padding: 0.75em;
+  background: var(--signal); color: var(--signal-ink); font-weight: 700; font-size: 0.92em;
+  transition: transform 100ms var(--ease), opacity 150ms var(--ease);
+}
+.primary-action:active { transform: scale(0.97); }
+.primary-action:disabled { opacity: 0.5; }
+#welcome-continue { margin-top: 0.4em; margin-bottom: 0.6em; }
+
+/* Dashboard ridotta (#reduced-home) — niente gateway, solo SOS (bottone già nell'header, sempre
+   presente) + relay Bluetooth + un invito a collegarne uno. Stato "off"/neutro (--off), non --bad: è
+   una scelta dell'utente o uno stato transitorio, non un errore. */
+#reduced-home { padding: 1em 1em 0; max-width: 32em; margin: 0 auto; }
+.statusbar-reduced {
+  display: flex; align-items: center; gap: 0.7em; background: var(--off-soft); border-radius: 0.8em;
+  padding: 0.8em 0.9em; margin-bottom: 0.9em;
+}
+.statusbar-reduced-dot {
+  width: 2.1em; height: 2.1em; border-radius: 50%; background: var(--off); color: var(--card);
+  display: flex; align-items: center; justify-content: center; flex: none;
+}
+.statusbar-reduced-dot .icon { width: 1.1em; height: 1.1em; }
+.statusbar-reduced-title { font-weight: 700; font-size: 0.9em; }
+.statusbar-reduced-sub { font-size: 0.78em; color: var(--muted); }
+.reduced-invite { border-color: var(--signal); background: var(--signal-soft); }
+.reduced-invite h2 { color: var(--signal); }
+.legendwrap { margin-top: 0.2em; margin-bottom: 1.5em; }
+.legendwrap summary {
+  display: flex; align-items: center; gap: 0.4em; font-size: 0.78em; color: var(--muted); font-weight: 700;
+  cursor: pointer; list-style: none; padding: 0.4em 0;
+}
+.legendwrap summary::-webkit-details-marker { display: none; }
+.legendgrid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 0.5em; background: var(--card);
+  border: 1px solid var(--border); border-radius: 0.7em; padding: 0.8em; font-size: 0.78em;
+}
+.legenditem { display: flex; align-items: center; gap: 0.4em; }
+.legend-dot { width: 0.65em; height: 0.65em; border-radius: 50%; flex: none; display: inline-block; }
+.legend-dot-good { background: var(--good); }
+.legend-dot-off { background: var(--off); }
+.legend-dot-bad { background: var(--bad); }
 
 /* display must be set for width/height to apply to a <span> (inline boxes ignore sizing) — and
    guarded by :not([hidden]) for the same reason as above, since both spans start `hidden`. */
@@ -481,8 +547,12 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
 #dashboard-main:focus-visible { outline: none; } /* focused programmatically for a11y on screen switch, not a keyboard target */
 
 /* Barra di navigazione a 4 voci (Fase 4 dell'audit UX/UI, docs/next-steps.md): Home/Comunica/Attività
-   cambiano vista (switchTab(), app.js); Mappa apre #map-overlay direttamente, mai una vista. */
-#bottom-nav {
+   cambiano vista (switchTab(), app.js); Mappa apre #map-overlay direttamente, mai una vista.
+   `:not([hidden])` necessario da quando la dashboard ridotta (bivio Card/gateway) nasconde questa
+   barra via JS: senza la guardia, un selettore per ID con `display` non guardato vince la regola
+   `[hidden]{display:none}` dello user agent per parità di specificità — stesso bug già trovato in
+   voce #109 per #setup-form/#setup-choice/.choice-card. */
+#bottom-nav:not([hidden]) {
   position: fixed;
   left: 0; right: 0; bottom: 0;
   z-index: 15;

@@ -9,6 +9,13 @@ const STORAGE_KEY_URL = "arald.gatewayUrl";
 const STORAGE_KEY_PASSWORD = "arald.networkPassword";
 const STORAGE_KEY_CONTACT_NAMES = "arald.contactNames";
 const STORAGE_KEY_INTRO_SEEN = "arald.introSeen";
+// Bivio di primo avvio (docs/next-steps.md, "Wizard di primo avvio per chi scarica solo l'app e/o
+// acquista una Card") — risposto una sola volta per dispositivo, mai più ripresentato dopo
+// (#welcome-screen/showWelcomeScreen() in fondo a questo file). STORAGE_KEY_HAS_CARD non gate
+// alcuna funzionalità di questo file oggi (il canale SOS via Bluetooth funziona identicamente per
+// chiunque) — serve solo a personalizzare la guida iniziale, quando verrà costruita.
+const STORAGE_KEY_WELCOME_DONE = "arald.welcomeDone";
+const STORAGE_KEY_HAS_CARD = "arald.hasCard";
 const MAX_CONTACT_NAME_LENGTH = 40;
 
 /**
@@ -1069,7 +1076,51 @@ function addressFieldNeeded() {
  */
 let setupChoiceDismissed = false;
 
+function showWelcomeScreen() {
+  document.getElementById("setup-screen").hidden = true;
+  document.getElementById("dashboard-screen").hidden = true;
+  document.getElementById("welcome-screen").hidden = false;
+}
+
+function wireWelcomeToggle(yesId, noId) {
+  const yes = document.getElementById(yesId);
+  const no = document.getElementById(noId);
+  const select = (chosen, other) => {
+    chosen.setAttribute("aria-pressed", "true");
+    other.setAttribute("aria-pressed", "false");
+    updateWelcomeContinueEnabled();
+  };
+  yes.addEventListener("click", () => select(yes, no));
+  no.addEventListener("click", () => select(no, yes));
+}
+wireWelcomeToggle("welcome-card-si", "welcome-card-no");
+wireWelcomeToggle("welcome-gateway-si", "welcome-gateway-no");
+
+function updateWelcomeContinueEnabled() {
+  const answered = (id) => document.getElementById(id).getAttribute("aria-pressed") === "true";
+  const cardAnswered = answered("welcome-card-si") || answered("welcome-card-no");
+  const gatewayAnswered = answered("welcome-gateway-si") || answered("welcome-gateway-no");
+  document.getElementById("welcome-continue").disabled = !(cardAnswered && gatewayAnswered);
+}
+
+document.getElementById("welcome-continue").addEventListener("click", () => {
+  const hasCard = document.getElementById("welcome-card-si").getAttribute("aria-pressed") === "true";
+  const wantsGateway = document.getElementById("welcome-gateway-si").getAttribute("aria-pressed") === "true";
+  try {
+    localStorage.setItem(STORAGE_KEY_HAS_CARD, hasCard ? "1" : "0");
+    localStorage.setItem(STORAGE_KEY_WELCOME_DONE, "1");
+  } catch {
+    // Storage piena/non disponibile — il bivio si ripresenterebbe al prossimo avvio, non blocca l'uso ora.
+  }
+  if (wantsGateway) {
+    showSetupScreen();
+  } else {
+    showDashboard();
+  }
+});
+
 function showSetupScreen(errorMessage) {
+  document.getElementById("welcome-screen").hidden = true;
   document.getElementById("setup-screen").hidden = false;
   document.getElementById("dashboard-screen").hidden = true;
   document.getElementById("setup-success").hidden = true;
@@ -1432,6 +1483,11 @@ document.getElementById("forget-network").addEventListener("click", () => {
   networkPassword = "";
   document.getElementById("gateway-input").value = ""; // showSetupScreen() only writes this field when an address is already known — a full reset has none, so it must be cleared here explicitly or a stale address would linger from before the reset
   setupChoiceDismissed = false; // una rete dimenticata è un setup da zero — mostra di nuovo "come vuoi connetterti?", non l'ultimo metodo scelto per una rete che non esiste più
+  // Mai il bivio "hai una Card?/hai un gateway?" (quello si mostra una sola volta in assoluto) — ma
+  // nemmeno la dashboard ridotta: "Cambia rete" è una richiesta esplicita di riconfigurare il gateway,
+  // non di rinunciarci, quindi riporta dritto al wizard, come già prima di questa voce (trovato dalla
+  // revisione: un utente che ha sempre usato un gateway e tocca "Cambia rete" per passare a un Box
+  // diverso non deve incontrare un passaggio in più dalla dashboard ridotta per arrivarci).
   showSetupScreen();
 });
 
@@ -1556,9 +1612,49 @@ for (const name of TAB_NAMES) {
   document.getElementById("nav-" + name).addEventListener("click", () => switchTab(name));
 }
 
+/**
+ * `#ble-relay-panel` vive normalmente dentro `#diagnostics-overlay` (un dettaglio tecnico, dietro un
+ * tap in più — corretto quando contenuti/servizi/chat sono il punto principale della dashboard). In
+ * modalità ridotta (nessun gateway) è invece l'unica cosa utile oltre all'SOS, quindi questa funzione
+ * *sposta* lo stesso nodo DOM (mai una copia — un solo pannello, una sola logica in ble-client.js,
+ * mai due toggle da tenere sincronizzati) dentro `#reduced-relay-slot`, e lo riporta dentro
+ * `#diagnostics-overlay` quando si torna alla dashboard piena. `blePanelHomeParent` cattura il
+ * genitore originale una sola volta, al caricamento dello script — prima che questa funzione possa
+ * mai essere chiamata la prima volta.
+ */
+const blePanelHomeParent = document.getElementById("ble-relay-panel").parentElement;
+
+function placeBleRelayPanelForMode(reduced) {
+  const panel = document.getElementById("ble-relay-panel");
+  const target = reduced ? document.getElementById("reduced-relay-slot") : blePanelHomeParent;
+  if (panel.parentElement !== target) target.appendChild(panel);
+}
+
 function showDashboard() {
+  document.getElementById("welcome-screen").hidden = true;
   document.getElementById("setup-screen").hidden = true;
   document.getElementById("dashboard-screen").hidden = false;
+  closeChatPanel();
+  closeChannelPanel();
+  closeGroupPanel();
+
+  // Dashboard ridotta (docs/next-steps.md): nessun flag separato persistito — ricalcolata da
+  // gatewayUrl/networkPassword ogni volta che questa funzione gira, così "Collega un gateway"
+  // dalla dashboard ridotta e "Cambia rete" dalla dashboard piena si limitano a cambiare quei due
+  // valori e richiamare showDashboard(), senza dover anche gestire un terzo stato a parte.
+  const reduced = !gatewayUrl || !networkPassword;
+  document.getElementById("bottom-nav").hidden = reduced;
+  document.getElementById("reduced-home").hidden = !reduced;
+  placeBleRelayPanelForMode(reduced);
+  const main = document.getElementById("dashboard-main");
+
+  if (reduced) {
+    for (const name of TAB_NAMES) document.getElementById("tab-" + name).hidden = true;
+    clearInterval(refreshTimer); // nessun gateway da interrogare — refreshAll() fallirebbe a ogni giro
+    main.focus({ preventScroll: true });
+    return;
+  }
+
   firstLoadDone = false;
   peerSeenIds = new Set();
   serviceSeenIds = new Set();
@@ -1566,9 +1662,6 @@ function showDashboard() {
   lastContentQuery = null;
   channelSeenNames = new Set();
   groupSeenIds = new Set();
-  closeChatPanel();
-  closeChannelPanel();
-  closeGroupPanel();
   switchTab("home");
   renderSkeletons();
   updateIntroBanner(false);
@@ -1580,12 +1673,15 @@ function showDashboard() {
   // refreshAll(), quindi senza questa chiamata resterebbe vuota a video finché l'utente non tocca
   // "Salva"/"Aggiungi" almeno una volta in questa sessione.
   renderRemoteContacts();
-  const main = document.getElementById("dashboard-main");
   main.focus({ preventScroll: true }); // announces the screen change to screen-reader users
   refreshAll();
   clearInterval(refreshTimer);
   refreshTimer = setInterval(refreshAll, 5000);
 }
+
+document.getElementById("reduced-connect-gateway").addEventListener("click", () => {
+  showSetupScreen();
+});
 
 /**
  * Shows #intro-banner (a plain-language "what can I do here" card) automatically once, the first
@@ -3591,8 +3687,22 @@ async function refreshAll() {
 
 // ---------- boot ----------
 
-if (gatewayUrl && networkPassword) {
+// Il bivio "hai una Card?/hai un gateway?" si mostra una sola volta in assoluto, al primo avvio vero
+// (mai più, nemmeno dopo un "dimentica rete" — vedi #forget-network sopra). Una volta superato,
+// showDashboard() decide da sé pieno/ridotto in base a gatewayUrl/networkPassword correnti.
+// Un dispositivo già appaiato PRIMA che questa voce esistesse (gatewayUrl/networkPassword già validi,
+// STORAGE_KEY_WELCOME_DONE mai scritta perché la chiave non esisteva ancora) salta comunque il bivio:
+// un setup già riuscito non ha bisogno di rispondere a "hai un gateway?" per scoprire che sì, ce l'ha
+// già — trovato dalla revisione (senza questo controllo, ogni installazione precedente a questa voce
+// si vedrebbe riproporre il bivio al primo avvio dopo l'aggiornamento, e rispondendo "Sì" dovrebbe pure
+// ridigitare la password di rete di un gateway a cui è già connessa).
+if (localStorage.getItem(STORAGE_KEY_WELCOME_DONE) === "1" || (gatewayUrl && networkPassword)) {
+  try {
+    localStorage.setItem(STORAGE_KEY_WELCOME_DONE, "1");
+  } catch {
+    // Storage piena/non disponibile — il bivio si ripresenterebbe al prossimo avvio, non blocca l'uso ora.
+  }
   showDashboard();
 } else {
-  showSetupScreen();
+  showWelcomeScreen();
 }
