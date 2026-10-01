@@ -420,6 +420,36 @@
           <ul id="peers"></ul>
         </details>
 
+        <!-- "Internet come trasporto opzionale tra nodi mesh lontani" (docs/next-steps.md) — connettersi
+             a un nodo lontano via il gateway (node/src/web-ui.ts's POST /api/discover-peer), mai un
+             indirizzo da digitare: un tap su un nome, pubblico o salvato privatamente. Sempre visibile
+             (a differenza di #ble-relay-panel/#sos-button): il canale gateway non dipende da alcun
+             plugin, funziona ovunque ci sia un gateway appaiato. -->
+        <details class="panel" id="discover-panel">
+          <summary>
+            <div class="summary-row">
+              <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-wifi"></use></svg> Collega un nodo remoto</h2>
+              <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg>
+            </div>
+            <p class="hint">Connettiti via Internet a un contatto pubblico (soccorsi, istituzioni) o a uno dei tuoi contatti salvati — nessun indirizzo da digitare.</p>
+          </summary>
+          <div class="discover-subtabs" role="tablist">
+            <button type="button" class="discover-subtab is-active" data-discover-tab="public" role="tab" aria-selected="true">Pubblici</button>
+            <button type="button" class="discover-subtab" data-discover-tab="private" role="tab" aria-selected="false">I miei contatti</button>
+          </div>
+          <!-- Spunta di verifica (docs/next-steps.md): significa solo "chi gestisce questo servizio di
+               discovery garantisce per questo contatto", mai un ente certificatore globale — mostrato
+               esplicitamente così in #discover-public-list, vedi renderDiscoveryDirectory() (app.js). -->
+          <ul id="discover-public-list"></ul>
+          <ul id="discover-private-list" hidden></ul>
+          <form id="add-remote-contact-form" hidden>
+            <input id="add-remote-contact-nodeid" type="text" placeholder="Codice del contatto" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64">
+            <input id="add-remote-contact-label" type="text" placeholder="Nome (es. Box di Marco)" autocomplete="off" maxlength="60">
+            <button type="submit">Aggiungi</button>
+          </form>
+          <p id="discover-status" class="muted" role="status" aria-live="polite"></p>
+        </details>
+
         <details class="panel" id="groups-panel">
           <summary>
             <div class="summary-row">

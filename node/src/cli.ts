@@ -252,6 +252,9 @@ async function main(): Promise<void> {
     externalDeliveryTtlMs,
     maxExternalDeliveryPayloadBytes,
     deviceClass,
+    discoveryServiceUrl: args["discovery-service-url"],
+    discoveryPublicAddress: args["discovery-public-address"],
+    discoveryPublicLabel: args["discovery-public-label"],
   });
   node.addTransport(new TcpTransport(node.nodeId, port));
 
@@ -366,6 +369,19 @@ async function main(): Promise<void> {
     }
   }
 
+  // "Internet come trasporto opzionale tra nodi mesh lontani" (docs/next-steps.md) — stessa azione di
+  // --connect sopra, solo con l'indirizzo risolto tramite --discovery-service-url invece che digitato a
+  // mano. Richiede esplicitamente --discovery-service-url: senza, connectToDiscoveredPeer() lancia subito
+  // un errore chiaro ("no discovery service configured") invece di un silenzioso "nessun effetto".
+  if (args["discover-peer"]) {
+    try {
+      const peerId = await node.connectToDiscoveredPeer(args["discover-peer"]);
+      console.log(`Connected to discovered peer ${peerId} (nodeId ${args["discover-peer"]})`);
+    } catch (err) {
+      console.error(`Failed to connect to discovered peer ${args["discover-peer"]}:`, (err as Error).message);
+    }
+  }
+
   node.on("data", (packet) => {
     console.log(`[DATA] from ${packet.source}: ${JSON.stringify(packet.payload)}`);
   });
@@ -454,6 +470,28 @@ async function main(): Promise<void> {
       node.attemptExternalDeliveries().catch((err) => console.error(`External delivery attempt failed: ${(err as Error).message}`));
     }, intervalMs);
     console.log(`Attempting external delivery every ${intervalMs}ms`);
+  }
+
+  // "Internet come trasporto opzionale tra nodi mesh lontani" (docs/next-steps.md) — ri-registra
+  // periodicamente l'indirizzo di questo nodo presso --discovery-service-url, stesso schema non-owning-
+  // timer di --report-relay-telemetry-interval-ms/--external-delivery-poll-interval-ms sopra
+  // (NomadNode stesso non possiede alcun setInterval, CLAUDE.md). A differenza di quei due, qui viene
+  // fatto anche un primo tentativo immediato prima di impostare l'intervallo: un peer che cerca di
+  // risolvere questo nodeId subito dopo l'avvio non dovrebbe dover aspettare un intero intervallo
+  // (default 5 minuti) prima che l'indirizzo compaia nel servizio.
+  let discoveryRegisterInterval: NodeJS.Timeout | undefined;
+  if (args["discovery-service-url"] && args["discovery-public-address"]) {
+    node.registerWithDiscoveryService().catch((err) => console.error(`Discovery registration failed: ${(err as Error).message}`));
+    const intervalMs = parsePositiveNumberFlag("discovery-register-interval-ms", args["discovery-register-interval-ms"]) ?? 5 * 60 * 1000;
+    discoveryRegisterInterval = setInterval(() => {
+      node.registerWithDiscoveryService().catch((err) => console.error(`Discovery registration failed: ${(err as Error).message}`));
+    }, intervalMs);
+    console.log(`Registering with discovery service every ${intervalMs}ms (${args["discovery-service-url"]})`);
+  } else if (args["discovery-register-interval-ms"] !== undefined) {
+    // --discovery-register-interval-ms da solo non ha alcun effetto senza anche --discovery-service-url/
+    // --discovery-public-address — segnalato esplicitamente, stesso principio "nessun flag ignorato in
+    // silenzio senza un motivo" già applicato a --trust-admin/--lora-serial-port sopra.
+    console.error("--discovery-register-interval-ms requires --discovery-service-url and --discovery-public-address to have any effect");
   }
 
   // Off by default (spec §59 web interface) — only started when explicitly requested, since it
@@ -635,6 +673,7 @@ async function main(): Promise<void> {
     try {
       if (telemetryInterval) clearInterval(telemetryInterval);
       if (externalDeliveryInterval) clearInterval(externalDeliveryInterval);
+      if (discoveryRegisterInterval) clearInterval(discoveryRegisterInterval);
       if (webUi) await webUi.stop();
       if (mapTiles) {
         mapTiles.close();

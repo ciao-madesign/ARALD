@@ -101,6 +101,7 @@ import {
   type ExternalDeliveryDirectoryPayload,
   type ExternalDeliveryPayload,
 } from "./external-delivery.js";
+import { fetchDiscoveryDirectory, lookupPeerAddress, parseDiscoveryAddress, postDiscoveryRegistration, signDiscoveryRegistration, type DiscoveryDirectoryEntry } from "./discovery-client.js";
 
 export interface NomadNodeOptions {
   displayName?: string;
@@ -285,6 +286,37 @@ export interface NomadNodeOptions {
   maxExternalDeliveryPayloadBytes?: number;
   /** Max publisher distinti (BOX) tracciati in `externalDeliveryDirectory` at once (spec §57 resource limits). */
   maxExternalDeliveryDirectoryPublishers?: number;
+  /**
+   * "Internet come trasporto opzionale tra nodi mesh lontani" (`docs/next-steps.md`,
+   * `node/src/discovery-client.ts`) — l'indirizzo di un servizio di discovery esterno a cui questo
+   * nodo registra il proprio indirizzo raggiungibile (`registerWithDiscoveryService()`) e tramite cui
+   * può risolvere il `nodeId` di un altro nodo prima di connettersi (`connectToDiscoveredPeer()`).
+   * Assente (default) = funzionalità completamente inattiva — **nessun servizio di default imposto da
+   * questo codice**, coerente con "Internet arricchisce, mai un requisito" già seguito da
+   * `internet-gateway.ts`/`external-delivery.ts`. Provisioning out-of-band dell'operatore
+   * (`cli.ts`'s `--discovery-service-url`), stesso modello già usato per `emergencyBeaconKey`.
+   */
+  discoveryServiceUrl?: string;
+  /**
+   * L'indirizzo (`host:port`) con cui questo nodo è raggiungibile da Internet — richiesto solo se si
+   * vuole che `registerWithDiscoveryService()` pubblichi qualcosa (nessun attraversamento NAT
+   * automatico in questa prima versione, `docs/next-steps.md`: l'operatore deve già sapere e aver
+   * configurato il proprio indirizzo pubblico, es. una porta inoltrata sul router). Mai dedotto/scoperto
+   * da questo codice — un valore sbagliato qui pubblicherebbe un indirizzo a cui nessuno arriva
+   * realmente, ma è un problema di configurazione dell'operatore, non di sicurezza: la firma garantisce
+   * solo che *quel* `nodeId` ha dichiarato quell'indirizzo, mai che sia corretto o raggiungibile
+   * (vedi `discovery-client.ts`, header).
+   */
+  discoveryPublicAddress?: string;
+  /**
+   * Nome pubblico facoltativo (`discovery-client.ts`'s `DiscoveryRegistration.label`) — se presente,
+   * `registerWithDiscoveryService()` lo include nella registrazione e questo nodo compare nella rubrica
+   * pubblica sfogliabile del servizio di discovery configurato (`GET /directory`). Assente (default):
+   * il nodo può comunque registrare il proprio indirizzo per farsi trovare da chi già conosce il suo
+   * `nodeId` (rubrica privata lato app), senza comparire nell'elenco pubblico. Richiede
+   * `discoveryServiceUrl`/`discoveryPublicAddress` per avere effetto.
+   */
+  discoveryPublicLabel?: string;
 }
 
 interface ContentWaiter {
@@ -960,6 +992,9 @@ export class NomadNode extends EventEmitter {
   private readonly minTrustForRelayCommand: TrustLevel;
   private readonly emergencyBeaconKey: Buffer | undefined;
   private readonly externalDeliveryAllowlist: ExternalDeliveryAllowlist | undefined;
+  private readonly discoveryServiceUrl: string | undefined;
+  private readonly discoveryPublicAddress: string | undefined;
+  private readonly discoveryPublicLabel: string | undefined;
   /**
    * Public (unlike every other per-instance cap in this list) so
    * `web-ui.ts`'s `POST /api/external-delivery` can size its own HTTP
@@ -1180,6 +1215,9 @@ export class NomadNode extends EventEmitter {
       throw new Error("NomadNode: emergencyBeaconKey must be exactly 32 bytes (AES-256-GCM)");
     }
     this.emergencyBeaconKey = options.emergencyBeaconKey;
+    this.discoveryServiceUrl = options.discoveryServiceUrl;
+    this.discoveryPublicAddress = options.discoveryPublicAddress;
+    this.discoveryPublicLabel = options.discoveryPublicLabel;
     this.externalDeliveryAllowlist = options.externalDeliveryAllowlist;
     this.maxExternalDeliveryPayloadBytes = options.maxExternalDeliveryPayloadBytes ?? DEFAULT_MAX_EXTERNAL_DELIVERY_PAYLOAD_BYTES;
     this.externalDeliveryDirectory = new ExternalDeliveryDirectory({ maxPublishers: options.maxExternalDeliveryDirectoryPublishers });
@@ -2256,6 +2294,55 @@ export class NomadNode extends EventEmitter {
     } finally {
       this.externalDeliveryAttemptInFlight = false;
     }
+  }
+
+  /**
+   * "Internet come trasporto opzionale tra nodi mesh lontani" (`docs/next-steps.md`,
+   * `node/src/discovery-client.ts`) — registra/aggiorna l'indirizzo raggiungibile di questo nodo presso
+   * `discoveryServiceUrl`, firmato con la propria identità Ed25519. No-op silenzioso (non lancia) se
+   * `discoveryServiceUrl`/`discoveryPublicAddress` non sono configurati — stesso schema già usato da
+   * `attemptExternalDeliveries()` ("se il ruolo non è attivo, nulla da fare"), così un chiamante
+   * periodico (`cli.ts`'s `--discovery-register-interval-ms`, stesso schema di
+   * `--report-relay-telemetry-interval-ms`) non deve controllare da sé se la funzionalità è abilitata.
+   * Propaga invece qualunque fallimento *di rete* (servizio irraggiungibile, timeout, rifiuto) —
+   * il chiamante decide come loggarlo, stesso schema di `reportRelayTelemetry()`.
+   */
+  async registerWithDiscoveryService(): Promise<void> {
+    if (!this.discoveryServiceUrl || !this.discoveryPublicAddress) return;
+    const registration = signDiscoveryRegistration(this.identity, this.discoveryPublicAddress, this.discoveryPublicLabel, Date.now());
+    await postDiscoveryRegistration(this.discoveryServiceUrl, registration);
+  }
+
+  /**
+   * Risolve `nodeId` tramite `discoveryServiceUrl` e si connette all'indirizzo trovato — la stessa
+   * identica azione di `connect()` (usata da `--connect <host:porta>`), solo con l'indirizzo scoperto
+   * invece che digitato a mano. Lancia se `discoveryServiceUrl` non è configurato (chiamare questo
+   * metodo senza averlo configurato è un errore del chiamante, non uno stato "normale" da ignorare
+   * silenziosamente come `registerWithDiscoveryService()` — a differenza di una registrazione periodica
+   * e best-effort, qui un operatore ha esplicitamente chiesto di connettersi a un `nodeId` preciso e si
+   * aspetta un esito chiaro), o se il servizio non conosce `nodeId` (nessun indirizzo da provare), o se
+   * la connessione stessa fallisce (lo stesso `connect()` sottostante).
+   */
+  async connectToDiscoveredPeer(nodeId: string): Promise<string> {
+    if (!this.discoveryServiceUrl) throw new Error("connectToDiscoveredPeer: no discovery service configured");
+    const address = await lookupPeerAddress(this.discoveryServiceUrl, nodeId);
+    if (!address) throw new Error(`connectToDiscoveredPeer: discovery service does not know nodeId ${nodeId}`);
+    const { host, port } = parseDiscoveryAddress(address);
+    return this.connect({ host, port });
+  }
+
+  /**
+   * La rubrica pubblica del servizio di discovery configurato — usata da `web-ui.ts`'s
+   * `GET /api/discovery-directory` per mostrarla al telefono senza che quest'ultimo debba conoscere
+   * l'indirizzo del servizio (il gateway lo inoltra per conto suo, evitando anche eventuali problemi di
+   * CORS sul servizio di discovery stesso). `[]`, mai un lancio, se `discoveryServiceUrl` non è
+   * configurato — funzionalità inattiva è uno stato normale, non un errore. Propaga invece un fallimento
+   * di rete (servizio configurato ma irraggiungibile) — un segnale diagnostico reale per l'operatore
+   * (`web-ui.ts` lo mappa a 502), diverso da "nessun servizio configurato".
+   */
+  async getDiscoveryDirectory(): Promise<DiscoveryDirectoryEntry[]> {
+    if (!this.discoveryServiceUrl) return [];
+    return fetchDiscoveryDirectory(this.discoveryServiceUrl);
   }
 
   /**

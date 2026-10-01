@@ -18,6 +18,7 @@
     "whatsapp-relay": "tsx whatsapp-relay/cli.ts",
     "email-relay": "tsx email-relay/cli.ts",
     "webhook-relay": "tsx webhook-relay/cli.ts",
+    "discovery-service": "tsx discovery-service/cli.ts",
     "build:portable": "tsx packaging/build-sea.ts"
   },
   "dependencies": {

@@ -62,6 +62,50 @@ function setContactName(nodeId, name) {
   }
 }
 
+const STORAGE_KEY_REMOTE_CONTACTS = "arald.remoteContacts";
+
+/**
+ * "Internet come trasporto opzionale tra nodi mesh lontani" (docs/next-steps.md) — la rubrica
+ * *privata* dei nodeId salvati da questo utente (separata dalla rubrica pubblica, che vive sul
+ * servizio di discovery stesso e arriva via GET /api/discovery-directory, mai salvata qui). Un
+ * array di nodeId puro: il NOME visualizzato riusa `contactNamesCache`/`getContactName()` già
+ * esistente (generico, non legato ai soli vicini — vedi sopra), perché questa struttura serve solo
+ * a rispondere a "quali nodeId sono miei contatti", non "come si chiamano". Locale, mai
+ * trasmessa/sincronizzata — stessa postura di contactNamesCache, nessun limite artificiale di
+ * dimensione: alimentata solo da un click esplicito di questo utente, mai dalla rete.
+ */
+let remoteContactsCache = null;
+
+function loadRemoteContacts() {
+  if (remoteContactsCache) return remoteContactsCache;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_REMOTE_CONTACTS);
+    const parsed = raw ? JSON.parse(raw) : [];
+    remoteContactsCache = Array.isArray(parsed) ? parsed.filter((id) => typeof id === "string" && id.length > 0) : [];
+  } catch {
+    remoteContactsCache = [];
+  }
+  return remoteContactsCache;
+}
+
+function saveRemoteContacts(ids) {
+  remoteContactsCache = ids;
+  try {
+    localStorage.setItem(STORAGE_KEY_REMOTE_CONTACTS, JSON.stringify(ids));
+  } catch {
+    // Storage piena/non disponibile — stessa postura non bloccante di setContactName().
+  }
+}
+
+function addRemoteContact(nodeId) {
+  const ids = loadRemoteContacts();
+  if (!ids.includes(nodeId)) saveRemoteContacts(ids.concat([nodeId]));
+}
+
+function removeRemoteContact(nodeId) {
+  saveRemoteContacts(loadRemoteContacts().filter((id) => id !== nodeId));
+}
+
 const STORAGE_KEY_ACTIVITY_LOG = "arald.activityLog";
 const MAX_ACTIVITY_LOG_ENTRIES = 50;
 
@@ -440,6 +484,65 @@ async function createDrop({ text, lat, lon, label, kind }) {
     throw err;
   }
   return body.drop;
+}
+
+/**
+ * GET /api/discovery-directory (node/src/web-ui.ts) — sempre pubblico, mai richiede la password di
+ * rete (la rubrica pubblica del servizio di discovery è per costruzione non sensibile). A differenza
+ * di fetchJson(), non rilancia mai: un operatore che ha configurato un servizio di discovery ora
+ * irraggiungibile non deve far fallire l'intero refreshAll() (lo stesso Promise.all di decine di
+ * altre fetch) solo per questa voce facoltativa — stessa postura di grado-degradazione già usata da
+ * fetchRelayRegistry()/fetchLocationRegistry() per un 404.
+ *
+ * Restituisce `null` specificamente su un 502 ("servizio di discovery configurato ma irraggiungibile
+ * al momento", NomadNode.getDiscoveryDirectory()) — distinto da `[]` ("nessun servizio configurato",
+ * o "servizio raggiungibile ma rubrica vuota"). Trovato dalla revisione: confondere i due casi
+ * nasconderebbe all'operatore un segnale diagnostico reale (il SUO servizio è giù) dietro una lista
+ * pubblica che sembra identica a una genuinamente vuota — renderDiscoveryDirectory() sotto mostra un
+ * messaggio distinto per questo caso.
+ */
+async function fetchDiscoveryDirectory() {
+  try {
+    const res = await fetchWithTimeout(apiUrl("/api/discovery-directory"), undefined, READ_TIMEOUT_MS);
+    if (res.status === 502) return null;
+    if (!res.ok) return [];
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * POST /api/discover-peer (node/src/web-ui.ts) — "Internet come trasporto opzionale tra nodi mesh
+ * lontani" (docs/next-steps.md): chiede a questo gateway di risolvere `nodeId` tramite il servizio
+ * di discovery configurato e connettersi davvero. Stesso err.status convention di createDrop() —
+ * il chiamante decide cosa fare di un 401/404/502 (vedi il click handler del pannello "Collega un
+ * nodo remoto"), mai gestito qui dentro.
+ */
+async function discoverPeer(nodeId) {
+  const res = await fetchWithTimeout(
+    apiUrl("/api/discover-peer"),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + networkPassword },
+      body: JSON.stringify({ nodeId }),
+    },
+    CALL_TIMEOUT_MS,
+  );
+  let body;
+  try {
+    body = await res.json();
+  } catch {
+    const err = new Error("risposta non valida dal gateway (HTTP " + res.status + ")");
+    err.status = res.status;
+    throw err;
+  }
+  if (!res.ok) {
+    const err = new Error(body.error || "HTTP " + res.status);
+    err.status = res.status;
+    throw err;
+  }
+  return body.peerId;
 }
 
 /**
@@ -1382,6 +1485,10 @@ function showDashboard() {
   // polling — without this call the persisted log from a previous session stayed invisible until the
   // next send, defeating the point of persisting it across reloads (found by review).
   renderActivityLog();
+  // Stessa ragione di renderActivityLog() sopra: la rubrica privata (localStorage) non dipende da
+  // refreshAll(), quindi senza questa chiamata resterebbe vuota a video finché l'utente non tocca
+  // "Salva"/"Aggiungi" almeno una volta in questa sessione.
+  renderRemoteContacts();
   const main = document.getElementById("dashboard-main");
   main.focus({ preventScroll: true }); // announces the screen change to screen-reader users
   refreshAll();
@@ -1955,6 +2062,149 @@ function renderExternalDeliveryDestinations(destinations) {
   if ([...select.options].some((o) => o.value === previousValue)) select.value = previousValue;
   updateExternalDeliveryPasswordVisibility();
 }
+
+// ---------- Collega un nodo remoto (discovery, docs/next-steps.md) ----------
+
+let discoverActiveTab = "public";
+let discoveryPublicSeenIds = new Set();
+let remoteContactsSeenIds = new Set();
+
+/**
+ * Click handler shared by both liste del pannello "Collega un nodo remoto" — un solo posto per la
+ * logica "tenta la connessione, mostra l'esito", invece di duplicarla in renderDiscoveryDirectory()
+ * e renderRemoteContacts(). Disabilita il bottone durante il tentativo (stessa postura di
+ * setSendExternalDeliveryBusy()) così un doppio tap non avvia due connessioni in parallelo.
+ */
+async function handleDiscoverPeerClick(button, nodeId, displayLabel) {
+  const status = document.getElementById("discover-status");
+  button.disabled = true;
+  status.classList.remove("error");
+  status.textContent = "Connessione a " + displayLabel + " in corso...";
+  try {
+    await discoverPeer(nodeId);
+    status.textContent = "Connesso a " + displayLabel + ".";
+    vibrate(10);
+    showToast("Connesso a " + displayLabel, "wifi");
+    refreshAll().catch(() => {});
+  } catch (err) {
+    if (err.status === 401) {
+      handlePasswordRejected();
+      return;
+    }
+    status.classList.add("error");
+    status.textContent = "Errore: " + err.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+/**
+ * Rubrica *pubblica* (GET /api/discovery-directory) — voci auto-pubblicate da chi gestisce un nodo e
+ * sceglie di farsi trovare (`discoveryPublicLabel`, node/src/node.ts), mai verificate per
+ * costruzione salvo la spunta esplicita di un admin (vedi `discovery-service/server.ts`). La spunta
+ * **non è mai un'autorità globale** — significa solo "chi gestisce questo specifico servizio di
+ * discovery garantisce per questo contatto" — mostrata qui onestamente con quel testo, mai come un
+ * generico "verificato" senza contesto.
+ */
+function renderDiscoveryDirectory(entries) {
+  const list = document.getElementById("discover-public-list");
+  if (entries === null) {
+    // Servizio di discovery configurato ma irraggiungibile ora (502, vedi fetchDiscoveryDirectory())
+    // — distinto da una rubrica genuinamente vuota, mai silenziato.
+    renderEmptyIfNeeded(list, [], "Servizio di discovery configurato ma non raggiungibile al momento.", "alert-circle");
+    discoveryPublicSeenIds = new Set();
+    return;
+  }
+  const safeEntries = entries || [];
+  if (renderEmptyIfNeeded(list, safeEntries, "Nessun contatto pubblico su questo servizio di discovery.", "wifi")) {
+    discoveryPublicSeenIds = new Set();
+    return;
+  }
+  const nextSeen = new Set();
+  for (const entry of safeEntries) {
+    nextSeen.add(entry.nodeId);
+    const tags = [el("span", { className: "tag mono", textContent: entry.nodeId.slice(0, 12) + "…", title: entry.nodeId })];
+    if (entry.verified) {
+      tags.push(el("span", { className: "pill good", title: "Verificato da chi gestisce questo servizio di discovery — mai un'autorità globale" }, [iconEl("check-circle"), document.createTextNode(" Verificato")]));
+    }
+    const li = el("li", null, [el("div", { className: "row" }, [el("span", { className: "row-title", textContent: entry.label })]), el("div", { className: "tags" }, tags)]);
+    li.dataset.nodeId = entry.nodeId;
+    const connectButton = el("button", { className: "call-button", textContent: "Connetti" });
+    connectButton.addEventListener("click", () => handleDiscoverPeerClick(connectButton, entry.nodeId, entry.label));
+    const saveButton = el("button", { className: "icon-button", type: "button", title: "Salva nei miei contatti" }, [iconEl("edit")]);
+    saveButton.addEventListener("click", () => {
+      addRemoteContact(entry.nodeId);
+      setContactName(entry.nodeId, entry.label);
+      showToast("Salvato nei tuoi contatti", "check-circle");
+      renderRemoteContacts();
+    });
+    li.append(connectButton, saveButton);
+    if (!discoveryPublicSeenIds.has(entry.nodeId)) li.classList.add("enter");
+    list.append(li);
+  }
+  discoveryPublicSeenIds = nextSeen;
+}
+
+/**
+ * Rubrica *privata* (localStorage, mai sulla rete) — i nodeId che questo utente ha scelto di
+ * salvare, via "Salva" sopra o il form "Aggiungi" (nessun contatto pubblico pre-esistente
+ * richiesto: per un contatto privato — famiglia, un box che un amico ti ha dettato — niente da
+ * verificare, solo da ricordare). Riusa `contactNameEl()` per il nome, esattamente come
+ * `renderPeers()`: lo stesso tocca-per-rinominare, la stessa rubrica di nomi.
+ */
+function renderRemoteContacts() {
+  if (isRenamePending()) return; // never yank an in-progress rename out from under the user — see isRenamePending()
+  const list = document.getElementById("discover-private-list");
+  const ids = loadRemoteContacts();
+  if (renderEmptyIfNeeded(list, ids, "Nessun contatto salvato. Aggiungine uno qui sotto, o salvane uno dai contatti pubblici.", "users")) {
+    remoteContactsSeenIds = new Set();
+    return;
+  }
+  const nextSeen = new Set();
+  for (const nodeId of ids) {
+    nextSeen.add(nodeId);
+    const li = el("li", null, [el("div", { className: "row" }, [contactNameEl(nodeId, nodeId)])]);
+    li.dataset.nodeId = nodeId;
+    const connectButton = el("button", { className: "call-button", textContent: "Connetti" });
+    connectButton.addEventListener("click", () => handleDiscoverPeerClick(connectButton, nodeId, getContactName(nodeId, nodeId)));
+    const removeButton = el("button", { className: "icon-button", type: "button", title: "Rimuovi dai contatti" }, [iconEl("x")]);
+    removeButton.addEventListener("click", () => {
+      removeRemoteContact(nodeId);
+      renderRemoteContacts();
+    });
+    li.append(connectButton, removeButton);
+    if (!remoteContactsSeenIds.has(nodeId)) li.classList.add("enter");
+    list.append(li);
+  }
+  remoteContactsSeenIds = nextSeen;
+}
+
+for (const tabButton of document.querySelectorAll(".discover-subtab")) {
+  tabButton.addEventListener("click", () => {
+    discoverActiveTab = tabButton.dataset.discoverTab;
+    for (const b of document.querySelectorAll(".discover-subtab")) {
+      b.classList.toggle("is-active", b === tabButton);
+      b.setAttribute("aria-selected", b === tabButton ? "true" : "false");
+    }
+    document.getElementById("discover-public-list").hidden = discoverActiveTab !== "public";
+    document.getElementById("discover-private-list").hidden = discoverActiveTab !== "private";
+    document.getElementById("add-remote-contact-form").hidden = discoverActiveTab !== "private";
+  });
+}
+
+document.getElementById("add-remote-contact-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const nodeIdInput = document.getElementById("add-remote-contact-nodeid");
+  const labelInput = document.getElementById("add-remote-contact-label");
+  const nodeId = nodeIdInput.value.trim();
+  if (!nodeId) return;
+  addRemoteContact(nodeId);
+  if (labelInput.value.trim()) setContactName(nodeId, labelInput.value);
+  nodeIdInput.value = "";
+  labelInput.value = "";
+  renderRemoteContacts();
+  vibrate(10);
+});
 
 /** Shows the password field only when the currently-selected destination's `requiresPassword` is true (`docs/service-catalog.md`'s per-destination lightweight authorization) — hidden and cleared otherwise, so a stale password never rides along to an unprotected destination by accident. */
 function updateExternalDeliveryPasswordVisibility() {
@@ -3201,6 +3451,7 @@ async function refreshAll() {
       emergencyBeacons,
       mapInfoResult,
       externalDeliveryDestinations,
+      discoveryDirectory,
     ] = await Promise.all([
       fetchJson("/api/status"),
       fetchJson("/api/peers"),
@@ -3214,6 +3465,7 @@ async function refreshAll() {
       fetchEmergencyBeacons(),
       fetchMapInfo(),
       fetchJson("/api/external-delivery-destinations"),
+      fetchDiscoveryDirectory(),
     ]);
     if (cycleId !== refreshCycleId) return; // superseded by a newer refresh while this one was in flight
     renderStats(status);
@@ -3229,6 +3481,7 @@ async function refreshAll() {
     renderEmergencyBeacons(emergencyBeacons);
     renderMapAvailability(mapInfoResult);
     renderExternalDeliveryDestinations(externalDeliveryDestinations);
+    renderDiscoveryDirectory(discoveryDirectory);
     await refreshContent();
     firstLoadDone = true;
     setDashboardError();

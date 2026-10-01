@@ -1056,6 +1056,10 @@ export class WebUiServer {
         void this.handlePostEmergencyBeacon(req, res);
         return;
       }
+      if (url.pathname === "/api/discover-peer") {
+        void this.handleDiscoverPeer(req, res);
+        return;
+      }
       if (url.pathname === "/api/external-delivery") {
         void this.handleSendExternalDelivery(req, res);
         return;
@@ -1172,6 +1176,11 @@ export class WebUiServer {
 
     if (url.pathname === "/api/external-delivery-destinations") {
       sendJson(res, 200, this.node.externalDeliveryDirectory.list());
+      return;
+    }
+
+    if (url.pathname === "/api/discovery-directory") {
+      void this.handleGetDiscoveryDirectory(res);
       return;
     }
 
@@ -2416,6 +2425,86 @@ export class WebUiServer {
       // convention handleSendNodeAppend() already uses above.
       const msg = (err as Error).message;
       sendJson(res, msg.includes("too many emergency beacons") ? 429 : 400, { error: msg });
+    }
+  }
+
+  /**
+   * `GET /api/discovery-directory` ("Internet come trasporto opzionale tra nodi mesh lontani",
+   * `docs/next-steps.md`) — la rubrica pubblica del servizio di discovery configurato su questo gateway
+   * (`node.getDiscoveryDirectory()`), inoltrata al telefono senza che quest'ultimo debba conoscere
+   * l'indirizzo del servizio o affrontare eventuali problemi di CORS su di esso. **Sempre pubblico**,
+   * stessa fascia di `/api/external-delivery-destinations` — mai `url`/indirizzi, solo nomi pubblici e
+   * stato di verifica, nessuna password richiesta per leggerla. `200 []` se nessun servizio è
+   * configurato (feature inattiva, uno stato normale); `502` se è configurato ma irraggiungibile (un
+   * segnale diagnostico reale per l'operatore, mai confuso col caso "nessun servizio" sopra).
+   */
+  private async handleGetDiscoveryDirectory(res: ServerResponse): Promise<void> {
+    try {
+      sendJson(res, 200, await this.node.getDiscoveryDirectory());
+    } catch (err) {
+      sendJson(res, 502, { error: (err as Error).message });
+    }
+  }
+
+  /**
+   * `POST /api/discover-peer` (voce "Internet come trasporto opzionale", `docs/next-steps.md`) — chiede
+   * al gateway di risolvere `nodeId` tramite il proprio servizio di discovery configurato e connettersi
+   * all'indirizzo trovato (`node.connectToDiscoveredPeer()`) — la stessa identica azione di
+   * `--connect <host:porta>` lato CLI, solo con l'indirizzo scoperto invece che digitato a mano. Gated
+   * come ogni altra azione interattiva ordinaria (`allowServiceCalls && networkPassword`, stesso schema
+   * di `handlePostEmergencyBeacon()`) — connettersi a un contatto remoto non è un'azione privilegiata
+   * più di inviare un messaggio o condividere la propria posizione.
+   */
+  private async handleDiscoverPeer(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.allowServiceCalls || !this.networkPassword) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+    if (!this.isAuthorized(req, this.networkPassword)) {
+      sendJson(res, 401, { error: "missing or invalid network password" });
+      return;
+    }
+
+    let raw: Buffer;
+    try {
+      raw = await readRequestBody(req, MAX_MESSAGE_BODY_BYTES, MAX_CALL_BODY_READ_MS);
+    } catch (err) {
+      if (res.writableEnded || res.destroyed) return;
+      if (err instanceof BodyTooLargeError) {
+        sendJson(res, 413, { error: "request body too large" });
+      } else if (err instanceof Error && err.message.includes("timed out")) {
+        sendJson(res, 408, { error: "timed out waiting for the request body" });
+      } else {
+        sendJson(res, 400, { error: "failed to read request body" });
+      }
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = raw.length === 0 ? {} : JSON.parse(raw.toString("utf8"));
+    } catch {
+      sendJson(res, 400, { error: "malformed JSON body" });
+      return;
+    }
+
+    const body = parsed as { nodeId?: unknown } | null;
+    if (typeof body?.nodeId !== "string" || body.nodeId.length === 0) {
+      sendJson(res, 400, { error: "'nodeId' must be a non-empty string" });
+      return;
+    }
+
+    try {
+      const peerId = await this.node.connectToDiscoveredPeer(body.nodeId);
+      sendJson(res, 200, { peerId });
+    } catch (err) {
+      // connectToDiscoveredPeer() lancia per: nessun servizio di discovery configurato su questo
+      // gateway (404 — un errore di configurazione, non qualcosa che l'operatore del telefono può
+      // correggere da qui), nodeId sconosciuto al servizio (404), o un fallimento della connessione
+      // stessa una volta trovato l'indirizzo (502 — lo stesso trattamento che avrebbe --connect).
+      const msg = (err as Error).message;
+      sendJson(res, msg.includes("no discovery service configured") || msg.includes("does not know nodeId") ? 404 : 502, { error: msg });
     }
   }
 

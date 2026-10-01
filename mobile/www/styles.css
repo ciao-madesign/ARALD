@@ -1135,3 +1135,23 @@ li.skel-row { display: flex; flex-direction: column; }
    identical to the enabled one — the native `disabled` attribute blocks the click, but an operator
    had no visual cue the button wasn't actually usable before reading the hint text below it. */
 .hub-shutdown-button:disabled { opacity: 0.45; cursor: default; }
+
+/* "Collega un nodo remoto" (discovery, docs/next-steps.md) — toggle a due stati, stesso linguaggio
+   visivo di .nav-item.is-active (colore signal per la scheda attiva) ma in piccolo, dentro un
+   pannello invece che nella barra di navigazione principale. */
+.discover-subtabs { display: flex; gap: 0.4em; margin-bottom: 0.6em; }
+.discover-subtab {
+  flex: 1; padding: 0.5em 0.6em; border-radius: 0.5em; border: 1px solid var(--border);
+  background: var(--bg); color: var(--muted); font-weight: 600; font-size: 0.85em;
+  transition: color 150ms var(--ease), background-color 150ms var(--ease), border-color 150ms var(--ease);
+}
+.discover-subtab.is-active { color: var(--accent-ink); background: linear-gradient(155deg, var(--accent-2), var(--accent)); border-color: transparent; }
+#add-remote-contact-form { display: flex; gap: 0.5em; margin-top: 0.6em; flex-wrap: wrap; }
+#add-remote-contact-form input {
+  flex: 1; min-width: 7em; padding: 0.55em 0.75em; border-radius: 0.5em; border: 1px solid var(--border);
+  background: var(--bg); color: var(--ink);
+}
+#add-remote-contact-form input:focus-visible { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
+#add-remote-contact-form button { flex: none; border-radius: 0.5em; padding: 0.55em 1em; background: linear-gradient(155deg, var(--accent-2), var(--accent)); color: var(--accent-ink); border: none; font-weight: 600; }
+#add-remote-contact-form button:active { transform: scale(0.97); }
+#discover-public-list .pill.good .icon { width: 0.95em; height: 0.95em; }
