@@ -1947,9 +1947,20 @@ function readFileAsBase64(file) {
   });
 }
 
-function setSendExternalDeliveryBusy(submit, busy) {
+/**
+ * Locks all three ways to send from this panel together — the manual "Invia" submit and the two
+ * quick-checkin buttons below share the same destination/password fields and the same status
+ * paragraph, so only one can be in flight at a time (found by code review): without this, a manual
+ * send finishing while a check-in's `getCurrentPosition()` was still pending could clear/re-hide the
+ * password field out from under the check-in's still-pending request, sending it without a password
+ * it needed and triggering a false `handlePasswordRejected()` reset mid check-in.
+ */
+function setSendExternalDeliveryBusy(busy) {
+  const submit = document.querySelector("#send-external-delivery-form button[type=submit]");
   submit.disabled = busy;
   submit.textContent = busy ? "Invio..." : "Invia";
+  document.getElementById("quick-checkin-ok").disabled = busy;
+  document.getElementById("quick-checkin-help").disabled = busy;
 }
 
 document.getElementById("send-external-delivery-form").addEventListener("submit", async (event) => {
@@ -1974,8 +1985,7 @@ document.getElementById("send-external-delivery-form").addEventListener("submit"
     status.textContent = "Scrivi un messaggio o scegli un file da inviare.";
     return;
   }
-  const submit = event.target.querySelector("button[type=submit]");
-  setSendExternalDeliveryBusy(submit, true);
+  setSendExternalDeliveryBusy(true);
   status.classList.remove("error");
   status.textContent = "Invio in corso...";
   try {
@@ -2007,9 +2017,81 @@ document.getElementById("send-external-delivery-form").addEventListener("submit"
     status.textContent = "Errore: " + err.message;
     vibrate([12, 40, 12]);
   } finally {
-    setSendExternalDeliveryBusy(submit, false);
+    setSendExternalDeliveryBusy(false);
   }
 });
+
+/**
+ * Check-in rapido (docs/next-steps.md, "Pulsante dedicato 'Invia la mia posizione'") — compila
+ * automaticamente un messaggio con la posizione GPS attuale (`getCurrentPosition()`, già usato per
+ * SOS/drop/location-sharing) più uno stato rapido, e lo invia subito come "Consegna esterna
+ * differita" verso la destinazione scelta nel form sopra — invece di dover scrivere a mano
+ * "sono qui, tutto ok" nel campo testo esistente. Riusa `sendExternalDelivery()`/`readFileAsBase64()`
+ * invariati: stesso percorso del form manuale, solo il testo è generato invece che digitato.
+ *
+ * A differenza del vero SOS (`#sos-button`, broadcast Bluetooth ripetuto verso dispositivi nelle
+ * vicinanze, `ble-client.js`), questo è un singolo invio in coda verso UNA destinazione esterna
+ * scelta esplicitamente — mai un allarme mesh-wide. Nessun `window.confirm()` per "Serve aiuto":
+ * lo stesso testo digitato a mano nel campo esistente e inviato con "Invia" non richiederebbe
+ * conferma oggi, e trattare le due strade in modo diverso sarebbe un'incoerenza, non una sicurezza
+ * in più — la vera protezione da un tap accidentale resta la scelta esplicita della destinazione.
+ *
+ * La posizione è centrale allo scopo di questa funzione (a differenza del SOS, dove è facoltativa e
+ * il messaggio ha comunque valore senza): se `getCurrentPosition()` fallisce, l'invio si ferma con un
+ * errore chiaro invece di mandare un check-in senza la posizione che ne è il punto.
+ */
+async function sendQuickCheckin(statusLabel) {
+  const select = document.getElementById("send-external-delivery-destination");
+  const passwordInput = document.getElementById("send-external-delivery-password");
+  const status = document.getElementById("send-external-delivery-status");
+
+  const destination = knownExternalDeliveryDestinations.find((d) => d.destinationId === select.value);
+  if (!destination) {
+    status.classList.add("error");
+    status.textContent = "Scegli prima una destinazione.";
+    return;
+  }
+
+  setSendExternalDeliveryBusy(true);
+  status.classList.remove("error");
+  status.textContent = "Rilevamento posizione...";
+  try {
+    const { lat, lon, accuracy } = await getCurrentPosition();
+    status.textContent = "Invio in corso...";
+    const mapLink = `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=16/${lat}/${lon}`;
+    const accuracyText = accuracy !== undefined ? ` (precisione ±${Math.round(accuracy)}m)` : "";
+    const text = `Check-in: ${statusLabel}\nPosizione: ${lat.toFixed(5)}, ${lon.toFixed(5)}${accuracyText}\n${mapLink}`;
+    const dataBase64 = await readFileAsBase64(new Blob([text], { type: "text/plain" }));
+    const { status: deliveryStatus } = await sendExternalDelivery({
+      boxNodeId: destination.boxNodeId,
+      destinationId: destination.destinationId,
+      publicKeyHex: destination.publicKeyHex,
+      dataBase64,
+      password: passwordInput.hidden ? undefined : passwordInput.value,
+    });
+    // Lo stato ("Tutto ok"/"Serve aiuto") è appeso all'etichetta, non solo al testo del messaggio
+    // inviato — trovato dalla revisione: senza questo, "Le mie attività" mostrava lo stesso identico
+    // titolo ("Invio a un'organizzazione — <destinazione>") per un check-in "Serve aiuto" e per un
+    // messaggio manuale qualunque, indistinguibili a colpo d'occhio proprio nel caso che più conta.
+    recordActivity("external-delivery", `${destination.label} — ${statusLabel}`, deliveryStatus);
+    status.textContent = "Posizione inviata — verrà consegnata non appena la destinazione sarà raggiungibile.";
+    vibrate(10);
+    showToast("Posizione inviata", "map-pin");
+  } catch (err) {
+    if (err.status === 401) {
+      handlePasswordRejected();
+      return;
+    }
+    status.classList.add("error");
+    status.textContent = "Errore: " + err.message;
+    vibrate([12, 40, 12]);
+  } finally {
+    setSendExternalDeliveryBusy(false);
+  }
+}
+
+document.getElementById("quick-checkin-ok").addEventListener("click", () => sendQuickCheckin("Tutto ok"));
+document.getElementById("quick-checkin-help").addEventListener("click", () => sendQuickCheckin("Serve aiuto"));
 
 // ---------- emergency beacons (docs/beacon.md — the Emergency Node view) ----------
 

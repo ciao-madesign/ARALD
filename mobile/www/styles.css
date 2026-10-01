@@ -861,6 +861,21 @@ li.skel-row { display: flex; flex-direction: column; }
 .sos-send-button:active { transform: scale(0.97); }
 .sos-send-button:disabled { opacity: 0.6; }
 
+/* Check-in rapido dentro #send-external-delivery-form (docs/next-steps.md) — due varianti dello stesso
+   invio "Consegna esterna differita", mai il broadcast SOS reale (che resta #sos-button/.sos-panel
+   sopra): #quick-checkin-help riusa comunque lo stesso colore d'emergenza (--bad) di .sos-send-button
+   per coerenza visiva di "richiede attenzione", stessa disciplina già applicata altrove (voce #86). */
+.quick-checkin-actions { display: flex; gap: 0.6em; margin: 0.6em 0; flex-wrap: wrap; }
+.quick-checkin-actions button {
+  flex: 1; min-width: 0; border-radius: 0.5em; padding: 0.55em 0.7em; font-weight: 600; border: none;
+  display: flex; align-items: center; justify-content: center; gap: 0.4em; font-size: 0.92em;
+}
+.quick-checkin-actions button .icon { width: 1.1em; height: 1.1em; flex-shrink: 0; }
+.quick-checkin-actions button:active { transform: scale(0.97); }
+.quick-checkin-actions button:disabled { opacity: 0.6; }
+#quick-checkin-ok { background: var(--card); border: 1px solid var(--border); color: var(--ink); }
+#quick-checkin-help { background: var(--bad); color: var(--accent-ink); }
+
 /* ---------- Attività relay: solo conteggi, mai contenuto (pezzo 3, docs/security.md) ---------- */
 
 /* Dentro #ble-relay-panel (già .panel) — un piccolo blocco distinto dalla lista peer sopra, stesso
