@@ -90,6 +90,17 @@ export function computeContentId(data: Buffer): string {
   return createHash("sha256").update(data).digest("hex");
 }
 
+/**
+ * How many chunks `chunksFor()` splits a `size`-byte item into — exposed so a requester
+ * (`NomadNode`, "ARALD Data Plane" multi-source retrieval, docs/next-steps.md) can compute this
+ * from a `ContentMetadata.size` learned via `CONTENT_FOUND`, before ever holding the bytes
+ * locally, instead of duplicating `chunksFor()`'s own loop boundary logic. Mirrors `chunksFor()`'s
+ * zero-byte special case exactly: an empty item is still one (empty) chunk, never zero.
+ */
+export function chunkCountForSize(size: number): number {
+  return size <= 0 ? 1 : Math.ceil(size / CHUNK_SIZE);
+}
+
 export interface ContentStoreOptions {
   /**
    * Bounds memory: an existing entry is evicted once the store is full to
@@ -246,7 +257,16 @@ export class ChunkAssembler {
     this.maxChunksPerEntry = options.maxChunksPerEntry ?? DEFAULT_MAX_CHUNKS_PER_ENTRY;
   }
 
-  addChunk(contentId: string, chunkIndex: number, totalChunks: number, data: Buffer): void {
+  /**
+   * Returns whether the chunk was actually accepted/stored — `false` for a malformed/out-of-bounds
+   * claim (spec §57). Added for "ARALD Data Plane" multi-source retrieval (`node.ts`'s
+   * `PendingContentEntry.receivedChunks`, docs/next-steps.md): a caller tracking its own separate
+   * "which chunks have genuinely arrived" bookkeeping must gate it on this, not call it
+   * unconditionally — otherwise a chunk this method silently rejected could still inflate that
+   * caller's own tracking without bound, reopening exactly the resource-exhaustion risk this
+   * method's own validation exists to close.
+   */
+  addChunk(contentId: string, chunkIndex: number, totalChunks: number, data: Buffer): boolean {
     if (
       !Number.isInteger(totalChunks) ||
       totalChunks <= 0 ||
@@ -255,7 +275,7 @@ export class ChunkAssembler {
       chunkIndex < 0 ||
       chunkIndex >= totalChunks
     ) {
-      return; // malformed or out-of-bounds claim — never trust it (spec §57)
+      return false; // malformed or out-of-bounds claim — never trust it (spec §57)
     }
 
     let entry = this.entries.get(contentId);
@@ -268,6 +288,7 @@ export class ChunkAssembler {
       this.entries.set(contentId, entry);
     }
     entry.chunks.set(chunkIndex, data);
+    return true;
   }
 
   /** Returns the reassembled+verified buffer once all chunks are present and the hash matches, otherwise undefined. */

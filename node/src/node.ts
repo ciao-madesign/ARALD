@@ -6,6 +6,7 @@ import { MessageType, Priority, createPacket, type Packet } from "./packet.js";
 import {
   ChunkAssembler,
   ContentStore,
+  chunkCountForSize,
   computeContentId,
   contentSigningPayload,
   verifyContentSignature,
@@ -329,6 +330,14 @@ interface ContentWaiter {
 const MAX_CONTENT_CANDIDATES = 16;
 
 /**
+ * Bounds how many providers fetch concurrently for the same content id ("ARALD Data Plane",
+ * docs/next-steps.md — multi-source retrieval for Open Content). V1 only ever splits a transfer in
+ * two (see `handleContentFound()`'s doc comment for why), so this is really a safety cap rather
+ * than a tuning knob yet — a future N-way split would raise it.
+ */
+const MAX_CONCURRENT_CONTENT_FETCHES = 2;
+
+/**
  * Bounds how many `getContent()` fetches `considerChannelMessage()` can
  * have in flight at once (found by review) — without this, a single
  * inbound `SYNC_RESPONSE`/burst of `CONTENT_ANNOUNCE`s naming hundreds of
@@ -639,25 +648,101 @@ const LOCATION_REGISTRY_SERVICE_ID = "service://location-registry";
 /** Discovery-only service id a dedicated relay-registry node advertises via `registerAsRelayRegistry()` — same discovery-only shape as `LOCATION_REGISTRY_SERVICE_ID`, used only so `reportRelayTelemetry()` can find where to send telemetry. */
 const RELAY_REGISTRY_SERVICE_ID = "service://relay-registry";
 
+/** Inclusive chunk index range — see `PendingContentEntry.unassignedRanges`/`ActiveContentFetch`. */
+interface ChunkRange {
+  start: number;
+  end: number;
+}
+
+/** One provider currently fetching a specific chunk range for us ("ARALD Data Plane" multi-source retrieval, docs/next-steps.md). */
+interface ActiveContentFetch extends ChunkRange {
+  /** Retries/reassigns this fetch's own range once it's made no progress for this long — refreshed on each chunk received from this provider, mirrors the old single-`providerTimer` design exactly, just per-fetch now. */
+  timer: NodeJS.Timeout;
+}
+
 interface PendingContentEntry {
   contentId: string;
   /** True once a CONTENT_QUERY has been flooded for this content id, so concurrent local callers don't re-flood. */
   queried: boolean;
-  /** Node id of the provider a CONTENT_REQUEST is currently outstanding to, if any. */
-  activeProvider?: string;
   /**
-   * Other providers that replied CONTENT_FOUND while `activeProvider` was already being tried —
-   * tried in arrival order if the active one goes silent (spec §90-92: a peer that answered a
-   * moment ago isn't guaranteed to still be reachable in an unreliable mesh).
+   * True once the first CONTENT_FOUND reply has been processed and this content's initial
+   * fetch(es) started — distinct from `totalChunks` below (which starts out genuinely unknown):
+   * this just means "the one-time split decision has already been made," not "we know the real
+   * chunk count yet."
+   */
+  sized: boolean;
+  /**
+   * The real chunk count, learned from the first *accepted* CONTENT_CHUNK's own `totalChunks`
+   * field — not from `metadata.size`. Deliberately the same ground truth `ChunkAssembler` itself
+   * uses (it fixes its own internal total from the first `addChunk()` call for a content id too),
+   * so `receivedChunks.size >= totalChunks` can never disagree with whether the assembler
+   * considers itself complete — `tryAssembleAndResolve()`'s own doc comment explains why that
+   * agreement matters. `metadata.size` is used only as a one-time *heuristic* for the initial
+   * split in `handleContentFound()`, via `chunkCountForSize()`, never stored here: a declared byte
+   * size and a wire-reported chunk count are two different claims and a provider's actual chunking
+   * isn't guaranteed to agree with what a reader of this field might expect from the size alone —
+   * trusting the wire value instead is what fixed a real bug found by this project's own existing
+   * test suite (`tests/integration/content-provider-retry.test.ts`'s raw-socket tests hand-craft a
+   * `totalChunks` independent of the signed metadata's `size`, which is unusual for a real
+   * `ContentStore`-backed provider but still something no peer's claim should be assumed never to
+   * do).
+   */
+  totalChunks?: number;
+  /** The first CONTENT_FOUND reply's full metadata — kept so `tryAssembleAndResolve()` can call `ChunkAssembler.tryComplete()`/`ContentStore.putVerified()` the moment the last chunk arrives, from whichever provider sent it, rather than only when *a* provider's own CONTENT_COMPLETE happens to be the one for the whole range. */
+  metadata?: ContentMetadata;
+  /** Every chunk index actually accepted so far (see `handleContentChunk`), regardless of which active fetch it came from — the authoritative "do we actually have it all yet" signal `tryAssembleAndResolve()` needs (see `totalChunks`'s doc comment). */
+  receivedChunks: Set<number>;
+  /** Providers currently fetching a range for us, keyed by provider node id. At most `MAX_CONCURRENT_CONTENT_FETCHES`. */
+  activeFetches: Map<string, ActiveContentFetch>;
+  /**
+   * Chunk ranges nobody is currently fetching, but a provider could be put to work on — created by
+   * `handleContentFound()`'s initial 50/50 split (the second half starts here until a second
+   * provider claims it) and by `abandonFetch()` handing a dead fetch's own range back here instead
+   * of discarding it. Deliberately a list of independent ranges, not one merged span: V1 never needs
+   * to prove there's at most one outstanding (two fetches dying around the same time could each
+   * contribute their own) — a little fragmentation here only ever costs a provider re-sending a few
+   * already-received chunks (harmless, `ChunkAssembler.addChunk()` no-ops on a repeat index), never
+   * incorrectness.
+   */
+  unassignedRanges: ChunkRange[];
+  /**
+   * The highest chunk index any range decided so far — the initial split in `handleContentFound()`,
+   * or a later gap closed in `handleContentChunk()` — has ever covered. Set once the first
+   * CONTENT_FOUND reply sizes the transfer (from the `metadata.size` *estimate*, since that's all
+   * that's known yet); if the real total learned from the wire later turns out larger than this,
+   * `handleContentChunk()` pushes the newly-revealed gap onto `unassignedRanges` and advances this
+   * to match, so metadata underestimating the real size can only ever leave a brief gap, never a
+   * permanently-unassigned tail (found by review).
+   */
+  rangeHighWaterMark: number;
+  /**
+   * Providers that answered CONTENT_FOUND while no unassigned range was available to give them
+   * (every known range already being actively fetched, or the content already fully received) —
+   * tried in arrival order if an active fetch dies with nobody else immediately available (spec
+   * §90-92: a peer that answered a moment ago isn't guaranteed to still be reachable in an
+   * unreliable mesh).
    */
   candidates: string[];
-  /** Retries the next candidate once the active provider has made no progress for this long — refreshed on each chunk received, cleared on success, `undefined` once candidates run out. */
-  providerTimer?: NodeJS.Timeout;
   waiters: ContentWaiter[];
 }
 
 interface ContentQueryPayload {
   contentId: string;
+}
+
+/**
+ * CONTENT_REQUEST's own payload (spec §25) — split from `ContentQueryPayload` once requesting a
+ * sub-range became possible ("ARALD Data Plane", docs/next-steps.md). `chunkStart`/`chunkEnd`
+ * (inclusive, absolute 0-based indices into the *full* content) are optional and mean "all of it"
+ * when absent — so a provider that has never heard of ranges (or a request for content small
+ * enough that no split ever happens) behaves exactly as before. A malformed/out-of-range pair is
+ * clamped defensively by `handleContentRequest()`, never trusted as-is (spec §57/"il payload di un
+ * pacchetto non è mai fidato quanto il suo tipo dichiarato", CLAUDE.md).
+ */
+interface ContentRequestPayload {
+  contentId: string;
+  chunkStart?: number;
+  chunkEnd?: number;
 }
 
 interface ContentFoundPayload {
@@ -1761,7 +1846,17 @@ export class NomadNode extends EventEmitter {
 
       let entry = this.pendingContentRequests.get(contentId);
       if (!entry) {
-        entry = { contentId, queried: false, candidates: [], waiters: [] };
+        entry = {
+          contentId,
+          queried: false,
+          sized: false,
+          receivedChunks: new Set(),
+          activeFetches: new Map(),
+          unassignedRanges: [],
+          rangeHighWaterMark: -1, // nothing decided yet — handleContentFound() sets this for real once the first reply sizes the transfer
+          candidates: [],
+          waiters: [],
+        };
         this.pendingContentRequests.set(contentId, entry);
       }
       const activeEntry = entry;
@@ -1772,7 +1867,7 @@ export class NomadNode extends EventEmitter {
         timeout: setTimeout(() => {
           activeEntry.waiters = activeEntry.waiters.filter((w) => w !== waiter);
           if (activeEntry.waiters.length === 0) {
-            if (activeEntry.providerTimer) clearTimeout(activeEntry.providerTimer);
+            this.clearActiveContentFetches(activeEntry);
             this.pendingContentRequests.delete(contentId);
           }
           reject(new Error(`content not found within mesh: ${contentId}`));
@@ -3634,7 +3729,7 @@ export class NomadNode extends EventEmitter {
         break;
 
       case MessageType.CONTENT_REQUEST:
-        this.handleContentRequest(packet as Packet<ContentQueryPayload>);
+        this.handleContentRequest(packet as Packet<ContentRequestPayload>);
         break;
 
       case MessageType.CONTENT_CHUNK:
@@ -3718,85 +3813,161 @@ export class NomadNode extends EventEmitter {
     void this.floodExcept(response);
   }
 
+  /**
+   * First reply ever for this content id: sizes the transfer from `metadata.size`
+   * (`chunkCountForSize()`) and, if it's more than one chunk, splits it in half right away — the
+   * front half goes to this provider immediately, the back half starts out in
+   * `unassignedRanges` so a second provider that answers moments later (common for popular
+   * content cached on many relays) can fetch it concurrently instead of sitting idle as a pure
+   * fallback candidate ("ARALD Data Plane" multi-source retrieval, docs/next-steps.md). A
+   * single-chunk transfer can't be split at all — full range to the one provider, identical to
+   * this method's behavior before this feature existed.
+   *
+   * A later reply (this content's size already known) tries to put the new provider to work on
+   * whatever's still unassigned; if there's nothing to assign right now (every known range either
+   * already being fetched or fully received), it's remembered as a fallback candidate instead —
+   * same role `candidates` has always had, just reached by a different path now.
+   */
   private handleContentFound(packet: Packet<ContentFoundPayload>): void {
     const contentId = packet.payload?.contentId;
     if (typeof contentId !== "string") return;
     const entry = this.pendingContentRequests.get(contentId);
     if (!entry) return; // not waiting on this
-    if (entry.activeProvider === packet.source) return; // already trying (or already gave up on) exactly this one
-    if (entry.activeProvider && entry.providerTimer) {
-      // Actively trying someone else with a live retry timer running — remember this one as a
-      // fallback candidate rather than requesting from it immediately.
-      if (!entry.candidates.includes(packet.source) && entry.candidates.length < MAX_CONTENT_CANDIDATES) {
-        entry.candidates.push(packet.source);
+    if (entry.activeFetches.has(packet.source) || entry.candidates.includes(packet.source)) return; // already known, one way or the other
+
+    if (!entry.sized) {
+      const metadata = packet.payload?.metadata;
+      if (!metadata || typeof metadata !== "object" || typeof metadata.size !== "number") return; // can't size the transfer from this reply — wait for one that actually carries usable metadata
+      entry.sized = true;
+      entry.metadata = metadata;
+      // Heuristic only, from the claimed byte size — never stored (see `totalChunks`'s own doc
+      // comment for why the wire-reported value, learned once a real chunk arrives, is what
+      // actually governs completion, not this estimate).
+      const estimatedTotalChunks = chunkCountForSize(metadata.size);
+      entry.rangeHighWaterMark = estimatedTotalChunks - 1;
+      if (estimatedTotalChunks > 1) {
+        const mid = Math.ceil(estimatedTotalChunks / 2);
+        this.requestRangeFromProvider(entry, packet.source, 0, mid - 1);
+        entry.unassignedRanges.push({ start: mid, end: estimatedTotalChunks - 1 });
+      } else {
+        this.requestRangeFromProvider(entry, packet.source, 0, estimatedTotalChunks - 1);
       }
       return;
     }
-    // Either nobody's been tried yet, or every known candidate was already exhausted and the retry
-    // timer isn't running any more — this reply is immediately usable either way.
-    this.requestFromProvider(entry, packet.source);
+
+    if (!this.tryAssignUnassignedRange(entry, packet.source) && entry.candidates.length < MAX_CONTENT_CANDIDATES) {
+      entry.candidates.push(packet.source);
+    }
   }
 
   /**
-   * The provider we're actively waiting on just told us explicitly it no
-   * longer has this content (CONTENT_NOT_FOUND) — fail over to the next
-   * candidate immediately rather than waiting for `providerTimer` to expire
-   * on a request that will never get a CONTENT_CHUNK/COMPLETE. A reply from
-   * anyone other than the currently-active provider is ignored: it can only
-   * be stale (about a provider we've already moved on from) or forged, and
-   * either way must never interrupt whichever attempt is genuinely in
-   * flight — same trust boundary as handleContentChunk/handleContentComplete.
+   * Puts `providerId` to work on the first available unassigned range, if any and if under
+   * `MAX_CONCURRENT_CONTENT_FETCHES`. Returns whether it actually found something to assign. The
+   * cap only applies to adding a genuinely *new* provider — re-assigning a provider that already
+   * has a slot (`requestRangeFromProvider()`'s own doc comment: the gap-closing case) just updates
+   * that existing slot, never consumes a second one, so it must never be blocked by a cap check
+   * that would otherwise read as "already full" purely because this same provider occupies one of
+   * the slots being counted.
+   */
+  private tryAssignUnassignedRange(entry: PendingContentEntry, providerId: string): boolean {
+    if (!entry.activeFetches.has(providerId) && entry.activeFetches.size >= MAX_CONCURRENT_CONTENT_FETCHES) return false;
+    const range = entry.unassignedRanges.shift();
+    if (!range) return false;
+    this.requestRangeFromProvider(entry, providerId, range.start, range.end);
+    return true;
+  }
+
+  /**
+   * The provider we're fetching `[chunkStart, chunkEnd]` from just told us explicitly it no
+   * longer has this content (CONTENT_NOT_FOUND) — abandon that fetch immediately rather than
+   * waiting for its own timer to expire on a request that will never get a CONTENT_CHUNK/COMPLETE.
+   * A reply from anyone this node isn't actively fetching from is ignored: it can only be stale
+   * (about a fetch already abandoned) or forged, and either way must never interrupt whichever
+   * attempt is genuinely in flight — same trust boundary as handleContentChunk/handleContentComplete.
    */
   private handleContentNotFound(packet: Packet<ContentNotFoundPayload>): void {
     const contentId = packet.payload?.contentId;
     if (typeof contentId !== "string") return;
     const entry = this.pendingContentRequests.get(contentId);
-    if (!entry) return; // not waiting on this
-    if (packet.source !== entry.activeProvider) return;
-    if (entry.providerTimer) clearTimeout(entry.providerTimer);
-    this.retryNextProvider(entry.contentId);
-  }
-
-  /** Sends CONTENT_REQUEST to `providerId` and arms the retry timer that falls through to the next known candidate if it stays silent. */
-  private requestFromProvider(entry: PendingContentEntry, providerId: string): void {
-    entry.activeProvider = providerId;
-    const request = this.originate<ContentQueryPayload>(
-      MessageType.CONTENT_REQUEST,
-      { contentId: entry.contentId },
-      { destination: providerId, priority: Priority.CONTENT },
-    );
-    void this.floodExcept(request);
-
-    if (entry.providerTimer) clearTimeout(entry.providerTimer);
-    entry.providerTimer = setTimeout(() => this.retryNextProvider(entry.contentId), this.contentProviderTimeoutMs);
+    if (!entry || !entry.activeFetches.has(packet.source)) return;
+    this.abandonFetch(contentId, packet.source);
   }
 
   /**
-   * Fires when the active provider has been silent for `contentProviderTimeoutMs` without
-   * completing the transfer. A peer that replied CONTENT_FOUND a moment ago isn't guaranteed to
-   * still be reachable in an unreliable mesh (spec §90-92) — rather than burning the caller's
-   * whole `getContent()` timeout on one unresponsive provider, move on to the next candidate that
-   * already offered this content. Discards whatever the abandoned provider sent so far: mixing its
-   * (possibly wrong/incomplete) chunks with the next attempt's would corrupt the reassembly.
+   * Sends CONTENT_REQUEST to `providerId` for `[chunkStart, chunkEnd]` and arms the retry timer
+   * that abandons this specific fetch if it stays silent — see `ActiveContentFetch`'s own doc
+   * comment. Clears any timer this same provider already had running first (found by review): a
+   * provider can legitimately be asked again while its previous range is still nominally "active"
+   * (handleContentChunk's gap-closing re-request to the same provider that just revealed a larger
+   * real total than expected) — without this, `activeFetches.set()` below would silently overwrite
+   * the old `ActiveContentFetch` object but leave its timer running, and that stale timer firing
+   * later would look up the *new* entry by the same provider id and wrongly abandon it.
    */
-  private retryNextProvider(contentId: string): void {
-    const entry = this.pendingContentRequests.get(contentId);
-    if (!entry) return;
-    entry.providerTimer = undefined; // this firing already consumed it — a late CONTENT_FOUND arriving now must be tried immediately, not just queued
-    if (entry.candidates.length === 0) return; // nothing left to try right now — the outer per-waiter timeout is the backstop
-    this.requesterAssembler.discard(contentId);
-    const next = entry.candidates.shift()!;
-    this.requestFromProvider(entry, next);
+  private requestRangeFromProvider(entry: PendingContentEntry, providerId: string, chunkStart: number, chunkEnd: number): void {
+    const existing = entry.activeFetches.get(providerId);
+    if (existing) clearTimeout(existing.timer);
+    const timer = setTimeout(() => this.abandonFetch(entry.contentId, providerId), this.contentProviderTimeoutMs);
+    entry.activeFetches.set(providerId, { start: chunkStart, end: chunkEnd, timer });
+    const request = this.originate<ContentRequestPayload>(
+      MessageType.CONTENT_REQUEST,
+      { contentId: entry.contentId, chunkStart, chunkEnd },
+      { destination: providerId, priority: Priority.CONTENT },
+    );
+    void this.floodExcept(request);
   }
 
-  private handleContentRequest(packet: Packet<ContentQueryPayload>): void {
+  /**
+   * `providerId`'s fetch for `contentId` has died — either its own retry timer fired after
+   * `contentProviderTimeoutMs` of silence, or it told us explicitly via CONTENT_NOT_FOUND. Its
+   * assigned range goes back onto `unassignedRanges` rather than being discarded: any chunks it
+   * already delivered stay in the assembler exactly as received (only the *range bookkeeping* is
+   * reused), so the worst case is a next provider redundantly re-sending a few already-arrived
+   * indices — harmless, `ChunkAssembler.addChunk()` just overwrites them — never the old
+   * behavior's "throw away all progress and start over" on every single retry. Immediately tries
+   * the next waiting candidate so the retry doesn't just sit there until a fresh CONTENT_FOUND
+   * happens to arrive on its own.
+   */
+  private abandonFetch(contentId: string, providerId: string): void {
+    const entry = this.pendingContentRequests.get(contentId);
+    if (!entry) return;
+    const fetch = entry.activeFetches.get(providerId);
+    if (!fetch) return; // already cleaned up (e.g. a timer firing just after this same fetch completed)
+    clearTimeout(fetch.timer);
+    entry.activeFetches.delete(providerId);
+    entry.unassignedRanges.push({ start: fetch.start, end: fetch.end });
+    this.tryKeepFetchesGoing(entry);
+  }
+
+  /**
+   * Offers every still-unassigned range to a waiting candidate first (same priority order
+   * `candidates` has always had), then — if any range is still unassigned after that —
+   * back to `fallbackProviderId` itself, when given one. The fallback matters for the single-copy
+   * case this feature must never regress: when exactly one provider ever answers CONTENT_FOUND,
+   * the initial 50/50 split in `handleContentFound()` still hands it only the front half, and with
+   * no second provider ever arriving to claim the back half, nothing would otherwise ever ask for
+   * it — a provider that just finished a fetch (handleContentComplete) has already proven it's
+   * reachable and (at least a moment ago) still had the content, making it the obvious one to ask
+   * for the rest rather than leaving the transfer to hang until the outer per-waiter timeout.
+   */
+  private tryKeepFetchesGoing(entry: PendingContentEntry, fallbackProviderId?: string): void {
+    while (entry.candidates.length > 0) {
+      const next = entry.candidates.shift()!;
+      if (!this.tryAssignUnassignedRange(entry, next)) {
+        entry.candidates.unshift(next); // nothing to give it right now (no range left, or already at the concurrency cap) — not consumed
+        break;
+      }
+    }
+    if (fallbackProviderId) this.tryAssignUnassignedRange(entry, fallbackProviderId);
+  }
+
+  private handleContentRequest(packet: Packet<ContentRequestPayload>): void {
     const contentId = packet.payload?.contentId;
     if (typeof contentId !== "string") return;
     const stored = this.contentStore.get(contentId);
     if (!stored) {
       // We advertised this a moment ago via CONTENT_FOUND (or the requester assumed we still had
       // it) but don't any more — evicted, or expired (spec §24) in the meantime. Say so explicitly
-      // rather than staying silent, so the requester can move on to its next candidate right away
+      // rather than staying silent, so the requester can abandon this fetch and move on right away
       // instead of waiting out contentProviderTimeoutMs on a request we'll never answer.
       const notFound = this.originate<ContentNotFoundPayload>(
         MessageType.CONTENT_NOT_FOUND,
@@ -3807,10 +3978,19 @@ export class NomadNode extends EventEmitter {
       return;
     }
     const chunks = this.contentStore.chunksFor(contentId);
-    for (const [chunkIndex, chunk] of chunks.entries()) {
+    // chunkStart/chunkEnd are optional (a requester predating multi-source retrieval never sets
+    // them, meaning "all of it") and, when present, untrusted network input — clamped to what this
+    // node actually has to offer rather than trusted as-is (spec §57; CLAUDE.md, "il payload di un
+    // pacchetto non è mai fidato quanto il suo tipo dichiarato").
+    const rawStart = packet.payload?.chunkStart;
+    const rawEnd = packet.payload?.chunkEnd;
+    const lastIndex = chunks.length - 1;
+    const chunkStart = Number.isInteger(rawStart) && (rawStart as number) >= 0 ? Math.min(rawStart as number, lastIndex) : 0;
+    const chunkEnd = Number.isInteger(rawEnd) && (rawEnd as number) >= chunkStart ? Math.min(rawEnd as number, lastIndex) : lastIndex;
+    for (let chunkIndex = chunkStart; chunkIndex <= chunkEnd; chunkIndex++) {
       const chunkPacket = this.originate<ContentChunkPayload>(
         MessageType.CONTENT_CHUNK,
-        { contentId, chunkIndex, totalChunks: chunks.length, data: chunk.toString("base64") },
+        { contentId, chunkIndex, totalChunks: chunks.length, data: chunks[chunkIndex].toString("base64") },
         { destination: packet.source, priority: Priority.CONTENT },
       );
       void this.floodExcept(chunkPacket);
@@ -3832,32 +4012,117 @@ export class NomadNode extends EventEmitter {
     if (typeof contentId !== "string" || typeof data !== "string") return;
     const { chunkIndex, totalChunks } = packet.payload;
     const entry = this.pendingContentRequests.get(contentId);
-    // A stale chunk from a provider we've since abandoned (retryNextProvider already discarded
-    // its partial data) — accepting it now would just corrupt the current attempt again.
-    if (entry && packet.source !== entry.activeProvider) return;
+    // A chunk from a provider we're not (or no longer) actively fetching from — stale (abandonFetch
+    // already requeued whatever it was assigned) or forged. Ignored exactly like the old
+    // single-`activeProvider` check, just keyed by the map instead of one field.
+    if (entry && !entry.activeFetches.has(packet.source)) return;
+    const accepted = this.requesterAssembler.addChunk(contentId, chunkIndex, totalChunks, Buffer.from(data, "base64"));
     if (entry) {
-      // Real progress from the active provider — it isn't silent, just possibly slow. Give it a
-      // fresh window instead of abandoning an in-progress transfer mid-flight (contentProviderTimeoutMs
-      // measures time since the *last* chunk, not a hard deadline on the whole transfer).
-      if (entry.providerTimer) clearTimeout(entry.providerTimer);
-      entry.providerTimer = setTimeout(() => this.retryNextProvider(contentId), this.contentProviderTimeoutMs);
+      // Gated on the assembler's own acceptance (found by review): refreshing this fetch's own
+      // timer for a chunk it rejected would let a provider hold one of the
+      // `MAX_CONCURRENT_CONTENT_FETCHES` slots indefinitely by repeatedly sending
+      // malformed/out-of-range chunks without ever making real progress — the one slot the old
+      // single-provider code had no real concurrency to starve, but these do. Real progress still
+      // gets a fresh window instead of abandoning an in-progress transfer mid-flight
+      // (contentProviderTimeoutMs measures time since the *last* genuinely accepted chunk from THIS
+      // provider, not a hard deadline on the whole, possibly multi-provider, transfer) — a
+      // garbage-only provider's *original* timer, left untouched, still fires and reclaims its slot.
+      if (accepted) {
+        const fetch = entry.activeFetches.get(packet.source)!;
+        clearTimeout(fetch.timer);
+        fetch.timer = setTimeout(() => this.abandonFetch(contentId, packet.source), this.contentProviderTimeoutMs);
+
+        // `totalChunks` is actually learned here (see its own doc comment) — `??=` so only the
+        // *first* accepted chunk's claim ever fixes it, same "first write wins" rule the assembler
+        // itself applies internally. Recording into `receivedChunks` is further gated on
+        // `chunkIndex < entry.totalChunks` (found by review): the assembler validates chunkIndex
+        // against *this chunk's own* claimed totalChunks, not the entry's already-fixed one, so a
+        // later chunk honestly or maliciously claiming a *different* totalChunks (e.g. 16 instead
+        // of the fixed 10) could otherwise add an out-of-range index (15) that inflates
+        // `receivedChunks.size` past the real `totalChunks` while a genuinely missing real index
+        // (e.g. 7) never arrives — tryAssembleAndResolve() would then see `haveAll` true too early
+        // and wrongly reject the whole transfer as a hash mismatch instead of still waiting.
+        const previouslyUnknownTotal = entry.totalChunks === undefined;
+        entry.totalChunks ??= totalChunks;
+        if (chunkIndex < entry.totalChunks) entry.receivedChunks.add(chunkIndex);
+
+        // The very first accepted chunk can reveal a real total larger than handleContentFound()'s
+        // metadata.size-based *estimate* (found by review) — that estimate is never stored (only
+        // used once, there, to decide the initial split) specifically because metadata isn't
+        // signature-verified yet and a provider's actual chunking isn't guaranteed to match a
+        // claimed byte size. Without this, the gap between what was estimated and the real total
+        // would never be assigned to anyone and the transfer would hang until the unrelated outer
+        // per-waiter timeout. `rangeHighWaterMark` is the highest index any range decided so far —
+        // initial split or this — has ever covered; recorded here purely as bookkeeping, deliberately
+        // *not* also handed to tryKeepFetchesGoing() from this method (found by review, second pass):
+        // the provider whose chunk just revealed the gap can easily still have more chunks of its
+        // *original* assignment in flight (e.g. a multi-chunk front half with only chunk 0 in so
+        // far) — reassigning it to the new gap right now would overwrite its still-live
+        // `ActiveContentFetch` entry, so its own still-arriving CONTENT_COMPLETE for the *original*
+        // range would then be mistaken for completing the *new* one, untracking the provider while
+        // it's still genuinely delivering the gap's real chunks and causing handleContentChunk's own
+        // `!entry.activeFetches.has(packet.source)` guard to silently drop every one of them. Leaving
+        // the gap in `unassignedRanges` for now and letting handleContentComplete's own
+        // tryKeepFetchesGoing() call pick it up is safe by construction: that only ever runs once a
+        // provider's *current* assignment is verifiably finished.
+        if (previouslyUnknownTotal && entry.totalChunks - 1 > entry.rangeHighWaterMark) {
+          entry.unassignedRanges.push({ start: entry.rangeHighWaterMark + 1, end: entry.totalChunks - 1 });
+          entry.rangeHighWaterMark = entry.totalChunks - 1;
+        }
+      }
+      // Deliberately *not* tryAssembleAndResolve() here (found by review): resolving the moment the
+      // last chunk lands, ahead of any provider's own CONTENT_COMPLETE, let a multi-hop getContent()
+      // return before an upstream relay on the same path had necessarily finished observing/caching
+      // that COMPLETE itself (tests/integration/cache-replication.test.ts's "third objective" —
+      // spec §91-92 — depends on a relay having a complete copy by the time a downstream request
+      // through it resolves). Completion is still checked reactively — just from
+      // handleContentComplete below, once per provider's own CONTENT_COMPLETE, which already
+      // covers the multi-provider case (each active fetch unconditionally sends one once done with
+      // its own range) without needing to also react to every individual chunk.
     }
-    this.requesterAssembler.addChunk(contentId, chunkIndex, totalChunks, Buffer.from(data, "base64"));
   }
 
   private handleContentComplete(packet: Packet<ContentCompletePayload>): void {
     const contentId = packet.payload?.contentId;
     const metadata = packet.payload?.metadata;
-    // metadata is handed to tryComplete()/putVerified() below, both of which dereference its
-    // fields directly (they trust decodePacket() already validated the shape, which it never
-    // does) — must be at least a non-null object here, or those throw on an undefined/primitive
-    // metadata before ever reaching their own signature check.
     if (typeof contentId !== "string" || !metadata || typeof metadata !== "object") return;
     const entry = this.pendingContentRequests.get(contentId);
-    // Same reasoning as handleContentChunk: a late COMPLETE from an abandoned provider must never
-    // be allowed to reject a retry that's currently in progress with a different, active one.
-    if (entry && packet.source !== entry.activeProvider) return;
-    if (entry?.providerTimer) clearTimeout(entry.providerTimer);
+    // Same reasoning as handleContentChunk: a late COMPLETE from an abandoned fetch must never be
+    // allowed to interrupt a different attempt genuinely in progress.
+    if (entry && !entry.activeFetches.has(packet.source)) return;
+    if (entry) {
+      // This provider is done sending its own assigned range — not necessarily the *whole*
+      // content any more (a provider assigned only half of it sends this after that half, same as
+      // always). Stop tracking its fetch, then see if anything still unassigned should go to it or
+      // a waiting candidate (tryKeepFetchesGoing's own doc comment) before checking whether
+      // everything is actually in yet, from every provider combined.
+      clearTimeout(entry.activeFetches.get(packet.source)!.timer);
+      entry.activeFetches.delete(packet.source);
+      this.tryKeepFetchesGoing(entry, packet.source);
+    }
+    this.tryAssembleAndResolve(contentId, metadata);
+  }
+
+  /**
+   * Checks whether `contentId` is now fully assembled across every provider that's contributed
+   * chunks so far, and resolves/rejects accordingly — called after every CONTENT_CHUNK and every
+   * CONTENT_COMPLETE, since in a multi-provider fetch either one could be the event that completes
+   * it, regardless of whose range it belongs to. `ChunkAssembler.tryComplete()`'s own `undefined`
+   * return is ambiguous on its own (it means both "not all chunks in yet" and "all chunks in, but
+   * the hash/signature didn't verify" — see that method's doc comment), which is why this needs its
+   * own `entry.receivedChunks.size` check to tell the two apart: only the second is a real failure
+   * worth rejecting every waiter over; the first just means keep waiting on whatever's still
+   * fetching. `fallbackMetadata` lets handleContentComplete hand over a freshly-arrived CONTENT_COMPLETE's
+   * metadata for a request this node hadn't otherwise learned the size of yet (defensive — in
+   * practice `entry.metadata` is already set by the time any fetch exists, via handleContentFound).
+   */
+  private tryAssembleAndResolve(contentId: string, fallbackMetadata?: ContentMetadata): void {
+    const entry = this.pendingContentRequests.get(contentId);
+    if (!entry) return;
+    const metadata = entry.metadata ?? fallbackMetadata;
+    if (!metadata || entry.totalChunks === undefined) return; // nothing to assemble against yet
+
+    const haveAll = entry.receivedChunks.size >= entry.totalChunks;
     const data = this.requesterAssembler.tryComplete(contentId, metadata);
 
     // putVerified() re-checks the hash (redundant with tryComplete's own check, harmless) and —
@@ -3866,33 +4131,38 @@ export class NomadNode extends EventEmitter {
     // would let a node with a forged/missing signature still succeed a getContent() call.
     const stored = data ? this.contentStore.putVerified(metadata, data) : false;
 
-    if (!stored) {
-      if (entry) {
-        this.pendingContentRequests.delete(contentId);
-        const error = new Error(
-          data
-            ? `content signature invalid, untrusted publisher, or already expired: ${contentId}`
-            : `content hash mismatch or incomplete transfer: ${contentId}`,
-        );
-        for (const waiter of entry.waiters) {
-          clearTimeout(waiter.timeout);
-          waiter.reject(error);
-        }
-      }
-      return;
-    }
-
-    // A successfully verified signature is real evidence this publisher controls its claimed
-    // identity's private key (spec §54) — independent of whether we happen to trust *this* content.
-    if (metadata.publisherId) this.trust.markVerified(metadata.publisherId);
-
-    if (entry) {
+    if (stored) {
+      if (metadata.publisherId) this.trust.markVerified(metadata.publisherId);
+      this.clearActiveContentFetches(entry);
       this.pendingContentRequests.delete(contentId);
       for (const waiter of entry.waiters) {
         clearTimeout(waiter.timeout);
         waiter.resolve(data!);
       }
+      return;
     }
+
+    if (!haveAll) return; // still waiting on more chunks from one or more providers — not a failure yet
+
+    // Every expected chunk is in, but it still didn't verify — a genuine failure, not just "not
+    // done yet". Same two error messages as before this feature existed.
+    this.clearActiveContentFetches(entry);
+    this.pendingContentRequests.delete(contentId);
+    const error = new Error(
+      data
+        ? `content signature invalid, untrusted publisher, or already expired: ${contentId}`
+        : `content hash mismatch or incomplete transfer: ${contentId}`,
+    );
+    for (const waiter of entry.waiters) {
+      clearTimeout(waiter.timeout);
+      waiter.reject(error);
+    }
+  }
+
+  /** Clears every active fetch's retry timer for `entry` — the one cleanup step every exit path (resolved, rejected, or the outer per-waiter timeout) needs, now that there can be more than one. */
+  private clearActiveContentFetches(entry: PendingContentEntry): void {
+    for (const fetch of entry.activeFetches.values()) clearTimeout(fetch.timer);
+    entry.activeFetches.clear();
   }
 
   /**

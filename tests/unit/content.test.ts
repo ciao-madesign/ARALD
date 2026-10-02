@@ -3,6 +3,7 @@ import {
   CHUNK_SIZE,
   ChunkAssembler,
   ContentStore,
+  chunkCountForSize,
   computeContentId,
   contentSigningPayload,
   type ContentMetadata,
@@ -39,6 +40,20 @@ describe("ContentStore", () => {
     const chunks = store.chunksFor(metadata.contentId);
     expect(chunks).toHaveLength(3);
     expect(Buffer.concat(chunks)).toEqual(data);
+  });
+});
+
+describe("chunkCountForSize", () => {
+  it("matches ContentStore.chunksFor()'s own count for the same size, including the zero-byte special case", () => {
+    const store = new ContentStore();
+    for (const size of [0, 1, CHUNK_SIZE - 1, CHUNK_SIZE, CHUNK_SIZE + 1, CHUNK_SIZE * 2 + 10]) {
+      const metadata = store.put(`f-${size}.bin`, "application/octet-stream", Buffer.alloc(size, 1));
+      expect(chunkCountForSize(size)).toBe(store.chunksFor(metadata.contentId).length);
+    }
+  });
+
+  it("never returns zero even for a negative size (defensive — never trusted network input in practice)", () => {
+    expect(chunkCountForSize(-1)).toBe(1);
   });
 });
 
@@ -283,11 +298,11 @@ describe("ChunkAssembler", () => {
 
   it("rejects a totalChunks claim above maxChunksPerEntry, instead of allocating unbounded chunk slots", () => {
     const assembler = new ChunkAssembler({ maxChunksPerEntry: 4 });
-    assembler.addChunk("huge", 0, 1_000_000, Buffer.from("x"));
+    expect(assembler.addChunk("huge", 0, 1_000_000, Buffer.from("x"))).toBe(false);
     const metadata = { contentId: "huge", name: "n", mimeType: "text/plain", size: 1, createdAt: Date.now() };
     // Never registered at all — a legitimate resend with a sane totalChunks must still work.
-    assembler.addChunk("huge", 0, 2, Buffer.from("y"));
-    assembler.addChunk("huge", 1, 2, Buffer.from("z"));
+    expect(assembler.addChunk("huge", 0, 2, Buffer.from("y"))).toBe(true);
+    expect(assembler.addChunk("huge", 1, 2, Buffer.from("z"))).toBe(true);
     expect(assembler.tryComplete("huge", { ...metadata, contentId: computeContentId(Buffer.from("yz")) })).toEqual(
       Buffer.from("yz"),
     );
@@ -295,12 +310,12 @@ describe("ChunkAssembler", () => {
 
   it("rejects a chunkIndex outside [0, totalChunks)", () => {
     const assembler = new ChunkAssembler();
-    assembler.addChunk("c", -1, 2, Buffer.from("x"));
-    assembler.addChunk("c", 2, 2, Buffer.from("x"));
+    expect(assembler.addChunk("c", -1, 2, Buffer.from("x"))).toBe(false);
+    expect(assembler.addChunk("c", 2, 2, Buffer.from("x"))).toBe(false);
     const metadata = { contentId: "c", name: "n", mimeType: "text/plain", size: 1, createdAt: Date.now() };
     // Neither malformed chunk was stored — completing normally with valid chunks still works.
-    assembler.addChunk("c", 0, 2, Buffer.from("y"));
-    assembler.addChunk("c", 1, 2, Buffer.from("z"));
+    expect(assembler.addChunk("c", 0, 2, Buffer.from("y"))).toBe(true);
+    expect(assembler.addChunk("c", 1, 2, Buffer.from("z"))).toBe(true);
     expect(assembler.tryComplete("c", { ...metadata, contentId: computeContentId(Buffer.from("yz")) })).toEqual(
       Buffer.from("yz"),
     );

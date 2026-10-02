@@ -134,7 +134,7 @@ Le opzioni sopra restano bloccate sui rispettivi prerequisiti ambientali **solo 
 
 **Convenzione da riusare, non reinventare**: qualunque nuova tabella di disponibilità chunk/stato multi-provider deve seguire la regola già fissata nel progetto — ogni struttura alimentata dalla rete è limitata per dimensione (`BoundedFifoMap`), altrimenti un peer con identità usa-e-getta la farebbe crescere senza limite.
 
-**Sequenziamento**: (1) ✅ **fatto** — gap `priority-queue.ts` sui driver LoRa reali chiuso (`docs/security.md` voce #112, 2 ottobre 2026); (2) **resta da fare, il vero lavoro nuovo** — scambio di disponibilità chunk fra provider + recupero multi-sorgente per Open Content (oggi un solo `activeProvider` alla volta, nessun primitivo "quali chunk possiedi"); (3) Private Swarm ed erasure/fountain coding restano V2, come la proposta stessa già dice — non pianificati qui.
+**Sequenziamento**: (1) ✅ **fatto** — gap `priority-queue.ts` sui driver LoRa reali chiuso (`docs/security.md` voce #112, 2 ottobre 2026); (2) ✅ **fatto** — recupero multi-sorgente per Open Content, split concorrente reale fra provider + rete di sicurezza per il caso a un solo provider (`docs/security.md` voce #113, 2 ottobre 2026); (3) Private Swarm ed erasure/fountain coding restano V2, come la proposta stessa già dice — non pianificati qui. Con la voce #113 si considera concluso il lavoro pianificato di "ARALD Data Plane" per questa sessione.
 
 ### ARALD Content Compression & Optimization — ottimizzazione dei contenuti prima della trasmissione (proposto dall'utente, 2 ottobre 2026, valutato contro il codice reale)
 
