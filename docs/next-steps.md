@@ -136,6 +136,30 @@ Le opzioni sopra restano bloccate sui rispettivi prerequisiti ambientali **solo 
 
 **Sequenziamento**: (1) ✅ **fatto** — gap `priority-queue.ts` sui driver LoRa reali chiuso (`docs/security.md` voce #112, 2 ottobre 2026); (2) **resta da fare, il vero lavoro nuovo** — scambio di disponibilità chunk fra provider + recupero multi-sorgente per Open Content (oggi un solo `activeProvider` alla volta, nessun primitivo "quali chunk possiedi"); (3) Private Swarm ed erasure/fountain coding restano V2, come la proposta stessa già dice — non pianificati qui.
 
+### ARALD Content Compression & Optimization — ottimizzazione dei contenuti prima della trasmissione (proposto dall'utente, 2 ottobre 2026, valutato contro il codice reale)
+
+**Proposta dell'utente**: un modulo nel Data Engine che scelga la rappresentazione più efficiente di un contenuto prima di inviarlo — compressione lossless generica (Zstd candidato), eventuale trasformazione lossy specifica per i media (resize/transcode immagini), profili (`ORIGINAL`/`BALANCED`/`LOW_BANDWIDTH`) adattati al transport disponibile, un manifest che descrive come il destinatario deve ricostruire il contenuto. Ordine corretto esplicitamente dalla proposta: comprimere prima di cifrare, mai dopo. Transcoding media, deduplicazione, delta updates ed erasure coding rimandati a V2 — stessa disciplina già vista nella proposta Data Plane dello stesso autore.
+
+**A differenza della voce Data Plane sopra, qui non c'è quasi nulla di già costruito da sovrapporre**: verificato con `grep` su `node/src/` in questa sessione — zero codice di compressione esiste oggi nella pipeline di contenuti ARALD. Proposta genuinamente nuova.
+
+**Finding importante, verificato con ricerca web reale in questa sessione**: **Node.js ha supporto nativo a Zstd in `node:zlib`** (`zstdCompress`/`zstdCompressSync`, ecc.) a partire dalla **22.15.0** — esattamente la versione minima già richiesta ovunque in questo progetto (Box, Portable, installer). Marcato "Experimental" da Node stesso (l'API potrebbe cambiare in una versione futura, da tenere d'occhio), ma significa che la compressione lossless generica può essere implementata con **zero nuove dipendenze npm** — perfettamente allineato alla convenzione più rigida del progetto ("nessuna nuova dipendenza esterna senza necessità reale"). Fonte: [Zlib — Node.js documentation](https://nodejs.org/api/zlib.html).
+
+**Due punti tecnici da aggiungere, non presenti nella proposta originale**:
+1. **Il manifest (ORIGINAL_SIZE/ENCODED_SIZE/COMPRESSION/ecc.) deve estendere una struttura già firmata, non inventarne una nuova**: `content.ts` ha già `contentSigningPayload()` (contentId, name, mimeType, size, publisherId, expiresAt) sotto firma Ed25519 — aggiungere campi cambia cosa viene firmato, serve un piano di compatibilità esplicito tra un nodo vecchio e contenuto nuovo (o viceversa), con lo stesso principio già applicato ovunque nel progetto: accesso difensivo al payload, mai assunto.
+2. **Comprimere prima di cifrare è la scelta giusta per l'efficienza, ma merita una nota di sicurezza per chi implementerà**: AES-256-GCM non nasconde la lunghezza del plaintext, quindi la dimensione compressa resta visibile nel ciphertext — per contenuti a bassa entropia/indovinabili è un canale laterale noto (stessa famiglia di CRIME/BREACH su TLS, anche se il modello di minaccia qui è più debole: un file privato inviato una volta a un destinatario specifico, non richieste ripetute con contenuto iniettabile da un attaccante). Non blocca la proposta, va solo registrato per la revisione quando si implementerà, stesso spirito dei bug di binding crittografico già trovati in passato (voce #70).
+
+**Guadagno stimato per tipo di contenuto, ricalcolato sulla tabella tempi già nella voce Data Plane sopra** — qui emerge la distinzione che la proposta stessa fa tra compressione lossless generica e trasformazione specifica per i media:
+
+| Contenuto | Senza compressione (LoRa) | Con Zstd lossless (stima ~65% su testo) | Con transcoding lossy (solo media, V2) |
+|---|---|---|---|
+| Articolo Wiki completo (500 KB, testo/HTML) | ~10 min | **~3,5 min** | n/a |
+| Pacchetto mappa di zona (20 MB, tile raster già compresse) | ~7 h | trascurabile (tile già immagini compresse) | n/a |
+| Foto operatore (3 MB JPEG) | ~1 h | trascurabile (JPEG già compresso) | **~6-10 min** (resize+re-encode a ~300-500 KB) |
+
+**Conclusione**: Zstd aiuta molto su contenuto testuale/strutturato (Wiki, firmware con sezioni testo, configurazioni), pochissimo su mappe/foto già in formato compresso — lì il guadagno reale (e il vero costo: una dipendenza nuova tipo `sharp` per il transcoding immagini, da valutare con `npm audit` sull'intera catena come da convenzione fissata il 30 settembre 2026) viene dalla trasformazione specifica per i media (V2 della proposta), non da Zstd.
+
+**Nessun codice scritto finora** — solo valutazione.
+
 ### Mockup pixel-precisi (Figma) — rimandati al lancio della beta, dopo i field test
 
 Il piano di audit UX/UI (Artifact "ARALD — UX/UI Audit & Redesign Plan", mini-team di 4 ruoli, sezione 11) prevedeva 8 fasi. Le Fasi 1-6 sono **✅ complete** (dettaglio in `docs/security.md` voci #86-91: "Le mie attività", stato persistente SOS, migrazione token Waypoint, navigazione a 4 voci + Diagnostica, feed "Richiede attenzione ora" + conferma a due passi, tabella dati densa + badge di ruolo). La Fase 7 (Field User Test sui prototipi con utenti reali, Marco/Elena) è stata **saltata esplicitamente** (21 settembre 2026, decisione dell'utente — nessun utente reale disponibile in questo ambiente); il piano stesso la segnava come prerequisito per considerare chiusa qualunque fase precedente, quindi quel criterio resta consapevolmente non soddisfatto.
