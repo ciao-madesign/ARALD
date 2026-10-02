@@ -101,6 +101,41 @@ Le opzioni sopra restano bloccate sui rispettivi prerequisiti ambientali **solo 
 
 **Diverso dal piano di audit UX/UI precedente** (Fasi 1-6 ✅ complete — `docs/security.md` voci #86-91 — Fase 7 saltata esplicitamente, Fase 8 "mockup pixel-precisi" rimandata al lancio della beta, vedi voce sotto): quel piano ha già semplificato molto (navigazione a 4 voci, "Le mie attività", feed unificato "Richiede attenzione ora", tabelle dense) ma non ha affrontato esplicitamente "troppo testo/troppo tecnico" come problema a sé, né un linguaggio icone-first o un design centrato sugli stati — questo è un nuovo giro mirato proprio a quello, non una ripresa dello stesso piano. Le due iniziative potrebbero sovrapporsi in fase di pianificazione (es. la Fase 8 rimandata potrebbe assorbire parte di questo lavoro) — da decidere quando si riprenderà, non assunto qui.
 
+### ARALD Data Plane — distribuzione efficiente dei contenuti (proposto dall'utente, 2 ottobre 2026, valutato contro il codice reale)
+
+**Proposta dell'utente**: separare un Control Plane (SOS/ACK/posizione/routing, priorità assoluta) da un Data Plane (file/Wiki/mappe/aggiornamenti, distribuzione "torrent-like" con Content ID, chunking, cache distribuita, multi-sorgente, rarest-first), con una distinzione netta tra Open Content (replicabile da qualunque nodo autorizzato) e Private Content (i relay lo trasportano senza poterlo leggere, nessuna replica P2P automatica). Private Swarm ed erasure/fountain coding esplicitamente rimandati a una V2, non requisiti per la prima versione — disciplina già coerente con lo stile del progetto.
+
+**Verificato contro il codice reale — buona parte è già costruita, sotto nomi diversi**:
+- **Content ID/firma/hash** → già `node/src/content.ts` (`ContentStore`, `contentSigningPayload()`).
+- **Chunking** → già `CHUNK_SIZE = 4096` byte, fino a 256MB ricostruibili (`DEFAULT_MAX_CHUNKS_PER_ENTRY`).
+- **Open vs Private** → **già reale**, non come un flag "VISIBILITY" ma come due sottosistemi separati: `content.ts`/`public-channels.ts` (Open, firmato mai cifrato, cacheable) contro `encryption.ts`/`external-delivery.ts`/`node-appends.ts` (Private, E2E, mai in cache) — più robusto di un flag a runtime, che si può impostare male.
+- **"Un relay inoltra senza poter leggere"** → già reale e testato in `external-delivery.ts` (X25519 effimero + AES-256-GCM). Se in futuro si costruirà il Private Swarm, va fatto su questo stesso pattern già provato, non un nuovo schema cripto.
+- **Priorità assoluta del Control Plane** → già reale: `priority-queue.ts`, coda a 6 bucket di priorità.
+
+**Gap concreto trovato, da chiudere prima di costruire qualunque cosa sopra**: `priority-queue.ts` è usato da `transports/tcp.ts`/`simulated-link.ts` ma **non ancora dai due driver LoRa reali** (`lora-serial.ts`, `lora-serial-sx1262.ts`) — verificato con `grep` in questa sessione. È esattamente il canale dove l'esempio della proposta ("arriva un SOS mentre trasferisco una mappa da 20MB") conta più di tutto, e oggi lì la precedenza del Control Plane non è garantita.
+
+**La parte genuinamente nuova, correttamente isolata dalla proposta**: oggi il recupero di un contenuto usa un solo `activeProvider` alla volta (fallback sequenziale su un altro provider solo se il primo fallisce, mai simultaneo) — non esiste il recupero multi-sorgente per chunk diversi né il primitivo "quali chunk possiedi" (un provider oggi o ha tutto il contenuto o non risponde affatto a `CONTENT_FOUND`).
+
+**Stima dei tempi di consegna per canale** (dai parametri già documentati nel simulatore — `transports/lora.ts`: MTU 200B/250ms per frammento; `transports/ble.ts`: stesso MTU, 5ms per frammento — **non misurati su hardware reale, nessun duty-cycle normativo modellato, nessun overhead di protocollo/retry incluso**: solo un ordine di grandezza, non un dato verificato):
+
+| Contenuto | Dimensione tipica | LoRa (~6,4 kbps) | BLE (~320 kbps) | Wi-Fi/LAN (~20 Mbps) |
+|---|---|---|---|---|
+| SOS / messaggio breve | 0,2-1 KB | <2 s | istantaneo | istantaneo |
+| Check-in / posizione | 0,5 KB | <1 s | istantaneo | istantaneo |
+| Headline notizia | 2 KB | ~3 s | istantaneo | istantaneo |
+| Riassunto Wiki | 50 KB | ~1 min | ~1,3 s | istantaneo |
+| Articolo Wiki completo | 500 KB | ~10 min | ~13 s | <1 s |
+| Foto operatore | 3 MB | ~1 h | ~1,3 min | ~1,2 s |
+| Pagina Wiki con mappa (esempio della proposta) | 4,2 MB | ~1h 23min | ~1,8 min | ~1,7 s |
+| Aggiornamento firmware/app | 8 MB | ~2h 47min | ~3,3 min | ~3,2 s |
+| Pacchetto mappa di zona (esempio della proposta) | 20 MB | **~7 h** | ~8,3 min | ~8 s |
+
+**Conclusione dalla stima**: conferma, con un numero concreto, il principio §1/§22 della proposta stessa — LoRa resta un canale di sopravvivenza per contenuto piccolo/urgente, mai il canale primario per Open Content oltre poche decine di KB. La distribuzione multi-sorgente su LoRa aiuterebbe solo marginalmente l'ordine di grandezza (ore, non minuti) — il vero guadagno per contenuti grandi viene da BLE/Wi-Fi quando disponibili, LoRa resta il "lentissimo ma non dipende da nulla".
+
+**Convenzione da riusare, non reinventare**: qualunque nuova tabella di disponibilità chunk/stato multi-provider deve seguire la regola già fissata nel progetto — ogni struttura alimentata dalla rete è limitata per dimensione (`BoundedFifoMap`), altrimenti un peer con identità usa-e-getta la farebbe crescere senza limite.
+
+**Sequenziamento proposto**: (1) chiudere il gap `priority-queue.ts` sui driver LoRa reali — piccolo, isolato, rende vero un principio già promesso altrove; (2) il vero lavoro nuovo — scambio di disponibilità chunk + recupero multi-sorgente per Open Content; (3) Private Swarm ed erasure/fountain coding restano V2, come la proposta stessa già dice. **Nessun codice scritto finora** — solo valutazione.
+
 ### Mockup pixel-precisi (Figma) — rimandati al lancio della beta, dopo i field test
 
 Il piano di audit UX/UI (Artifact "ARALD — UX/UI Audit & Redesign Plan", mini-team di 4 ruoli, sezione 11) prevedeva 8 fasi. Le Fasi 1-6 sono **✅ complete** (dettaglio in `docs/security.md` voci #86-91: "Le mie attività", stato persistente SOS, migrazione token Waypoint, navigazione a 4 voci + Diagnostica, feed "Richiede attenzione ora" + conferma a due passi, tabella dati densa + badge di ruolo). La Fase 7 (Field User Test sui prototipi con utenti reali, Marco/Elena) è stata **saltata esplicitamente** (21 settembre 2026, decisione dell'utente — nessun utente reale disponibile in questo ambiente); il piano stesso la segnava come prerequisito per considerare chiusa qualunque fase precedente, quindi quel criterio resta consapevolmente non soddisfatto.
