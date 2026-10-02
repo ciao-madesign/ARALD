@@ -134,7 +134,7 @@ Le opzioni sopra restano bloccate sui rispettivi prerequisiti ambientali **solo 
 
 **Convenzione da riusare, non reinventare**: qualunque nuova tabella di disponibilità chunk/stato multi-provider deve seguire la regola già fissata nel progetto — ogni struttura alimentata dalla rete è limitata per dimensione (`BoundedFifoMap`), altrimenti un peer con identità usa-e-getta la farebbe crescere senza limite.
 
-**Sequenziamento proposto**: (1) chiudere il gap `priority-queue.ts` sui driver LoRa reali — piccolo, isolato, rende vero un principio già promesso altrove; (2) il vero lavoro nuovo — scambio di disponibilità chunk + recupero multi-sorgente per Open Content; (3) Private Swarm ed erasure/fountain coding restano V2, come la proposta stessa già dice. **Nessun codice scritto finora** — solo valutazione.
+**Sequenziamento**: (1) ✅ **fatto** — gap `priority-queue.ts` sui driver LoRa reali chiuso (`docs/security.md` voce #112, 2 ottobre 2026); (2) **resta da fare, il vero lavoro nuovo** — scambio di disponibilità chunk fra provider + recupero multi-sorgente per Open Content (oggi un solo `activeProvider` alla volta, nessun primitivo "quali chunk possiedi"); (3) Private Swarm ed erasure/fountain coding restano V2, come la proposta stessa già dice — non pianificati qui.
 
 ### Mockup pixel-precisi (Figma) — rimandati al lancio della beta, dopo i field test
 

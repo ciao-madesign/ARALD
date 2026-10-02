@@ -3,7 +3,7 @@ import { MockBinding, type MockPortBinding } from "@serialport/binding-mock";
 import { SerialPortStream } from "@serialport/stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { Identity } from "../../node/src/identity.js";
-import { MessageType, createPacket, type Packet } from "../../node/src/packet.js";
+import { MessageType, Priority, createPacket, type Packet } from "../../node/src/packet.js";
 import { ChipMode } from "../../node/src/transports/sx126x-commands.js";
 import { LoraSerialSx1262Transport } from "../../node/src/transports/lora-serial-sx1262.js";
 import { FakeSX126xSerialDevice, linkFakeRadios } from "../helpers/fake-sx126x-serial-device.js";
@@ -263,4 +263,87 @@ describe("LoraSerialSx1262Transport relay (two fake SX126x devices)", () => {
     transports.push(a.transport);
     await expect(a.transport.start()).rejects.toThrow(/not responding as expected/);
   });
+
+  it("a packet queued at EMERGENCY priority overtakes a BULK packet queued earlier but not yet started (docs/next-steps.md, \"ARALD Data Plane\")", async () => {
+    const a = await makeNode();
+    const b = await makeNode();
+    transports.push(a.transport, b.transport);
+    linkFakeRadios(a.device, b.device);
+
+    await Promise.all([a.transport.start(), b.transport.start()]);
+    const peerId = await a.transport.connect({ host: "irrelevant", port: 0 });
+
+    const receivedOrder: string[] = [];
+    const allReceived = new Promise<void>((resolve) => {
+      b.transport.onPacket((packet) => {
+        if (packet.type !== MessageType.DATA) return;
+        receivedOrder.push((packet.payload as { tag: string }).tag);
+        if (receivedOrder.length === 3) resolve();
+      });
+    });
+
+    const firstPacket = createPacket({
+      type: MessageType.DATA,
+      source: a.nodeId,
+      priority: Priority.BULK,
+      payload: { tag: "bulk-in-flight", text: "x".repeat(2000) },
+    });
+    const queuedBulk = createPacket({
+      type: MessageType.DATA,
+      source: a.nodeId,
+      priority: Priority.BULK,
+      payload: { tag: "bulk-queued-first" },
+    });
+    const queuedEmergency = createPacket({
+      type: MessageType.DATA,
+      source: a.nodeId,
+      priority: Priority.EMERGENCY,
+      payload: { tag: "emergency-queued-second" },
+    });
+
+    const originalOnTransmit = a.device.onTransmit;
+    let firstFragmentSeen = false;
+    a.device.onTransmit = (bytes) => {
+      originalOnTransmit?.(bytes);
+      if (!firstFragmentSeen) {
+        firstFragmentSeen = true;
+        void a.transport.send(peerId, queuedBulk);
+        void a.transport.send(peerId, queuedEmergency);
+      }
+    };
+
+    await a.transport.send(peerId, firstPacket);
+    await allReceived;
+
+    expect(receivedOrder).toEqual(["bulk-in-flight", "emergency-queued-second", "bulk-queued-first"]);
+  });
+
+  it("rejects sends once sendQueue is full, without blocking sends already accepted (MAX_QUEUED_SENDS, docs/next-steps.md \"ARALD Data Plane\")", async () => {
+    // pollIntervalMs lowered from the harness default (5ms) so draining 500 real queued sends stays
+    // fast — the bound itself is independent of timing, only how long this test takes to prove it.
+    const a = await makeNode({ pollIntervalMs: 1 });
+    const b = await makeNode({ pollIntervalMs: 1 });
+    transports.push(a.transport, b.transport);
+    linkFakeRadios(a.device, b.device);
+
+    await Promise.all([a.transport.start(), b.transport.start()]);
+    const peerId = await a.transport.connect({ host: "irrelevant", port: 0 });
+
+    // Issued synchronously (no await between calls) — same technique as transports/tcp.ts's own
+    // identical test and lora-serial.ts's own copy of this test.
+    const TOTAL = 505;
+    const results = await Promise.allSettled(
+      Array.from({ length: TOTAL }, (_, i) =>
+        a.transport.send(peerId, createPacket({ type: MessageType.DATA, source: a.nodeId, payload: { n: i } })),
+      ),
+    );
+
+    const rejected = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    expect(fulfilled.length).toBe(TOTAL - 4);
+    expect(rejected.length).toBe(4);
+    for (const r of rejected) {
+      expect((r.reason as Error).message).toMatch(/send queue full/);
+    }
+  }, 20000);
 });

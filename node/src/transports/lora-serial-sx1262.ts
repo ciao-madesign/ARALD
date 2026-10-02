@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { SerialPortStream } from "@serialport/stream";
-import { MessageType, createPacket, decodePacket, encodePacket, type Packet } from "../packet.js";
+import { MessageType, PRIORITY_LEVEL_COUNT, createPacket, decodePacket, encodePacket, type Packet } from "../packet.js";
+import { PriorityQueue } from "../priority-queue.js";
 import type { PacketHandler, PeerAddress, PeerConnectedHandler, PeerDisconnectedHandler, Transport } from "../transport.js";
 import { FragmentReassembler, MAX_FRAGMENTS_PER_MESSAGE, type Fragment } from "./simulated-link.js";
 import {
@@ -141,6 +142,9 @@ const ALL_IRQ_MASK = IrqFlag.TX_DONE | IrqFlag.RX_DONE | IrqFlag.HEADER_ERROR | 
 const RADIO_HEADER_BYTES = 8;
 const MAX_RADIO_FRAGMENTS = MAX_FRAGMENTS_PER_MESSAGE;
 
+/** Same bound/rationale as `transports/tcp.ts`'s `MAX_QUEUED_SENDS_PER_PEER` (spec §57) — a single slow LoRa link (hours for a large transfer, docs/next-steps.md "ARALD Data Plane") makes a send backlog from a fast local caller even more plausible than over TCP. */
+const MAX_QUEUED_SENDS = 500;
+
 function encodeRadioFragmentHeader(msgId: Buffer, index: number, total: number): Buffer {
   const header = Buffer.alloc(4);
   header.writeUInt16BE(index, 0);
@@ -274,6 +278,12 @@ interface ActiveConnection {
   reassembler: FragmentReassembler;
 }
 
+interface QueuedSend {
+  packet: Packet;
+  resolve: () => void;
+  reject: (err: Error) => void;
+}
+
 export class LoraSerialSx1262Transport implements Transport {
   readonly id = "lora-serial-sx1262";
 
@@ -298,6 +308,9 @@ export class LoraSerialSx1262Transport implements Transport {
   private radioBusy: Promise<unknown> = Promise.resolve();
   /** `Date.now()` of the last completed fragment TX cycle, `0` before the first one ever — see `transmitFragmentBytes()`'s pacing (identical rationale to `lora-serial.ts`'s own). */
   private lastFragmentTransmittedAt = 0;
+  /** Priority-orders packets not yet started (spec §50) before they enter `transmitPacket()` — identical rationale to `lora-serial.ts`'s own `sendQueue` (docs/next-steps.md, "ARALD Data Plane"). */
+  private readonly sendQueue = new PriorityQueue<QueuedSend>(PRIORITY_LEVEL_COUNT);
+  private draining = false;
   private connection?: ActiveConnection;
   private pendingConnect?: { resolve: (peerId: string) => void; reject: (err: Error) => void; timer: NodeJS.Timeout };
   /** Whether this side has already sent its own HELLO for the current handshake — see `sendHelloOnce()`. */
@@ -381,6 +394,12 @@ export class LoraSerialSx1262Transport implements Transport {
     }
     this.helloSent = false;
     this.reassemblerForPendingConnect = undefined;
+    // Reject anything still queued — see drainSendQueue()'s own comment for why this is the only
+    // place that needs to (identical rationale to lora-serial.ts's own stop()).
+    let queued: QueuedSend | undefined;
+    while ((queued = this.sendQueue.dequeue())) {
+      queued.reject(new Error("LoRa transport stopped"));
+    }
   }
 
   private waitForStreamOpen(): Promise<void> {
@@ -432,11 +451,36 @@ export class LoraSerialSx1262Transport implements Transport {
     await this.transmitPacket(hello);
   }
 
+  /** Queues `packet` ordered by priority — identical rationale to `lora-serial.ts`'s own `send()`/`sendQueue`. */
   async send(peerId: string, packet: Packet): Promise<void> {
     if (!this.connection || this.connection.peerId !== peerId) {
       throw new Error(`no active LoRa connection to peer ${peerId}`);
     }
-    await this.transmitPacket(packet);
+    if (this.sendQueue.size >= MAX_QUEUED_SENDS) {
+      throw new Error(`send queue full for peer ${peerId}`);
+    }
+    await new Promise<void>((resolve, reject) => {
+      this.sendQueue.enqueue(packet.priority, { packet, resolve, reject });
+      this.drainSendQueue();
+    });
+  }
+
+  /** Transmits queued sends in priority order until the queue is empty — identical to `lora-serial.ts`'s own `drainSendQueue()`, including why it needs no liveness check against `this.connection`/`this.started` (see that method's own comment). */
+  private drainSendQueue(): void {
+    if (this.draining) return;
+    this.draining = true;
+    void (async () => {
+      let next: QueuedSend | undefined;
+      while ((next = this.sendQueue.dequeue())) {
+        try {
+          await this.transmitPacket(next.packet);
+          next.resolve();
+        } catch (err) {
+          next.reject(err as Error);
+        }
+      }
+      this.draining = false;
+    })();
   }
 
   /** Fragments `packet` and transmits each fragment's full TX cycle serially — same rationale as `lora-serial.ts`'s identical method. */

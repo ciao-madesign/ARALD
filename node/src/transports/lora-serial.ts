@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { SerialPortStream } from "@serialport/stream";
-import { MessageType, createPacket, decodePacket, encodePacket, type Packet } from "../packet.js";
+import { MessageType, PRIORITY_LEVEL_COUNT, createPacket, decodePacket, encodePacket, type Packet } from "../packet.js";
+import { PriorityQueue } from "../priority-queue.js";
 import type { PacketHandler, PeerAddress, PeerConnectedHandler, PeerDisconnectedHandler, Transport } from "../transport.js";
 import { FragmentReassembler, MAX_FRAGMENTS_PER_MESSAGE, type Fragment } from "./simulated-link.js";
 import {
@@ -151,6 +152,9 @@ const RADIO_HEADER_BYTES = 8;
  */
 const MAX_RADIO_FRAGMENTS = MAX_FRAGMENTS_PER_MESSAGE;
 
+/** Same bound/rationale as `transports/tcp.ts`'s `MAX_QUEUED_SENDS_PER_PEER` (spec §57) — a single slow LoRa link (hours for a large transfer, docs/next-steps.md "ARALD Data Plane") makes a send backlog from a fast local caller even more plausible than over TCP. */
+const MAX_QUEUED_SENDS = 500;
+
 function encodeRadioFragmentHeader(msgId: Buffer, index: number, total: number): Buffer {
   const header = Buffer.alloc(4);
   header.writeUInt16BE(index, 0);
@@ -259,6 +263,12 @@ interface ActiveConnection {
   reassembler: FragmentReassembler;
 }
 
+interface QueuedSend {
+  packet: Packet;
+  resolve: () => void;
+  reject: (err: Error) => void;
+}
+
 export class LoraSerialTransport implements Transport {
   readonly id = "lora-serial";
 
@@ -282,6 +292,18 @@ export class LoraSerialTransport implements Transport {
   private radioBusy: Promise<unknown> = Promise.resolve();
   /** `Date.now()` of the last completed fragment TX cycle, `0` before the first one ever — see `transmitFragmentBytes()`'s pacing. */
   private lastFragmentTransmittedAt = 0;
+  /**
+   * Priority-orders packets *not yet started* (spec §50) before they enter `transmitPacket()` — the
+   * gap closed here (docs/next-steps.md, "ARALD Data Plane"): before this, concurrent `send()` calls
+   * were only ever serialized in call order via `withRadio()`'s own promise chain, so a Control Plane
+   * packet (e.g. an SOS) queued while a large Data Plane transfer was already sending waited behind
+   * every one of that transfer's remaining fragments, with no way to jump ahead — exactly the gap
+   * `transports/tcp.ts`'s own `PriorityQueue` already closed for TCP. Can't preempt a fragment already
+   * mid-flight (physically impossible on a half-duplex radio — see `transmitFragmentBytes()`), only
+   * reorders what's still waiting, same guarantee TCP provides.
+   */
+  private readonly sendQueue = new PriorityQueue<QueuedSend>(PRIORITY_LEVEL_COUNT);
+  private draining = false;
   private connection?: ActiveConnection;
   private pendingConnect?: { resolve: (peerId: string) => void; reject: (err: Error) => void; timer: NodeJS.Timeout };
   /** Whether this side has already sent its own HELLO for the current handshake — see `sendHelloOnce()`, mirrors `ConnectionEntry.helloSent` in `simulated-link.ts`. */
@@ -377,6 +399,12 @@ export class LoraSerialTransport implements Transport {
     }
     this.helloSent = false;
     this.reassemblerForPendingConnect = undefined;
+    // Reject anything still queued — see drainSendQueue()'s own comment for why this is the only
+    // place that needs to, so a caller awaiting send() never hangs past this transport's own stop().
+    let queued: QueuedSend | undefined;
+    while ((queued = this.sendQueue.dequeue())) {
+      queued.reject(new Error("LoRa transport stopped"));
+    }
   }
 
   private waitForStreamOpen(): Promise<void> {
@@ -445,11 +473,47 @@ export class LoraSerialTransport implements Transport {
     await this.transmitPacket(hello);
   }
 
+  /** Queues `packet` ordered by `packet.priority` ahead of anything already queued at a lower priority — see `sendQueue`'s own doc comment. Resolves once *this* packet has actually been transmitted, which can be later than the call if higher-priority sends jumped ahead of it. */
   async send(peerId: string, packet: Packet): Promise<void> {
     if (!this.connection || this.connection.peerId !== peerId) {
       throw new Error(`no active LoRa connection to peer ${peerId}`);
     }
-    await this.transmitPacket(packet);
+    if (this.sendQueue.size >= MAX_QUEUED_SENDS) {
+      throw new Error(`send queue full for peer ${peerId}`);
+    }
+    await new Promise<void>((resolve, reject) => {
+      this.sendQueue.enqueue(packet.priority, { packet, resolve, reject });
+      this.drainSendQueue();
+    });
+  }
+
+  /**
+   * Transmits queued sends in priority order until the queue is empty. Safe to call repeatedly — a
+   * no-op while already draining. No liveness check against `this.connection`/`this.started` here
+   * (found by review, unlike `transports/tcp.ts`'s analogous drain loop, which does need one): `stop()`
+   * is fully synchronous and already drains-and-rejects the whole queue itself before returning (see
+   * its own comment), so this loop can never actually observe a stopped transport mid-iteration — by
+   * the time `stop()` runs, either an item is still sitting in `sendQueue` (and `stop()`'s own loop
+   * claims it first) or it's already been dequeued here and is mid-`transmitPacket()` (handled by the
+   * ordinary try/catch below regardless of connection state). A TCP socket can die asynchronously
+   * without `stop()` ever being called (the remote end closing it); this transport has no equivalent
+   * path today — nothing clears `this.connection` outside `stop()` itself.
+   */
+  private drainSendQueue(): void {
+    if (this.draining) return;
+    this.draining = true;
+    void (async () => {
+      let next: QueuedSend | undefined;
+      while ((next = this.sendQueue.dequeue())) {
+        try {
+          await this.transmitPacket(next.packet);
+          next.resolve();
+        } catch (err) {
+          next.reject(err as Error);
+        }
+      }
+      this.draining = false;
+    })();
   }
 
   /**

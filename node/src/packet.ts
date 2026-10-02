@@ -33,9 +33,10 @@ export enum MessageType {
 
 /**
  * Traffic priority classes (spec §50), lowest number = highest priority.
- * TcpTransport (transports/tcp.ts) schedules per-peer sends by this exact
- * numeric ordering and count (PriorityQueue) — adding, removing, or
- * reordering a level here must be reflected there.
+ * TcpTransport (transports/tcp.ts) and both real LoRa drivers
+ * (transports/lora-serial.ts, transports/lora-serial-sx1262.ts) schedule
+ * sends by this exact numeric ordering and count (PriorityQueue) — adding,
+ * removing, or reordering a level here must be reflected in all three.
  */
 export enum Priority {
   EMERGENCY = 0,
