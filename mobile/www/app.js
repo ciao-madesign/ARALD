@@ -16,6 +16,11 @@ const STORAGE_KEY_INTRO_SEEN = "arald.introSeen";
 // chiunque) — serve solo a personalizzare la guida iniziale, quando verrà costruita.
 const STORAGE_KEY_WELCOME_DONE = "arald.welcomeDone";
 const STORAGE_KEY_HAS_CARD = "arald.hasCard";
+// Guida iniziale (docs/next-steps.md, "Guida iniziale all'utilizzo dell'app") — mostrata una sola
+// volta in assoluto, indipendente da STORAGE_KEY_WELCOME_DONE: quest'ultimo segna solo che il bivio
+// Card/gateway è stato risposto, non che il tour è stato visto (vedi startTour()/finishTour() più
+// sotto, agganciati ai due soli punti di primo ingresso reale nella dashboard).
+const STORAGE_KEY_TOUR_SEEN = "arald.tourSeen";
 const MAX_CONTACT_NAME_LENGTH = 40;
 
 /**
@@ -1082,6 +1087,119 @@ function showWelcomeScreen() {
   document.getElementById("welcome-screen").hidden = false;
 }
 
+/**
+ * Guida iniziale (docs/next-steps.md) — 3 o 4 passi icona-prima, contenuto fisso in testa più un
+ * passo opzionale sulla Card (solo se STORAGE_KEY_HAS_CARD) e un ultimo passo che cambia in base alla
+ * modalità raggiunta (piena vs ridotta) — deciso una volta da buildTourSteps(), mai ricalcolato a
+ * metà tour. Un solo markup in index.html (#tour-screen), nessuna sezione duplicata per passo.
+ */
+const TOUR_STEP_CARD = {
+  icon: "icon-plug",
+  title: "La tua Card",
+  text: "Quando è nelle vicinanze e il Bluetooth è attivo, verrà usata automaticamente per inoltrare i messaggi — niente da abbinare o configurare.",
+};
+
+function buildTourSteps(reduced) {
+  const steps = [
+    {
+      icon: "icon-waypoint",
+      title: "Benvenuto in ARALD",
+      text: "Una rete locale che funziona anche senza internet: condividi contenuti, messaggi e aiuto con chi è vicino.",
+    },
+    {
+      icon: "icon-alert-circle",
+      title: "SOS sempre a portata di mano",
+      text: "Il bottone rosso in alto invia una richiesta di soccorso su ogni canale disponibile — anche solo via Bluetooth, senza bisogno di un gateway.",
+    },
+  ];
+  if (localStorage.getItem(STORAGE_KEY_HAS_CARD) === "1") {
+    steps.push(TOUR_STEP_CARD);
+  }
+  steps.push(
+    reduced
+      ? {
+          icon: "icon-wifi",
+          title: "Collega un gateway quando vuoi",
+          text: "Appena un Box o un Portable sarà nei paraggi, trovi l'invito a collegarti proprio qui nella dashboard.",
+        }
+      : {
+          icon: "icon-waypoint",
+          title: "Esplora la rete",
+          text: "Da qui puoi leggere contenuti, scrivere in bacheca o in chat, vedere la mappa e chiamare i servizi disponibili.",
+        },
+  );
+  return steps;
+}
+
+let tourSteps = [];
+let tourIndex = 0;
+let tourOnDone = null;
+
+function renderTourStep() {
+  const step = tourSteps[tourIndex];
+  document.getElementById("tour-icon-use").setAttribute("href", "#" + step.icon);
+  document.getElementById("tour-title").textContent = step.title;
+  document.getElementById("tour-text").textContent = step.text;
+  const dots = document.getElementById("tour-dots");
+  dots.textContent = "";
+  tourSteps.forEach((_, i) => {
+    const dot = document.createElement("span");
+    dot.className = "tourdot" + (i < tourIndex ? " done" : i === tourIndex ? " on" : "");
+    dots.appendChild(dot);
+  });
+  document.getElementById("tour-next").textContent = tourIndex === tourSteps.length - 1 ? "Inizia" : "Avanti";
+}
+
+/**
+ * Agganciata solo ai due punti di primo ingresso reale nella dashboard (#welcome-continue con "No" al
+ * gateway, showSetupSuccess()/#setup-success-continue dopo un pairing riuscito) — mai al boot diretto
+ * di un dispositivo già configurato, stessa disciplina di #welcome-screen (voce #110). onDone è sempre
+ * showDashboard(), passata esplicitamente invece di chiamata qui dentro per rendere ovvio dalla firma
+ * che questa funzione non decide da sé come continuare.
+ */
+function startTour(reduced, onDone) {
+  tourSteps = buildTourSteps(reduced);
+  tourIndex = 0;
+  tourOnDone = onDone;
+  document.getElementById("welcome-screen").hidden = true;
+  document.getElementById("setup-screen").hidden = true;
+  document.getElementById("setup-success").hidden = true;
+  document.getElementById("dashboard-screen").hidden = true;
+  document.getElementById("tour-screen").hidden = false;
+  renderTourStep();
+}
+
+function finishTour() {
+  try {
+    localStorage.setItem(STORAGE_KEY_TOUR_SEEN, "1");
+  } catch {
+    // Storage piena/non disponibile — il tour si ripresenterebbe al prossimo primo-ingresso, non blocca l'uso ora.
+  }
+  document.getElementById("tour-screen").hidden = true;
+  const onDone = tourOnDone;
+  tourOnDone = null;
+  if (onDone) onDone();
+}
+
+document.getElementById("tour-skip").addEventListener("click", finishTour);
+document.getElementById("tour-next").addEventListener("click", () => {
+  if (tourIndex < tourSteps.length - 1) {
+    tourIndex++;
+    renderTourStep();
+  } else {
+    finishTour();
+  }
+});
+
+/** Punto unico da cui entrambi i trigger del tour decidono se mostrarlo o saltare dritto a onDone. */
+function maybeShowTour(reduced, onDone) {
+  if (localStorage.getItem(STORAGE_KEY_TOUR_SEEN) === "1") {
+    onDone();
+  } else {
+    startTour(reduced, onDone);
+  }
+}
+
 function wireWelcomeToggle(yesId, noId) {
   const yes = document.getElementById(yesId);
   const no = document.getElementById(noId);
@@ -1115,7 +1233,7 @@ document.getElementById("welcome-continue").addEventListener("click", () => {
   if (wantsGateway) {
     showSetupScreen();
   } else {
-    showDashboard();
+    maybeShowTour(true, showDashboard);
   }
 });
 
@@ -1236,23 +1354,30 @@ document.getElementById("choice-back").addEventListener("click", goToSetupChoice
  */
 const SETUP_SUCCESS_AUTO_CONTINUE_MS = 1800;
 let setupSuccessTimer = null;
+// Guardia contro il doppio avvio (trovato dalla revisione): clearTimeout() su un timer già scaduto è
+// un no-op, quindi un tap su "Vai alla rete" nello stesso istante in cui il timer scade potrebbe far
+// girare entrambi i percorsi — il primo a eseguire vince, imposta questo flag, l'altro trova il flag
+// già vero e non fa nulla (mai un doppio startTour()/showDashboard()).
+let setupSuccessContinued = false;
 
 function showSetupSuccess(networkName) {
   document.getElementById("setup-screen").hidden = true;
   document.getElementById("setup-success-network").textContent = networkName;
   document.getElementById("setup-success").hidden = false;
+  setupSuccessContinued = false;
   clearTimeout(setupSuccessTimer);
-  setupSuccessTimer = setTimeout(() => {
-    document.getElementById("setup-success").hidden = true;
-    showDashboard();
-  }, SETUP_SUCCESS_AUTO_CONTINUE_MS);
+  setupSuccessTimer = setTimeout(continueFromSetupSuccess, SETUP_SUCCESS_AUTO_CONTINUE_MS);
 }
 
-document.getElementById("setup-success-continue").addEventListener("click", () => {
+function continueFromSetupSuccess() {
+  if (setupSuccessContinued) return;
+  setupSuccessContinued = true;
   clearTimeout(setupSuccessTimer);
   document.getElementById("setup-success").hidden = true;
-  showDashboard();
-});
+  maybeShowTour(false, showDashboard);
+}
+
+document.getElementById("setup-success-continue").addEventListener("click", continueFromSetupSuccess);
 
 document.getElementById("setup-form").addEventListener("submit", async (event) => {
   event.preventDefault();

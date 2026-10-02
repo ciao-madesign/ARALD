@@ -155,7 +155,7 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
 /* :not([hidden]) — an ID selector's specificity otherwise beats the UA stylesheet's own
    [hidden] { display: none } rule, so an unguarded `display: flex` here would keep this screen
    visible even after app.js sets the hidden attribute to switch to the dashboard. */
-#setup-screen:not([hidden]), #setup-success:not([hidden]), #welcome-screen:not([hidden]) {
+#setup-screen:not([hidden]), #setup-success:not([hidden]), #welcome-screen:not([hidden]), #tour-screen:not([hidden]) {
   min-height: 100vh;
   display: flex;
   align-items: center;
@@ -371,6 +371,15 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
 .legend-dot-good { background: var(--good); }
 .legend-dot-off { background: var(--off); }
 .legend-dot-bad { background: var(--bad); }
+
+/* Guida iniziale (#tour-screen) — step-dots nello stile già usato dal mockup TourCard.dc.html
+   approvato: "done" per i passi già visti, "on" per quello corrente, nessuno stato per i futuri. */
+.tourdots { display: flex; gap: 0.3em; margin-bottom: 2em; width: 100%; max-width: 16em; }
+.tourdot { height: 0.35em; flex: 1; border-radius: 999px; background: var(--border); }
+.tourdot.done { background: var(--signal); }
+.tourdot.on { background: var(--accent); }
+.tourskiprow { display: flex; justify-content: space-between; align-items: center; gap: 1em; margin-top: 0.5em; }
+.tourskiprow .primary-action { flex: none; padding: 0.7em 1.6em; }
 
 /* display must be set for width/height to apply to a <span> (inline boxes ignore sizing) — and
    guarded by :not([hidden]) for the same reason as above, since both spans start `hidden`. */

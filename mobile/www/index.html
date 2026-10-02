@@ -193,7 +193,33 @@
     <div class="success-ring"><svg viewBox="0 0 24 24" class="icon icon-lg" aria-hidden="true"><use href="#icon-check-circle"></use></svg></div>
     <h1>Connesso!</h1>
     <p class="lede">Sei collegato alla rete <strong id="setup-success-network"></strong>.</p>
-    <button type="button" id="setup-success-continue" class="call-submit" style="width: 100%;">Vai alla rete</button>
+    <button type="button" id="setup-success-continue" class="primary-action" style="width: 100%;">Vai alla rete</button>
+  </div>
+</section>
+
+<!-- Guida iniziale (docs/next-steps.md, "Guida iniziale all'utilizzo dell'app") — tour breve icona-prima
+     mostrato una sola volta in assoluto, nei due punti di primo ingresso reale nella dashboard (dal
+     bivio con "No" al gateway, o dopo "Connesso!" con "Sì" al gateway — mai ai boot successivi né a un
+     dispositivo migrato, stessa disciplina di #welcome-screen). Un solo markup, contenuto renderizzato
+     da un array in app.js (startTour()/renderTourStep()) — niente da duplicare per ciascun passo:
+     cambiano icona/titolo/testo, mai la struttura. Il numero di passi e il contenuto dell'ultimo
+     dipendono da arald.hasCard/dalla modalità (piena/ridotta), decisi una volta a startTour(). -->
+<section id="tour-screen" hidden>
+  <div class="setup-card" style="text-align: center;">
+    <div id="tour-dots" class="tourdots" role="presentation"></div>
+    <div class="success-ring"><svg viewBox="0 0 24 24" class="icon icon-lg" aria-hidden="true"><use id="tour-icon-use" href="#icon-waypoint"></use></svg></div>
+    <!-- role="status"/aria-live="polite" (trovato dalla revisione): titolo e testo cambiano in-place
+         a ogni "Avanti" senza alcun cambio di focus/pagina — senza questo, un lettore di schermo non
+         saprebbe che il contenuto è cambiato. Stesso pattern già usato altrove in questo file per
+         contenuto dinamico (es. #wifi-provisioning-status). -->
+    <div role="status" aria-live="polite">
+      <h1 id="tour-title"></h1>
+      <p class="lede" id="tour-text"></p>
+    </div>
+    <div class="tourskiprow">
+      <button type="button" id="tour-skip" class="link-button">Salta</button>
+      <button type="button" id="tour-next" class="primary-action">Avanti</button>
+    </div>
   </div>
 </section>
 
