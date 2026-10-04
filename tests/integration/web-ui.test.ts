@@ -594,6 +594,58 @@ describe("WebUiServer POST /api/call", () => {
   });
 });
 
+/**
+ * Pagina di benvenuto per il primo avvio Box/Portable (docs/next-steps.md, ultimo punto dello
+ * sprint UX/UI finale, docs/security.md voce #118) — sempre raggiungibile come ogni altra pagina di
+ * questo server (vedi WELCOME_PAGE_HTML in web-ui.ts), cli.ts decide solo quando aprirla
+ * automaticamente.
+ */
+describe("WebUiServer GET /welcome", () => {
+  let node: NomadNode | undefined;
+  let webUi: WebUiServer | undefined;
+
+  afterEach(async () => {
+    if (webUi) await webUi.stop();
+    if (node) await node.stop();
+    node = undefined;
+    webUi = undefined;
+  });
+
+  function baseUrl(): string {
+    return `http://127.0.0.1:${webUi!.port}`;
+  }
+
+  it("serves the welcome page HTML, reachable even without allowServiceCalls", async () => {
+    node = new NomadNode({ displayName: "N" });
+    webUi = new WebUiServer(node, { port: 0 });
+    await webUi.start();
+
+    const res = await fetch(`${baseUrl()}/welcome`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toMatch(/text\/html/);
+    const body = await res.text();
+    expect(body).toContain("ARALD");
+    // Must fetch GET /api/pairing itself, not rely on a server-rendered value — the QR/name/
+    // password are injected client-side, same as PAGE_HTML's own loadPairingInfo().
+    expect(body).toContain("/api/pairing");
+    expect(body).toContain('href="/"');
+  });
+
+  it("is a distinct page from the dashboard root, not a redirect or alias", async () => {
+    node = new NomadNode({ displayName: "N" });
+    webUi = new WebUiServer(node, { port: 0 });
+    await webUi.start();
+
+    const res = await fetch(`${baseUrl()}/welcome`);
+    expect(res.status).toBe(200);
+    const welcomeBody = await res.text();
+    const dashboardBody = await (await fetch(`${baseUrl()}/`)).text();
+    expect(welcomeBody).not.toEqual(dashboardBody);
+    expect(welcomeBody).toContain("welcome-qr");
+    expect(dashboardBody).not.toContain("welcome-qr");
+  });
+});
+
 describe("WebUiServer GET /api/pairing", () => {
   let node: NomadNode | undefined;
   let webUi: WebUiServer | undefined;

@@ -944,6 +944,134 @@ setInterval(refreshAll, 5000);
 `;
 
 /**
+ * Pagina di benvenuto per il primo avvio di un ARALD Box/Portable (`docs/next-steps.md`, ultimo
+ * punto dello sprint UX/UI finale, dopo la voce #117): aperta automaticamente dal browser al posto
+ * della dashboard ordinaria solo sul genuino primo avvio (`cli.ts`'s `portableFirstRun` — mai per un
+ * riavvio di un'installazione già configurata). Un solo scopo, nessuna navigazione propria: mostrare
+ * subito il QR di pairing in grande, invece che una dashboard operativa (stats/vicini/servizi) senza
+ * ancora nulla da mostrare — un Box appena acceso non ha peer né servizi, quella pagina sarebbe vuota
+ * esattamente nel momento in cui l'utente ha più bisogno di capire "cosa faccio adesso".
+ *
+ * Deliberatamente NON un wizard multi-passo: un'unica schermata con il QR e un link "Vai alla
+ * dashboard" verso "/" — lo stesso ambito già descritto in `docs/next-steps.md` ("pagina di
+ * benvenuto con QR", non una sequenza di passi). Riusa `GET /api/pairing` (stesso endpoint, stesso
+ * schema `PairingInfo` di `loadPairingInfo()` sopra) invece di un endpoint dedicato — nessun nuovo
+ * stato lato server, nessun flag `WebUiOptions` in più: questa route è sempre raggiungibile, come
+ * ogni altra pagina di questo server, l'apertura automatica al primo avvio è l'unica cosa "nuova" e
+ * vive interamente in `cli.ts`. Se il pairing non è configurato su questo nodo (improbabile per un
+ * vero Box/Portable, dove `--portable` imposta sempre `--allow-service-calls`/una password di rete —
+ * ma questa route non lo presume, è raggiungibile anche su un nodo di sviluppo qualunque) mostra un
+ * messaggio onesto invece di un QR vuoto o rotto.
+ *
+ * Token di colore e le classi `.panel`/`.pairing-body`/`.pairing-grid`/`.k`/`.v`/`.muted` duplicati
+ * da `PAGE_HTML` sopra piuttosto che condivisi: stessa scelta architetturale già presa per questo
+ * file verso `mirror-portal/app/globals.css` (pagine "sorelle", stessi valori, nessun meccanismo di
+ * condivisione CSS tra loro) — qui applicata tra due pagine dello stesso file invece che tra due
+ * progetti, per lo stesso motivo (questo server scrive HTML a mano, senza un bundler che renderebbe
+ * l'estrazione gratuita).
+ */
+const WELCOME_PAGE_HTML = `<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<title>ARALD — Benvenuto</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #eef0e3; --card: #ffffff; --border: #c9cdbc; --ink: #1e231f; --muted: #5f6656;
+    --accent: #1c6b57; --accent-dark: #123f33;
+    --header-from: #1c6b57; --header-to: #123f33;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #10151a; --card: #1a2329; --border: #2b363c; --ink: #edeae0; --muted: #93a099;
+      --accent: #4fbfa2; --accent-dark: #2f8b71;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--ink);
+    margin: 0; line-height: 1.45;
+  }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  header {
+    background: linear-gradient(180deg, var(--header-from) 0%, var(--header-to) 130%);
+    color: #fff; padding: 1.4em 1em;
+  }
+  .header-inner { max-width: 32em; margin: 0 auto; text-align: center; }
+  h1 { margin: 0; font-size: 1.6em; letter-spacing: 0.02em; }
+  .welcome-tagline { margin-top: 0.3em; opacity: 0.9; font-size: 1em; }
+  .welcome-inner { max-width: 32em; margin: 0 auto; padding: 1.6em 1em 3em; }
+  .panel { background: var(--card); border: 1px solid var(--border); border-radius: 0.6em; padding: 1.2em; }
+  h2 { margin: 0 0 0.5em; font-size: 1em; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+  .welcome-intro { margin: 0 0 1.2em; font-size: 0.92em; color: var(--muted); }
+  .pairing-body { display: flex; gap: 1.4em; flex-wrap: wrap; align-items: center; justify-content: center; }
+  .pairing-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(10em, 1fr)); gap: 1em; flex: 1; min-width: 11em; }
+  .k { font-size: 0.78em; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.25em; }
+  .v { font-size: 1.35em; font-weight: 700; font-family: ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.02em; }
+  /* Più grande della sua controparte in PAGE_HTML (9em): qui è l'unico contenuto della pagina, non
+     un pannello fra tanti — il focus assoluto di questa schermata. */
+  #welcome-qr { width: 12em; height: 12em; border-radius: 0.5em; background: #fff; padding: 0.6em; flex: none; }
+  .muted { color: var(--muted); font-size: 0.9em; }
+  .welcome-continue {
+    display: inline-block; margin-top: 1.4em; color: var(--accent-dark); font-weight: 600;
+    text-decoration: none; font-size: 0.95em;
+  }
+  .welcome-continue:hover { text-decoration: underline; }
+  @media (prefers-color-scheme: dark) { .welcome-continue { color: var(--accent); } }
+</style>
+</head>
+<body>
+<header>
+  <div class="header-inner">
+    <h1>ARALD</h1>
+    <div class="welcome-tagline">Il tuo Box è pronto.</div>
+  </div>
+</header>
+
+<div class="welcome-inner">
+  <section class="panel">
+    <h2>Collega un telefono</h2>
+    <p class="welcome-intro">Apri l'app ARALD sul telefono, sulla stessa rete Wi-Fi, e inquadra questo codice — oppure inserisci questi dati a mano.</p>
+    <div id="welcome-pairing-ready" class="pairing-body" hidden>
+      <img id="welcome-qr" alt="QR di pairing" hidden>
+      <div class="pairing-grid">
+        <div><div class="k">Nome rete</div><div class="v" id="welcome-name"></div></div>
+        <div><div class="k">Password</div><div class="v mono" id="welcome-password"></div></div>
+      </div>
+    </div>
+    <p id="welcome-pairing-missing" class="muted" hidden>Il pairing non è configurato su questo nodo.</p>
+  </section>
+  <a class="welcome-continue" href="/">Vai alla dashboard &rarr;</a>
+</div>
+
+<script>
+// Stesso schema di loadPairingInfo() in PAGE_HTML — chiamata una sola volta, nessun poll: questa
+// pagina si vede una volta per installazione, nulla qui cambia mentre resta aperta.
+(async function loadWelcomePairing() {
+  var res = await fetch("/api/pairing");
+  if (!res.ok) {
+    document.getElementById("welcome-pairing-missing").hidden = false;
+    return;
+  }
+  var info = await res.json();
+  document.getElementById("welcome-name").textContent = info.networkName;
+  document.getElementById("welcome-password").textContent = info.networkPassword;
+  var qr = document.getElementById("welcome-qr");
+  if (info.qrDataUri) {
+    qr.src = info.qrDataUri; // data: URI via .src, mai innerHTML — stessa disciplina di PAGE_HTML
+    qr.hidden = false;
+  }
+  document.getElementById("welcome-pairing-ready").hidden = false;
+})();
+</script>
+</body>
+</html>
+`;
+
+/**
  * Local status/search web interface (spec §59): "l'utente non deve essere
  * costretto a capire il routing" — a human-readable dashboard over data
  * this node already tracks (peers, known services, cached-content ratio)
@@ -1183,6 +1311,15 @@ export class WebUiServer {
     if (url.pathname === "/") {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Length": Buffer.byteLength(PAGE_HTML) });
       res.end(PAGE_HTML);
+      return;
+    }
+
+    // Sempre raggiungibile (nessun flag `WebUiOptions`, come ogni altra pagina qui) — solo cli.ts
+    // decide di aprirla automaticamente al posto di "/" al primo avvio di un Box/Portable. Vedi il
+    // doc comment di WELCOME_PAGE_HTML sopra.
+    if (url.pathname === "/welcome") {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Length": Buffer.byteLength(WELCOME_PAGE_HTML) });
+      res.end(WELCOME_PAGE_HTML);
       return;
     }
 

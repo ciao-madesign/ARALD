@@ -599,8 +599,27 @@ async function main(): Promise<void> {
     // every time) — only on the genuine first run (`portableFirstRun`, `loadOrCreatePortableConfig()`
     // just created the config file), or whenever `--open-browser` is explicitly given, independent of
     // `--portable` entirely — e.g. to let an installer's "Apri ARALD" menu entry reopen the control
-    // panel later without redoing the whole wizard.
-    if (portableFirstRun || args["open-browser"] === "true") {
+    // panel later without redoing the whole wizard. The two cases now land on two different pages
+    // (docs/next-steps.md, ultimo punto dello sprint UX/UI finale, dopo docs/security.md voce #117):
+    // the genuine first run opens /welcome (the QR-forward onboarding screen, web-ui.ts's
+    // WELCOME_PAGE_HTML — nothing else on this node is set up yet, so the ordinary dashboard would
+    // just be empty panels), while an explicit --open-browser later (the "reopen the control panel"
+    // case the comment above already described) opens the real dashboard at "/" — re-showing the
+    // onboarding screen on every later reopen would be the exact "wizard every time" this whole
+    // distinction exists to avoid.
+    //
+    // Deliberate precedence, found worth spelling out by review: `portableFirstRun` wins even when
+    // `--open-browser true` is ALSO passed on that same genuine first run (e.g. an installer script
+    // that always passes `--open-browser true` defensively, not knowing in advance whether this is
+    // the first run) — before this voice, that combination opened the plain dashboard once; now it
+    // opens /welcome instead. Intentional, not a side effect of turning `||` into `else if`: on a
+    // true first run there is nothing yet to "reopen" (no peers, no services, no prior session) — the
+    // wizard is strictly the more useful thing to show, regardless of which flag asked for a browser
+    // tab at all. An installer wanting to force the plain dashboard even on a first run has no flag
+    // for that today; none has been requested, so none was added speculatively.
+    if (portableFirstRun) {
+      openInBrowser(`http://${webHost}:${webUi.port}/welcome`);
+    } else if (args["open-browser"] === "true") {
       openInBrowser(`http://${webHost}:${webUi.port}`);
     }
     if (needsNetworkPassword) {
