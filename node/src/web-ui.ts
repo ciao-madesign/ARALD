@@ -613,13 +613,31 @@ const PAGE_HTML = `<!doctype html>
   .empty { color: var(--muted); font-style: italic; padding: 0.4em 0; }
   #search-input { width: 100%; font: inherit; padding: 0.55em 0.7em; border-radius: 0.5em; border: 1px solid var(--border); background: var(--bg); color: var(--ink); margin-bottom: 0.8em; }
   #content-panel { margin-bottom: 1em; }
-  #pairing-panel { margin-bottom: 1em; border-color: var(--accent); border-left: 4px solid var(--accent); }
+  /* Niente più bordo accentato: era pensato per farlo risaltare in cima alla pagina (stato
+     Operational), prima che si spostasse qui dentro "Configurazione" — dove ogni pannello ha
+     lo stesso peso visivo, nessuno "urgente" più di un altro (voce #117). */
+  #pairing-panel { margin-bottom: 1em; }
   #pairing-panel .pairing-body { display: flex; gap: 1.4em; flex-wrap: wrap; align-items: flex-start; }
   #pairing-panel .pairing-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11em, 1fr)); gap: 1em; flex: 1; min-width: 12em; }
   #pairing-panel .k { font-size: 0.78em; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.25em; }
   #pairing-panel .v { font-size: 1.35em; font-weight: 700; font-family: ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.02em; }
   #pairing-panel p { margin: 0.8em 0 0; font-size: 0.85em; color: var(--muted); }
   #pairing-qr { width: 9em; height: 9em; border-radius: 0.5em; background: #fff; padding: 0.5em; flex: none; }
+  /* Separazione Operational/Configuration (docs/ux-ui-design-system.md §11, "Non mischiare
+     continuamente configurazione e operatività"): un'intestazione di sola lettura (mai un pannello a
+     sé, non ha azioni proprie) che segna dove inizia il blocco "configurazione" della pagina — stesso
+     trattamento tipografico di ogni <h2> di pannello, ma fuori da ogni .panel e con un margine/bordo
+     sopra per marcare visivamente il confine. */
+  /* Solo le proprietà che un <h2> normale non ha già (margine/bordo di separazione) — font-size,
+     text-transform, letter-spacing e color sono già quelli della regola "h2" sopra, dato che questa
+     classe è sempre applicata a un <h2>: ripeterli qui li farebbe solo divergere in futuro se uno dei
+     due viene cambiato senza l'altro. */
+  .section-divider { margin: 1.6em 0 0.8em; padding-top: 1.2em; border-top: 1px solid var(--border); }
+  #identity-panel { margin-bottom: 1em; }
+  .identity-list { display: flex; flex-direction: column; gap: 0.6em; margin: 0; }
+  .identity-list > div { display: flex; align-items: baseline; justify-content: space-between; gap: 1em; }
+  .identity-list dt { margin: 0; color: var(--muted); font-size: 0.85em; }
+  .identity-list dd { margin: 0; text-align: right; font-size: 0.9em; overflow-wrap: anywhere; }
   @media (max-width: 26em) {
     /* Narrow phones only — the connected-pill's own text ("Connesso"/"Non connesso") wraps
        awkwardly next to the h1 at very small widths without this, since header's flex-wrap alone
@@ -643,24 +661,6 @@ const PAGE_HTML = `<!doctype html>
 
 <div id="stats" class="stats"></div>
 
-<section class="panel" id="pairing-panel" hidden>
-  <h2>Collega un telefono</h2>
-  <div class="pairing-body">
-    <img id="pairing-qr" alt="QR di pairing" hidden>
-    <div class="pairing-grid">
-      <div>
-        <div class="k">Nome rete</div>
-        <div class="v" id="pairing-name"></div>
-      </div>
-      <div>
-        <div class="k">Password</div>
-        <div class="v mono" id="pairing-password"></div>
-      </div>
-    </div>
-  </div>
-  <p>Apri l'app ARALD sul telefono, sulla stessa rete Wi-Fi, e inquadra il QR — oppure inserisci questi dati a mano.</p>
-</section>
-
 <div class="panels">
   <section class="panel">
     <h2>Vicini connessi</h2>
@@ -678,6 +678,43 @@ const PAGE_HTML = `<!doctype html>
     <input id="search-input" type="text" placeholder="Cerca per nome..." autocomplete="off">
   </form>
   <ul id="content"></ul>
+</section>
+
+<!-- Separazione Operational/Configuration (docs/ux-ui-design-system.md §11) — tutto sopra questo
+     punto è "cosa sta succedendo ora" (stato, vicini, servizi, contenuti raggiungibili), sempre
+     aggiornato ogni 5s da refreshAll(). Tutto sotto è configurazione tecnica/identità del nodo,
+     statica per l'intera vita di questo processo (mai nel poll periodico, vedi i commenti di
+     renderIdentity()/loadPairingInfo() nello script sotto). -->
+<h2 class="section-divider">Configurazione</h2>
+
+<!-- Niente riga "Nome rete" qui: coincide quasi sempre con displayName (già nell'header, #node-label)
+     e quando il pairing è abilitato è già mostrata, ben più in evidenza, in #pairing-panel subito
+     sotto — ripeterla qui sarebbe lo stesso fatto scritto due volte nella stessa sezione (trovato da
+     code-review, voce #117). -->
+<section class="panel" id="identity-panel">
+  <h2>Identità del nodo</h2>
+  <dl class="identity-list">
+    <div><dt>ID nodo</dt><dd id="identity-node-id" class="mono"></dd></div>
+    <div><dt>Classe dispositivo</dt><dd id="identity-device-class"></dd></div>
+  </dl>
+</section>
+
+<section class="panel" id="pairing-panel" hidden>
+  <h2>Collega un telefono</h2>
+  <div class="pairing-body">
+    <img id="pairing-qr" alt="QR di pairing" hidden>
+    <div class="pairing-grid">
+      <div>
+        <div class="k">Nome rete</div>
+        <div class="v" id="pairing-name"></div>
+      </div>
+      <div>
+        <div class="k">Password</div>
+        <div class="v mono" id="pairing-password"></div>
+      </div>
+    </div>
+  </div>
+  <p>Apri l'app ARALD sul telefono, sulla stessa rete Wi-Fi, e inquadra il QR — oppure inserisci questi dati a mano.</p>
 </section>
 
 </div>
@@ -746,6 +783,36 @@ function renderStats(s) {
   pill.querySelector("span:last-child").textContent = s.connected ? "Connesso" : "Non connesso";
 
   document.getElementById("node-label").textContent = s.displayName + " · " + s.nodeId.slice(0, 12) + "...";
+
+  // Identità del nodo (pannello "Configurazione") — resa una sola volta, mai a ogni giro dei 5s:
+  // nodeId/networkName/deviceClass sono fissi per l'intera vita di questo processo, stessa
+  // disciplina già applicata a loadPairingInfo() sotto ("mai nel poll periodico, non c'è nulla da
+  // aggiornare"). identityRendered evita di ritoccare questo DOM a ogni refreshStatus() inutilmente.
+  if (!identityRendered) {
+    renderIdentity(s);
+    identityRendered = true;
+  }
+}
+
+var identityRendered = false;
+
+/**
+ * Identità/configurazione del nodo (docs/ux-ui-design-system.md §11: "Configuration — ID nodo; rete;
+ * ..."). Deliberatamente minimale rispetto all'elenco completo della specifica (radio, impostazioni,
+ * aggiornamenti, log): questo prototipo non ha oggi alcuna configurazione modificabile da questa
+ * pagina (tutto è impostato via flag CLI una tantum all'avvio, mai cambiabile dal browser — vedi
+ * cli.ts) né un meccanismo di log/aggiornamento reale da mostrare — mostrare placeholder per
+ * funzionalità inesistenti violerebbe la stessa regola già applicata altrove in questo progetto (mai
+ * un'informazione non verificata/non reale presentata come se lo fosse, CLAUDE.md). Solo due fatti
+ * statici che /api/status espone già per davvero: ID nodo completo (qui mai troncato, a differenza
+ * dell'etichetta nell'header) e classe dispositivo auto-dichiarata (se impostata —
+ * NomadNodeOptions.deviceClass, mai mostrata altrove su questa pagina prima d'ora). networkName non è
+ * ripetuto qui: coincide quasi sempre con displayName (già nell'header) ed è già mostrato in
+ * #pairing-panel quando il pairing è abilitato (vedi il commento HTML sopra a questo pannello).
+ */
+function renderIdentity(s) {
+  document.getElementById("identity-node-id").textContent = s.nodeId;
+  document.getElementById("identity-device-class").textContent = s.deviceClass || "—";
 }
 
 function renderPeers(peers) {
