@@ -550,62 +550,63 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
 /* ---------- dashboard ---------- */
 
 #dashboard-screen:not([hidden]) { animation: screen-in 320ms var(--ease); }
-/* padding-bottom più ampio della norma: spazio per #bottom-nav (fixed) sotto, così l'ultimo pannello
-   di ogni vista non resta mai coperto. */
-#dashboard-screen { padding: 1.2em 1em calc(5.5em + env(safe-area-inset-bottom)); max-width: 40em; margin: 0 auto; }
+#dashboard-screen { padding: 1.2em 1em calc(1.2em + env(safe-area-inset-bottom)); max-width: 40em; margin: 0 auto; }
 #dashboard-main:focus-visible { outline: none; } /* focused programmatically for a11y on screen switch, not a keyboard target */
 
-/* Barra di navigazione a 4 voci (Fase 4 dell'audit UX/UI, docs/next-steps.md): Home/Comunica/Attività
-   cambiano vista (switchTab(), app.js); Mappa apre #map-overlay direttamente, mai una vista.
-   `:not([hidden])` necessario da quando la dashboard ridotta (bivio Card/gateway) nasconde questa
-   barra via JS: senza la guardia, un selettore per ID con `display` non guardato vince la regola
-   `[hidden]{display:none}` dello user agent per parità di specificità — stesso bug già trovato in
-   voce #109 per #setup-form/#setup-choice/.choice-card. */
-#bottom-nav:not([hidden]) {
-  position: fixed;
-  left: 0; right: 0; bottom: 0;
-  z-index: 15;
-  display: flex;
-  background: var(--card);
-  border-top: 1px solid var(--border);
-  padding: 0.4em 0.4em calc(0.4em + env(safe-area-inset-bottom));
-  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.06);
+/* Status-bar icona-prima (Home icona-prima, docs/ux-ui-design-system.md) — sostituisce il vecchio
+   anello radiale .trail-gauge: stesso schema icona+colore+titolo+sottotitolo già usato da
+   .statusbar-reduced (#reduced-home) sotto, solo con `tone` dinamico invece di sempre "off". */
+.statusbar {
+  display: flex; align-items: center; gap: 0.7em; background: var(--card); border: 1px solid var(--border);
+  border-radius: 0.8em; padding: 0.8em 0.9em; margin-bottom: 0.7em;
 }
-.nav-item {
-  flex: 1;
-  display: flex; flex-direction: column; align-items: center; gap: 0.2em;
-  padding: 0.4em 0.2em;
-  border-radius: 0.6em;
-  color: var(--muted);
-  font-size: 0.7em; font-weight: 600;
-  transition: color 150ms var(--ease), background-color 150ms var(--ease);
+.statusbar-dot {
+  width: 2.1em; height: 2.1em; border-radius: 50%; color: var(--card);
+  display: flex; align-items: center; justify-content: center; flex: none;
 }
-.nav-item .icon { width: 1.3em; height: 1.3em; }
-.nav-item:active { background: color-mix(in srgb, var(--signal) 12%, transparent); }
-.nav-item.is-active { color: var(--signal); }
-.nav-item:disabled { color: var(--off); opacity: 0.55; }
+.statusbar-dot .icon { width: 1.1em; height: 1.1em; }
+.statusbar-dot-signal { background: var(--signal); }
+.statusbar-dot-off { background: var(--off); }
+.statusbar-title { font-weight: 700; font-size: 0.95em; }
+.statusbar-sub { font-size: 0.8em; color: var(--muted); }
+
+/* Due chip compatti (vicini/relay) — non tre come nella bozza approvata: niente batteria *di questo
+   telefono*, per cui non esiste oggi alcuna lettura reale (vedi il commento su renderStats() in
+   app.js). */
+.chips { display: flex; gap: 0.6em; margin-bottom: 0.9em; }
+.chip {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 0.35em;
+  background: var(--card); border: 1px solid var(--border); border-radius: 0.7em;
+  padding: 0.6em; font-size: 0.82em; color: var(--muted);
+}
+.chip .icon { width: 1em; height: 1em; flex: none; }
+.chip b { color: var(--ink); margin-right: 0.15em; }
+
+/* Tab-shelf "a fogli" (sostituisce #bottom-nav fisso in fondo allo schermo + le 3 viste separate
+   Home/Comunica/Attività, Fase 4 dell'audit UX/UI) — una riga di schede scorrevole, in linea nel
+   flusso della pagina invece che fissata: ogni sua voce è una vista dentro #full-home, toggled da
+   switchTab() (app.js). "Mappa" resta deliberatamente fuori — vedi .secondary-links sotto. */
+.tabshelf { display: flex; gap: 0.35em; overflow-x: auto; margin-bottom: 0.9em; padding-bottom: 0.2em; -webkit-overflow-scrolling: touch; }
+.tabshelf-item {
+  flex: none; display: flex; align-items: center; gap: 0.35em;
+  padding: 0.5em 0.9em; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--card); color: var(--muted); font-size: 0.82em; font-weight: 700; white-space: nowrap;
+  transition: color 150ms var(--ease), background-color 150ms var(--ease), border-color 150ms var(--ease);
+}
+.tabshelf-item .icon { width: 1em; height: 1em; }
+.tabshelf-item.is-active { background: var(--signal); color: var(--signal-ink); border-color: var(--signal); }
+
+/* Link secondari (Diagnostica/Mappa) — dettaglio tecnico/azione occasionale, deliberatamente fuori
+   dal tab-shelf sopra. #nav-map riusa lo stesso id/listener di mapview.js (nessuna modifica lì):
+   solo la sua collocazione nel markup è cambiata, da voce di #bottom-nav a link qui. */
+.secondary-links { display: flex; gap: 1em; justify-content: center; flex-wrap: wrap; margin: 0.2em 0 1.2em; }
+.secondary-links .link-button:disabled { color: var(--off); opacity: 0.55; }
 
 header { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.6em; margin-bottom: 1.2em; }
 .header-identity { display: flex; align-items: center; gap: 0.5em; min-width: 0; }
 .header-identity .icon { color: var(--good); }
 #node-label { font-size: 0.82em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .header-actions { display: flex; align-items: center; gap: 0.3em; flex: none; }
-
-/* Un'unica lettura ("condizione del sentiero") al posto di quattro tile numeriche isolate che
-   l'utente doveva sommare mentalmente — vedi Field Guide (Artifact), plate "Dashboard". L'anello
-   non è una percentuale di segnale reale (questo prototipo non misura latenza/perdita, spec §22):
-   è una lettura onesta ma approssimata, derivata solo dal numero di vicini raggiungibili — vedi
-   gaugeFraction()/gaugeLabel() in app.js per la soglia esatta, stesso principio di trasparenza già
-   usato per "Internet: OFFLINE" nella pagina web del gateway (mai una misura finta di precisione). */
-.trail-gauge { display: flex; align-items: center; gap: 1.1em; margin-bottom: 1.2em; }
-.trail-gauge .gauge-ring { width: 4.4em; height: 4.4em; flex: none; }
-.trail-gauge .gauge-label { font-size: 1.05em; font-weight: 700; }
-.trail-gauge .gauge-detail { font-size: 0.78em; color: var(--muted); margin-top: 0.25em; line-height: 1.5; }
-/* "ARALD disponibile — Internet assente" (voce #87, Fase 2 dell'audit UX/UI) — una riga a sé, non
-   infilata nel dettaglio tecnico sopra: risponde a una domanda diversa ("questo posto funziona anche
-   senza internet?"), non "quanti vicini ho ora". --accent invece di --muted: è la risposta rassicurante
-   che l'audit ha chiesto fosse la più leggibile della card, non un dettaglio secondario. */
-.trail-gauge .gauge-note { font-size: 0.82em; font-weight: 600; color: var(--accent); margin-top: 0.35em; }
 
 /* A single, always-visible commitment — opt-in per spec (docs/next-steps.md Opzione J: mai un
    invio automatico/periodico), quindi non nascosto dietro un <details> come le sezioni più
@@ -614,9 +615,10 @@ header { display: flex; align-items: flex-start; justify-content: space-between;
 #share-location-panel { display: flex; flex-direction: column; gap: 0.5em; margin-bottom: 1.2em; }
 #share-location-status:empty { display: none; }
 
-/* Punto d'ingresso a Diagnostica (Fase 4) — un link discreto sotto lo stato rete, non un bottone
-   primario: è un dettaglio tecnico, non un'azione quotidiana. */
-.diagnostics-link { display: inline-flex; align-items: center; gap: 0.4em; margin-bottom: 1.2em; }
+/* Punto d'ingresso a Diagnostica (Fase 4) — un link discreto, non un bottone primario: è un
+   dettaglio tecnico, non un'azione quotidiana. Nessun margin-bottom proprio: vive dentro
+   .secondary-links sopra, che gestisce già lo spazio tra i link della riga. */
+.diagnostics-link { display: inline-flex; align-items: center; gap: 0.4em; }
 
 .tab-view:not([hidden]) { animation: fade-in 200ms var(--ease); }
 
@@ -686,7 +688,6 @@ details.panel[open] > summary .chevron { transform: rotate(90deg); }
 .skel-line.w-40 { width: 40%; }
 .skel-line.w-80 { width: 80%; }
 li.skel-row { display: flex; flex-direction: column; }
-.trail-gauge .gauge-ring.skel-ring circle { stroke: var(--skeleton-base); }
 
 /* ---------- home hero (search-engine-style landing) ---------- */
 
@@ -1055,12 +1056,6 @@ li.skel-row { display: flex; flex-direction: column; }
 #dashboard-error-wrap #retry-refresh { margin: 0.6em auto 0; }
 
 /* ---------- passata UX per pubblico generico: rubrica locale, spiegazioni, form guidati ---------- */
-
-/* "Comunicare con gli altri" — un'intestazione di sola lettura (mai un altro <details>) che dà un
-   ombrello concettuale a Bacheca/Canali/Vicini/Gruppi sotto di lei, senza aggiungere un altro livello
-   di interazione: stesso trattamento tipografico di ogni altro <h2> di sezione. */
-.section-intro { margin: 1.2em 0 0.8em; }
-.section-intro .hint { margin-top: 0.3em; }
 
 /* Card introduttiva mostrata una sola volta dopo il primo pairing, sempre richiamabile dal bottone
    "?" nell'header — mai un overlay a schermo intero, una card come le altre che si può ignorare. */

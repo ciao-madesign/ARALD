@@ -68,7 +68,7 @@ async function fetchMapInfo() {
   return res.json();
 }
 
-/** Enables/disables the "Mappa" bottom-nav item based on the latest fetchMapInfo() result — called every refreshAll() cycle, same as renderLocationReports(). Fase 4 dell'audit UX/UI: sostituisce il vecchio #map-panel ("Apri mappa" nella Home) con lo stesso degrado onesto applicato alla voce di navigazione che lo rimpiazza. */
+/** Enables/disables the "Mappa" secondary link based on the latest fetchMapInfo() result — called every refreshAll() cycle, same as renderLocationReports(). Stesso degrado onesto da sempre (Fase 4 dell'audit UX/UI), solo rilocato dalla vecchia #bottom-nav a .secondary-links (Home icona-prima) — id #nav-map invariato, nessuna modifica a questo file. */
 function renderMapAvailability(info) {
   mapInfo = info;
   document.getElementById("nav-map").disabled = info === null;

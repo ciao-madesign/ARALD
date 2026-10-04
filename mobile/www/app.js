@@ -1638,62 +1638,30 @@ function handlePasswordRejected() {
 // away mid-session.
 let firstLoadDone = false;
 
-const GAUGE_RADIUS = 42;
-const GAUGE_CIRCUMFERENCE = 2 * Math.PI * GAUGE_RADIUS;
-
 /**
  * Approximate, honestly-labelled network-health reading derived only from the number of reachable
  * peers — the only "how connected am I" signal /api/status actually exposes (no latency/loss
- * measurement exists in this prototype, spec §22). Never claims false precision: the ring fraction
- * is illustrative and caps well short of a full circle even at many peers, and the word label (not
- * a fabricated percentage) is what the "condizione del sentiero" reading actually communicates —
- * same transparency principle as the self-declared "Internet: OFFLINE" on the desktop status page
- * (node/src/web-ui.ts).
+ * measurement exists in this prototype, spec §22). Never claims false precision: only two `tone`
+ * values exist ("off"/"signal") because that is genuinely all this prototype can distinguish — no
+ * fabricated third "degraded" state, same transparency principle as the self-declared
+ * "Internet: OFFLINE" on the desktop status page (node/src/web-ui.ts).
  */
 function gaugeReading(peers) {
-  if (peers === 0) return { fraction: 0.06, label: "Isolato", tone: "off" };
-  if (peers === 1) return { fraction: 0.5, label: "Debole", tone: "signal" };
-  return { fraction: Math.min(0.95, 0.3 + peers * 0.2), label: "Solido", tone: "signal" };
-}
-
-/** Builds the radial "condizione del sentiero" ring — a plain track circle, plus (unless `muted`, used for the loading skeleton) a progress arc in `tone`'s color for `fraction` of the circumference. */
-function buildGaugeRing(fraction, muted, tone) {
-  const svg = document.createElementNS(SVG_NS, "svg");
-  svg.setAttribute("viewBox", "0 0 100 100");
-  svg.setAttribute("class", "gauge-ring" + (muted ? " skel-ring" : ""));
-  svg.setAttribute("aria-hidden", "true");
-  const track = document.createElementNS(SVG_NS, "circle");
-  track.setAttribute("cx", "50");
-  track.setAttribute("cy", "50");
-  track.setAttribute("r", String(GAUGE_RADIUS));
-  track.setAttribute("fill", "none");
-  track.setAttribute("stroke", "var(--border)");
-  track.setAttribute("stroke-width", "9");
-  svg.append(track);
-  if (!muted) {
-    const arc = document.createElementNS(SVG_NS, "circle");
-    arc.setAttribute("cx", "50");
-    arc.setAttribute("cy", "50");
-    arc.setAttribute("r", String(GAUGE_RADIUS));
-    arc.setAttribute("fill", "none");
-    arc.setAttribute("stroke", tone === "off" ? "var(--off)" : "var(--signal)");
-    arc.setAttribute("stroke-width", "9");
-    arc.setAttribute("stroke-linecap", "round");
-    arc.setAttribute("stroke-dasharray", (fraction * GAUGE_CIRCUMFERENCE).toFixed(1) + " " + GAUGE_CIRCUMFERENCE.toFixed(1));
-    arc.setAttribute("transform", "rotate(-90 50 50)");
-    svg.append(arc);
-  }
-  return svg;
+  if (peers === 0) return { label: "Isolato", tone: "off" };
+  if (peers === 1) return { label: "Debole", tone: "signal" };
+  return { label: "Solido", tone: "signal" };
 }
 
 function renderStatSkeletons() {
-  const stats = document.getElementById("stats");
-  stats.textContent = "";
-  stats.setAttribute("aria-busy", "true");
-  stats.append(
-    buildGaugeRing(0, true, "off"),
-    el("div", null, [el("div", { className: "skel skel-line w-60" }), el("div", { className: "skel skel-line w-80" }), el("div", { className: "skel skel-line w-60" })]),
-  );
+  const bar = document.getElementById("statusbar");
+  bar.setAttribute("aria-busy", "true");
+  document.getElementById("statusbar-dot").className = "statusbar-dot statusbar-dot-off";
+  document.getElementById("statusbar-title").textContent = "";
+  document.getElementById("statusbar-title").append(el("span", { className: "skel skel-line w-60" }));
+  document.getElementById("statusbar-sub").textContent = "";
+  document.getElementById("statusbar-sub").append(el("span", { className: "skel skel-line w-80" }));
+  document.getElementById("chip-peers-value").textContent = "";
+  document.getElementById("chip-relay-value").textContent = "";
 }
 
 function listSkeleton(list, rows) {
@@ -1714,16 +1682,18 @@ function renderSkeletons() {
 }
 
 /**
- * The 4-tab navigation (Fase 4 dell'audit UX/UI, docs/next-steps.md): "home"/"comunica"/"activity"
- * are views inside #dashboard-main, toggled here; "Mappa" is deliberately NOT one of these — it opens
- * #map-overlay directly (see mapview.js's #nav-map click listener), never routed through this function.
+ * Il tab-shelf della Home icona-prima (docs/ux-ui-design-system.md, bozza "MobileDopo" approvata,
+ * sostituisce la vecchia barra di navigazione a 4 voci Home/Comunica/Attività/Mappa, Fase 4
+ * dell'audit UX/UI): 6 viste dentro #full-home, toggled here. "Mappa" resta deliberatamente fuori da
+ * questo elenco — è un link secondario che apre #map-overlay direttamente (vedi mapview.js's
+ * #nav-map click listener), mai una vista di questo tab-shelf.
  */
-const TAB_NAMES = ["home", "comunica", "activity"];
+const TAB_NAMES = ["vicini", "remoto", "canali", "gruppi", "relay", "scopri"];
 
 function switchTab(tabName) {
   for (const name of TAB_NAMES) {
     document.getElementById("tab-" + name).hidden = name !== tabName;
-    const navButton = document.getElementById("nav-" + name);
+    const navButton = document.getElementById("tab-btn-" + name);
     navButton.classList.toggle("is-active", name === tabName);
     if (name === tabName) navButton.setAttribute("aria-current", "page");
     else navButton.removeAttribute("aria-current");
@@ -1734,7 +1704,7 @@ function switchTab(tabName) {
 }
 
 for (const name of TAB_NAMES) {
-  document.getElementById("nav-" + name).addEventListener("click", () => switchTab(name));
+  document.getElementById("tab-btn-" + name).addEventListener("click", () => switchTab(name));
 }
 
 /**
@@ -1768,13 +1738,12 @@ function showDashboard() {
   // dalla dashboard ridotta e "Cambia rete" dalla dashboard piena si limitano a cambiare quei due
   // valori e richiamare showDashboard(), senza dover anche gestire un terzo stato a parte.
   const reduced = !gatewayUrl || !networkPassword;
-  document.getElementById("bottom-nav").hidden = reduced;
+  document.getElementById("full-home").hidden = reduced;
   document.getElementById("reduced-home").hidden = !reduced;
   placeBleRelayPanelForMode(reduced);
   const main = document.getElementById("dashboard-main");
 
   if (reduced) {
-    for (const name of TAB_NAMES) document.getElementById("tab-" + name).hidden = true;
     clearInterval(refreshTimer); // nessun gateway da interrogare — refreshAll() fallirebbe a ogni giro
     main.focus({ preventScroll: true });
     return;
@@ -1787,7 +1756,7 @@ function showDashboard() {
   lastContentQuery = null;
   channelSeenNames = new Set();
   groupSeenIds = new Set();
-  switchTab("home");
+  switchTab("vicini");
   renderSkeletons();
   updateIntroBanner(false);
   // "Le mie attività" is purely local (localStorage), never refreshed by refreshAll()'s network
@@ -1859,34 +1828,33 @@ document.getElementById("retry-refresh").addEventListener("click", () => {
   refreshAll().catch(() => {});
 });
 
+/**
+ * Popola la status-bar icona-prima (sostituisce il vecchio anello radiale #stats, Home icona-prima
+ * — vedi il commento su gaugeReading() sopra) + i due chip "vicini"/"relay" sotto. Il titolo è solo
+ * la `label` di gaugeReading() senza il prefisso "Rete" che una prima versione di questa scritta
+ * aveva: "Rete" è femminile, ma le tre label ("Isolato"/"Debole"/"Solido") sono forme maschili —
+ * "Rete isolato" è un errore di concordanza di genere, trovato prima del commit. Niente percentuale
+ * di cache qui (si legge già nel tab Scopri, dentro "Contenuti della rete") né batteria del telefono
+ * (nessuna lettura reale esiste oggi — vedi lo stesso principio già applicato a #reduced-home).
+ */
 function renderStats(s) {
   myNodeId = s.nodeId; // needed by renderChannelMessages() to tell "my own message" apart from another author's
-  const stats = document.getElementById("stats");
-  stats.textContent = "";
-  stats.removeAttribute("aria-busy");
-  const { fraction, label, tone } = gaugeReading(s.peers);
-  const detail =
-    (s.peers === 1 ? "1 vicino" : s.peers + " vicini") +
-    " · " +
-    (s.services === 1 ? "1 servizio attivo" : s.services + " servizi attivi") +
-    " · cache " +
-    s.cachedContentPercent +
-    "% · relay " +
-    (s.relaying ? "attivo" : "fermo");
-  // "ARALD disponibile — Internet assente" (docs/security.md voce #87) — a plain-language answer to
-  // "does this work without internet?", never the raw "Internet: OFFLINE" wording the desktop status
-  // page uses for an operator audience. Independent of the vicini-based gauge above: this is about
-  // whether *this gateway* has real internet, not about mesh connectivity.
-  const internetNote = "ARALD disponibile — " + (s.internet === "ONLINE" ? "Internet raggiungibile" : "Internet assente");
-  stats.append(
-    buildGaugeRing(fraction, false, tone),
-    el("div", null, [
-      el("div", { className: "gauge-label", textContent: label }),
-      el("div", { className: "gauge-detail", textContent: detail }),
-      el("div", { className: "gauge-note", textContent: internetNote }),
-    ]),
-  );
-  stats.setAttribute("aria-label", "Stato della rete: " + label + ". " + detail + ". " + internetNote);
+  document.getElementById("statusbar").removeAttribute("aria-busy");
+  const { label, tone } = gaugeReading(s.peers);
+  document.getElementById("statusbar-dot").className = "statusbar-dot statusbar-dot-" + tone;
+  document.getElementById("statusbar-dot").querySelector("use").setAttribute("href", tone === "off" ? "#icon-alert-triangle" : "#icon-wifi");
+  document.getElementById("statusbar-title").textContent = label;
+  const peersPhrase = s.peers === 0 ? "Nessun vicino raggiungibile" : s.peers === 1 ? "1 vicino raggiungibile" : s.peers + " vicini raggiungibili";
+  // "Internet assente" (docs/security.md voce #87) — a plain-language answer to "does this work
+  // without internet?", never the raw "Internet: OFFLINE" wording the desktop status page uses for
+  // an operator audience. Independent of the vicini-based reading above: this is about whether
+  // *this gateway* has real internet, not about mesh connectivity.
+  const internetPhrase = s.internet === "ONLINE" ? "Internet raggiungibile" : "Internet assente";
+  const sub = peersPhrase + " · " + internetPhrase;
+  document.getElementById("statusbar-sub").textContent = sub;
+  document.getElementById("statusbar").setAttribute("aria-label", "Stato della rete: " + label + ". " + sub);
+  document.getElementById("chip-peers-value").textContent = String(s.peers);
+  document.getElementById("chip-relay-value").textContent = s.relaying ? "attivo" : "fermo";
   document.getElementById("node-label").textContent = "Connesso a: " + (s.networkName || s.displayName);
 }
 
