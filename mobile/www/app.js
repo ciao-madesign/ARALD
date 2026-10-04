@@ -1741,6 +1741,21 @@ function showDashboard() {
   document.getElementById("full-home").hidden = reduced;
   document.getElementById("reduced-home").hidden = !reduced;
   placeBleRelayPanelForMode(reduced);
+
+  // Emergency State Screen (docs/ux-ui-design-system.md §8, definita in ble-client.js, caricato dopo
+  // questo script — stessa guardia `typeof` già usata altrove in questo file per una dipendenza
+  // dall'ordine di caricamento): mostra automaticamente un'emergenza persistita non ancora conclusa a
+  // ogni ingresso nella dashboard, piena o ridotta (l'SOS funziona in entrambe — vedi sotto, questa
+  // chiamata precede deliberatamente il ramo `if (reduced)`). Copre SOLO una chiamata a showDashboard()
+  // successiva al caricamento iniziale della pagina (es. un nuovo pairing in questa stessa sessione,
+  // quando ble-client.js ha già finito di girare per forza) — la primissima chiamata sincrona al boot
+  // (dispositivo già appaiato) precede l'esecuzione di ble-client.js, quindi questa guardia trova
+  // `openEmergencyScreen` ancora non definita e non fa nulla: per quel caso specifico se ne occupa
+  // invece il piccolo `<script type="module">` in fondo a index.html (vedi il suo commento per il
+  // perché un modulo, non un controllo qui o alla fine di ble-client.js stesso, è l'unico punto in cui
+  // window.AraldEmergencyState è garantito pronto).
+  if (typeof openEmergencyScreen === "function") openEmergencyScreen();
+
   const main = document.getElementById("dashboard-main");
 
   if (reduced) {

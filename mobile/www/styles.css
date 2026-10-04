@@ -139,6 +139,8 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
 .icon { width: 1.2em; height: 1.2em; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vertical-align: -0.2em; }
 .icon-lg { width: 2.4em; height: 2.4em; }
 .icon-accent { color: var(--signal); }
+.icon-good { color: var(--good); }
+.icon-bad { color: var(--bad); }
 
 .icon-button {
   display: inline-flex; align-items: center; justify-content: center;
@@ -518,6 +520,42 @@ button:focus-visible, .icon-button:focus-visible { outline-offset: 3px; }
   border-radius: 0.4em;
 }
 #map-overlay .error { position: absolute; inset: 40% 1.5em auto; text-align: center; z-index: 1; }
+
+/* ---------- Emergency State Screen (docs/ux-ui-design-system.md §8) ---------- */
+
+/* z-index 15: sopra ogni altro overlay (10, scanner/mappa/diagnostica) — un'emergenza vince
+   visivamente su qualunque altra cosa fosse aperta — ma sotto il toast (20): una conferma "SOS
+   inviato" deve restare leggibile anche sopra questa schermata. A differenza di quegli overlay,
+   #dashboard-screen sotto NON è nascosto mentre questo è visibile (il suo refreshAll() deve
+   continuare a girare, vedi il commento in index.html) — `position: fixed` è ciò che rende possibile
+   la sovrapposizione senza quel nascondimento. */
+#emergency-screen:not([hidden]) {
+  position: fixed;
+  inset: 0;
+  z-index: 15;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5em;
+  animation: screen-in 320ms var(--ease);
+}
+.emergency-card { max-width: 26em; width: 100%; text-align: center; }
+.emergency-badge {
+  width: 4em; height: 4em; border-radius: 50%; background: var(--bad); color: var(--card);
+  display: flex; align-items: center; justify-content: center; margin: 0 auto 0.8em;
+}
+.emergency-badge .icon { width: 2.1em; height: 2.1em; }
+.emergency-card h1 { color: var(--bad); margin: 0 0 0.3em; font-size: 1.3em; letter-spacing: 0.02em; }
+.emergency-status-list { list-style: none; margin: 1.2em 0 0.6em; padding: 0; text-align: left; display: flex; flex-direction: column; gap: 0.5em; }
+.emergency-status-list li {
+  display: flex; align-items: flex-start; gap: 0.5em; background: var(--card); border: 1px solid var(--border);
+  border-radius: 0.6em; padding: 0.6em 0.8em; font-size: 0.92em;
+}
+.emergency-status-list li .icon { flex: none; margin-top: 0.1em; }
+.emergency-meta { color: var(--muted); font-size: 0.85em; margin: 0 0 1.4em; }
+.emergency-actions { display: flex; flex-direction: column; gap: 0.7em; }
+.emergency-actions .sos-send-button { padding: 0.7em 1em; }
 
 /* ---------- diagnostica (Fase 4 dell'audit UX/UI) ---------- */
 
@@ -988,21 +1026,16 @@ li.skel-row { display: flex; flex-direction: column; }
 .sos-send-button:active { transform: scale(0.97); }
 .sos-send-button:disabled { opacity: 0.6; }
 
-/* Coda SOS persistente (docs/next-steps.md, "Coda SOS persistente sul telefono, in attesa di un peer
-   BLE") — un piccolo punto rosso sul bottone collassato #sos-button (visibile anche a pannello
-   chiuso, mai solo dentro di esso: l'utente deve accorgersene senza doverlo riaprire) più un blocco
-   informativo dentro il pannello stesso quando aperto, con il proprio bottone "Annulla". */
+/* Emergenza attiva non ancora conclusa (window.AraldEmergencyState, docs/ux-ui-design-system.md §8)
+   — un piccolo punto rosso sul bottone collassato #sos-button, visibile anche quando l'utente ha
+   toccato "Torna alla rete" senza concludere l'emergenza (deve accorgersene senza dover riaprire
+   nulla). Il dettaglio completo di stato vive ora in #emergency-screen, mai più in un blocco dentro
+   #sos-panel (sostituito da questa stessa voce). */
 .sos-button.has-pending { position: relative; }
 .sos-button.has-pending::after {
   content: ""; position: absolute; top: 0.3em; right: 0.3em; width: 0.6em; height: 0.6em;
   border-radius: 50%; background: var(--bad); border: 1.5px solid var(--surface);
 }
-.sos-pending {
-  margin-bottom: 0.8em; padding: 0.7em 0.8em; border-radius: 0.5em; border: 1px dashed var(--bad);
-  background: var(--surface);
-}
-.sos-pending p { display: flex; align-items: flex-start; gap: 0.5em; margin: 0 0 0.5em; color: var(--bad); font-weight: 600; }
-.sos-pending .icon { flex: none; margin-top: 0.1em; }
 
 /* Check-in rapido dentro #send-external-delivery-form (docs/next-steps.md) — due varianti dello stesso
    invio "Consegna esterna differita", mai il broadcast SOS reale (che resta #sos-button/.sos-panel

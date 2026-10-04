@@ -306,6 +306,39 @@
   </div>
 </section>
 
+<!-- Emergency State Screen (docs/ux-ui-design-system.md §8, "Dopo l'attivazione SOS non lasciare
+     l'utente sulla normale home. Passare a una Emergency State Screen dedicata.") — overlay a schermo
+     intero SOPRA #dashboard-screen (stesso pattern fixed/z-index di #diagnostics-overlay/#map-overlay
+     sopra), non uno dei 3 stati top-level mutuamente esclusivi (welcome/setup/tour): #dashboard-screen
+     resta vivo e visibile sotto, col proprio refreshAll() che continua a far girare il ritentativo
+     periodico del canale gateway (ble-client.js's tryFlushPendingSosViaGateway()) anche mentre questa
+     schermata è in primo piano — un'emergenza "in coda" deve continuare a provare a trasmettersi, non
+     restare congelata perché l'utente sta guardando questa schermata invece della dashboard.
+     Mostrata automaticamente (1) subito dopo la conferma di invio di un SOS, (2) a ogni apertura della
+     dashboard se un'emergenza persistita (window.AraldEmergencyState, sopravvive a una chiusura
+     dell'app) non è ancora stata conclusa, (3) ogni volta che si tocca di nuovo #sos-button mentre è
+     attiva — mai lasciata silenziosamente indietro. Niente "X"/chiudi qui (a differenza di
+     #diagnostics-overlay/#map-overlay): solo "Torna alla rete" (nasconde l'overlay SENZA concludere
+     l'emergenza — #sos-button la riapre a ogni tap finché resta attiva) o il bottone rosso in fondo
+     (conclude/annulla per davvero, ble-client.js azzera lo stato persistito). -->
+<section id="emergency-screen" hidden>
+  <div class="emergency-card">
+    <div class="emergency-badge">
+      <svg viewBox="0 0 24 24" class="icon icon-lg" aria-hidden="true"><use href="#icon-alert-circle"></use></svg>
+    </div>
+    <h1>EMERGENZA ATTIVA</h1>
+    <!-- role="status"/aria-live="polite": lo stato cambia in-place (es. da "in attesa" a "trasmesso")
+         senza alcun cambio di focus/pagina, stesso pattern già usato da #tour-title/#tour-text. -->
+    <ul id="emergency-status-list" class="emergency-status-list" role="status" aria-live="polite"></ul>
+    <p id="emergency-activated-at" class="emergency-meta"></p>
+    <p id="emergency-error" class="error" role="alert" aria-live="assertive" hidden></p>
+    <div class="emergency-actions">
+      <button type="button" id="emergency-conclude" class="sos-send-button"></button>
+      <button type="button" id="emergency-back" class="link-button">Torna alla rete</button>
+    </div>
+  </div>
+</section>
+
 <section id="dashboard-screen" hidden>
   <header>
     <div class="header-identity">
@@ -329,22 +362,15 @@
     </div>
   </header>
 
-  <!-- Pannello aperto/chiuso dal bottone #sos-button — mai un overlay a schermo intero (un SOS non
-       deve richiedere un passo "chiudi questo" in più): un messaggio è facoltativo, inviare deve
-       restare il più rapido possibile. Conferma nativa window.confirm() prima dell'invio vero (unica
-       protezione contro un tap accidentale, stesso pattern già usato in hub-control.js per
-       Ferma/Riavvia — nessun pattern di conferma custom esiste già in mobile/www/ da riusare). -->
+  <!-- Modulo di composizione aperto/chiuso dal bottone #sos-button QUANDO NESSUNA EMERGENZA È GIÀ
+       ATTIVA (ble-client.js controlla window.AraldEmergencyState prima di aprirlo: se un'emergenza è
+       già in corso, lo stesso tap apre #emergency-screen sopra invece di questo pannello) — mai un
+       overlay a schermo intero in questa fase: un messaggio è facoltativo, inviare deve restare il più
+       rapido possibile. Conferma nativa window.confirm() prima dell'invio vero (unica protezione
+       contro un tap accidentale, stesso pattern già usato in hub-control.js per Ferma/Riavvia — nessun
+       pattern di conferma custom esiste già in mobile/www/ da riusare). -->
   <div id="sos-panel" class="panel sos-panel" hidden>
     <h2><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-alert-circle"></use></svg> Invia un SOS</h2>
-    <!-- Coda SOS persistente, su ogni canale disponibile (docs/next-steps.md, voci #106/#107) —
-         mostrato solo se ble-client.js's renderPendingSosUi() trova un SOS già in attesa (sopravvissuto
-         anche a una chiusura dell'app): nessuna nuova trasmissione è richiesta qui, l'SOS riparte da
-         solo non appena un canale qualsiasi diventa disponibile (un dispositivo Bluetooth incrociato, o
-         il gateway a cui questo telefono è appaiato). -->
-    <div id="sos-pending" class="sos-pending" hidden>
-      <p><svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-alert-circle"></use></svg> SOS in attesa di trasmissione (in coda <span id="sos-pending-since"></span>) — verrà inviato automaticamente appena un canale sarà disponibile (gateway o dispositivo Bluetooth).</p>
-      <button type="button" id="sos-pending-cancel" class="link-button">Annulla SOS in coda</button>
-    </div>
     <p class="hint">Invia una richiesta di soccorso attraverso ogni canale disponibile — il gateway a cui sei collegato, e i dispositivi ARALD Bluetooth nelle vicinanze (Clip, altri telefoni, relay). Un messaggio è facoltativo, ma puoi inviare subito anche senza scriverlo.</p>
     <textarea id="sos-message" placeholder="Descrivi la situazione (facoltativo)..." rows="3" maxlength="4000"></textarea>
     <div class="sos-panel-actions">
@@ -833,6 +859,12 @@
      globale nacl), ma solo dentro corpi funzione mai a livello di script, stesso motivo di
      ble-identity.js sopra: l'ordine stretto non è tecnicamente necessario, mantenuto per coerenza. -->
 <script type="module" src="ble-wifi-provisioning.js"></script>
+<!-- Vero modulo ES come sos-queue.js sopra (window.AraldEmergencyState come ponte verso ble-client.js)
+     — stato dell'Emergency State Screen (docs/ux-ui-design-system.md §8), distinto deliberatamente
+     dalla coda di sos-queue.js (dettaglio di instradamento, azzerata non appena un canale ha successo):
+     questo stato resta attivo finché l'utente non conclude l'emergenza. Nessuna dipendenza da altri
+     moduli (solo localStorage) — dopo sos-queue.js solo per coerenza, "i moduli SOS insieme". -->
+<script type="module" src="emergency-state.js"></script>
 
 <!-- mapview.js prima di app.js: app.js chiama fetchMapInfo()/renderMapAvailability() (definite in
      mapview.js) in modo sincrono dal proprio codice di avvio (showDashboard() -> refreshAll(), per
@@ -843,5 +875,23 @@
 <!-- Dopo app.js: usa showToast()/vibrate(), definite lì come funzioni globali (nessun import
      possibile, vedi il commento in cima a ble-client.js). -->
 <script src="ble-client.js"></script>
+<!-- Emergency State Screen (docs/ux-ui-design-system.md §8) — mostra automaticamente un'emergenza
+     persistita non ancora conclusa al caricamento "a freddo" della pagina (dispositivo già appaiato).
+     Deliberatamente un modulo, anche se inline e con un corpo di una sola riga: uno script `type=
+     "module"` è SEMPRE eseguito dopo ogni script classico di questa pagina (app.js/ble-client.js/
+     mapview.js, che bloccano il parsing ed eseguono immediatamente) E dopo ogni altro modulo che lo
+     precede nel documento (sos-queue.js/emergency-state.js inclusi, anch'essi deferred) — la sola
+     garanzia reale che sia window.AraldEmergencyState (emergency-state.js) sia openEmergencyScreen()
+     (ble-client.js) esistano per davvero a questo punto, non "probabilmente". Un primo tentativo
+     equivalente messo invece alla fine di ble-client.js stesso (un semplice script classico) falliva
+     silenziosamente a ogni apertura "a freddo" della pagina — trovato con Playwright scrivendo questa
+     stessa voce, non solo in teoria: window.AraldEmergencyState non aveva ancora finito di caricarsi a
+     quel punto, lasciando #emergency-screen nel suo stato di markup predefinito (hidden). Nessuna
+     guardia `typeof` qui (a differenza del controllo equivalente in app.js's showDashboard(), che la
+     usa proprio perché può girare PRIMA che questo modulo esista): per costruzione, a questo punto del
+     documento entrambe le dipendenze sono già pronte. -->
+<script type="module">
+  if (!document.getElementById("dashboard-screen").hidden) openEmergencyScreen();
+</script>
 </body>
 </html>

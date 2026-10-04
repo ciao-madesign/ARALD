@@ -156,24 +156,110 @@ function setBleRelayStatus(text, isError) {
 }
 
 /**
- * Riflette lo stato della coda SOS persistente (`window.AraldSosQueue`, `sos-queue.js`) sull'interfaccia:
- * un piccolo punto rosso su `#sos-button` (visibile anche a pannello chiuso — trovato necessario, non un
- * dettaglio solo del pannello: l'utente deve accorgersi che un SOS è ancora in attesa senza doverlo
- * riaprire) più il blocco informativo `#sos-pending` dentro il pannello stesso. Chiamata da ogni punto
- * che può cambiare lo stato della coda (dopo un `savePendingSos()`/`clearPendingSos()`, all'apertura
- * del pannello, al caricamento dello script) — mai da un timer proprio, coerente con la scadenza pigra
- * di `sos-queue.js`'s `loadPendingSos()` che questa funzione stessa invoca.
+ * Riflette se esiste un'emergenza attiva non ancora conclusa (`window.AraldEmergencyState`,
+ * docs/ux-ui-design-system.md §8) con un piccolo punto rosso su `#sos-button` — visibile anche se
+ * l'utente ha toccato "Torna alla rete" senza concludere l'emergenza (deve accorgersene senza dover
+ * riaprire `#emergency-screen`). Chiamata da ogni punto che può cambiare lo stato (dopo un
+ * `saveActiveEmergency()`/`clearActiveEmergency()`/`markActiveEmergencySent()`, al caricamento dello
+ * script) — mai da un timer proprio, coerente con l'assenza di scadenza di
+ * `emergency-state.js`'s `loadActiveEmergency()` che questa funzione stessa invoca.
  */
-function renderPendingSosUi() {
+function renderSosButtonBadge() {
   const button = document.getElementById("sos-button");
-  if (!button || typeof window.AraldSosQueue === "undefined") return;
-  const pending = window.AraldSosQueue.loadPendingSos();
-  button.classList.toggle("has-pending", Boolean(pending));
+  if (!button || typeof window.AraldEmergencyState === "undefined") return;
+  button.classList.toggle("has-pending", Boolean(window.AraldEmergencyState.loadActiveEmergency()));
+}
 
-  const block = document.getElementById("sos-pending");
-  if (!block) return;
-  block.hidden = !pending;
-  if (pending) document.getElementById("sos-pending-since").textContent = timeAgo(pending.queuedAt);
+/**
+ * Popola `#emergency-screen` dallo stato persistito (`window.AraldEmergencyState`) SENZA mai forzarne
+ * l'apertura — chiamata sia quando la schermata è già visibile (per aggiornarla in-place quando lo
+ * stato cambia sotto di lei, es. il canale gateway consegna in background via `markEmergencySent()`)
+ * sia quando è nascosta (in quel caso l'aggiornamento resta inerte fino alla prossima apertura, mai un
+ * motivo per riaprirla da sola: trovato dalla revisione — un utente che ha toccato "Torna alla rete"
+ * senza concludere l'emergenza non deve ritrovarsi catapultato di nuovo sulla schermata a schermo
+ * intero solo perché un canale in background ha finito di tentare). L'UNICA eccezione a "mai forzare
+ * l'apertura" è quando non c'è più nessuna emergenza attiva (conclusa nel frattempo): in quel caso la
+ * nasconde sempre, qui dentro — mostrare una schermata vuota sarebbe peggio di nasconderla senza che
+ * nessuno l'avesse chiesto. Per aprirla deliberatamente, vedi `openEmergencyScreen()` sotto.
+ *
+ * Nessuna riga "numero di relay/hop" (docs/ux-ui-design-system.md §8 la elenca come "eventuale"):
+ * questo protocollo non ha una conferma di consegna end-to-end (CLAUDE.md), quindi non esiste un
+ * conteggio reale da mostrare — mai inventarne uno.
+ */
+function renderEmergencyScreen() {
+  const screen = document.getElementById("emergency-screen");
+  if (!screen || typeof window.AraldEmergencyState === "undefined") return;
+  const active = window.AraldEmergencyState.loadActiveEmergency();
+  if (!active) {
+    screen.hidden = true;
+    return;
+  }
+
+  const list = document.getElementById("emergency-status-list");
+  list.textContent = "";
+  // `iconClass` colora la riga in base al suo significato reale, non tutte uguali: verde per un esito
+  // riuscito (`icon-good`), rosso per uno stato ancora da risolvere (`icon-bad`, coerente con --bad già
+  // usato per #sos-button/.sos-send-button), nessuna classe (colore neutro, eredita dal testo) per
+  // un'informazione puramente descrittiva come "Posizione disponibile" — un problema reale trovato
+  // dalla revisione: una regola CSS generica colorava *ogni* riga di rosso, incluso il segno di spunta
+  // di successo, che così sembrava allarmante quanto la riga "in attesa".
+  const addLine = (iconName, text, iconClass) => list.append(el("li", null, [iconEl(iconName, iconClass), document.createTextNode(text)]));
+
+  if (active.status === "sent") {
+    const viaText = active.channel === "gateway" ? " via gateway" : active.channel === "bluetooth" ? " via Bluetooth" : "";
+    addLine("check-circle", "SOS trasmesso" + viaText, "icon-good");
+  } else {
+    addLine("alert-circle", "In attesa di un canale disponibile — verrà trasmesso automaticamente", "icon-bad");
+  }
+  if (active.lat !== undefined && active.lon !== undefined) addLine("map-pin", "Posizione disponibile");
+
+  document.getElementById("emergency-activated-at").textContent =
+    "Attivato alle " + new Date(active.activatedAt).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
+  document.getElementById("emergency-conclude").textContent = active.status === "sent" ? "Concludi emergenza" : "Annulla SOS in coda";
+  // Un errore mostrato da un tentativo precedente (vedi il catch in #sos-send sotto) non deve restare
+  // visibile per sempre una volta che lo stato è di nuovo aggiornato con successo da qui.
+  const errorEl = document.getElementById("emergency-error");
+  if (errorEl) errorEl.hidden = true;
+
+  // Nessun `screen.hidden = false` qui (bug reale trovato dalla revisione, corretto): questa funzione
+  // aggiorna solo il CONTENUTO, mai la visibilità in apertura — se la schermata è già nascosta (l'utente
+  // ha toccato "Torna alla rete"), deve restare nascosta anche se lo stato sottostante cambia. Solo il
+  // ramo "nessuna emergenza attiva" sopra può nasconderla da qui; per aprirla deliberatamente, vedi
+  // `openEmergencyScreen()` sotto.
+}
+
+/**
+ * Apre deliberatamente `#emergency-screen` — a differenza di `renderEmergencyScreen()` sopra (che
+ * aggiorna solo il contenuto, mai forzando la visibilità), questa è la funzione da chiamare nei punti
+ * in cui mostrare la schermata è esattamente l'azione voluta: subito dopo l'attivazione di un SOS, un
+ * tap su `#sos-button` mentre un'emergenza è già attiva, l'apertura "a freddo" della pagina con
+ * un'emergenza non ancora conclusa (vedi lo script di avvio in fondo a index.html).
+ */
+function openEmergencyScreen() {
+  renderEmergencyScreen();
+  const screen = document.getElementById("emergency-screen");
+  if (screen && typeof window.AraldEmergencyState !== "undefined" && window.AraldEmergencyState.loadActiveEmergency()) screen.hidden = false;
+}
+
+/**
+ * Chiamata da OGNI canale che può consegnare un'emergenza attiva, una volta che quel canale ha vinto
+ * la corsa condivisa (`window.AraldSosQueue.claimSosSuccess()`): il burst Bluetooth/gateway di
+ * `sendSos()` stesso (col canale che ha vinto), `tryFlushPendingSosViaGateway()` ("gateway"),
+ * `tryFlushPendingSos()` ("bluetooth"). Centralizza l'aggiornamento di stato persistito + interfaccia
+ * in un solo posto invece di ripetere la stessa sequenza in tre punti diversi del file (prima di
+ * questa voce, le tre copie quasi identiche erano già un rischio di incoerenza — trovato scrivendo
+ * questa stessa funzione). Chiama `renderEmergencyScreen()`, mai `openEmergencyScreen()`: un canale che
+ * consegna in background non deve mai far riapparire la schermata se l'utente l'ha già chiusa con
+ * "Torna alla rete" senza concludere (stesso problema, trovato dalla revisione, già descritto sul
+ * commento di `renderEmergencyScreen()`).
+ */
+function markEmergencySent(channel) {
+  if (typeof window.AraldEmergencyState !== "undefined") window.AraldEmergencyState.markActiveEmergencySent(channel);
+  renderSosButtonBadge();
+  renderEmergencyScreen();
+  recordActivity("sos", undefined, "sent");
+  showToast("SOS trasmesso", "alert-circle");
+  vibrate([30, 50, 30, 50, 30]);
 }
 
 function renderRelayPeers() {
@@ -338,7 +424,7 @@ function forwardPacket(plugin, fromDeviceId, packet) {
  * ri-processato se mai rimbalzasse indietro da un peer che lo relaya a sua volta.
  */
 async function tryFlushPendingSos(plugin, deviceId) {
-  if (typeof window.AraldSosQueue === "undefined") return; // modulo non caricato — guardia difensiva, stesso schema di renderPendingSosUi()
+  if (typeof window.AraldSosQueue === "undefined") return; // modulo non caricato — guardia difensiva, stesso schema di renderSosButtonBadge()
   const pending = window.AraldSosQueue.loadPendingSos();
   if (!pending) return;
 
@@ -351,10 +437,7 @@ async function tryFlushPendingSos(plugin, deviceId) {
   forwardPacket(plugin, deviceId, pending.packet);
 
   if (!window.AraldSosQueue.claimSosSuccess(pending.packet.id)) return; // un altro canale lo ha già consegnato/segnalato nel frattempo
-  renderPendingSosUi();
-  recordActivity("sos", undefined, "sent");
-  showToast("SOS trasmesso", "alert-circle");
-  vibrate([30, 50, 30, 50, 30]);
+  markEmergencySent("bluetooth");
 }
 
 /**
@@ -811,24 +894,45 @@ async function tryGatewaySosChannel({ message, lat, lon }) {
  * testo/stato onesto da mostrare, stesso vocabolario "sent"/"queued" già usato da `recordActivity()` per
  * gli altri invii (app.js):
  * - `"sent"` — consegnato ORA da uno dei due canali, nessun altro lo ha già segnalato nel frattempo.
+ *   `markEmergencySent()` (chiamata qui dentro con il canale che ha vinto — tracciato localmente via
+ *   `wonChannel`, l'unico modo per sapere QUALE dei due ha avuto successo dato che `raceFirstSuccess()`
+ *   restituisce solo un booleano) ha già aggiornato lo stato persistito dell'Emergency State Screen
+ *   (`window.AraldEmergencyState`, docs/ux-ui-design-system.md §8) + attività/toast/vibrazione: il
+ *   chiamante non deve ripetere nulla di tutto ciò.
  * - `"claimed-elsewhere"` — consegnato ORA, ma `window.AraldSosQueue.claimSosSuccess()` ha trovato che
  *   un canale indipendente (`tryFlushPendingSos()` su un nuovo peer Bluetooth, o un ritentativo gateway
- *   periodico) lo aveva già consegnato e segnalato (attività/toast/vibrazione) mentre questa stessa
- *   chiamata era ancora in attesa — trovato dalla revisione (voce #106, rilevante ancora di più con più
- *   di un canale): senza questo controllo il chiamante ripeterebbe una segnalazione già fatta.
+ *   periodico) lo aveva già consegnato e segnalato (attività/toast/vibrazione/stato persistito, tramite
+ *   la STESSA `markEmergencySent()`) mentre questa stessa chiamata era ancora in attesa — trovato dalla
+ *   revisione (voce #106, rilevante ancora di più con più di un canale): senza questo controllo il
+ *   chiamante ripeterebbe una segnalazione già fatta. Il canale che ha vinto per davvero non è
+ *   conosciuto da questa chiamata in questo caso — onestamente omesso, mai indovinato.
  * - `"queued"` — nessun canale ha avuto successo ora, resta in coda.
  */
 async function sendSos({ message, lat, lon } = {}) {
   const identity = window.AraldBleIdentity.loadOrCreateIdentity();
   const packet = window.AraldBleSos.buildEmergencyBeaconPacket({ message, lat, lon }, identity);
   window.AraldSosQueue.savePendingSos({ packet, message, lat, lon });
-  renderPendingSosUi();
+  renderSosButtonBadge();
 
-  const won = await window.AraldSosQueue.raceFirstSuccess([tryGatewaySosChannel({ message, lat, lon }), tryBleSosBurst(packet)]);
+  // Quale dei due canali ha vinto, per attribuirlo nell'Emergency State Screen — raceFirstSuccess()
+  // (sos-queue.js) restituisce solo true/false, mai *quale* promise, quindi lo si traccia qui
+  // localmente: il primo dei due `.then()` a vedere `ok === true` scrive `wonChannel` una sola volta
+  // (la guardia `wonChannel === null` impedisce a un secondo canale, più lento ma anch'esso riuscito,
+  // di sovrascrivere l'attribuzione già fatta al primo).
+  let wonChannel = null;
+  const gatewayPromise = tryGatewaySosChannel({ message, lat, lon }).then((ok) => {
+    if (ok && wonChannel === null) wonChannel = "gateway";
+    return ok;
+  });
+  const blePromise = tryBleSosBurst(packet).then((ok) => {
+    if (ok && wonChannel === null) wonChannel = "bluetooth";
+    return ok;
+  });
+  const won = await window.AraldSosQueue.raceFirstSuccess([gatewayPromise, blePromise]);
   if (!won) return "queued";
 
   if (!window.AraldSosQueue.claimSosSuccess(packet.id)) return "claimed-elsewhere";
-  renderPendingSosUi();
+  markEmergencySent(wonChannel);
   return "sent";
 }
 
@@ -859,10 +963,7 @@ async function tryFlushPendingSosViaGateway() {
   if (!delivered) return; // ancora irraggiungibile/rifiutato — resta in coda, ritentato al prossimo ciclo
 
   if (!window.AraldSosQueue.claimSosSuccess(pending.packet.id)) return; // un altro canale lo ha già consegnato/segnalato nel frattempo
-  renderPendingSosUi();
-  recordActivity("sos", undefined, "sent");
-  showToast("SOS trasmesso", "alert-circle");
-  vibrate([30, 50, 30, 50, 30]);
+  markEmergencySent("gateway");
 }
 
 const bleRelayPanel = document.getElementById("ble-relay-panel");
@@ -910,7 +1011,7 @@ if (sosButton) {
   // qualunque telefono/browser senza quel plugin, anche se il canale gateway avrebbe funzionato da solo
   // (bug reale trovato eseguendo la verifica end-to-end di questa voce, mai da un test automatico: nulla
   // in questo file aveva mai coperto la visibilità condizionale del bottone stesso).
-  renderPendingSosUi(); // riflette subito un'eventuale coda SOS sopravvissuta a una chiusura dell'app
+  renderSosButtonBadge(); // riflette subito un'eventuale emergenza sopravvissuta a una chiusura dell'app
 
   const sosPanel = document.getElementById("sos-panel");
   const sosMessage = document.getElementById("sos-message");
@@ -918,11 +1019,17 @@ if (sosButton) {
   const sosSend = document.getElementById("sos-send");
 
   sosButton.addEventListener("click", () => {
-    sosPanel.hidden = !sosPanel.hidden;
-    if (!sosPanel.hidden) {
-      renderPendingSosUi(); // ricontrolla al momento dell'apertura — scadenza pigra, vedi sos-queue.js
-      sosMessage.focus();
+    // Emergency State Screen (docs/ux-ui-design-system.md §8): se un'emergenza è già attiva (in coda
+    // o già trasmessa, ma non ancora conclusa dall'utente), questo stesso bottone la riapre invece del
+    // modulo di composizione — un secondo SOS mentre il primo è ancora in corso non avrebbe senso, e
+    // l'utente deve poter sempre tornare a vedere lo stato di quello già attivo con lo stesso tap che
+    // lo ha originato.
+    if (typeof window.AraldEmergencyState !== "undefined" && window.AraldEmergencyState.loadActiveEmergency()) {
+      openEmergencyScreen();
+      return;
     }
+    sosPanel.hidden = !sosPanel.hidden;
+    if (!sosPanel.hidden) sosMessage.focus();
   });
 
   document.getElementById("sos-cancel").addEventListener("click", () => {
@@ -931,28 +1038,39 @@ if (sosButton) {
     sosStatus.textContent = "";
   });
 
-  const sosPendingCancel = document.getElementById("sos-pending-cancel");
-  if (sosPendingCancel) {
-    sosPendingCancel.addEventListener("click", () => {
-      // Nessuna conferma nativa qui (a differenza di #sos-send sotto): annullare un SOS già in coda è
-      // un'azione reversibile nel senso che pratica — un nuovo tap su "Invia SOS" lo rimette subito in
-      // coda — mentre il bottone di invio vero innesca un broadcast/una richiesta reale, da proteggere
-      // con window.confirm().
-      window.AraldSosQueue.clearPendingSos();
-      renderPendingSosUi();
-      showToast("SOS in coda annullato", "x");
-    });
-  }
+  document.getElementById("emergency-back").addEventListener("click", () => {
+    // Nasconde la schermata SENZA concludere l'emergenza (nessun azzeramento di stato) — un tap
+    // successivo su #sos-button la riapre, e il punto rosso su #sos-button resta visibile come
+    // promemoria (renderSosButtonBadge(), già invariato da questa azione).
+    document.getElementById("emergency-screen").hidden = true;
+  });
+
+  document.getElementById("emergency-conclude").addEventListener("click", () => {
+    const active = window.AraldEmergencyState.loadActiveEmergency();
+    const stillQueued = !active || active.status !== "sent";
+    // Conferma nativa solo quando c'è qualcosa di reale da perdere: annullare un SOS ancora in coda è
+    // un'azione reversibile in pratica (un nuovo tap su "Invia SOS" lo rimette subito in corsa), mentre
+    // concludere un'emergenza già trasmessa è la dichiarazione "sono al sicuro/non serve più aiuto" —
+    // stesso principio già applicato a #sos-send sotto per l'invio vero.
+    const confirmText = stillQueued
+      ? "Annullare la richiesta di soccorso ancora in coda?"
+      : "Confermi di voler concludere l'emergenza? Questo dispositivo non mostrerà più lo stato dell'SOS.";
+    if (!window.confirm(confirmText)) return;
+
+    window.AraldSosQueue.clearPendingSos();
+    window.AraldEmergencyState.clearActiveEmergency();
+    renderSosButtonBadge();
+    document.getElementById("emergency-screen").hidden = true;
+    showToast(stillQueued ? "SOS in coda annullato" : "Emergenza conclusa", "x");
+  });
 
   sosSend.addEventListener("click", async () => {
-    // Unica conferma nativa — previene un tap accidentale senza aggiungere passi in un'emergenza
-    // reale (nessun modulo di conferma custom esiste già in mobile/www/ da riusare, stesso ragionamento
-    // già applicato a hub-control.js per Ferma/Riavvia).
+    // Unica conferma nativa per l'invio vero — previene un tap accidentale senza aggiungere passi in
+    // un'emergenza reale (nessun modulo di conferma custom esiste già in mobile/www/ da riusare, stesso
+    // ragionamento già applicato a hub-control.js per Ferma/Riavvia).
     if (!window.confirm("Inviare una richiesta di soccorso (SOS)?")) return;
 
     sosSend.disabled = true;
-    sosStatus.classList.remove("error");
-    sosStatus.textContent = "Invio SOS in corso...";
     try {
       // Best-effort: una posizione nota rende il SOS più utile, ma la sua assenza (permesso negato,
       // GPS non disponibile) non deve mai bloccare l'invio — stesso principio già applicato altrove
@@ -966,41 +1084,76 @@ if (sosButton) {
         // nessuna posizione — il SOS parte comunque
       }
       const message = sosMessage.value.trim() || undefined;
+
+      // Emergency State Screen (docs/ux-ui-design-system.md §8, "Dopo l'attivazione SOS non lasciare
+      // l'utente sulla normale home"): attiva l'emergenza e mostra la schermata dedicata SUBITO, prima
+      // ancora di far correre i canali — stesso principio "persisti prima di far correre i canali" già
+      // usato da sendSos()/savePendingSos(): un refresh/crash a metà tentativo non deve mai far perdere
+      // la schermata di emergenza.
+      window.AraldEmergencyState.saveActiveEmergency({ activatedAt: Date.now(), message, lat, lon, status: "queued" });
+      sosPanel.hidden = true;
+      sosStatus.classList.remove("error");
+      sosStatus.textContent = "";
+      sosMessage.value = "";
+      renderSosButtonBadge();
+      openEmergencyScreen(); // qui SÌ forzare l'apertura: è il momento esatto dell'attivazione (docs/ux-ui-design-system.md §8)
+
       // L'esito di sendSos() distingue onestamente "consegnato ORA da un canale" da "già consegnato e
       // segnalato da un altro canale mentre questo era ancora in attesa" da "rimasto in coda, un canale
       // qualsiasi lo trasmetterà da solo appena disponibile" (coda SOS persistente su ogni canale
       // possibile, docs/next-steps.md voci #106/#107) — mai "consegnato" in senso di conferma end-to-end
-      // reale in nessuno dei tre casi, vedi recordActivity()'s own doc comment (app.js) per perché
-      // "sent"/"queued" restano le affermazioni oneste più forti possibili qui.
+      // reale in nessuno dei tre casi, vedi recordActivity()'s own doc comment (app.js). Nei casi
+      // "sent"/"claimed-elsewhere" lo stato persistito/l'interfaccia sono già stati aggiornati da
+      // markEmergencySent() (chiamata dentro sendSos() stessa, o dal canale indipendente che ha vinto
+      // per davvero) — qui basta un refresh (mai una riapertura forzata: nel brevissimo intervallo di
+      // questo await l'utente potrebbe già aver toccato "Torna alla rete", e quella scelta va rispettata
+      // anche qui) della schermata per riflettere quell'esito.
       const outcome = await sendSos({ message, lat, lon });
-      sosMessage.value = "";
-      renderPendingSosUi();
       if (outcome === "queued") {
         recordActivity("sos", undefined, "queued");
-        sosStatus.textContent = "Nessun canale disponibile ora — l'SOS resta in attesa, verrà trasmesso automaticamente appena un gateway o un dispositivo Bluetooth saranno raggiungibili.";
         vibrate([30, 50, 30, 50, 30]);
         showToast("SOS in coda", "alert-circle");
-        // Il pannello resta aperto per mostrare lo stato appena scritto in #sos-status invece di
-        // nasconderlo subito — a differenza dei due rami sotto, qui l'operatore potrebbe voler sapere
-        // di più (es. riprovare dopo aver avvicinato il telefono a un altro dispositivo).
-      } else if (outcome === "claimed-elsewhere") {
-        // Un altro canale (es. un peer Bluetooth appena incrociato, o un ritentativo gateway periodico)
-        // ha già consegnato e segnalato questo stesso SOS — attività/toast/vibrazione già mostrati da
-        // quel percorso, qui si aggiorna solo il testo locale del pannello, senza ripetere la notifica.
-        sosStatus.textContent = "SOS inviato.";
-        sosPanel.hidden = true;
-      } else {
-        recordActivity("sos", undefined, "sent");
-        sosStatus.textContent = "SOS inviato.";
-        vibrate([30, 50, 30, 50, 30]);
-        showToast("SOS inviato", "alert-circle");
-        sosPanel.hidden = true;
       }
+      renderEmergencyScreen();
     } catch (err) {
-      sosStatus.classList.add("error");
-      sosStatus.textContent = "Errore: " + err.message;
+      // Due casi distinti, trovati dalla revisione — il primo tentativo di questo codice li confondeva:
+      const activeNow = typeof window.AraldEmergencyState !== "undefined" ? window.AraldEmergencyState.loadActiveEmergency() : null;
+      if (activeNow && activeNow.status === "sent") {
+        // Un canale ha avuto successo per davvero PRIMA dell'eccezione (`markEmergencySent()` l'ha
+        // già persistito, registrato in attività e segnalato con toast/vibrazione) — l'errore è
+        // scoppiato DOPO, tipicamente un problema di rendering, mai di trasmissione. Non si dice mai
+        // all'utente che l'SOS non è partito quando invece sì: ci si limita ad aggiornare la
+        // schermata già corretta, senza toccare lo stato persistito.
+        renderEmergencyScreen();
+      } else {
+        // Percorso genuinamente raro (es. storage bloccato mentre si genera/persiste l'identità
+        // Ed25519): nessun canale ha mai potuto correre per davvero. L'emergenza resta "queued" (MAI
+        // azzerata: l'utente ha comunque toccato "Invia SOS", il segnale resta valido anche se questo
+        // tentativo è fallito) — l'errore si mostra direttamente su #emergency-screen, già visibile a
+        // questo punto (#sos-panel non è più raggiungibile da #sos-button mentre un'emergenza resta
+        // attiva, quindi riportare l'utente lì sarebbe un vicolo cieco).
+        // renderEmergencyScreen() PRIMA (ri-nasconde anche un errore precedente, vedi il suo stesso
+        // commento) — l'errore di QUESTO tentativo si mostra dopo, altrimenti verrebbe nascosto nello
+        // stesso istante in cui viene scritto.
+        renderEmergencyScreen();
+        const errorEl = document.getElementById("emergency-error");
+        if (errorEl) {
+          errorEl.textContent = "Errore: " + err.message + " — puoi annullare e riprovare.";
+          errorEl.hidden = false;
+        }
+      }
     } finally {
       sosSend.disabled = false;
     }
   });
 }
+
+// Mostrare automaticamente un'emergenza persistita non ancora conclusa al caricamento della pagina
+// (docs/ux-ui-design-system.md §8) NON avviene qui: un controllo sincrono a questo punto del file
+// troverebbe `window.AraldEmergencyState` non ancora pronto in modo inaffidabile (un modulo ES è
+// deferred rispetto a questo script classico, quindi potrebbe non aver ancora girato — confermato con
+// Playwright scrivendo questa stessa voce: un primo tentativo con il controllo proprio qui falliva
+// silenziosamente a ogni apertura "a freddo" della pagina, non solo in teoria). Vedi invece il piccolo
+// `<script type="module">` in fondo a index.html, DOPO questo stesso script: un modulo, anche inline,
+// è sempre eseguito dopo ogni script classico della pagina E dopo ogni altro modulo precedente nel
+// documento (emergency-state.js incluso) — la sola garanzia reale che entrambe le dipendenze esistano.
