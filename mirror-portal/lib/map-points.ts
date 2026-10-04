@@ -2,14 +2,16 @@ import type { MirrorSnapshot } from "./db";
 import { asFiniteNumber, beaconMessage, dropKind, formatDateTime, relayOnline, relayType } from "./format";
 
 /**
- * Pure logic behind the Mappa screen (docs/security.md voce #75) — kept separate from
- * `app/mappa/page.tsx` for the exact reason `lib/format.ts`'s own doc comment already gives for
- * itself: so it can be unit tested without a live Postgres connection or a React/Next.js render.
- * Pulled out specifically after `toMapPoints()` living inline in `page.tsx` turned out to be
- * untestable from this repo's root vitest suite — that file also imports `next/navigation` and the
- * `@/auth` path alias (only resolvable inside Next.js's own build, not a plain Vite/vitest run), so
- * any test trying to import a function out of it failed to load the whole module graph. This file
- * imports only `./db` (types) and `./format` (already-pure helpers), nothing Next.js-specific.
+ * Pure logic behind the Mappa screen (docs/security.md voce #75) — kept separate from the page that
+ * renders it (`app/page.tsx` since the map-centric restructuring, docs/security.md voce #116; was
+ * `app/mappa/page.tsx` before that move) for the exact reason `lib/format.ts`'s own doc comment
+ * already gives for itself: so it can be unit tested without a live Postgres connection or a
+ * React/Next.js render. Pulled out specifically after `toMapPoints()` living inline in `page.tsx`
+ * turned out to be untestable from this repo's root vitest suite — that file also imports
+ * `next/navigation` and the `@/auth` path alias (only resolvable inside Next.js's own build, not a
+ * plain Vite/vitest run), so any test trying to import a function out of it failed to load the whole
+ * module graph. This file imports only `./db` (types) and `./format` (already-pure helpers), nothing
+ * Next.js-specific.
  */
 
 export interface MapPoint {

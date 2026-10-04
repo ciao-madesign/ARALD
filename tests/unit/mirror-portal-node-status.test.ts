@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAttentionFeed, summarizeFleet, type NodeFleetStatus } from "../../mirror-portal/lib/node-status.js";
+import { attentionItemText, buildAttentionFeed, summarizeFleet, type AttentionItem, type NodeFleetStatus } from "../../mirror-portal/lib/node-status.js";
 import type { BeaconRow, DestinationRow, DropRow, NodeStatusRow, RelayRow } from "../../mirror-portal/lib/db.js";
 
 /**
@@ -273,5 +273,30 @@ describe("mirror-portal lib/node-status buildAttentionFeed", () => {
     ];
     const feed = buildAttentionFeed(fleet);
     expect(feed.map((i) => i.nodeDisplayName)).toEqual(["Rifugio Nord", "Rifugio Sud"]);
+  });
+});
+
+/**
+ * `attentionItemText()` (docs/security.md voce #116, Mirror Portal map-centrica) — estratta da
+ * code-review --level high perché la stessa formattazione era scritta due volte identiche in
+ * app/elenco/page.tsx e app/mappa/MapClient.tsx's AttentionBar. Una sola stringa semplice, nessuna
+ * formattazione JSX: entrambi i rami usano solo concatenazione di testo.
+ */
+describe("mirror-portal lib/node-status attentionItemText", () => {
+  it("per un'emergenza offline, menziona il nome del Box tra «» senza il testo (vuoto per costruzione)", () => {
+    const item: AttentionItem = { kind: "offline", nodeDisplayName: "Rifugio Alto", text: "", since: 0 };
+    expect(attentionItemText(item)).toBe("Box «Rifugio Alto» non raggiungibile");
+  });
+
+  it("per sos/emergency/hazard, antepone il nome del nodo al testo dell'avviso con una lineetta", () => {
+    const item: AttentionItem = { kind: "sos", nodeDisplayName: "Rifugio Valle", text: "Serve aiuto", since: 0 };
+    expect(attentionItemText(item)).toBe("Rifugio Valle — Serve aiuto");
+  });
+
+  it("usa lo stesso formato per emergency e hazard quanto per sos", () => {
+    const emergency: AttentionItem = { kind: "emergency", nodeDisplayName: "N", text: "valanga", since: 0 };
+    const hazard: AttentionItem = { kind: "hazard", nodeDisplayName: "N", text: "frana", since: 0 };
+    expect(attentionItemText(emergency)).toBe("N — valanga");
+    expect(attentionItemText(hazard)).toBe("N — frana");
   });
 });

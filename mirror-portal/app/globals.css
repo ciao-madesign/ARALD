@@ -943,9 +943,55 @@ h2 {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
+/* Barra di attenzione compatta sopra la mappa (docs/ux-ui-design-system.md §9, "priorità 3: stato dei
+   nodi") — una sola riga per costruzione (MapClient.tsx's AttentionBar), mai una lista che cresce;
+   .map-container sotto non ha comunque bisogno di conoscerne l'altezza esatta, vedi .map-screen. */
+.map-attention-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 28px;
+  background: var(--sos-soft);
+  border-bottom: 1px solid var(--sos);
+}
+.sos-badge-sm {
+  width: 22px;
+  height: 22px;
+}
+.map-attention-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--sos-dark);
+  font-size: 13px;
+}
+.map-attention-link {
+  flex: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sos-dark);
+}
+
+/* .map-screen (MapClient.tsx) — colonna flex alta quanto lo spazio sotto header+nav (114px,
+   misurato dal vivo: 68.84px + 44.84px — le due sole barre di altezza realisticamente fissa su
+   questa pagina, PortalHeader, mai toccata da questa schermata). notice/partialErrors/AttentionBar
+   restano nel flusso normale con la loro altezza naturale, qualunque essa sia, e .map-container
+   (flex: 1 1 auto) sotto riceve sempre esattamente lo spazio che resta — mai un calcolo con
+   sottrazioni multiple da tenere sincronizzate a mano con ogni banner che può comparire sopra di lei
+   (bug reale trovato da code-review --level high: una versione precedente sottraeva solo l'altezza
+   dell'AttentionBar, ignorando il banner `partialErrors` quando comparivano insieme, rischiando di
+   spingere la mappa sotto il fold su uno schermo stretto). */
+.map-screen {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 114px); /* header.top + nav.tabs misurati dal vivo (68.84 + 44.84px), arrotondato per eccesso */
+}
+
 .map-container {
   position: relative;
-  height: calc(100vh - 170px);
+  flex: 1 1 auto;
   min-height: 420px;
   border-top: 1px solid var(--border);
 }

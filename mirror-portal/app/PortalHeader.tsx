@@ -15,6 +15,12 @@ interface PortalHeaderProps {
  * the identical bar, rather than duplicating the markup a second time. Login and Admin keep their own
  * simpler headers, unchanged — this component was never designed for them (no design canvas mockup
  * covers those two screens), so out of scope here rather than force-fitting it.
+ *
+ * Href scambiati (4 ottobre 2026, docs/security.md voce #116, Mirror Portal map-centrica —
+ * docs/ux-ui-design-system.md §9): `/` è ora la Mappa (prima "Elenco"), `/elenco` è la tabella
+ * dettagliata (prima "/"). `active`/i nomi dei due valori restano "elenco"/"mappa" senza cambiarli —
+ * sono etichette logiche interne a questo componente, mai esposte nell'URL o altrove; ridenominarle
+ * non avrebbe aggiunto nulla, solo un diff più grande senza beneficio.
  */
 export function PortalHeader({ userEmail, roleLabel, active, isAdmin }: PortalHeaderProps): JSX.Element {
   return (
@@ -43,11 +49,11 @@ export function PortalHeader({ userEmail, roleLabel, active, isAdmin }: PortalHe
       </header>
       <nav className="tabs">
         <div className="tabs-inner">
-          <a href="/" className={active === "elenco" ? "tab active" : "tab"} aria-current={active === "elenco" ? "page" : undefined}>
-            Elenco
-          </a>
-          <a href="/mappa" className={active === "mappa" ? "tab active" : "tab"} aria-current={active === "mappa" ? "page" : undefined}>
+          <a href="/" className={active === "mappa" ? "tab active" : "tab"} aria-current={active === "mappa" ? "page" : undefined}>
             Mappa
+          </a>
+          <a href="/elenco" className={active === "elenco" ? "tab active" : "tab"} aria-current={active === "elenco" ? "page" : undefined}>
+            Elenco
           </a>
           {isAdmin && (
             <a href="/admin" className="tab" style={{ marginLeft: "auto" }}>

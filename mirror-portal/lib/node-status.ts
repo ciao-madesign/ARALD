@@ -204,3 +204,17 @@ export function buildAttentionFeed(fleet: NodeFleetStatus[]): AttentionItem[] {
   // severity, most recent first — matches how `alerts` is already ordered per node above.
   return items.sort((a, b) => ATTENTION_SEVERITY_RANK[a.kind] - ATTENTION_SEVERITY_RANK[b.kind] || b.since - a.since);
 }
+
+/**
+ * Una sola riga di testo per un `AttentionItem` ("Box «X» non raggiungibile" per offline,
+ * "X — testo" per sos/emergency/hazard) — estratta qui (trovato da code-review --level high, voce
+ * #116 Mirror Portal map-centrica) perché prima questa stessa logica era scritta due volte
+ * identiche, in `app/elenco/page.tsx` (la lista completa) e in `app/mappa/MapClient.tsx`'s
+ * `AttentionBar` (la riga compatta sopra la mappa): una correzione di formulazione fatta su una sola
+ * copia avrebbe lasciato le due presentazioni dello stesso feed silenziosamente diverse. Restituisce
+ * una stringa semplice, non JSX: nessuna delle due formattazioni usa elementi annidati, solo
+ * concatenazione di testo.
+ */
+export function attentionItemText(item: AttentionItem): string {
+  return item.kind === "offline" ? `Box «${item.nodeDisplayName}» non raggiungibile` : `${item.nodeDisplayName} — ${item.text}`;
+}
