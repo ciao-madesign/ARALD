@@ -472,6 +472,15 @@ function linkAirtimeCost(link: LinkState, p: ModelParams): number {
   return (8 * p.loraFrameBytes) / bps;
 }
 
+/**
+ * Comportamento della coda dei relay (`PendingDeliveryQueue`, node/src/store-and-forward.ts)
+ * da passare a `SimOptions.relayCarryTtlS`. Attuale (dal 5 ottobre 2026, docs/security.md
+ * voce #120): `Priority.EMERGENCY` non scade mai, il resto dopo 5 minuti.
+ */
+export const ARALD_QUEUE_TTL_S = (priority: number): number => (priority === 0 ? Infinity : 300);
+/** Comportamento precedente alla voce #120 (SOS scartato dopo 30 minuti), tenuto per confronto e per i test storici. */
+export const LEGACY_QUEUE_TTL_S = (priority: number): number => (priority === 0 ? 1800 : 300);
+
 /** Dijkstra multi-sorgente (grafo piccolo: selezione lineare del minimo è sufficiente). */
 function dijkstra(adj: Map<string, { nb: string; link: LinkState }[]>, from: string[], cost: (l: LinkState) => number): Map<string, number> {
   const dist = new Map<string, number>(from.map((r) => [r, 0]));

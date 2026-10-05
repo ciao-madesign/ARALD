@@ -12,7 +12,7 @@
 import { readFileSync } from "node:fs";
 import {
   BUDGET_SHORT_RANGE, DEFAULT_PHY, DEFAULT_SHORT_RANGE, EU868_G1, EU868_G3, SPREADING_FACTORS, type ModelParams, type RegulatoryProfile,
-  type SpreadingFactor, destinationsOf, nodePosition, loraDutyLimitedAppBps, loraRawAppBps, loraTimeOnAir, loraLink, simulate,
+  type SpreadingFactor, ARALD_QUEUE_TTL_S, destinationsOf, nodePosition, loraDutyLimitedAppBps, loraRawAppBps, loraTimeOnAir, loraLink, simulate,
 } from "./model.js";
 import type { Scenario } from "./scenario.js";
 import { valleMaira } from "./valle-maira.js";
@@ -148,7 +148,7 @@ const columns = msgs.flatMap((m) => {
 const [connSrc, connDst] = scenario.connectivityPair;
 const H = 3600;
 const carryModels: [string, ((prio: number) => number) | undefined][] = [
-  ["ARALD attuale — coda relay 30 min SOS / 5 min resto", (prio) => (prio === 0 ? 0.5 * H : 300)],
+  ["ARALD attuale — coda relay: SOS senza scadenza / resto 5 min", ARALD_QUEUE_TTL_S],
   ["DTN — il relay trattiene la copia fino alla consegna", undefined],
 ];
 function resultsTable(title: string, reg: RegulatoryProfile, carry: ((prio: number) => number) | undefined, routingMetric: "hops" | "airtime") {

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { assessLink, coverageGrid, qualityFromRate, qualityLabel } from "../../tools/scenario-model/assess.js";
 import * as S3 from "../../tools/scenario-model/eolie.js";
 import {
-  BUDGET_SHORT_RANGE, DEFAULT_PHY, EU868_G1, EU868_G3, type Environment, type ModelParams, type NodeSpec,
+  ARALD_QUEUE_TTL_S, BUDGET_SHORT_RANGE, DEFAULT_PHY, LEGACY_QUEUE_TTL_S, EU868_G1, EU868_G3, type Environment, type ModelParams, type NodeSpec,
   evaluateBle, evaluateLora, nodePosition, positionAt, simulate,
 } from "../../tools/scenario-model/model.js";
 import { TERRAIN_ENVIRONMENTS, assessNetwork, parseNetworkConfig, placeDevices } from "../../tools/scenario-model/network-config.js";
@@ -198,7 +198,6 @@ describe("network-config: configurazione salvabile", () => {
 });
 
 describe("Scenario 3 (Eolie)", () => {
-  const ttl = (prio: number) => (prio === 0 ? 0.5 * H : 300);
   const run = (variant: S3.Variant, extra: Partial<Parameters<typeof simulate>[0]> = {}) =>
     simulate({
       nodes: S3.buildNodes(variant), messages: S3.benchmarkMessages(),
@@ -211,13 +210,16 @@ describe("Scenario 3 (Eolie)", () => {
     expect(f1.deliveredAtByDest.BOX).toBeNull();
   });
 
-  it("aliscafo come data mule: SOS al Box solo con coda DTN; con la coda attuale scade prima del rientro", () => {
-    expect(run("hydrofoil", { relayCarryTtlS: ttl }).deliveredAtByDest.BOX).toBeNull();
-    expect(run("hydrofoil").deliveredAtByDest.BOX).not.toBeNull();
+  it("aliscafo come data mule: con la coda precedente l'SOS scadeva prima del rientro, con quella attuale arriva", () => {
+    expect(run("hydrofoil", { relayCarryTtlS: LEGACY_QUEUE_TTL_S }).deliveredAtByDest.BOX).toBeNull();
+    expect(run("hydrofoil", { relayCarryTtlS: ARALD_QUEUE_TTL_S }).deliveredAtByDest.BOX).not.toBeNull();
   });
 
-  it("con il Fixed Relay su Panarea l'aliscafo rientra in copertura prima: l'SOS arriva anche con la coda attuale", () => {
-    expect(run("relay-hydrofoil", { relayCarryTtlS: ttl }).deliveredAtByDest.BOX).not.toBeNull();
+  it("il Fixed Relay su Panarea accorcia l'attesa del mulo: l'SOS arriva prima", () => {
+    const withRelay = run("relay-hydrofoil", { relayCarryTtlS: ARALD_QUEUE_TTL_S }).deliveredAtByDest.BOX!;
+    const without = run("hydrofoil", { relayCarryTtlS: ARALD_QUEUE_TTL_S }).deliveredAtByDest.BOX!;
+    expect(withRelay).toBeLessThan(without);
+    expect(run("relay-hydrofoil", { relayCarryTtlS: LEGACY_QUEUE_TTL_S }).deliveredAtByDest.BOX).not.toBeNull();
   });
 
   it("lungo una traiettoria in salita la quota segue il terreno, non la retta tra i waypoint (regressione)", () => {

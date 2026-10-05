@@ -2,7 +2,7 @@
 
 **Stato**: Scenario 1 (alta Valle Maira), Scenario 2 (alpino frammentato, due valli separate da una cresta) e Scenario 3 (Isole Eolie, primo costruito nel formato del futuro tool) completati. Scenari successivi (Atacama, Kampala, …) da aggiungere come nuovi file di scenario sullo stesso motore.
 
-**Aggiornamento sul comportamento della coda (5 ottobre 2026)**: dopo che questi tre scenari sono stati calcolati, `PendingDeliveryQueue` è stata corretta (`docs/security.md` voce #120). I pacchetti `Priority.EMERGENCY` non scadono più; gli altri mantengono il TTL di 5 minuti. Le tabelle etichettate "ARALD attuale — coda relay 30 min SOS / 5 min resto" descrivono quindi il comportamento **precedente** alla correzione. Il problema che avevano messo in luce, l'SOS perso dal data mule, è proprio quello che la correzione risolve. Per l'SOS il nuovo comportamento corrisponde a quello della coda DTN; per gli altri file resta il TTL di 5 minuti. Le tabelle vanno rigenerate con il nuovo modello della coda: non ancora fatto.
+**Aggiornamento sul comportamento della coda (5 ottobre 2026)**: dopo che questi tre scenari sono stati calcolati, `PendingDeliveryQueue` è stata corretta (`docs/security.md` voce #120). I pacchetti `Priority.EMERGENCY` non scadono più; gli altri mantengono il TTL di 5 minuti. Le tabelle "ARALD attuale" sono state **rigenerate** con il comportamento corretto (`ARALD_QUEUE_TTL_S` in `model.ts`); quello precedente resta disponibile come `LEGACY_QUEUE_TTL_S`, per confronto e per i test storici. Il problema che la prima versione aveva messo in luce, l'SOS perso dal data mule, è proprio quello che la correzione risolve. I punti "cosa dice il modello" sotto descrivono entrambi i comportamenti dove la differenza conta.
 
 **Obiettivo finale**: questo modello è il motore di un futuro tool interattivo di progettazione di reti ARALD su mappa reale — vedi [`docs/network-design-tool.md`](network-design-tool.md), da rispettare come vincolo di progetto.
 
@@ -90,7 +90,7 @@ Output integrale di `npm run scenario-model` (default: policy `custody`, SF max 
 ### D. Tempi di consegna end-to-end (policy custody, SF max 12, orizzonte 10 h dalla partenza; file generati a 3h15)
 
 
-**ARALD attuale — coda relay 30 min SOS / 5 min resto · profilo radio g1 14 dBm ERP/1%**
+**ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g1 14 dBm ERP/1%**
 
 | Variante | Ambiente | F1 | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
@@ -99,7 +99,7 @@ Output integrale di `npm run scenario-model` (default: policy `custody`, SF max 
 | static | severo | ✗ | ✗ | ✗ | ✗ | ✗ | 13% | 1.6 min |
 | ferry | favorevole | 10 s | 3.7 h | 4.2 h | ✗ (20%) | ✗ | 100% | 11.4 min |
 | ferry | tipico | 30 s | 3.7 h | ✗ (22%) | ✗ (16%) | ✗ | 100% | 22.0 min |
-| ferry | severo | ✗ | ✗ | ✗ | ✗ | ✗ | 13% | 2.3 min |
+| ferry | severo | 3.2 h | ✗ | ✗ | ✗ | ✗ | 13% | 3.7 min |
 | return | favorevole | 10 s | 2.2 h | 2.2 h | 2.2 h | 2.2 h | 100% | 7.7 min |
 | return | tipico | 30 s | 2.2 h | 2.2 h | 2.2 h | 2.2 h | 100% | 10.1 min |
 | return | severo | 1.7 h | 2.2 h | 2.2 h | 2.2 h | 2.2 h | 62% | 5.4 min |
@@ -107,7 +107,7 @@ Output integrale di `npm run scenario-model` (default: policy `custody`, SF max 
 | card-failure | tipico | ✗ | ✗ | ✗ | ✗ | ✗ | 30% | 2.6 min |
 | card-failure | severo | ✗ | ✗ | ✗ | ✗ | ✗ | 13% | 1.6 min |
 
-**ARALD attuale — coda relay 30 min SOS / 5 min resto · profilo radio g3 27 dBm ERP/10%**
+**ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g3 27 dBm ERP/10%**
 
 | Variante | Ambiente | F1 | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
@@ -116,7 +116,7 @@ Output integrale di `npm run scenario-model` (default: policy `custody`, SF max 
 | static | severo | ✗ | ✗ | ✗ | ✗ | ✗ | 15% | 7.6 min |
 | ferry | favorevole | 10 s | 13 min | 19 min | ✗ (54%) | ✗ | 100% | 85.6 min |
 | ferry | tipico | 1.5 min | 2.4 h | 1.6 h | ✗ (31%) | ✗ | 100% | 119.4 min |
-| ferry | severo | ✗ | ✗ | ✗ | ✗ | ✗ | 15% | 8.7 min |
+| ferry | severo | 2.6 h | ✗ | ✗ | ✗ | ✗ | 15% | 10.9 min |
 | return | favorevole | 10 s | 13 min | 19 min | 2.2 h | 2.2 h | 100% | 45.3 min |
 | return | tipico | 1.5 min | 1.8 h | 1.7 h | 2.2 h | 2.2 h | 100% | 67.4 min |
 | return | severo | 1.6 h | 2.0 h | 2.2 h | 2.2 h | 2.2 h | 64% | 25.5 min |
@@ -161,7 +161,7 @@ Output integrale di `npm run scenario-model` (default: policy `custody`, SF max 
 ### E. Stessa simulazione con instradamento a costo "airtime" invece che a numero di salti (coda relay ARALD attuale)
 
 
-**Metrica airtime · ARALD attuale — coda relay 30 min SOS / 5 min resto · profilo radio g1 14 dBm ERP/1%**
+**Metrica airtime · ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g1 14 dBm ERP/1%**
 
 | Variante | Ambiente | F1 | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
@@ -170,7 +170,7 @@ Output integrale di `npm run scenario-model` (default: policy `custody`, SF max 
 | static | severo | ✗ | ✗ | ✗ | ✗ | ✗ | 13% | 1.6 min |
 | ferry | favorevole | 10 s | 3.7 h | 4.2 h | 3.8 h | 4.0 h | 100% | 7.9 min |
 | ferry | tipico | 30 s | 3.7 h | ✗ (46%) | 3.8 h | 4.0 h | 100% | 16.3 min |
-| ferry | severo | ✗ | ✗ | ✗ | ✗ | ✗ | 13% | 2.3 min |
+| ferry | severo | 3.2 h | ✗ | ✗ | ✗ | ✗ | 13% | 3.7 min |
 | return | favorevole | 10 s | 2.2 h | 2.2 h | 2.2 h | 2.2 h | 100% | 7.7 min |
 | return | tipico | 30 s | 2.2 h | 2.2 h | 2.2 h | 2.2 h | 100% | 9.3 min |
 | return | severo | 1.7 h | 2.2 h | 2.2 h | 2.2 h | 2.2 h | 62% | 5.6 min |
@@ -178,7 +178,7 @@ Output integrale di `npm run scenario-model` (default: policy `custody`, SF max 
 | card-failure | tipico | ✗ | ✗ | ✗ | ✗ | ✗ | 30% | 2.6 min |
 | card-failure | severo | ✗ | ✗ | ✗ | ✗ | ✗ | 13% | 1.6 min |
 
-**Metrica airtime · ARALD attuale — coda relay 30 min SOS / 5 min resto · profilo radio g3 27 dBm ERP/10%**
+**Metrica airtime · ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g3 27 dBm ERP/10%**
 
 | Variante | Ambiente | F1 | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
@@ -187,7 +187,7 @@ Output integrale di `npm run scenario-model` (default: policy `custody`, SF max 
 | static | severo | ✗ | ✗ | ✗ | ✗ | ✗ | 15% | 7.6 min |
 | ferry | favorevole | 10 s | 13 min | 19 min | 3.8 h | 4.0 h | 100% | 50.6 min |
 | ferry | tipico | 30 s | 41 min | 59 min | 3.8 h | 4.0 h | 100% | 83.6 min |
-| ferry | severo | ✗ | ✗ | ✗ | ✗ | ✗ | 15% | 8.7 min |
+| ferry | severo | 2.6 h | ✗ | ✗ | ✗ | ✗ | 15% | 10.9 min |
 | return | favorevole | 10 s | 13 min | 19 min | 2.2 h | 2.2 h | 100% | 45.3 min |
 | return | tipico | 30 s | 41 min | 59 min | 2.2 h | 2.2 h | 100% | 65.3 min |
 | return | severo | 1.6 h | 2.0 h | 2.2 h | 2.2 h | 2.2 h | 64% | 25.3 min |
@@ -205,7 +205,10 @@ Con `--horizon-h 30` (quasi 27 h dopo l'evento), nella variante `static` in cond
 2. **I throughput "10-20 kbps" dell'analisi di partenza sono irrealistici in EU868.** Al netto dell'overhead ARALD, LoRa SF7/125 kHz rende ~3,2 kbps *a canale libero*; con il duty-cycle legale si scende a **~32 bps (1%) o ~320 bps (10%)** sostenuti per nodo. Di conseguenza 12 MB via LoRa richiedono **giorni o settimane** (3,6 giorni nel caso migliore SF7/10% su un solo hop, ~37 giorni all'1%), non 1-22 ore. Anche 70-150 KB (Wiki, audio) arrivano in minuti/decine di minuti solo in g3 (10%); in g1 (1%) richiedono ore.
 3. **Per i file grandi l'unico canale che conta è fisico: la persona che porta il telefono vicino al Box.** Nella variante `return` tutti i file arrivano in ~2,2 h (= tempo di cammino + qualche secondo di Wi-Fi), in qualunque condizione radio. La rete "Wi-Fi/BLE locale + mobilità" batte LoRa di 2-3 ordini di grandezza per F3/F4. Conferma la conclusione architetturale di partenza (LoRa = controllo e piccoli dati; mobilità = estensione temporale), ma con un divario molto più netto.
 4. **La scelta della sotto-banda conta molto per i dati medi, poco per l'SOS**: passare da g1 (1%) a g3 (10%) porta F5 (150 KB) da "non arriva in 6h45" a 13 min in condizioni favorevoli; in tipico a 41 min, ma solo con la metrica `airtime` (punto 8). Il guadagno viene **soprattutto dal duty-cycle**, non dalla potenza: con l'SX1262 a +22 dBm il Box guadagna ~9 dB di EIRP passando a g3, ma una Card con antenna −3 dBi solo ~3 dB, quindi i link Card–Card cambiano poco. In tipico l'unico link aggiuntivo è Box–C4, che però chiude solo a SF11 (lento: vedi punto 8).
-5. **Il "data mule" oggi non funziona davvero nel codice ARALD.** Nella variante `ferry` in condizioni severe (unico caso in cui il mulo è l'unico ponte), con la coda attuale di `PendingDeliveryQueue` (30 min EMERGENCY, 5 min resto) **anche l'SOS va perso**: il mulo resta isolato ~2 h tra il contatto con C5 e il rientro, e la copia scade prima. Con una coda in stile DTN lo stesso mulo consegna l'SOS in ~3,4 h (g1) / ~2,7 h (g3) e i file grandi in ~3,7 h (via Wi-Fi al rientro). Questo è il risultato più concreto per il codice: il TTL di 30 min per gli SOS dichiarato per il "courier" è più corto di un tipico attraversamento a piedi di un gap alpino.
+5. **Il "data mule" ora porta l'SOS, ma non ancora i dati.** Nella variante `ferry` in condizioni severe, il mulo è l'unico ponte e resta isolato ~2 h tra il contatto con C5 e il rientro.
+   - Prima della correzione della coda (`docs/security.md` voce #120) **anche l'SOS andava perso**: il TTL di 30 minuti per `Priority.EMERGENCY` era più corto dell'attraversamento a piedi del gap. Questo risultato ha motivato la correzione.
+   - Con la coda corretta l'SOS arriva in 3,2 h (g1) / 2,6 h (g3).
+   - Rapporto e foto scadono ancora dopo 5 minuti di isolamento e si perdono. Con una coda in stile DTN arriverebbero in ~3,7 h, via Wi-Fi al rientro.
 6. **Robustezza: la catena di Card è fragile.** In condizioni tipiche la sola Card C4 al rifugio è punto singolo di guasto: spenta lei, C5 resta isolata (connettività istantanea C5→Box dal 100% al 30%, solo prima delle 3h) e nulla viene consegnato. In condizioni severe la rete fissa non raggiunge mai C5 (connettività 13-15%, solo nella fase di salita) e serve sempre la mobilità.
 7. **Connettività istantanea ≠ capacità.** In condizioni tipiche C5→Box è connessa il 100% del tempo, eppure F5 (150 KB) arriva solo al 40% in 6h45 in g1 (1%): il collo di bottiglia è l'airtime legale, non la topologia.
 8. **L'instradamento a numero di salti spreca airtime.** `routing-table.ts` sceglie il percorso con meno salti; quando esiste un link diretto lento (es. Box–C4 a SF11 in g3) lo preferisce a due o tre salti a SF7, anche se costa ~10-20 volte più tempo di trasmissione. In g3 tipico, passando alla metrica `airtime` (sezione E), F5 scende da 13,4 h a 41 min e la Wiki da 5,9 h a 59 min. In g1 i dati medi cambiano poco (i link lenti lì quasi non chiudono), ma nella variante `ferry` rapporto e foto (F4/F3), in condizioni tipiche, passano da non consegnati (in g1 16% e 0%, in g3 31% e 0%) a 3,8 h / 4,0 h: quando il mulo è accanto a C5 il percorso a costo minimo preferisce il BLE verso di lui al LoRa lento, e i file arrivano col mulo al Campo Base.
@@ -258,7 +261,7 @@ Output di `npm run scenario-model -- --scenario alpino-frammentato` (stessi para
 ### D. Tempi di consegna end-to-end (policy custody, SF max 12, orizzonte 10 h dalla partenza; file generati a 4h)
 
 
-**ARALD attuale — coda relay 30 min SOS / 5 min resto · profilo radio g1 14 dBm ERP/1%**
+**ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g1 14 dBm ERP/1%**
 
 | Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -272,8 +275,8 @@ Output di `npm run scenario-model -- --scenario alpino-frammentato` (stessi para
 | fixed-relay | tipico | 10 s | 30 s | ✗ (11%) | ✗ (14%) | ✗ | ✗ | 100% | 12.6 min |
 | fixed-relay | severo | — | — | ✗ | ✗ | ✗ | ✗ | 10% | 0.0 min |
 | crossing | favorevole | 10 s | 40 s | 4.0 h | ✗ (6%) | 4.1 h | 4.2 h | 100% | 10.0 min |
-| crossing | tipico | 10 s | — | ✗ | ✗ (1%) | ✗ | ✗ | 33% | 4.7 min |
-| crossing | severo | 29 min | — | ✗ | ✗ | ✗ | ✗ | 10% | 1.7 min |
+| crossing | tipico | 10 s | 2.5 h | ✗ | ✗ | ✗ | ✗ | 33% | 4.8 min |
+| crossing | severo | 29 min | 3.6 h | ✗ | ✗ | ✗ | ✗ | 10% | 2.8 min |
 | storm | favorevole | 10 s | 30 s | ✗ (38%) | ✗ (62%) | ✗ | ✗ | 100% | 12.5 min |
 | storm | tipico | 40 s | 3.0 h | ✗ | ✗ | ✗ | ✗ | 70% | 1.9 min |
 | storm | severo | — | — | ✗ | ✗ | ✗ | ✗ | 10% | 0.0 min |
@@ -281,7 +284,7 @@ Output di `npm run scenario-model -- --scenario alpino-frammentato` (stessi para
 | box-failure | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 39% | 0.0 min |
 | box-failure | severo | — | — | ✗ | ✗ | ✗ | ✗ | 10% | 0.0 min |
 
-**ARALD attuale — coda relay 30 min SOS / 5 min resto · profilo radio g3 27 dBm ERP/10%**
+**ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g3 27 dBm ERP/10%**
 
 | Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -295,8 +298,8 @@ Output di `npm run scenario-model -- --scenario alpino-frammentato` (stessi para
 | fixed-relay | tipico | 10 s | 30 s | 26 min | 49 min | ✗ (14%) | ✗ | 100% | 85.8 min |
 | fixed-relay | severo | 40 s | — | ✗ | ✗ | ✗ | ✗ | 34% | 5.7 min |
 | crossing | favorevole | 10 s | 20 s | 46 min | 28 min | 4.0 h | 4.2 h | 100% | 61.9 min |
-| crossing | tipico | 10 s | — | ✗ | ✗ (17%) | ✗ | ✗ | 33% | 19.2 min |
-| crossing | severo | 40 s | — | ✗ | ✗ | ✗ | ✗ | 24% | 13.1 min |
+| crossing | tipico | 10 s | 2.1 h | ✗ | ✗ (16%) | ✗ | ✗ | 33% | 19.3 min |
+| crossing | severo | 40 s | 2.5 h | ✗ | ✗ | ✗ | ✗ | 24% | 14.2 min |
 | storm | favorevole | 10 s | 1.5 min | 3.5 h | 46 min | ✗ (9%) | ✗ | 100% | 84.9 min |
 | storm | tipico | 10 s | 50 s | 3.8 h | 4.1 h | ✗ (5%) | ✗ | 100% | 92.4 min |
 | storm | severo | 3.0 h | — | ✗ | ✗ | ✗ | ✗ | 34% | 3.3 min |
@@ -353,7 +356,7 @@ Output di `npm run scenario-model -- --scenario alpino-frammentato` (stessi para
 ### E. Stessa simulazione con instradamento a costo "airtime" invece che a numero di salti (coda relay ARALD attuale)
 
 
-**Metrica airtime · ARALD attuale — coda relay 30 min SOS / 5 min resto · profilo radio g1 14 dBm ERP/1%**
+**Metrica airtime · ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g1 14 dBm ERP/1%**
 
 | Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -367,8 +370,8 @@ Output di `npm run scenario-model -- --scenario alpino-frammentato` (stessi para
 | fixed-relay | tipico | 10 s | 30 s | ✗ (36%) | ✗ | ✗ | ✗ | 100% | 16.8 min |
 | fixed-relay | severo | — | — | ✗ | ✗ | ✗ | ✗ | 10% | 0.0 min |
 | crossing | favorevole | 10 s | 50 s | 4.0 h | ✗ (22%) | 4.0 h | 4.2 h | 100% | 13.9 min |
-| crossing | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 33% | 3.8 min |
-| crossing | severo | 29 min | — | ✗ | ✗ | ✗ | ✗ | 10% | 1.7 min |
+| crossing | tipico | 10 s | 2.1 h | ✗ | ✗ | ✗ | ✗ | 33% | 4.1 min |
+| crossing | severo | 29 min | 3.6 h | ✗ | ✗ | ✗ | ✗ | 10% | 2.8 min |
 | storm | favorevole | 10 s | 30 s | ✗ (64%) | ✗ | ✗ | ✗ | 100% | 11.5 min |
 | storm | tipico | 40 s | 3.0 h | ✗ | ✗ | ✗ | ✗ | 70% | 1.9 min |
 | storm | severo | — | — | ✗ | ✗ | ✗ | ✗ | 10% | 0.0 min |
@@ -376,7 +379,7 @@ Output di `npm run scenario-model -- --scenario alpino-frammentato` (stessi para
 | box-failure | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 39% | 0.0 min |
 | box-failure | severo | — | — | ✗ | ✗ | ✗ | ✗ | 10% | 0.0 min |
 
-**Metrica airtime · ARALD attuale — coda relay 30 min SOS / 5 min resto · profilo radio g3 27 dBm ERP/10%**
+**Metrica airtime · ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g3 27 dBm ERP/10%**
 
 | Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -390,8 +393,8 @@ Output di `npm run scenario-model -- --scenario alpino-frammentato` (stessi para
 | fixed-relay | tipico | 10 s | 30 s | 26 min | 49 min | ✗ (14%) | ✗ | 100% | 85.8 min |
 | fixed-relay | severo | 40 s | — | ✗ | ✗ | ✗ | ✗ | 34% | 5.7 min |
 | crossing | favorevole | 10 s | 20 s | 46 min | 28 min | 4.0 h | 4.2 h | 100% | 61.8 min |
-| crossing | tipico | 10 s | — | ✗ | ✗ (55%) | ✗ | ✗ | 33% | 19.3 min |
-| crossing | severo | 40 s | — | ✗ | ✗ | ✗ | ✗ | 24% | 13.1 min |
+| crossing | tipico | 10 s | 2.1 h | ✗ | ✗ (54%) | ✗ | ✗ | 33% | 19.3 min |
+| crossing | severo | 40 s | 2.5 h | ✗ | ✗ | ✗ | ✗ | 24% | 14.2 min |
 | storm | favorevole | 10 s | 30 s | 26 min | 49 min | ✗ (12%) | ✗ | 100% | 70.5 min |
 | storm | tipico | 10 s | 50 s | 3.0 h | 3.5 h | ✗ (7%) | ✗ | 100% | 113.9 min |
 | storm | severo | 3.0 h | — | ✗ | ✗ | ✗ | ✗ | 34% | 3.3 min |
@@ -401,12 +404,16 @@ Output di `npm run scenario-model -- --scenario alpino-frammentato` (stessi para
 
 Legenda D/E: F1 = SOS + coordinate (1 KB) (C5→PORT e BOX); F5 = GPS + audio 10 s (150 KB) (S5→BOX); F2 = Articolo Wiki (200 KB → ~70 KB compresso) (BOX→S5); F4 = Rapporto 5 pag. + 3 JPEG (5 MB) (S5→BOX); F3 = 8 JPEG (12 MB) (S5→BOX). "✗ (x%)" = non consegnato entro l'orizzonte, x% arrivato; "—" = destinazione non raggiunta. "C5→BOX connesso" = frazione del tempo con un percorso simultaneo (connettività istantanea): una consegna avvenuta con questo valore < 100% è passata (anche) per contatti opportunistici. "Airtime LoRa" = tempo di trasmissione LoRa consumato da tutti i file, tutte le copie. Varianti: static = nessun ponte sul colle: tre isole radio (valle A, vallone laterale, valle B); col-card = C3 sale al colle e ci resta: una persona con la Card fa da ponte tra le valli; fixed-relay = ARALD Fixed Relay installato al colle (13° dispositivo), C3 resta all'alpe; crossing = nessun ponte; C4 raggiunge l'infortunato e poi rivalica fino al Box (data mule); storm = come 'fixed-relay', con una perturbazione (+12 dB su ogni link LoRa) dalle 4h alle 7h; box-failure = come 'fixed-relay', ma il Box va offline a 3h54 (prima dell'evento).
 
+
 ## 7. Scenario 2 — cosa dice il modello
 
 1. **La frammentazione è reale e la cresta la decide.** Senza ponte, in condizioni tipiche, la valle B è un'isola: l'SOS raggiunge il Portable in 10 s ma **non raggiunge mai il Box**, con qualunque sotto-banda e coda. C5→Box è connesso solo il 29% del tempo, cioè prima che C5 valichi. In condizioni severe e in g1 nemmeno il Portable, a 2 km nella stessa valle, viene raggiunto; in g3 sì (40 s).
 2. **Un ponte sul colle ricuce la rete per i messaggi.** Con un Fixed Relay l'SOS arriva al Box in 30 s (tipico, entrambe le sotto-bande); con una persona e la sua Card al colle in 2,7 min (g1) / 30 s (g3): il Fixed Relay rende di più grazie all'antenna esterna e all'assenza del corpo. **Ma in condizioni severe nessun ponte funziona**: i link del colle (3,6-4,3 km) non chiudono, e resta solo la mobilità.
 3. **Anche con il ponte, il colle diventa il collo di bottiglia.** Tutto il traffico tra le valli passa da un solo dispositivo, e il suo budget di duty-cycle (36 s/h in g1) è la capacità dell'intero collegamento: in g1 né l'audio (150 KB) né la Wiki arrivano in 6 h. In g3 (tipico) l'audio arriva in 26 min e la Wiki in 49 min.
-4. **Il data mule che rivalica è l'unico modo di portare l'SOS al Box senza ponte, e oggi fallisce come nello Scenario 1.** Con la coda attuale l'SOS verso il Box va perso (tipico e severo). Con una coda DTN arriva in 2,5 h / 3,7 h (g1) e in 2,1 h / 2,5 h (g3), e rapporto e foto arrivano in 4 h via Wi-Fi al rientro: l'unico caso in tutto lo scenario in cui F3/F4 arrivano.
+4. **Il data mule che rivalica è l'unico modo di portare l'SOS al Box senza ponte.**
+   - Con la coda precedente alla correzione l'SOS si perdeva, come nello Scenario 1.
+   - Con la coda corretta arriva in 2,5 h / 3,6 h (g1, tipico / severo) e in 2,1 h / 2,5 h (g3).
+   - Rapporto e foto (F4/F3) arrivano in 4 h via Wi-Fi al rientro **solo con una coda DTN**: l'unico caso in tutto lo scenario. Con la coda attuale scadono dopo 5 minuti.
 5. **Il meteo pesa molto meno in g3.** Con la perturbazione (+12 dB per 3 h) e il Fixed Relay, in tipico l'SOS al Box impiega 3 h in g1 (deve aspettare la fine della perturbazione) e 50 s in g3: i ~9 dB di EIRP in più del Box e del relay valgono come margine contro il maltempo.
 6. **Il guasto del Box non ferma l'SOS, ma ferma tutto il resto.** Con il Box offline l'SOS raggiunge comunque il Portable in 10 s (tipico): avere due infrastrutture in valli diverse dà ridondanza all'emergenza. Ogni altro file però non ha una destinazione alternativa (la Wiki vive solo sul Box, i report sono indirizzati al Box) e resta fermo.
 7. **Metrica airtime: aiuta, ma sposta il problema sul relay.** Con la metrica `airtime` l'audio passa dal 3% al 64% (favorevole, g1) e, con la Card al colle in g3 tipico, da non consegnato (51%) a 1,0 h. Ma con il Fixed Relay in g1 tipico la Wiki scende dal 14% a 0: più audio attraversa il relay del colle, il cui duty-cycle è condiviso tra i due versi e servito per priorità, così la Wiki (meno urgente) resta indietro. Una metrica migliore dovrebbe tenere conto anche del carico (budget residuo del duty-cycle), non solo dell'airtime.
@@ -458,27 +465,27 @@ Output di `npm run scenario-model -- --scenario eolie --horizon-h 6`. Le sezioni
 ### D. Tempi di consegna end-to-end (policy custody, SF max 12, orizzonte 6 h dalla partenza; file generati a 0h30)
 
 
-**ARALD attuale — coda relay 30 min SOS / 5 min resto · profilo radio g1 14 dBm ERP/1%**
+**ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g1 14 dBm ERP/1%**
 
 | Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
 | static | favorevole | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.5 min |
 | static | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.9 min |
 | static | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.3 min |
-| hydrofoil | favorevole | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.9 min |
-| hydrofoil | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 2.3 min |
-| hydrofoil | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.7 min |
+| hydrofoil | favorevole | 10 s | 2.7 h | ✗ | ✗ | ✗ | ✗ | 0% | 4.6 min |
+| hydrofoil | tipico | 10 s | 3.0 h | ✗ | ✗ | ✗ | ✗ | 0% | 3.1 min |
+| hydrofoil | severo | 10 s | 3.2 h | ✗ | ✗ | ✗ | ✗ | 0% | 2.9 min |
 | panarea-relay | favorevole | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 2.6 min |
 | panarea-relay | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 2.2 min |
 | panarea-relay | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.3 min |
 | relay-hydrofoil | favorevole | 10 s | 1.2 h | ✗ | ✗ | ✗ | ✗ | 1% | 3.9 min |
 | relay-hydrofoil | tipico | 10 s | 2.4 h | ✗ | ✗ | ✗ | ✗ | 0% | 4.0 min |
-| relay-hydrofoil | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.7 min |
+| relay-hydrofoil | severo | 10 s | 3.1 h | ✗ | ✗ | ✗ | ✗ | 0% | 3.1 min |
 | box-harbour | favorevole | 10 s | 1.2 h | ✗ | ✗ | ✗ | ✗ | 1% | 3.5 min |
-| box-harbour | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.9 min |
-| box-harbour | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.2 min |
+| box-harbour | tipico | 10 s | 2.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 2.9 min |
+| box-harbour | severo | 10 s | 2.9 h | ✗ | ✗ | ✗ | ✗ | 0% | 2.3 min |
 
-**ARALD attuale — coda relay 30 min SOS / 5 min resto · profilo radio g3 27 dBm ERP/10%**
+**ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g3 27 dBm ERP/10%**
 
 | Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -486,17 +493,17 @@ Output di `npm run scenario-model -- --scenario eolie --horizon-h 6`. Le sezioni
 | static | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 5.7 min |
 | static | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.3 min |
 | hydrofoil | favorevole | 10 s | 1.6 h | ✗ | ✗ | ✗ | ✗ | 1% | 7.1 min |
-| hydrofoil | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 6.4 min |
-| hydrofoil | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 6.8 min |
+| hydrofoil | tipico | 10 s | 2.5 h | ✗ | ✗ | ✗ | ✗ | 0% | 8.9 min |
+| hydrofoil | severo | 10 s | 2.9 h | ✗ | ✗ | ✗ | ✗ | 0% | 8.6 min |
 | panarea-relay | favorevole | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 8.5 min |
 | panarea-relay | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 8.4 min |
 | panarea-relay | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.3 min |
 | relay-hydrofoil | favorevole | 10 s | 1.2 h | ✗ | ✗ | ✗ | ✗ | 6% | 9.8 min |
 | relay-hydrofoil | tipico | 10 s | 1.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 6.9 min |
-| relay-hydrofoil | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 7.9 min |
+| relay-hydrofoil | severo | 10 s | 2.9 h | ✗ | ✗ | ✗ | ✗ | 0% | 8.8 min |
 | box-harbour | favorevole | 10 s | 1.2 h | ✗ | ✗ | ✗ | ✗ | 2% | 6.6 min |
 | box-harbour | tipico | 10 s | 1.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 6.9 min |
-| box-harbour | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.8 min |
+| box-harbour | severo | 10 s | 2.5 h | ✗ | ✗ | ✗ | ✗ | 0% | 5.8 min |
 
 **DTN — il relay trattiene la copia fino alla consegna · profilo radio g1 14 dBm ERP/1%**
 
@@ -541,27 +548,27 @@ Output di `npm run scenario-model -- --scenario eolie --horizon-h 6`. Le sezioni
 ### E. Stessa simulazione con instradamento a costo "airtime" invece che a numero di salti (coda relay ARALD attuale)
 
 
-**Metrica airtime · ARALD attuale — coda relay 30 min SOS / 5 min resto · profilo radio g1 14 dBm ERP/1%**
+**Metrica airtime · ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g1 14 dBm ERP/1%**
 
 | Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
 | static | favorevole | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.5 min |
 | static | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.9 min |
 | static | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.3 min |
-| hydrofoil | favorevole | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.9 min |
-| hydrofoil | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 2.3 min |
-| hydrofoil | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.7 min |
+| hydrofoil | favorevole | 10 s | 2.7 h | ✗ | ✗ | ✗ | ✗ | 0% | 4.7 min |
+| hydrofoil | tipico | 10 s | 3.0 h | ✗ | ✗ | ✗ | ✗ | 0% | 3.1 min |
+| hydrofoil | severo | 10 s | 3.2 h | ✗ | ✗ | ✗ | ✗ | 0% | 2.9 min |
 | panarea-relay | favorevole | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 2.6 min |
 | panarea-relay | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 2.2 min |
 | panarea-relay | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.3 min |
 | relay-hydrofoil | favorevole | 10 s | 1.2 h | ✗ | ✗ | ✗ | ✗ | 1% | 3.9 min |
 | relay-hydrofoil | tipico | 10 s | 2.4 h | ✗ | ✗ | ✗ | ✗ | 0% | 4.0 min |
-| relay-hydrofoil | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.7 min |
+| relay-hydrofoil | severo | 10 s | 3.1 h | ✗ | ✗ | ✗ | ✗ | 0% | 3.1 min |
 | box-harbour | favorevole | 10 s | 1.2 h | ✗ | ✗ | ✗ | ✗ | 1% | 3.4 min |
-| box-harbour | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.9 min |
-| box-harbour | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.2 min |
+| box-harbour | tipico | 10 s | 2.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 2.9 min |
+| box-harbour | severo | 10 s | 2.9 h | ✗ | ✗ | ✗ | ✗ | 0% | 2.3 min |
 
-**Metrica airtime · ARALD attuale — coda relay 30 min SOS / 5 min resto · profilo radio g3 27 dBm ERP/10%**
+**Metrica airtime · ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g3 27 dBm ERP/10%**
 
 | Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -569,17 +576,17 @@ Output di `npm run scenario-model -- --scenario eolie --horizon-h 6`. Le sezioni
 | static | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 5.7 min |
 | static | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.3 min |
 | hydrofoil | favorevole | 10 s | 1.6 h | ✗ | ✗ | ✗ | ✗ | 1% | 7.1 min |
-| hydrofoil | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 6.4 min |
-| hydrofoil | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 6.8 min |
+| hydrofoil | tipico | 10 s | 2.5 h | ✗ | ✗ | ✗ | ✗ | 0% | 8.9 min |
+| hydrofoil | severo | 10 s | 2.9 h | ✗ | ✗ | ✗ | ✗ | 0% | 8.6 min |
 | panarea-relay | favorevole | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 8.5 min |
 | panarea-relay | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 8.4 min |
 | panarea-relay | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.3 min |
 | relay-hydrofoil | favorevole | 10 s | 1.2 h | ✗ | ✗ | ✗ | ✗ | 6% | 9.4 min |
 | relay-hydrofoil | tipico | 10 s | 1.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 6.9 min |
-| relay-hydrofoil | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 7.9 min |
+| relay-hydrofoil | severo | 10 s | 2.9 h | ✗ | ✗ | ✗ | ✗ | 0% | 8.8 min |
 | box-harbour | favorevole | 10 s | 1.2 h | ✗ | ✗ | ✗ | ✗ | 2% | 6.6 min |
 | box-harbour | tipico | 10 s | 1.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 6.9 min |
-| box-harbour | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.8 min |
+| box-harbour | severo | 10 s | 2.5 h | ✗ | ✗ | ✗ | ✗ | 0% | 5.8 min |
 
 Legenda D/E: F1 = SOS + coordinate (1 KB) (C5→PORT e BOX); F5 = GPS + audio 10 s (150 KB) (S5→BOX); F2 = Articolo Wiki (200 KB → ~70 KB compresso) (BOX→S5); F4 = Rapporto 5 pag. + 3 JPEG (5 MB) (S5→BOX); F3 = 8 JPEG (12 MB) (S5→BOX). "✗ (x%)" = non consegnato entro l'orizzonte, x% arrivato; "—" = destinazione non raggiunta. "C5→BOX connesso" = frazione del tempo con un percorso simultaneo (connettività istantanea): una consegna avvenuta con questo valore < 100% è passata (anche) per contatti opportunistici. "Airtime LoRa" = tempo di trasmissione LoRa consumato da tutti i file, tutte le copie. Varianti: static = aliscafo fermo: C4 resta al porto di Lipari; hydrofoil = C4 è a bordo dell'aliscafo Lipari → Panarea → Stromboli → Panarea → Lipari (data mule); panarea-relay = ARALD Fixed Relay sulla vetta di Panarea (~420 m), aliscafo fermo; relay-hydrofoil = Fixed Relay a Panarea e aliscafo in servizio; box-harbour = come 'hydrofoil', ma il Box è sul molo di Lipari (dove attracca l'aliscafo) invece che nel centro abitato denso.
 
@@ -800,13 +807,14 @@ Wi-Fi                                                BLE                        
 - BLE: 12 celle coperte su 2500
 - LoRa: 2500 celle coperte su 2500
 
+
 ## 10. Scenario 3 — cosa dice il modello
 
 1. **Stromboli è un'isola anche per la radio.** L'SOS arriva al Portable del paese in 10 s, ma **non arriva mai al Box di Lipari** senza l'aliscafo, in ogni ambiente, sotto-banda e coda. Il paese e l'escursionista sono sul versante nord-est di Stromboli, **dietro il cono del vulcano** rispetto a Lipari: 35-41 dB di diffrazione, con l'ostacolo a meno di 2 km da loro. Anche su mare aperto, comunque, 43 km tra dispositivi a pochi metri sul livello del mare costerebbero diversi dB di curvatura terrestre (~8 dB nel modello).
 2. **Un relay in quota non basta se è sul lato sbagliato.** Il Fixed Relay sulla vetta di Panarea vede Lipari (21 km, SF12 in g1 / SF8 in g3) e Salina, ma **non il paese né l'escursionista di Stromboli**: il cono del vulcano è in mezzo (36-42 dB di diffrazione, ostacolo a ~21,7 km dal relay). Da solo non cambia nulla per l'SOS. È l'esempio concreto di copertura che non è un cerchio, ed è ciò che il tool deve mostrare (§4 di `docs/network-design-tool.md`).
-3. **L'aliscafo è il vero ponte, ma la coda attuale lo spreca, come negli Scenari 1 e 2.** Con la coda dei relay attuale l'SOS raccolto a Stromboli scade prima che l'aliscafo torni in copertura di Lipari (condizioni tipiche, entrambe le sotto-bande). Con una coda DTN arriva in 3,0 h (g1) / 2,6 h (g3).
-4. **Relay + aliscafo funzionano anche con la coda attuale.** Con il relay su Panarea, al ritorno l'aliscafo rientra in copertura già all'altezza di Panarea, entro i 30 minuti di vita della copia: l'SOS arriva in 2,4 h (g1) / 1,6 h (g3). Qui il relay non serve a coprire Stromboli ma ad accorciare l'attesa del mulo: un ruolo diverso da quello che ci si aspetterebbe guardando solo la mappa.
-5. **La posizione del Box conta quanto la sua potenza.** Nel centro abitato denso il Box paga ~15 dB di clutter a 868 MHz. Spostato sul molo, in g3 con la coda attuale riceve l'SOS dall'aliscafo in arrivo (1,6 h) invece di perderlo; in g1 con coda DTN il tempo scende da 3,0 h a 2,6 h. Nel centro denso Wi-Fi e BLE del Box arrivano a ~50-60 m (sezione H); sul molo, in g3 con coda DTN, anche la Wiki raggiunge l'escursionista (1,5 h) passando per l'aliscafo.
+3. **L'aliscafo è il vero ponte.** Con la coda corretta l'SOS raccolto a Stromboli arriva al Box in 3,0 h (g1) / 2,5 h (g3) in condizioni tipiche. Con la coda precedente alla correzione scadeva prima che l'aliscafo tornasse in copertura di Lipari, come negli Scenari 1 e 2.
+4. **Il relay di Panarea accorcia l'attesa del mulo.** Al ritorno l'aliscafo rientra in copertura già all'altezza di Panarea: l'SOS arriva in 2,4 h invece di 3,0 h (g1) e in 1,6 h invece di 2,5 h (g3). Qui il relay non serve a coprire Stromboli ma ad accorciare il percorso del mulo: un ruolo diverso da quello che ci si aspetterebbe guardando solo la mappa. Con la coda precedente era l'unico modo di non perdere l'SOS.
+5. **La posizione del Box conta quanto la sua potenza.** Nel centro abitato denso il Box paga ~15 dB di clutter a 868 MHz. Spostato sul molo, riceve l'SOS dall'aliscafo in arrivo prima: 2,6 h invece di 3,0 h (g1) e 1,6 h invece di 2,5 h (g3), in condizioni tipiche. Nel centro denso Wi-Fi e BLE del Box arrivano a ~50-60 m (sezione H); sul molo, in g3 con coda DTN, anche la Wiki raggiunge l'escursionista (1,5 h) passando per l'aliscafo.
 6. **I file grandi non arrivano: il mulo deve passare dove sono i dati.** L'escursionista non incontra mai l'aliscafo né il Portable, quindi foto e rapporto restano sul suo telefono; solo l'audio (150 KB) arriva, in g3 con coda DTN (2,6-4,1 h), a pezzi via LoRa. Un'indicazione di progetto, non verificata nel modello: mettere il Portable al molo dove attracca l'aliscafo permetterebbe ai telefoni a bordo di sincronizzarsi via Wi-Fi a ogni passaggio.
 7. **Il pannello del tool è già calcolabile** (sezione F e `npm run scenario-model -- --config tools/scenario-model/examples/eolie.json`): per ogni coppia tecnologia, modo radio, velocità istantanea e sostenibile, qualità. Ad esempio Card ↔ telefono BLE 2M PHY 1,0 Mbps (qualità 0,77), Box ↔ relay di Panarea LoRa SF8 1,8 kbps istantanei / 179 bps sostenuti in g3 (0,35).
 
@@ -852,7 +860,8 @@ Stato al termine dello Scenario 3. Va aggiornato a ogni estensione del motore.
 
 ## 12. Implicazioni proposte (non implementate — da valutare con l'utente)
 
-- **TTL di custodia per il ruolo "courier"**: rendere configurabile (o molto più lungo, ore) il TTL di `PendingDeliveryQueue` per `Priority.EMERGENCY` sui nodi mobili (Card in Relay Mode, telefoni), oppure introdurre un vero bundle-store DTN separato dalla coda di retry. Oggi il ruolo "mobile relay" di `docs/beacon.md` non sopravvive a un attraversamento di ~2 h.
+- **TTL di custodia per il ruolo "courier"**: per l'SOS è **fatto** (`docs/security.md` voce #120: `Priority.EMERGENCY` non scade più in `PendingDeliveryQueue`). Resta aperto per gli altri contenuti. Report, foto e audio scadono dopo 5 minuti di isolamento, e in ogni scenario sono arrivati via mulo solo con una coda DTN. Serve un vero bundle-store DTN per i nodi mobili, separato dalla coda di retry e con limiti propri di memoria.
+
 - **Policy di trasporto per dimensione**: impedire che contenuti oltre una soglia (es. 50-100 KB) usino LoRa e instradarli solo su Wi-Fi/BLE/contatto fisico, per non sprecare il budget di duty-cycle che serve agli SOS e ai messaggi.
 - **Sotto-banda g3 (869,4-869,65 MHz, 27 dBm ERP/10%)** come candidata principale per i link infrastrutturali (Box/Portable/Fixed Relay), da decidere nella specifica radio (`docs/compliance.md`).
 - **Ridondanza della catena** (Scenario 1): in un rifugio, un Fixed Relay in quota (o il Portable posizionato al rifugio) elimina il punto singolo di guasto C4.
