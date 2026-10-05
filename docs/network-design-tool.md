@@ -1,6 +1,6 @@
 # Obiettivo finale della simulazione: tool interattivo di progettazione di reti ARALD
 
-**Stato**: specifica di destinazione dichiarata dall'utente il 5 ottobre 2026, durante lo sviluppo della simulazione teorica (`docs/scenario-simulation.md`, `tools/scenario-model/`). Non ancora pianificato né implementato. Serve da **vincolo di progetto** per il lavoro sulla simulazione: ogni scenario e ogni estensione del motore va fatta in modo che resti riusabile dal tool.
+**Stato**: specifica di destinazione dichiarata dall'utente il 5 ottobre 2026, durante lo sviluppo della simulazione teorica (`docs/scenario-simulation.md`, `tools/scenario-model/`). Non ancora pianificato né implementato. Serve da **vincolo di progetto** per il lavoro sulla simulazione (scope ampliato lo stesso giorno a resilienza e ottimizzazione, vedi "Precisazione sullo scope" sotto): ogni scenario e ogni estensione del motore va fatta in modo che resti riusabile dal tool.
 
 ## Obiettivo
 
@@ -138,6 +138,121 @@ La simulazione va sviluppata tenendo presente questo uso. Al termine del lavoro 
 **Non progettare la simulazione come un esperimento isolato**, ma come il **motore di calcolo di un futuro ARALD Network Design Tool**, con modello, dati e visualizzazione separati. La domanda a cui il tool deve rispondere visivamente, su una porzione reale di territorio:
 
 > **"Se posiziono questi dispositivi ARALD in questi punti, che rete ottengo e con quali prestazioni?"**
+
+## Precisazione sullo scope: resilienza e ottimizzazione (5 ottobre 2026)
+
+Precisazione dell'utente, che amplia lo scope del tool oltre la progettazione. Due funzioni **core**, non secondarie: la **verifica della resilienza** e l'**ottimizzazione** della rete.
+
+### A. Test Network Resilience (Failure Simulation)
+
+Permette di passare dalla semplice progettazione alla **verifica della resilienza** della rete.
+
+**Cosa deve fare**: l'utente seleziona un nodo e lo mette in stato **OFFLINE / FAILED**. Il nodo resta sulla mappa ma appare chiaramente spento/non operativo, e il modello ricalcola immediatamente:
+
+- connessioni radio;
+- copertura residua;
+- percorsi opportunistici;
+- nodi isolati;
+- eventuali alternative;
+- aree rimaste scoperte;
+- dipendenze critiche.
+
+Esempio: Box A collegato via LoRa a tre Card. Spento il Box, il tool evidenzia "Nodi: 4 → 3 attivi, Connessioni: 3 → 0, Nodi isolati: 2, Copertura: 87% → 31%, Dipendenza critica: BOX A". Il progettista capisce subito che **quel Box è un single point of failure**.
+
+**Deve distinguere connettività diretta e opportunistica**: spento un nodo, il sistema può scoprire che la **connettività diretta è persa** ma che **esiste un percorso opportunistico** (es. un sentiero percorso da chi porta una Card tra due aree), quindi la rete non è del tutto isolata. Questa distinzione è centrale per valutare la resilienza reale di ARALD.
+
+**Tre modalità di test**:
+
+1. **Single Node Failure** — spengo un singolo dispositivo: "cosa succede se questo nodo smette di funzionare?".
+2. **Multiple Failure** — spengo più dispositivi insieme: "cosa succede se una parte dell'infrastruttura viene compromessa?" (utile soprattutto negli scenari di emergenza).
+3. **Area Failure** — l'utente seleziona un'area e simula perdita di nodi, interruzione di percorsi, impossibilità di attraversamento, perdita simultanea di infrastrutture (es. "simula un terremoto"). Nell'MVP basta poter selezionare manualmente nodi e ostacoli da disattivare, senza scenari predefiniti.
+
+**Resilience Score**: un punteggio numerico (es. "86 / 100") con le sue componenti, ad esempio:
+
+- copertura;
+- connettività diretta;
+- percorsi ridondanti;
+- nodi critici;
+- gap recuperabili;
+- aree isolate dopo un guasto.
+
+**Il valore va definito sulla base del modello, mai inventato nell'interfaccia.**
+
+### B. Le quattro dimensioni del tool
+
+1. **Territorio** — dove posso mettere i nodi?
+2. **Connettività** — come possono comunicare?
+3. **Mobilità** — posso colmare un gap trasportando fisicamente un relay?
+4. **Resilienza** — cosa succede se qualcosa smette di funzionare?
+
+Definizione completa del progetto:
+
+> **ARALD Network Designer è uno strumento per progettare, analizzare, ottimizzare e sottoporre a stress test reti di comunicazione resilienti su territorio reale, considerando infrastruttura esistente, nuovi nodi, propagazione radio, caratteristiche del territorio, percorsi fisici e mobilità opportunistica dei relay.**
+
+### C. Network Optimizer
+
+Il tool può passare da simulatore a **ottimizzatore**: l'utente indica **quali nodi vuole installare** e **quali obiettivi vuole ottenere**, e il motore prova diverse posizioni sul territorio e propone le configurazioni con il miglior rapporto tra copertura, connettività, resilienza e mobilità.
+
+**Flusso**:
+
+1. **L'utente sceglie i nodi** (es. 2 Box, 4 Portable, 8 Card, 10 smartphone) e indica eventualmente:
+   - aree dove i nodi **devono** essere presenti;
+   - aree dove **non possono** essere installati;
+   - nodi già esistenti da sfruttare.
+2. **Il motore genera posizioni candidate**, non punti casuali, considerando:
+   - morfologia, quota, ostacoli, edifici;
+   - strade, sentieri, aree accessibili;
+   - copertura radio e nodi esistenti;
+   - possibilità di collegamento opportunistico;
+   - costi e difficoltà di raggiungimento.
+
+   Ad esempio: "questi 17 punti sono buoni candidati per un Box".
+3. **Simula le configurazioni** calcolando:
+   - area coperta;
+   - connessioni dirette e opportunistiche;
+   - aree isolate;
+   - single point of failure;
+   - percorsi alternativi;
+   - gap critici;
+   - Resilience Score.
+4. **Classifica le soluzioni**, non necessariamente una sola. Ad esempio:
+   - "A — massima resilienza";
+   - "B — minimo numero di nodi";
+   - "C — minimo costo";
+
+   ciascuna con punteggio, composizione, copertura e gap.
+
+**Non deve ottimizzare solo la copertura**: un algoritmo che cerca la massima copertura può produrre una rete fragile. Serve una **funzione obiettivo multi-parametrica**, concettualmente:
+
+```text
+Score = copertura + connettività + ridondanza + resilienza + accessibilità + mobilità opportunistica
+        − nodi inutilmente concentrati − single point of failure − aree irraggiungibili − costo/difficoltà di installazione
+```
+
+con **priorità regolabili dall'utente** (resilienza, copertura, costo, accessibilità, mobilità) e ricalcolo delle posizioni migliori.
+
+**Suggerimenti incrementali**: su una rete già esistente il motore propone il prossimo passo. Ad esempio: "installa un Portable nell'area evidenziata", con l'impatto stimato:
+
+- +14% copertura;
+- +3 connessioni;
+- elimina un gap radio;
+- crea un percorso alternativo per Box A e ne riduce la dipendenza;
+- priorità: alta.
+
+**Planner senza AI**: input (territorio + nodi esistenti + nodi disponibili + vincoli + obiettivi) → motore di ottimizzazione (genera candidati → simula → valuta → confronta → scarta le configurazioni inefficienti → ripete) → output (configurazione ottimale: tipo di nodo → punto), con la possibilità di **accettare/rifiutare ogni suggerimento** e vedere subito come cambia la rete.
+
+**Ogni suggerimento deve essere spiegabile**: non "metti un Box qui", ma *perché*. Ad esempio: "questo punto collega 4 nodi esistenti, copre una zona oggi scoperta e crea una seconda via verso il rifugio B; in caso di guasto del Portable 02 la rete resta connessa". Coerente con l'obiettivo di ARALD: **non un generatore automatico di posizioni, ma uno strumento che aiuta un operatore a progettare una rete resiliente sul territorio**.
+
+### Cosa implica per il motore (annotazione tecnica, non una decisione)
+
+| Funzione | Cosa c'è già | Cosa manca |
+|---|---|---|
+| Nodo OFFLINE | `NodeSpec.offFrom` (un nodo spento da un istante); varianti di guasto negli scenari (`card-failure`, `box-failure`) | Uno stato "failed" interrogabile senza simulazione temporale, sulla `NetworkConfig` del tool |
+| Ricalcolo di connessioni e copertura dopo un guasto | `assessNetwork()` e `coverageGrid()` sono deterministiche e senza stato: basta ricalcolarle senza i nodi spenti | Copertura "di rete" (unione degli aloni dei nodi attivi) e percentuale di area coperta |
+| Nodi isolati, dipendenze critiche | Grafo dei link già calcolato | Componenti connesse, nodi di articolazione (single point of failure), percorsi alternativi |
+| Diretto vs opportunistico | La simulazione temporale distingue connettività istantanea e consegna opportunistica (mule, aliscafo) | Per il tool statico: un modo di descrivere i percorsi opportunistici senza simulazione completa (es. "corridoi" percorribili tra componenti) |
+| Resilience Score | — | Definizione delle componenti e dei pesi dal modello, da documentare come tutte le altre formule |
+| Optimizer | `assessLink()`/`coverageGrid()` sono le valutazioni elementari riusabili | Generazione di posizioni candidate dal territorio, funzione obiettivo multi-parametrica, ricerca, spiegazione dei suggerimenti |
 
 ## Cosa implica già oggi per il motore (`tools/scenario-model/`)
 
