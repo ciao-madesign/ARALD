@@ -38,6 +38,7 @@ Il piano d'insieme originario (milestone 0-20 + i follow-up post-audit) è compl
 | Cosa è riusato da Project NOMAD/BitChat vs. costruito ex novo | [`docs/reuse-vs-new.md`](docs/reuse-vs-new.md) |
 | Appunto grezzo di spunti/migliorie notati confrontando ARALD con repository esterni (analisi a comando, non un monitoraggio automatico) | [`docs/external-inspiration.md`](docs/external-inspiration.md) |
 | Specifica UX/UI per il nuovo giro di rifinimento (icone, stati, legenda, gerarchia, mappa-centrica, Operational/Configuration) — mobile, Mirror Portal, Web UI del nodo | [`docs/ux-ui-design-system.md`](docs/ux-ui-design-system.md) |
+| Simulazione teorica parametrica di efficienza della rete per scenario (link budget LoRa, duty-cycle EU868, mobilità, store-and-forward) — ipotesi, risultati, limiti | [`docs/scenario-simulation.md`](docs/scenario-simulation.md) |
 
 **Leggi la voce/il documento pertinente prima di toccare il codice corrispondente** — spiegano non solo cosa è stato fatto ma perché, inclusi i bug trovati dalla revisione prima di considerare ogni voce conclusa.
 
@@ -77,6 +78,7 @@ arald/
 ├─ node/src/        arald-node: il runtime di rete (unico package con codice reale)
 ├─ tests/           unit/, integration/, network/ (vitest)
 ├─ tools/simulator/ simulatore di rete a scala (usato anche da `npm run simulate`)
+├─ tools/scenario-model/ modello teorico parametrico per scenario (fisica radio + mobilità + code, nessun NomadNode reale) — `npm run scenario-model`, vedi docs/scenario-simulation.md
 ├─ gateway/local-services/  gateway servizi locali (ex gateway/nomad/, rinominata 30 settembre 2026): KiwixGateway, AiGateway, NewsGateway, TranslateGateway, InternetGateway, FlatnotesGateway — mockato, non nel workspace npm
 ├─ service-stack/   docker-compose.yml che avvia i backend reali di gateway/local-services/ (kiwix-serve, Ollama, Flatnotes) con le loro immagini Docker ufficiali — sostituisce la dipendenza dal sorgente Project NOMAD per questi servizi (30 settembre 2026); nessun codice, solo config — vedi service-stack/README.md e docs/next-steps.md, "Indipendenza da Project NOMAD"
 ├─ nomad-hub/       ARALD Hub Management API: amministra Docker sull'host che esegue i servizi (Project NOMAD storicamente, service-stack/ da quando applicabile) — mai la mesh; non nel workspace npm, come gateway/local-services/
