@@ -166,4 +166,41 @@ describe("Emergency beacon: broadcast Beacon Mode -> connected Relay Mode -> Eme
     expect(() => beacon.sendEmergencyBeacon({ message: "ok" })).not.toThrow();
     expect(() => beacon.sendEmergencyBeacon({ message: "ok" })).not.toThrow();
   });
+
+  it("delivers a long, compressible SOS message to a pure Beacon Mode listener — the inline announce data must match whatever publishContent() actually compressed/signed, not the pre-compression bytes (ARALD Content Compression & Optimization, found by code-review)", async () => {
+    const medium = new BleMedium();
+
+    const beacon = new NomadNode({ displayName: "Beacon" });
+    beacon.setBroadcastTransport(new BeaconBroadcastTransport("beacon-device-long", medium));
+    nodes.push(beacon);
+    await beacon.start();
+
+    const relay = new NomadNode({ displayName: "Relay" });
+    relay.addTransport(new BleSimulatedTransport(relay.nodeId, "relay-device-long", { medium }));
+    const relayTcp = new TcpTransport(relay.nodeId, 0);
+    relay.addTransport(relayTcp);
+    nodes.push(relay);
+
+    const emergencyNode = new NomadNode({ displayName: "EmergencyNode" });
+    emergencyNode.addTransport(new TcpTransport(emergencyNode.nodeId, 0));
+    nodes.push(emergencyNode);
+
+    await Promise.all([relay.start(), emergencyNode.start()]);
+    await emergencyNode.connect({ host: "127.0.0.1", port: relayTcp.port }, "tcp");
+
+    // Long and highly repetitive — well over compressForTransfer()'s 512-byte floor once wrapped in
+    // the beacon's own JSON envelope (lat/lon/timestamp), so this is expected to actually compress.
+    const longMessage = "valanga, siamo bloccati sul versante nord, serve soccorso alpino urgente. ".repeat(10);
+    const sighting = beacon.sendEmergencyBeacon({ message: longMessage, lat: 46.5, lon: 10.3 });
+
+    // Picked up purely from the air (never connected to the beacon) — this only succeeds if the
+    // inline announce data hashes to the same contentId publishContent() actually signed.
+    await waitFor(() => relay.emergencyBeacons.list().length === 1);
+    const relaySighting = relay.emergencyBeacons.list()[0];
+    expect(relaySighting.beaconContentId).toBe(sighting.beaconContentId);
+    expect(relaySighting.message).toBe(longMessage);
+
+    await waitFor(() => emergencyNode.emergencyBeacons.list().length === 1);
+    expect(emergencyNode.emergencyBeacons.list()[0].message).toBe(longMessage);
+  });
 });

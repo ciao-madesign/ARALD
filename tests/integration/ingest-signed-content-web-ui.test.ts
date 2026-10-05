@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { NomadNode } from "../../node/src/node.js";
 import { WebUiServer } from "../../node/src/web-ui.js";
 import { Identity } from "../../node/src/identity.js";
-import { computeContentId, contentSigningPayload, type ContentMetadata } from "../../node/src/content.js";
+import { compressForTransfer, computeContentId, contentSigningPayload, type ContentMetadata } from "../../node/src/content.js";
 import { DROP_CONTENT_NAME, type DropPayload } from "../../node/src/drops.js";
 
 /**
@@ -95,6 +95,34 @@ describe("WebUiServer POST /api/ingest-signed-content", () => {
     expect((await res.json()).contentId).toBe(metadata.contentId);
     expect(node.contentStore.get(metadata.contentId)?.data.toString("utf8")).toBe("comunicazione dall'operatore");
     expect(metadata.publisherId).not.toBe(node.nodeId);
+  });
+
+  it("accepts a compressed submission — encoding/originalSize survive extractIngestMetadata() and are honored by signature verification (ARALD Content Compression & Optimization, docs/next-steps.md)", async () => {
+    const { node, webUi } = makeGateway();
+    await Promise.all([node.start(), webUi.start()]);
+    const operator = Identity.generate();
+
+    const original = Buffer.from("comunicazione dall'operatore ".repeat(100)); // well over compressForTransfer()'s floor
+    const { data: compressed, encoding, originalSize } = compressForTransfer(original);
+    expect(encoding).toBe("zstd"); // sanity: this test only proves something if compression actually kicked in
+
+    const contentId = computeContentId(compressed);
+    const size = compressed.length;
+    const publisherId = operator.nodeId;
+    const signature = operator
+      .sign(contentSigningPayload({ contentId, name: "bulletin", mimeType: "text/plain", size, publisherId, encoding, originalSize }))
+      .toString("hex");
+    const metadata: ContentMetadata = { contentId, name: "bulletin", mimeType: "text/plain", size, createdAt: Date.now(), publisherId, signature, encoding, originalSize };
+
+    const res = await authedFetch(webUi, { metadata, data: compressed.toString("base64") });
+
+    expect(res.status).toBe(200);
+    const stored = node.contentStore.get(metadata.contentId);
+    // Stored exactly as submitted — the compressed bytes, not re-inflated on ingest — and the
+    // Box never re-signs/re-derives anything here (it isn't the publisher).
+    expect(stored?.data.equals(compressed)).toBe(true);
+    expect(stored?.metadata.encoding).toBe("zstd");
+    expect(stored?.metadata.originalSize).toBe(original.length);
   });
 
   it("responds 422 (never 200/500) for a submission whose signature doesn't verify — never trusts the caller", async () => {

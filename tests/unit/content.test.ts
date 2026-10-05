@@ -1,11 +1,14 @@
+import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   CHUNK_SIZE,
   ChunkAssembler,
   ContentStore,
   chunkCountForSize,
+  compressForTransfer,
   computeContentId,
   contentSigningPayload,
+  decodeStoredContent,
   type ContentMetadata,
 } from "../../node/src/content.js";
 import { Identity } from "../../node/src/identity.js";
@@ -246,6 +249,23 @@ describe("ContentStore publisher signature verification (spec §55)", () => {
     expect(metadata.signature).toBeTruthy();
     expect(node.contentStore.has(metadata.contentId)).toBe(true);
   });
+
+  it("rejects a genuinely-signed claim of 'encoding: zstd' whose bytes don't actually decompress — a self-signed identity can lie about encoding the same way it could about name/mimeType (found by code-review)", () => {
+    const publisher = Identity.generate();
+    const data = Buffer.from("plain text, not a zstd frame");
+    const contentId = computeContentId(data);
+    const size = data.length;
+    const publisherId = publisher.nodeId;
+    const signature = publisher
+      .sign(contentSigningPayload({ contentId, name: "n", mimeType: "text/plain", size, publisherId, encoding: "zstd", originalSize: 500 }))
+      .toString("hex");
+    const forged: ContentMetadata = { contentId, name: "n", mimeType: "text/plain", size, createdAt: Date.now(), publisherId, signature, encoding: "zstd", originalSize: 500 };
+    const store = new ContentStore();
+
+    // Hash matches, signature verifies — the only thing wrong is a lie only decompression exposes.
+    expect(store.putVerified(forged, data)).toBe(false);
+    expect(store.has(forged.contentId)).toBe(false);
+  });
 });
 
 describe("ChunkAssembler", () => {
@@ -319,5 +339,84 @@ describe("ChunkAssembler", () => {
     expect(assembler.tryComplete("c", { ...metadata, contentId: computeContentId(Buffer.from("yz")) })).toEqual(
       Buffer.from("yz"),
     );
+  });
+});
+
+describe("compressForTransfer/decodeStoredContent — ARALD Content Compression & Optimization (docs/next-steps.md)", () => {
+  it("leaves tiny content untouched — below the point where zstd's own framing could ever shrink anything", () => {
+    const data = Buffer.from("short");
+    const result = compressForTransfer(data);
+    expect(result.data).toBe(data); // same buffer, never even attempted
+    expect(result.encoding).toBeUndefined();
+    expect(result.originalSize).toBeUndefined();
+  });
+
+  it("compresses large, genuinely repetitive content and records encoding+originalSize", () => {
+    const data = Buffer.from("ARALD mesh network ".repeat(200)); // well over the 512B floor, highly compressible
+    const result = compressForTransfer(data);
+    expect(result.encoding).toBe("zstd");
+    expect(result.originalSize).toBe(data.length);
+    expect(result.data.length).toBeLessThan(data.length);
+  });
+
+  it("keeps the original, uncompressed, when compression would not actually shrink it (e.g. high-entropy data)", () => {
+    const data = randomBytes(2000); // random bytes are, for all practical purposes, incompressible
+    const result = compressForTransfer(data);
+    expect(result.data).toBe(data);
+    expect(result.encoding).toBeUndefined();
+    expect(result.originalSize).toBeUndefined();
+  });
+
+  it("decodeStoredContent reverses compressForTransfer exactly", () => {
+    const original = Buffer.from("ARALD mesh network ".repeat(500));
+    const { data: stored, encoding, originalSize } = compressForTransfer(original);
+    expect(encoding).toBe("zstd"); // sanity: this test only proves something if compression actually kicked in
+    const decoded = decodeStoredContent({ encoding }, stored);
+    expect(decoded.equals(original)).toBe(true);
+    expect(decoded.length).toBe(originalSize);
+  });
+
+  it("decodeStoredContent is a no-op when encoding is undefined, including for content that happens to look like zstd bytes", () => {
+    const data = Buffer.from("plain, never compressed");
+    expect(decodeStoredContent({ encoding: undefined }, data)).toBe(data);
+  });
+
+  it("decodeStoredContent throws (never crashes the process with a raw native error) for data claiming zstd encoding that isn't actually a valid zstd frame — the DoS found by code-review", () => {
+    const forged = Buffer.from("plain bytes, not a zstd frame at all");
+    expect(() => decodeStoredContent({ encoding: "zstd", originalSize: 1000 }, forged)).toThrow();
+  });
+
+  it("decodeStoredContent enforces a decompressed-size ceiling instead of trusting the claimed originalSize unconditionally", () => {
+    const real = Buffer.from("x".repeat(5000)); // compresses extremely well
+    const { data: compressed, encoding } = compressForTransfer(real);
+    expect(encoding).toBe("zstd");
+    // A claim smaller than the genuine decompressed size must fail closed, not silently truncate —
+    // same "maxOutputLength" mechanism that bounds a genuine zip-bomb independently of what's claimed.
+    expect(() => decodeStoredContent({ encoding: "zstd", originalSize: 10 }, compressed)).toThrow();
+    // The correct claim still works, proving the throw above is about the cap, not a broken frame.
+    expect(decodeStoredContent({ encoding: "zstd", originalSize: real.length }, compressed).equals(real)).toBe(true);
+  });
+
+  it("contentSigningPayload is byte-for-byte identical to before compression existed when encoding/originalSize are absent — the backward-compatibility guarantee this feature depends on", () => {
+    const fields = { contentId: "abc", name: "n.txt", mimeType: "text/plain", size: 42, publisherId: "pub1", expiresAt: undefined };
+    const withCompressionFields = contentSigningPayload(fields);
+    const legacyShape = Buffer.from(
+      JSON.stringify({
+        contentId: fields.contentId,
+        name: fields.name,
+        mimeType: fields.mimeType,
+        size: fields.size,
+        publisherId: fields.publisherId,
+        expiresAt: fields.expiresAt,
+      }),
+    );
+    expect(withCompressionFields.equals(legacyShape)).toBe(true);
+  });
+
+  it("contentSigningPayload does change when encoding/originalSize are set — proves they're actually signed, not silently dropped", () => {
+    const base = { contentId: "abc", name: "n.txt", mimeType: "text/plain", size: 10, publisherId: "pub1", expiresAt: undefined };
+    const uncompressedPayload = contentSigningPayload(base);
+    const compressedPayload = contentSigningPayload({ ...base, encoding: "zstd", originalSize: 100 });
+    expect(compressedPayload.equals(uncompressedPayload)).toBe(false);
   });
 });

@@ -3,7 +3,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { networkInterfaces } from "node:os";
 import { BodyTooLargeError, LoopbackHttpServer, readRequestBody, sendBinary, sendJson } from "./loopback-http-server.js";
 import type { NomadNode } from "./node.js";
-import type { ContentMetadata } from "./content.js";
+import type { ContentEncoding, ContentMetadata } from "./content.js";
 import { MAX_MESSAGE_TEXT_LENGTH, type StoredMessage } from "./message-history.js";
 import type { TrustLevel } from "./trust.js";
 import { encodeQr, qrToSvg } from "./qrcode.js";
@@ -457,7 +457,10 @@ function contentEntryFor(node: NomadNode, metadata: ContentMetadata): ContentEnt
     contentId: metadata.contentId,
     name: metadata.name,
     mimeType: metadata.mimeType,
-    size: metadata.size,
+    // The logical/original size, not the compressed-on-the-wire one, when the two differ — found
+    // by code-review: a human reading this list wants to know how big *their* file is, never the
+    // internal detail of how many bytes compression happened to shrink it to for transfer.
+    size: metadata.originalSize ?? metadata.size,
     availableLocally,
     availableThrough,
   };
@@ -485,6 +488,14 @@ function extractIngestMetadata(raw: unknown): ContentMetadata | undefined {
   if (typeof r.publisherId !== "string" || r.publisherId.length === 0) return undefined;
   if (typeof r.signature !== "string" || r.signature.length === 0) return undefined;
   if (r.expiresAt !== undefined && (typeof r.expiresAt !== "number" || !Number.isFinite(r.expiresAt))) return undefined;
+  // "ARALD Content Compression & Optimization" (docs/next-steps.md) fields — signed the same way
+  // expiresAt is (contentSigningPayload()'s own doc comment): dropping them here instead of
+  // passing them through would silently strip part of what an external signer (e.g. a mirror-portal
+  // operator ingesting a compressed Drop) actually signed, making verifyContentSignature() fail
+  // closed on perfectly legitimate content — found while adding compression, before it ever shipped
+  // a real caller that compresses here, not a bug found in production.
+  if (r.encoding !== undefined && r.encoding !== "zstd") return undefined;
+  if (r.originalSize !== undefined && (typeof r.originalSize !== "number" || !Number.isFinite(r.originalSize) || r.originalSize < 0)) return undefined;
   return {
     contentId: r.contentId,
     name: r.name,
@@ -494,6 +505,8 @@ function extractIngestMetadata(raw: unknown): ContentMetadata | undefined {
     publisherId: r.publisherId,
     signature: r.signature,
     expiresAt: r.expiresAt as number | undefined,
+    encoding: r.encoding as ContentEncoding | undefined,
+    originalSize: r.originalSize as number | undefined,
   };
 }
 

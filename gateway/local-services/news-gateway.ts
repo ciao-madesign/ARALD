@@ -398,24 +398,23 @@ export class NewsGateway {
         emergencyAnnouncesThisSync++;
         this.announcedEmergencyById.set(headline.id, headlineContentId);
       }
-      const headlineMetadata = this.node.publishContent(
+      // publishContent() (node.ts) no longer necessarily assigns computeContentId(data) as its own
+      // contentId — "ARALD Content Compression & Optimization" (docs/next-steps.md) may compress
+      // headlineBytes first, hashing the *compressed* form instead. headlineContentId above is kept
+      // as its own independent fingerprint of headlineBytes specifically for isChanged/isEmergency
+      // tracking, deliberately never compared against or replaced by whatever id publishContent()
+      // actually assigns — the two are allowed to differ now, by design, so this loop no longer
+      // asserts they're equal (a previous version here did, found by review when that was still a
+      // safe assumption; compression made it a guaranteed false alarm instead of a real bug signal).
+      this.node.publishContent(
         headline.title,
         "application/json",
         headlineBytes,
         isEmergency ? { announce: true, priority: Priority.EMERGENCY } : undefined,
       );
-      // publishContent() (node.ts) computes its own contentId as computeContentId(data) over the
-      // exact buffer passed in — headlineContentId above used the same function on the same
-      // headlineBytes, so these are provably equal today, not just "by convention". This assertion
-      // exists so a future change to how publishContent() derives its contentId (found by review:
-      // nothing today ties the two computations together) fails loudly here instead of silently
-      // leaving isChanged/isEmergency decided against a stale hash shape.
-      if (headlineMetadata.contentId !== headlineContentId) {
-        throw new Error("internal error: headline content id computed ahead of publishContent() diverged from the id it actually assigned");
-      }
       headlines.push(headline);
       if (isChanged) {
-        this.publishedById.set(headline.id, headlineMetadata.contentId);
+        this.publishedById.set(headline.id, headlineContentId);
         changed.push(headline);
       }
     }

@@ -46,6 +46,13 @@ function startTestServer(): Promise<{ server: Server; url: (path: string) => str
         res.end("x".repeat(5_000_000));
         return;
       }
+      if (url.pathname === "/compressible.txt") {
+        // Well over compressForTransfer()'s 512-byte floor, well under any maxResponseBytes used
+        // below — large and repetitive enough that compression reliably kicks in.
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end("comunicato ufficiale ".repeat(200));
+        return;
+      }
       res.writeHead(404);
       res.end("not found");
     });
@@ -153,6 +160,25 @@ describe("service://internet-fetch (InternetGateway)", () => {
     expect(result.mimeType).toBe("text/plain");
     const bytes = await gatewayNode.node.getContent(result.contentId);
     expect(bytes.toString("utf8")).toContain("rifugio riapre");
+  });
+
+  it("kind: text — reports the original logical size, not the compressed-on-the-wire one, for compressible content (ARALD Content Compression & Optimization, found by code-review)", async () => {
+    const started = await startTestServer();
+    server = started.server;
+    gatewayNode = makeNode("gateway");
+    await gatewayNode.node.start();
+    const gateway = new InternetGateway(gatewayNode.node, { allowedTextHosts: ["127.0.0.1"] });
+    gateway.registerInternetFetchService();
+
+    const original = "comunicato ufficiale ".repeat(200);
+    const result = (await gatewayNode.node.callService("service://internet-fetch", { kind: "text", url: started.url("/compressible.txt") })) as {
+      contentId: string;
+      size: number;
+    };
+    const metadata = gatewayNode.node.contentStore.get(result.contentId)?.metadata;
+    expect(metadata?.encoding).toBe("zstd"); // sanity: this test only means something if compression kicked in
+    // Must report what the caller actually fetched, never the smaller internal wire-compressed size.
+    expect(result.size).toBe(original.length);
   });
 
   it("kind: text — the allowlist match is case-insensitive", async () => {

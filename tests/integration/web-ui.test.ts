@@ -283,6 +283,22 @@ describe("WebUiServer (spec §59)", () => {
     expect(all[0]).toMatchObject({ name: "Guida Rifugio.pdf", availableLocally: true });
   });
 
+  it("/api/content shows the original logical size, not the compressed-on-the-wire one, for compressed content (ARALD Content Compression & Optimization, found by code-review)", async () => {
+    node = new NomadNode({ displayName: "N" });
+    const original = Buffer.from("ARALD mesh network status report. ".repeat(500)); // well over the compression floor
+    const metadata = node.publishContent("report.txt", "text/plain", original);
+    expect(metadata.encoding).toBe("zstd"); // sanity: this test only means something if compression kicked in
+    expect(metadata.size).toBeLessThan(original.length);
+
+    webUi = new WebUiServer(node, { port: 0 });
+    await webUi.start();
+
+    const all = await (await fetch(`${baseUrl()}/api/content`)).json();
+    const entry = all.find((e: { name: string }) => e.name === "report.txt");
+    // Must show the size the user actually published, never the smaller internal wire-compressed one.
+    expect(entry.size).toBe(original.length);
+  });
+
   it("returns 404 for an unknown path and 405 for a non-GET method", async () => {
     node = new NomadNode({ displayName: "N" });
     webUi = new WebUiServer(node, { port: 0 });

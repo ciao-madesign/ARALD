@@ -1,6 +1,15 @@
 import { createHash } from "node:crypto";
+import { zstdCompressSync, zstdDecompressSync } from "node:zlib";
 import { BoundedFifoMap } from "./bounded-map.js";
 import { Identity } from "./identity.js";
+
+/**
+ * How the bytes actually stored/transferred for a piece of content relate to its logical/original
+ * form — "ARALD Content Compression & Optimization" (`docs/next-steps.md`, `docs/security.md`).
+ * Only one value today (lossless generic compression); media-specific lossy transforms/profiles
+ * are V2 per the proposal, not built here.
+ */
+export type ContentEncoding = "zstd";
 
 /**
  * Content metadata (spec §24). `publisherId`/`signature` (spec §55) are
@@ -12,6 +21,7 @@ export interface ContentMetadata {
   contentId: string;
   name: string;
   mimeType: string;
+  /** Byte length of the content actually stored/transferred/chunked — the *compressed* length when `encoding` is set, identical to the logical length otherwise. Unchanged in meaning from before this field existed: `chunksFor()`/`chunkCountForSize()` always operated on this exact byte count. */
   size: number;
   createdAt: number;
   /** Node id of the original publisher (spec §55). */
@@ -26,12 +36,22 @@ export interface ContentMetadata {
    * or cut a legitimate one short.
    */
   expiresAt?: number;
+  /**
+   * Set only when the stored bytes went through `compressForTransfer()` and it actually helped —
+   * `undefined` (never the literal string, see `contentSigningPayload()`) means "stored exactly as
+   * given," the universal case for every piece of content published before this field existed.
+   * This *is* the "manifest" the compression proposal asked for — nothing more is needed, since
+   * zstd's own framing carries everything else required to decompress.
+   */
+  encoding?: ContentEncoding;
+  /** Logical/decompressed byte length — present only when `encoding` is set; informational (lets a UI show the saving) and used by `decodeStoredContent()`'s caller contract, never required by zstd itself to decompress. */
+  originalSize?: number;
 }
 
 /** The fields a publisher's signature actually commits to — everything a relay could otherwise tamper with while keeping the same bytes. */
 export type SignableContentFields = Pick<
   ContentMetadata,
-  "contentId" | "name" | "mimeType" | "size" | "publisherId" | "expiresAt"
+  "contentId" | "name" | "mimeType" | "size" | "publisherId" | "expiresAt" | "encoding" | "originalSize"
 >;
 
 /**
@@ -41,6 +61,16 @@ export type SignableContentFields = Pick<
  * harmless file as something else) while the signature still "verified".
  * JSON-encoded with explicit field order so the signed representation is
  * unambiguous regardless of what characters appear in `name`/`mimeType`.
+ *
+ * `encoding`/`originalSize` are included the same way `expiresAt` always has been: assigned
+ * directly from `fields`, so `JSON.stringify` drops the key entirely when the value is
+ * `undefined` (the case for every piece of content that never went through compression) —
+ * byte-for-byte the exact same signing payload as before this pair of fields existed. Content that
+ * *is* compressed signs a payload that includes them, which an older node's `contentSigningPayload()`
+ * (not yet aware of the fields) would compute differently — its `verifyContentSignature()` would
+ * then correctly fail closed rather than accept bytes it has no way to interpret, instead of ever
+ * serving compressed bytes as if they were the real content (`docs/next-steps.md`'s own flagged
+ * risk, "serve a un piano di compatibilità esplicito").
  */
 export function contentSigningPayload(fields: SignableContentFields): Buffer {
   return Buffer.from(
@@ -51,8 +81,87 @@ export function contentSigningPayload(fields: SignableContentFields): Buffer {
       size: fields.size,
       publisherId: fields.publisherId,
       expiresAt: fields.expiresAt,
+      encoding: fields.encoding,
+      originalSize: fields.originalSize,
     }),
   );
+}
+
+/**
+ * Below this, zstd's own frame overhead (header/checksum, a few dozen bytes) can only ever grow
+ * the input, never shrink it — most `publishContent()` callers in this codebase are small
+ * control-plane JSON blobs (a Drop, a beacon sighting, a directory entry), so skipping the attempt
+ * outright avoids spending CPU on every one of those for a result `compressForTransfer()` would
+ * have discarded anyway (see its own "keep whichever is smaller" rule below).
+ */
+const MIN_COMPRESSIBLE_SIZE = 512;
+
+/**
+ * "ARALD Content Compression & Optimization" (`docs/next-steps.md`, `docs/security.md`): tries
+ * lossless Zstd (native `node:zlib`, no new dependency — Node 22.15+, already this project's
+ * floor everywhere, `docs/next-steps.md`'s own verified finding) and keeps the result only if it
+ * actually shrank the content; otherwise returns the original bytes untouched with `encoding` left
+ * `undefined`. Automatic and unconditional by design — every `NomadNode.publishContent()` call
+ * benefits with zero change to any of its call sites, and the "keep whichever is smaller" rule
+ * means a payload compression doesn't help (already-compressed media, short control messages) is
+ * never made worse.
+ *
+ * Must be called **before** signing/hashing (`NomadNode.publishContent()` does, immediately) and,
+ * for any future encrypted/private content built on this same shape, before encryption too —
+ * compressing ciphertext never works (encryption output is already high-entropy), and comressing
+ * *then* encrypting is the only order that lets a later encrypted transport still benefit. Content
+ * published through this module is never encrypted today (`content.ts` is the Open/signed path —
+ * see `node.ts`'s Open-vs-Private split in `CLAUDE.md`), so this ordering is currently academic but
+ * load-bearing for that future case: a confidentiality note worth logging for whoever builds it —
+ * AES-256-GCM doesn't hide plaintext length, so the *compressed* size remains visible in the
+ * ciphertext, a known side channel (CRIME/BREACH's family) for low-entropy/guessable content, even
+ * though the threat model here (a specific file sent once to a specific recipient, not a repeated
+ * request with attacker-injectable content) is far weaker than the TLS case that named it.
+ */
+export function compressForTransfer(data: Buffer): { data: Buffer; encoding?: ContentEncoding; originalSize?: number } {
+  if (data.length < MIN_COMPRESSIBLE_SIZE) return { data };
+  const compressed = zstdCompressSync(data);
+  if (compressed.length >= data.length) return { data }; // didn't help — never store/sign a "compressed" form that's actually bigger
+  return { data: compressed, encoding: "zstd", originalSize: data.length };
+}
+
+/**
+ * Independent ceiling on how large a `encoding: "zstd"` claim may ever decompress to — never
+ * derived from `metadata.originalSize` itself, since that's a signed-but-attacker-controlled field
+ * for any self-signed identity (nothing stops a forged metadata/data pair from claiming a tiny
+ * `originalSize` while actually being a "zip bomb": a small frame engineered to decompress to
+ * gigabytes). Matches the reconstructable-content ceiling this project already accepts elsewhere
+ * (`DEFAULT_MAX_CHUNKS_PER_ENTRY * CHUNK_SIZE`, `ChunkAssembler`, below) — content this large was
+ * never actually reachable through this codebase before compression existed either.
+ */
+const MAX_DECOMPRESSED_CONTENT_BYTES = 256 * 1024 * 1024;
+
+/**
+ * Reverses `compressForTransfer()` — the one place `encoding` is ever interpreted. Bounded against
+ * two distinct ways a forged `encoding: "zstd"` claim could otherwise crash or exhaust this process
+ * (found by `code-review`, reproduced directly against `NomadNode.ingestSignedContent()`): data
+ * that isn't actually a valid zstd frame at all (`zstdDecompressSync` throws — a single malformed
+ * packet must never crash the process, spec §57/CLAUDE.md "Convenzioni consolidate"), and data that
+ * *is* valid zstd but decompresses to something enormous (the "zip bomb" `MAX_DECOMPRESSED_CONTENT_BYTES`
+ * guards against, via `maxOutputLength` — Node aborts the decompression itself once the cap would be
+ * exceeded, rather than allocating past it first). Throws a plain `Error` on either failure; the one
+ * caller that must never let that throw reach a peer or a crash is `ContentStore.putVerified()`
+ * below, which treats it exactly like a hash mismatch — content that merely *claims* to decode never
+ * enters the store, is never cached, relayed, or announced further. `NomadNode.getContent()`'s two
+ * resolution paths only ever read already-stored entries, so by the time either calls this, the
+ * decode has already succeeded once at `putVerified()` time and is expected to succeed identically
+ * again (zstd decompression is deterministic) — this is intentionally not special-cased away for
+ * that redundancy, same "redundant, harmless" posture `putVerified()`'s own hash re-check documents
+ * elsewhere in this file.
+ */
+export function decodeStoredContent(metadata: Pick<ContentMetadata, "encoding" | "originalSize">, data: Buffer): Buffer {
+  if (metadata.encoding !== "zstd") return data;
+  const maxOutputLength = Math.min(metadata.originalSize ?? MAX_DECOMPRESSED_CONTENT_BYTES, MAX_DECOMPRESSED_CONTENT_BYTES);
+  try {
+    return zstdDecompressSync(data, { maxOutputLength });
+  } catch {
+    throw new Error("content claims zstd encoding but failed to decompress (corrupt, forged, or exceeds the decompressed-size ceiling)");
+  }
 }
 
 /**
@@ -156,11 +265,27 @@ export class ContentStore {
    * through anyway would just be helping it linger past its own publisher's
    * intent. This is the trust boundary for anything not authored locally by
    * this node — see docs/security.md.
+   *
+   * A fourth check, added alongside "ARALD Content Compression & Optimization": a signature being
+   * valid only proves the publisher really signed `encoding: "zstd"` over these exact bytes, never
+   * that those bytes genuinely decompress — a self-signed identity can sign anything about its own
+   * content. Rejecting here, at the one gate every untrusted entry point funnels through (mesh
+   * CONTENT_COMPLETE/CONTENT_ANNOUNCE, `POST /api/ingest-signed-content`, catalog-verified direct
+   * stores), means a forged/corrupt "zstd" claim is never cached, relayed, or announced further —
+   * found by `code-review`, reproduced as a real unauthenticated remote crash before this fix
+   * (`decodeStoredContent()`'s own doc comment has the full detail).
    */
   putVerified(metadata: ContentMetadata, data: Buffer): boolean {
     if (computeContentId(data) !== metadata.contentId) return false;
     if (!verifyContentSignature(metadata)) return false;
     if (metadata.expiresAt !== undefined && metadata.expiresAt <= Date.now()) return false;
+    if (metadata.encoding !== undefined) {
+      try {
+        decodeStoredContent(metadata, data);
+      } catch {
+        return false; // claims an encoding it doesn't actually honor — never trust it
+      }
+    }
     this.items.set(metadata.contentId, { metadata, data });
     return true;
   }

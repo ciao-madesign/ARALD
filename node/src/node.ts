@@ -7,8 +7,10 @@ import {
   ChunkAssembler,
   ContentStore,
   chunkCountForSize,
+  compressForTransfer,
   computeContentId,
   contentSigningPayload,
+  decodeStoredContent,
   verifyContentSignature,
   type ContentMetadata,
 } from "./content.js";
@@ -1446,15 +1448,31 @@ export class NomadNode extends EventEmitter {
    * option existed); ignored if `announce` is not set.
    */
   publishContent(name: string, mimeType: string, data: Buffer, options: { ttlMs?: number; announce?: boolean; priority?: Priority } = {}): ContentMetadata {
-    const contentId = computeContentId(data);
-    const size = data.length;
+    // "ARALD Content Compression & Optimization" (docs/next-steps.md): tried, kept only if it
+    // actually helped — stored/signed/chunked bytes are whichever of the two compressForTransfer()
+    // returns, transparently to every caller of this method (drops, beacons, external-delivery
+    // directory, ordinary files — none of them had to change for this).
+    const { data: storedData, encoding, originalSize } = compressForTransfer(data);
+    const contentId = computeContentId(storedData);
+    const size = storedData.length;
     const publisherId = this.nodeId;
     const expiresAt = options.ttlMs !== undefined ? Date.now() + options.ttlMs : undefined;
     const signature = this.identity
-      .sign(contentSigningPayload({ contentId, name, mimeType, size, publisherId, expiresAt }))
+      .sign(contentSigningPayload({ contentId, name, mimeType, size, publisherId, expiresAt, encoding, originalSize }))
       .toString("hex");
-    const metadata: ContentMetadata = { contentId, name, mimeType, size, createdAt: Date.now(), publisherId, signature, expiresAt };
-    if (!this.contentStore.putVerified(metadata, data)) {
+    const metadata: ContentMetadata = {
+      contentId,
+      name,
+      mimeType,
+      size,
+      createdAt: Date.now(),
+      publisherId,
+      signature,
+      expiresAt,
+      encoding,
+      originalSize,
+    };
+    if (!this.contentStore.putVerified(metadata, storedData)) {
       throw new Error("internal error: freshly signed content failed its own verification (bad signature, or ttlMs too small to survive publishing)");
     }
     if (options.announce) {
@@ -1839,7 +1857,7 @@ export class NomadNode extends EventEmitter {
    */
   getContent(contentId: string, options: { timeoutMs?: number } = {}): Promise<Buffer> {
     const cached = this.contentStore.get(contentId);
-    if (cached) return Promise.resolve(cached.data);
+    if (cached) return Promise.resolve(decodeStoredContent(cached.metadata, cached.data));
 
     return new Promise<Buffer>((resolve, reject) => {
       const timeoutMs = options.timeoutMs ?? this.contentRequestTimeoutMs;
@@ -2737,19 +2755,27 @@ export class NomadNode extends EventEmitter {
     const timestamp = Date.now();
     const payload: EmergencyBeaconPayload = { message: beacon.message, lat: beacon.lat, lon: beacon.lon, timestamp };
     // Encrypted (this.emergencyBeaconKey set) or plaintext (unset, the pre-existing default) wire
-    // bytes — see NomadNodeOptions.emergencyBeaconKey's own doc comment. Either way `publishContent()`
-    // below signs and stores exactly these bytes: a relay that never received the key can still
-    // verify/cache/forward the ciphertext, it just can't read it.
+    // bytes — see NomadNodeOptions.emergencyBeaconKey's own doc comment. Either way these are what
+    // gets *signed* (passed into publishContent() below) — not necessarily what ends up stored, see
+    // storedData right under it.
     const data = this.emergencyBeaconKey
       ? Buffer.from(JSON.stringify({ encrypted: true, ...encryptForPeer(this.emergencyBeaconKey, Buffer.from(JSON.stringify(payload), "utf8")) }), "utf8")
       : Buffer.from(JSON.stringify(payload), "utf8");
     const metadata = this.publishContent(EMERGENCY_BEACON_CONTENT_NAME, "application/json", data, { ttlMs });
+    // "ARALD Content Compression & Optimization" may have compressed `data` before signing it —
+    // metadata.contentId/size describe whatever publishContent() actually stored, not necessarily
+    // `data` itself any more. The inline announce below must carry exactly those bytes (found by
+    // code-review): a receiver's handleContentAnnounce() hashes the inline bytes and compares
+    // against metadata.contentId, so inlining the pre-compression `data` would silently fail that
+    // check on every receiver whenever compression kicks in — losing the SOS for good on any pure
+    // Beacon Mode listener, which has no other way to ever learn these bytes.
+    const storedData = this.contentStore.get(metadata.contentId)?.data ?? data;
 
     // Inline data + sender identity announcement (see ContentAnnouncePayload's own doc comments on
     // both fields) — required here, not optional: a pure Beacon Mode device that only broadcasts is
     // never reachable for a follow-up pull fetch, nor for the identity-sync exchange that would
     // otherwise let anyone reply to it.
-    const announcePacket = this.buildContentAnnouncePacket(metadata, Priority.EMERGENCY, data, this.ownAnnouncement);
+    const announcePacket = this.buildContentAnnouncePacket(metadata, Priority.EMERGENCY, storedData, this.ownAnnouncement);
     void this.floodExcept(announcePacket);
 
     if (this.broadcastTransport) {
@@ -4135,9 +4161,12 @@ export class NomadNode extends EventEmitter {
       if (metadata.publisherId) this.trust.markVerified(metadata.publisherId);
       this.clearActiveContentFetches(entry);
       this.pendingContentRequests.delete(contentId);
+      // Same decode step as the cache-hit path above — a caller of getContent() must never see the
+      // raw wire bytes when `metadata.encoding` says they need reversing first.
+      const decoded = decodeStoredContent(metadata, data!);
       for (const waiter of entry.waiters) {
         clearTimeout(waiter.timeout);
-        waiter.resolve(data!);
+        waiter.resolve(decoded);
       }
       return;
     }

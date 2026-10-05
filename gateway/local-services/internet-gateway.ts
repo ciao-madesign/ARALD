@@ -149,13 +149,15 @@ export class InternetGateway {
       // about the origin site itself (which signed nothing and isn't part of the mesh's trust model
       // at all). A receiving peer trusts the gateway's attestation, not the destination site.
       const metadata = this.node.publishContent(`internet-fetch (rss): ${url}`, "application/xml", Buffer.from(xml, "utf8"));
-      return { contentId: metadata.contentId, mimeType: "application/xml", size: metadata.size };
+      // originalSize when compression kicked in, not the compressed-on-the-wire size shown to the
+      // caller — same fix as web-ui.ts's contentEntryFor(), found by code-review.
+      return { contentId: metadata.contentId, mimeType: "application/xml", size: metadata.originalSize ?? metadata.size };
     }
 
     // kind === "text" — same signing-attestation caveat as the "rss" branch above.
     const text = await fetchTextBounded(url, this.maxResponseBytes);
     const metadata = this.node.publishContent(`internet-fetch (text): ${url}`, "text/plain", Buffer.from(text, "utf8"));
-    return { contentId: metadata.contentId, mimeType: "text/plain", size: metadata.size };
+    return { contentId: metadata.contentId, mimeType: "text/plain", size: metadata.originalSize ?? metadata.size };
   }
 
   /**

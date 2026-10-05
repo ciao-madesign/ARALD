@@ -350,4 +350,32 @@ describe("NomadNode.ingestSignedContent (Pezzo 1, canale di comando)", () => {
     expect(exceeded).toBe(0);
     socket.destroy();
   });
+
+  it("rejects (never crashes) a submission that signs 'encoding: zstd' over bytes that aren't actually valid zstd (ARALD Content Compression & Optimization, docs/next-steps.md)", async () => {
+    const box = makeNode("Box");
+    nodes.push(box.node);
+    await box.node.start();
+
+    const operator = Identity.generate();
+    const data = Buffer.from("not a zstd frame at all, just plain text pretending to be one");
+    const contentId = computeContentId(data);
+    const size = data.length;
+    const publisherId = operator.nodeId;
+    const originalSize = 1000; // claimed logical size — irrelevant, the bytes still don't decompress
+    const signature = operator
+      .sign(contentSigningPayload({ contentId, name: "forged", mimeType: "text/plain", size, publisherId, encoding: "zstd", originalSize }))
+      .toString("hex");
+    const metadata: ContentMetadata = { contentId, name: "forged", mimeType: "text/plain", size, createdAt: Date.now(), publisherId, signature, encoding: "zstd", originalSize };
+
+    // A fully, genuinely validly signed submission by this exact measure (hash matches, signature
+    // verifies) — the forged claim is only in `encoding`, something a self-signed identity can
+    // always lie about. Before the fix found by code-review, this reached decodeStoredContent()
+    // uncaught and crashed the process the next time anything tried to read it back.
+    let result: IngestSignedContentResult | undefined;
+    expect(() => {
+      result = box.node.ingestSignedContent(metadata, data);
+    }).not.toThrow();
+    expect(result).toBe("rejected");
+    expect(box.node.contentStore.has(contentId)).toBe(false);
+  });
 });
