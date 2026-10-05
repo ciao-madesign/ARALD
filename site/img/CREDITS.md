@@ -14,15 +14,15 @@ All photos from [Unsplash](https://unsplash.com) (Unsplash License — free to u
 | `scenario-rural.jpg` | Jaime Gusmao | https://unsplash.com/photos/AjWRupNAt3I |
 | `scenario-expeditions.jpg` | Matthieu Davies | https://unsplash.com/photos/gdfNQtYvLZ0 |
 | `scenario-forests.jpg` | Alex Moliski | https://unsplash.com/photos/5kjdcjYCLY0 |
-| `scenario-wildfire.jpg` | *(temporary duplicate of `scenario-forests.jpg`, same photographer/link above — no dedicated photo sourced yet, this environment has no general internet access so sourcing goes through the project owner, see note below)* | — |
+| `scenario-wildfire.jpg` | *(uploaded directly, photographer/link not provided)* | — |
 | `scenario-crisis.jpg` | Mathurin Napoly (matnapo) | https://unsplash.com/photos/o_FFvM4JzGk |
 | `community.jpg` | Hayes | https://unsplash.com/photos/StrmusT8d9Y |
 | `where-it-works.jpg` | *(uploaded directly, photographer/link not provided)* | — |
 | `mechanism.jpg` | *(uploaded directly, photographer/link not provided)* | — |
 | `hardware.jpg` | ThisisEngineering | https://unsplash.com/photos/32PpagSzeGs |
 
-All scenario/hero photo slots are filled — no CSS placeholders left in `styles.css`. "Deserts" was dropped as a scenario (no photo, and not pursued further per explicit decision). **One exception, added 5 ottobre 2026**: `scenario-wildfire.jpg` (new "Wildfire response" scenario) is a plain file copy of `scenario-forests.jpg`, not a distinct photo — same reason as below, no general internet access here to source one. Swap it for a dedicated photo (forest/wildland fire context, no firefighter personnel depicted — see the note below on why a firefighters shot was previously dropped from the hero) when one is available, and update this table + `site/README.md`'s image table accordingly.
+All scenario/hero photo slots are filled — no CSS placeholders left in `styles.css`. "Deserts" was dropped as a scenario (no photo, and not pursued further per explicit decision).
 
-`hero.jpg`, `where-it-works.jpg`, `mechanism.jpg` and `hardware.jpg` replace an earlier round of hero photos (a firefighters shot on the landing page implied ARALD replaces existing emergency services, which isn't the intent) — uploaded directly to the repo rather than sourced by Claude (this environment has no general internet access, so photo sourcing always goes through the project owner). Add the Unsplash photographer/link above if known, for attribution.
+`hero.jpg`, `where-it-works.jpg`, `mechanism.jpg`, `hardware.jpg` and `scenario-wildfire.jpg` replace an earlier round of hero photos (a firefighters shot on the landing page implied ARALD replaces existing emergency services, which isn't the intent) — uploaded directly to the repo rather than sourced by Claude (this environment has no general internet access, so photo sourcing always goes through the project owner). `scenario-wildfire.jpg` was briefly a placeholder copy of `scenario-forests.jpg` (5 ottobre 2026) until the project owner uploaded a dedicated photo the same day (a hillside wildfire, no firefighter personnel in frame — consistent with the concern above); resized/re-compressed for web from the 4592×3064 original by Claude (1600px long edge, JPEG quality 78). Add the Unsplash photographer/link above if known, for attribution.
 
 `hardware.jpg`'s photographer/link above was read off Unsplash's own download filename convention (`<username>-<photo-id>-unsplash.jpg`), not independently verified against the live page (no internet access here) — double-check it if precise attribution matters.
