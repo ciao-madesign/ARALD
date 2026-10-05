@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "name": "Eolie — Box a Lipari, Portable a Stromboli, Fixed Relay su Panarea",
+  "frame": { "lat0": 38.6, "lon0": 15.05 },
+  "environment": "tipico",
+  "regulatory": "g3",
+  "terrain": "eolie-sintetico",
+  "devices": [
+    { "id": "BOX", "kind": "box", "lat": 38.4665, "lon": 14.9545, "label": "Lipari centro" },
+    { "id": "PORT", "kind": "portable", "lat": 38.8, "lon": 15.237, "label": "Stromboli paese" },
+    { "id": "FR", "kind": "relay", "lat": 38.636, "lon": 15.066, "label": "Panarea, vetta" },
+    { "id": "C1", "kind": "card", "lat": 38.418, "lon": 14.962, "label": "Vulcano Porto" },
+    { "id": "C2", "kind": "card", "lat": 38.561, "lon": 14.879, "label": "Santa Marina Salina" },
+    { "id": "C3", "kind": "card", "lat": 38.632, "lon": 15.08, "label": "Panarea, San Pietro" },
+    { "id": "C5", "kind": "card", "lat": 38.797, "lon": 15.222, "label": "Escursionista a Stromboli" },
+    { "id": "S1", "kind": "phone", "lat": 38.41802, "lon": 14.96203 },
+    { "id": "S5", "kind": "phone", "lat": 38.79702, "lon": 15.22203 }
+  ]
+}

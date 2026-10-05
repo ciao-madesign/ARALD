@@ -21,4 +21,6 @@ export interface Scenario {
   linkSnapshotVariant: string;
   /** Coppia sorgente→destinazione di cui riportare la connettività istantanea. */
   connectivityPair: [string, string];
+  /** Modello BLE/Wi-Fi: "fixed" (default, Scenari 1-2) o "budget" (link budget a 2,4 GHz). */
+  shortRangeModel?: "fixed" | "budget";
 }

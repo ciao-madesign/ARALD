@@ -1791,3 +1791,41 @@ Un relay instrada `PRIVATE_MESSAGE`/`GROUP_MESSAGE` senza poter leggerne il payl
 
     **Trovato durante il lavoro e dalla revisione**: (1) il link budget della voce #120 usava il guadagno d'antenna di un solo lato, quindi il risultato dipendeva dall'ordine dei due nodi. Ora si calcolano entrambe le direzioni e vale la più debole; cambiano alcuni risultati g3 dello Scenario 1, aggiornati nel doc, e c'è un test di regressione sulla simmetria. (2) La revisione ha trovato due frasi del §4 del doc non più coerenti con le tabelle rigenerate (un "nessun link aggiuntivo" ormai falso e un "in g1 cambia poco" che ignorava la variante `ferry`), corrette. Nessun bug di correttezza in `simulate()` su destinazioni multiple, metrica airtime e geometria delle zone (verificate esplicitamente). Nessuna modifica a `node/src/`, nessuna nuova dipendenza.
 
+122. **Simulazione teorica — Scenario 3, Isole Eolie, e primi mattoni del motore per il futuro ARALD Network Design Tool**, 5 ottobre 2026 — seguito delle voci #120/#121, su ok esplicito dell'utente ("procedi con il prossimo scenario tenendo conto dei dati indispensabili per il tool finale", `docs/network-design-tool.md`). Lo scenario (rete tra isole su mare aperto, aliscafo come data mule, Fixed Relay sulla vetta di Panarea) è il primo costruito nel formato del tool: dispositivi su latitudine/longitudine, altezza dal suolo per tipo, territorio interrogabile. In questo ambiente non c'è accesso a un DEM reale (richiesta a un servizio pubblico di quote bloccata dalla policy di rete): il terreno è **sintetico** (isole a cono) e le coordinate sono **approssimative, non verificate**.
+
+    **Nuovi moduli** in `tools/scenario-model/`:
+    - `terrain.ts`: interfaccia `Terrain` (quota e uso del suolo per punto), conversione geografica ↔ locale, diffrazione knife-edge sull'ostacolo dominante del profilo (ITU-R P.526, curvatura terrestre k = 4/3), clutter per classe di suolo scalato con la distanza, terreno sintetico a isole e terreno piatto;
+    - `assess.ts`: `assessLink()` (A in X, B in Y → per tecnologia: applicabile, possibile, RSSI, margine, modo radio, velocità istantanea e sostenibile, qualità 0-1) e `coverageGrid()` (alone per tecnologia verso un ricevitore di riferimento);
+    - `network-config.ts`: `NetworkConfig` versionata e salvabile, validazione, `assessNetwork()`; esempio `examples/eolie.json`, valutabile con `npm run scenario-model -- --config <file> [--json]`;
+    - `eolie.ts`: lo scenario.
+
+    **Modifiche al motore** (`model.ts`):
+    - `KIND_DEFAULTS` guadagna potenza BLE, EIRP Wi-Fi e altezza tipica;
+    - BLE/Wi-Fi possono usare un link budget a 2,44 GHz con velocità a gradini (`model: "budget"`), quindi portata e velocità dipendono da distanza e territorio;
+    - il mezzo scelto è quello più veloce tra quelli possibili;
+    - `nodePosition()` fa seguire il terreno alla quota dei nodi in movimento;
+    - due ottimizzazioni senza effetto sui risultati: profilo del terreno memoizzato e saltato quando il link non chiuderebbe nemmeno senza territorio.
+
+    Gli output degli Scenari 1 e 2 sono rimasti identici byte per byte (verificato). `docs/scenario-simulation.md` §11 risponde ai 10 punti del §12 di `docs/network-design-tool.md`, la cui tabella dei pezzi mancanti è aggiornata.
+
+    **Risultati principali** (`docs/scenario-simulation.md` §10):
+    - Stromboli è un'isola anche per la radio: paese ed escursionista sono dietro il cono rispetto a Lipari;
+    - il relay di Panarea vede Lipari ma non il versante nord-est di Stromboli: esempio concreto di copertura che non è un cerchio;
+    - l'aliscafo è il vero ponte ma, come negli Scenari 1-2, la coda attuale fa scadere l'SOS. Il relay di Panarea serve ad accorciare l'attesa del mulo, che così consegna anche con la coda attuale (2,4 h in g1 / 1,6 h in g3);
+    - spostare il Box dal centro denso al molo vale ~15 dB a 868 MHz;
+    - i file grandi non arrivano se il mulo non passa dove sono i dati.
+
+    **Trovato durante il lavoro**:
+    - il primo calcolo applicava per intero il clutter urbano anche a link di pochi metri, togliendo Wi-Fi e BLE al Box anche a 25 m e degradando la Card verso il proprio telefono. Corretto scalando il clutter con la distanza (`CLUTTER_DEPTH_M`), con test di regressione;
+    - due aspettative di test sbagliate sulla fisica (antenne a 1-2 m hanno già qualche dB di diffrazione su qualche km), corrette.
+
+    **Trovato dalla revisione** (6 problemi, tutti corretti, con test di regressione dove applicabile):
+    1. `parseNetworkConfig()` validava ambiente e profilo con `in`, quindi `"constructor"`/`"toString"` passavano e facevano crashare il motore (riprodotto). Ora usa `Object.hasOwn`;
+    2. stesso problema nella risoluzione del territorio nella CLI;
+    3. il doc attribuiva alla curvatura terrestre il blocco Lipari–Stromboli, che nel modello è il cono del vulcano;
+    4. la didascalia della mappa a tre livelli prometteva un'area solo-BLE e una forma non circolare impossibili con questi parametri. Ora la mappa mostra i tre livelli separati e la didascalia dice cosa si vede davvero;
+    5. l'RSSI di un link impossibile calcolato senza profilo era esposto senza avvertenza: ora c'è `rssiIsUpperBound`;
+    6. i nodi in salita "galleggiavano" fino a ~57 m sopra il pendio tra due waypoint: ora c'è `NodeSpec.heightAglM` + `nodePosition()`.
+
+    Nessuna modifica a `node/src/`, nessuna nuova dipendenza.
+

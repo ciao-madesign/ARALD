@@ -8,6 +8,7 @@
  *
  * Nessuna dipendenza esterna: solo TypeScript puro.
  */
+import { type Terrain, terrainLinkLossDb } from "./terrain.js";
 
 // ---------------------------------------------------------------- geometria
 
@@ -98,20 +99,46 @@ export type NodeKind = "box" | "portable" | "card" | "phone" | "relay";
 
 export interface RadioCaps { lora: boolean; ble: boolean; wifi: boolean }
 
-export const KIND_DEFAULTS: Record<NodeKind, { caps: RadioCaps; txDbm: number; antennaDbi: number; bodyLossDb: number }> = {
-  // txDbm è il massimo hardware (SX1262 +22 dBm, senza PA esterno); il profilo regolatorio limita l'EIRP.
-  box:      { caps: { lora: true,  ble: true, wifi: true  }, txDbm: 22, antennaDbi: 3,  bodyLossDb: 0 },
-  portable: { caps: { lora: true,  ble: true, wifi: true  }, txDbm: 22, antennaDbi: 0,  bodyLossDb: 2 },
-  card:     { caps: { lora: true,  ble: true, wifi: false }, txDbm: 22, antennaDbi: -3, bodyLossDb: 4 },
-  phone:    { caps: { lora: false, ble: true, wifi: true  }, txDbm: 0,  antennaDbi: 0,  bodyLossDb: 0 },
+export interface KindRadioProfile {
+  caps: RadioCaps;
+  /** LoRa: potenza hardware massima (SX1262 +22 dBm, senza PA esterno) e guadagno d'antenna. */
+  txDbm: number;
+  antennaDbi: number;
+  /** Perdita dovuta al corpo di chi porta il dispositivo (tutte le tecnologie). */
+  bodyLossDb: number;
+  /** BLE: potenza di trasmissione (dBm, antenna integrata ~0 dBi). */
+  bleTxDbm: number;
+  /** Wi-Fi 2,4 GHz: EIRP (dBm; limite UE 20 dBm). */
+  wifiEirpDbm: number;
+  /** Altezza tipica dell'antenna dal suolo (m), usata quando l'utente non la specifica. */
+  heightAglM: number;
+}
+
+/**
+ * Caratteristiche intrinseche di ogni tipo di dispositivo (docs/network-design-tool.md §2:
+ * mai reinserite dall'utente nella prima versione del tool). Valori di progetto/ipotesi,
+ * NON misurati su hardware ARALD.
+ */
+export const KIND_DEFAULTS: Record<NodeKind, KindRadioProfile> = {
+  box:      { caps: { lora: true,  ble: true, wifi: true  }, txDbm: 22, antennaDbi: 3,  bodyLossDb: 0, bleTxDbm: 8, wifiEirpDbm: 20, heightAglM: 4 },
+  portable: { caps: { lora: true,  ble: true, wifi: true  }, txDbm: 22, antennaDbi: 0,  bodyLossDb: 2, bleTxDbm: 8, wifiEirpDbm: 20, heightAglM: 1.5 },
+  card:     { caps: { lora: true,  ble: true, wifi: false }, txDbm: 22, antennaDbi: -3, bodyLossDb: 4, bleTxDbm: 4, wifiEirpDbm: 0,  heightAglM: 1.2 },
+  phone:    { caps: { lora: false, ble: true, wifi: true  }, txDbm: 0,  antennaDbi: 0,  bodyLossDb: 0, bleTxDbm: 4, wifiEirpDbm: 15, heightAglM: 1.2 },
   // ARALD Fixed Relay (docs/beacon.md): palo/supporto fisso in quota, antenna esterna, nessun corpo.
-  relay:    { caps: { lora: true,  ble: true, wifi: false }, txDbm: 22, antennaDbi: 3,  bodyLossDb: 0 },
+  relay:    { caps: { lora: true,  ble: true, wifi: false }, txDbm: 22, antennaDbi: 3,  bodyLossDb: 0, bleTxDbm: 4, wifiEirpDbm: 0,  heightAglM: 6 },
 };
 
 export interface NodeSpec {
   id: string;
   kind: NodeKind;
   path: Waypoint[];
+  /**
+   * Altezza dell'antenna dal suolo (m). Se presente e l'ambiente ha un `Terrain`, la quota
+   * del nodo segue il terreno lungo la traiettoria (suolo + questa altezza) invece di
+   * interpolare in linea retta la z dei waypoint, che su un pendio farebbe "galleggiare"
+   * il nodo sopra il terreno (trovato dalla revisione).
+   */
+  heightAglM?: number;
   /** Istante (s) da cui il nodo è spento/assente — robustezza. */
   offFrom?: number;
 }
@@ -132,6 +159,13 @@ export interface Environment {
   /** Moltiplicatore applicato alle ostruzioni (favorevole < 1, severo > 1). */
   obstructionScale: number;
   interferenceDb: number;
+  /**
+   * Territorio reale o sintetico (terrain.ts): se presente, ogni link aggiunge la
+   * diffrazione sul profilo del terreno (con curvatura terrestre) e il clutter
+   * d'uso del suolo ai due estremi, alla frequenza della tecnologia. Le posizioni
+   * dei nodi (z) sono allora quote assolute dell'antenna.
+   */
+  terrain?: Terrain;
 }
 
 export function pairKey(a: string, b: string): string {
@@ -139,22 +173,73 @@ export function pairKey(a: string, b: string): string {
 }
 
 export interface ShortRangeParams {
+  /**
+   * "fixed" (Scenari 1-2): portata e velocità BLE/Wi-Fi costanti.
+   * "budget": link budget a 2,4 GHz come per LoRa, velocità a gradini in funzione
+   * del segnale ricevuto — portata e velocità dipendono da distanza e territorio.
+   */
+  model?: "fixed" | "budget";
   bleRangeM: number;
-  bleBps: number;   // throughput applicativo effettivo
+  bleBps: number;   // throughput applicativo effettivo (solo "fixed")
   wifiRangeM: number;
   wifiBps: number;
 }
 
-export const DEFAULT_SHORT_RANGE: ShortRangeParams = { bleRangeM: 30, bleBps: 200_000, wifiRangeM: 80, wifiBps: 8_000_000 };
+export const DEFAULT_SHORT_RANGE: ShortRangeParams = { model: "fixed", bleRangeM: 30, bleBps: 200_000, wifiRangeM: 80, wifiBps: 8_000_000 };
+export const BUDGET_SHORT_RANGE: ShortRangeParams = { ...DEFAULT_SHORT_RANGE, model: "budget" };
+
+/**
+ * Gradini di velocità applicativa in funzione dell'RSSI (al netto del margine di fading).
+ * BLE: 2M PHY, 1M PHY, Coded PHY S2/S8. Wi-Fi 802.11n 2,4 GHz 20 MHz 1 flusso
+ * (MCS7…MCS0) più 802.11b 1 Mbps, throughput applicativo ≈ 55% del PHY.
+ * Soglie e velocità sono ipotesi tipiche, NON verificate su dispositivi ARALD.
+ */
+export const BLE_RATE_STEPS: { minRssiDbm: number; bps: number; label: string }[] = [
+  { minRssiDbm: -80, bps: 1_000_000, label: "2M PHY" },
+  { minRssiDbm: -92, bps: 300_000, label: "1M PHY" },
+  { minRssiDbm: -97, bps: 120_000, label: "Coded S2" },
+  { minRssiDbm: -101, bps: 40_000, label: "Coded S8" },
+];
+export const WIFI_RATE_STEPS: { minRssiDbm: number; bps: number; label: string }[] = [
+  { minRssiDbm: -64, bps: 36_000_000, label: "MCS7" },
+  { minRssiDbm: -66, bps: 32_000_000, label: "MCS6" },
+  { minRssiDbm: -70, bps: 28_000_000, label: "MCS5" },
+  { minRssiDbm: -74, bps: 21_000_000, label: "MCS4" },
+  { minRssiDbm: -77, bps: 14_000_000, label: "MCS3" },
+  { minRssiDbm: -79, bps: 11_000_000, label: "MCS2" },
+  { minRssiDbm: -81, bps: 7_000_000, label: "MCS1" },
+  { minRssiDbm: -82, bps: 3_500_000, label: "MCS0" },
+  { minRssiDbm: -90, bps: 600_000, label: "802.11b 1 Mbps" },
+];
 
 export type Medium = "wifi" | "ble" | "lora";
 
 export interface LinkState {
   medium: Medium;
-  /** Solo LoRa: SF scelto (il più veloce che chiude il link), RSSI stimato, margine residuo. */
+  /** Solo LoRa: SF scelto (il più veloce che chiude il link). */
   sf?: SpreadingFactor;
+  /** RSSI stimato (direzione più debole) e margine residuo sopra la soglia usata. */
   rssiDbm?: number;
   marginDb?: number;
+  /** Velocità applicativa istantanea stimata (bit/s). Per LoRa: a canale libero, senza duty-cycle. */
+  rateBps?: number;
+  /** Nome del gradino/modo radio usato (es. "SF9", "1M PHY", "MCS4"). */
+  mode?: string;
+}
+
+/** Valutazione di una tecnologia su una coppia di nodi, anche quando il link non chiude. */
+export interface RadioEvaluation {
+  medium: Medium;
+  /** false se uno dei due dispositivi non ha questa tecnologia (o il Wi-Fi non coinvolge un access point). */
+  applicable: boolean;
+  /**
+   * RSSI stimato. Quando il link è impossibile già senza territorio, il profilo del
+   * terreno non viene calcolato e questo è solo un limite superiore.
+   */
+  rssiDbm: number | null;
+  /** true se `rssiDbm` è solo un limite superiore (profilo del terreno non calcolato). */
+  rssiIsUpperBound: boolean;
+  link: LinkState | null;
 }
 
 export interface ModelParams {
@@ -173,40 +258,116 @@ export interface ModelParams {
   maxSf: SpreadingFactor;
 }
 
+const LORA_FREQ_HZ = 868e6;
+const ISM24_FREQ_HZ = 2.44e9;
+
+/** Perdite comuni a ogni tecnologia, territorio escluso: percorso, ostruzioni dello scenario, interferenza, evento. */
+function baseLossDb(a: NodeSpec, pa: Point3, b: NodeSpec, pb: Point3, p: ModelParams, freqHz: number, extraLossDb: number): number {
+  const obstruction = ((p.env.obstructionDb[pairKey(a.id, b.id)] ?? 0) + (p.env.obstructionFn?.(pa, pb) ?? 0)) * p.env.obstructionScale;
+  return pathLossDb(distance3(pa, pb), p.env.pathLossExponent, freqHz) + obstruction + p.env.interferenceDb + extraLossDb;
+}
+
 /**
- * Link LoRa diretto tra due nodi: SF più veloce che chiude il budget, altrimenti null.
- * `extraLossDb` = perdita aggiuntiva dipendente dal tempo (meteo, neve bagnata, ghiaccio sulle antenne).
+ * RSSI della direzione più debole, territorio incluso. Il profilo del terreno è il
+ * calcolo costoso: se il link non chiuderebbe nemmeno senza territorio (che può solo
+ * aggiungere perdita) lo si salta e si restituisce quel valore come limite superiore.
  */
-export function loraLink(a: NodeSpec, pa: Point3, b: NodeSpec, pb: Point3, p: ModelParams, extraLossDb = 0): LinkState | null {
+function rssiWithTerrain(rssiNoTerrain: number, bestThresholdDbm: number, pa: Point3, pb: Point3, p: ModelParams, freqHz: number): { rssi: number; upperBound: boolean } {
+  if (!p.env.terrain) return { rssi: rssiNoTerrain, upperBound: false };
+  if (rssiNoTerrain - p.env.fadeMarginDb < bestThresholdDbm) return { rssi: rssiNoTerrain, upperBound: true };
+  return { rssi: rssiNoTerrain - cachedTerrainLossDb(p.env.terrain, pa, pb, freqHz), upperBound: false };
+}
+
+/** Memo del profilo di terreno: i nodi fermi ripetono le stesse coppie a ogni passo della simulazione. */
+const terrainCache = new WeakMap<Terrain, Map<string, number>>();
+function cachedTerrainLossDb(terrain: Terrain, pa: Point3, pb: Point3, freqHz: number): number {
+  let m = terrainCache.get(terrain);
+  if (!m) { m = new Map(); terrainCache.set(terrain, m); }
+  if (m.size > 200_000) m.clear();
+  const k = (q: Point3) => `${q.x.toFixed(1)},${q.y.toFixed(1)},${q.z.toFixed(1)}`;
+  // Il link budget è simmetrico: stessa chiave per (a,b) e (b,a).
+  const [k1, k2] = [k(pa), k(pb)].sort();
+  const key = `${k1}|${k2}|${freqHz}`;
+  let v = m.get(key);
+  if (v === undefined) { v = terrainLinkLossDb(terrain, pa, pb, freqHz); m.set(key, v); }
+  return v;
+}
+
+/** LoRa: SF più veloce che chiude il budget (logica ADR). */
+export function evaluateLora(a: NodeSpec, pa: Point3, b: NodeSpec, pb: Point3, p: ModelParams, extraLossDb = 0): RadioEvaluation {
   const da = KIND_DEFAULTS[a.kind];
   const db = KIND_DEFAULTS[b.kind];
-  if (!da.caps.lora || !db.caps.lora) return null;
+  if (!da.caps.lora || !db.caps.lora) return { medium: "lora", applicable: false, rssiDbm: null, rssiIsUpperBound: false, link: null };
   // Il link utile è bidirezionale (dati in un verso, risposte/ACK nell'altro): vale la direzione più
   // debole. Ogni direzione = EIRP del trasmettitore + guadagno d'antenna del ricevitore.
   const eirpA = effectiveEirpDbm(da.txDbm, da.antennaDbi, p.reg);
   const eirpB = effectiveEirpDbm(db.txDbm, db.antennaDbi, p.reg);
   const weakest = Math.min(eirpA + db.antennaDbi, eirpB + da.antennaDbi);
-  const obstruction = ((p.env.obstructionDb[pairKey(a.id, b.id)] ?? 0) + (p.env.obstructionFn?.(pa, pb) ?? 0)) * p.env.obstructionScale;
-  const rssi = weakest - da.bodyLossDb - db.bodyLossDb
-    - pathLossDb(distance3(pa, pb), p.env.pathLossExponent) - obstruction - p.env.interferenceDb - extraLossDb;
+  const bestSens = SX1262_SENSITIVITY_125K[p.maxSf];
+  const { rssi, upperBound } = rssiWithTerrain(weakest - da.bodyLossDb - db.bodyLossDb - baseLossDb(a, pa, b, pb, p, LORA_FREQ_HZ, extraLossDb), bestSens, pa, pb, p, LORA_FREQ_HZ);
   for (const sf of SPREADING_FACTORS) {
     if (sf > p.maxSf) break;
     const margin = rssi - p.env.fadeMarginDb - SX1262_SENSITIVITY_125K[sf];
-    if (margin >= 0) return { medium: "lora", sf, rssiDbm: rssi, marginDb: margin };
+    if (margin >= 0) {
+      return { medium: "lora", applicable: true, rssiDbm: rssi, rssiIsUpperBound: upperBound, link: { medium: "lora", sf, rssiDbm: rssi, marginDb: margin, rateBps: loraRawAppBps(sf, p), mode: `SF${sf}` } };
+    }
+  }
+  return { medium: "lora", applicable: true, rssiDbm: rssi, rssiIsUpperBound: upperBound, link: null };
+}
+
+function stepLink(medium: Medium, rssi: number, p: ModelParams, steps: { minRssiDbm: number; bps: number; label: string }[]): LinkState | null {
+  for (const s of steps) {
+    const margin = rssi - p.env.fadeMarginDb - s.minRssiDbm;
+    if (margin >= 0) return { medium, rssiDbm: rssi, marginDb: margin, rateBps: s.bps, mode: s.label };
   }
   return null;
 }
 
-/** Miglior mezzo disponibile tra due nodi a un istante: Wi-Fi > BLE > LoRa. */
-export function bestLink(a: NodeSpec, pa: Point3, b: NodeSpec, pb: Point3, p: ModelParams, extraLossDb = 0): LinkState | null {
-  const ca = KIND_DEFAULTS[a.kind].caps;
-  const cb = KIND_DEFAULTS[b.kind].caps;
-  const d = distance3(pa, pb);
-  // Wi-Fi solo verso/da un nodo che fa da access point (Box/Portable).
+/** BLE: portata fissa ("fixed") oppure link budget a 2,4 GHz con gradini di PHY ("budget"). */
+export function evaluateBle(a: NodeSpec, pa: Point3, b: NodeSpec, pb: Point3, p: ModelParams, extraLossDb = 0): RadioEvaluation {
+  const da = KIND_DEFAULTS[a.kind];
+  const db = KIND_DEFAULTS[b.kind];
+  if (!da.caps.ble || !db.caps.ble) return { medium: "ble", applicable: false, rssiDbm: null, rssiIsUpperBound: false, link: null };
+  if (p.shortRange.model !== "budget") {
+    const ok = distance3(pa, pb) <= p.shortRange.bleRangeM;
+    return { medium: "ble", applicable: true, rssiDbm: null, rssiIsUpperBound: false, link: ok ? { medium: "ble", rateBps: p.shortRange.bleBps, mode: "fisso" } : null };
+  }
+  const { rssi, upperBound } = rssiWithTerrain(Math.min(da.bleTxDbm, db.bleTxDbm) - da.bodyLossDb - db.bodyLossDb - baseLossDb(a, pa, b, pb, p, ISM24_FREQ_HZ, extraLossDb),
+    BLE_RATE_STEPS[BLE_RATE_STEPS.length - 1].minRssiDbm, pa, pb, p, ISM24_FREQ_HZ);
+  return { medium: "ble", applicable: true, rssiDbm: rssi, rssiIsUpperBound: upperBound, link: stepLink("ble", rssi, p, BLE_RATE_STEPS) };
+}
+
+/** Wi-Fi: solo verso/da un access point (Box/Portable); portata fissa o link budget a 2,4 GHz. */
+export function evaluateWifi(a: NodeSpec, pa: Point3, b: NodeSpec, pb: Point3, p: ModelParams, extraLossDb = 0): RadioEvaluation {
+  const da = KIND_DEFAULTS[a.kind];
+  const db = KIND_DEFAULTS[b.kind];
   const apInvolved = a.kind === "box" || a.kind === "portable" || b.kind === "box" || b.kind === "portable";
-  if (ca.wifi && cb.wifi && apInvolved && d <= p.shortRange.wifiRangeM) return { medium: "wifi" };
-  if (ca.ble && cb.ble && d <= p.shortRange.bleRangeM) return { medium: "ble" };
-  return loraLink(a, pa, b, pb, p, extraLossDb);
+  if (!da.caps.wifi || !db.caps.wifi || !apInvolved) return { medium: "wifi", applicable: false, rssiDbm: null, rssiIsUpperBound: false, link: null };
+  if (p.shortRange.model !== "budget") {
+    const ok = distance3(pa, pb) <= p.shortRange.wifiRangeM;
+    return { medium: "wifi", applicable: true, rssiDbm: null, rssiIsUpperBound: false, link: ok ? { medium: "wifi", rateBps: p.shortRange.wifiBps, mode: "fisso" } : null };
+  }
+  const { rssi, upperBound } = rssiWithTerrain(Math.min(da.wifiEirpDbm, db.wifiEirpDbm) - da.bodyLossDb - db.bodyLossDb - baseLossDb(a, pa, b, pb, p, ISM24_FREQ_HZ, extraLossDb),
+    WIFI_RATE_STEPS[WIFI_RATE_STEPS.length - 1].minRssiDbm, pa, pb, p, ISM24_FREQ_HZ);
+  return { medium: "wifi", applicable: true, rssiDbm: rssi, rssiIsUpperBound: upperBound, link: stepLink("wifi", rssi, p, WIFI_RATE_STEPS) };
+}
+
+/** Link LoRa diretto tra due nodi: SF più veloce che chiude il budget, altrimenti null. */
+export function loraLink(a: NodeSpec, pa: Point3, b: NodeSpec, pb: Point3, p: ModelParams, extraLossDb = 0): LinkState | null {
+  return evaluateLora(a, pa, b, pb, p, extraLossDb).link;
+}
+
+/**
+ * Miglior mezzo disponibile tra due nodi a un istante: quello con la velocità
+ * istantanea più alta tra quelli che chiudono il link (in pratica Wi-Fi > BLE > LoRa).
+ */
+export function bestLink(a: NodeSpec, pa: Point3, b: NodeSpec, pb: Point3, p: ModelParams, extraLossDb = 0): LinkState | null {
+  let best: LinkState | null = null;
+  for (const ev of [evaluateWifi, evaluateBle, evaluateLora]) {
+    const l = ev(a, pa, b, pb, p, extraLossDb).link;
+    if (l && (best === null || (l.rateBps ?? 0) > (best.rateBps ?? 0))) best = l;
+  }
+  return best;
 }
 
 /** Byte applicativi trasferibili in un frame LoRa. */
@@ -293,6 +454,13 @@ export interface SimResult {
   linkSnapshots: { t: number; links: { a: string; b: string; link: LinkState }[] }[];
 }
 
+/** Posizione di un nodo al tempo t, con la quota che segue il territorio quando è noto (`heightAglM`). */
+export function nodePosition(n: NodeSpec, t: number, terrain?: Terrain): Point3 {
+  const p = positionAt(n.path, t);
+  if (!terrain || n.heightAglM === undefined) return p;
+  return { x: p.x, y: p.y, z: terrain.elevationAt(p.x, p.y) + n.heightAglM };
+}
+
 function isOn(n: NodeSpec, t: number): boolean {
   return n.offFrom === undefined || t < n.offFrom;
 }
@@ -300,7 +468,7 @@ function isOn(n: NodeSpec, t: number): boolean {
 /** Costo di un link per la metrica "airtime": secondi di trasmissione per un frame equivalente. */
 function linkAirtimeCost(link: LinkState, p: ModelParams): number {
   if (link.medium === "lora") return loraTimeOnAir(p.loraFrameBytes, link.sf!, p.phy);
-  const bps = link.medium === "wifi" ? p.shortRange.wifiBps : p.shortRange.bleBps;
+  const bps = link.rateBps ?? (link.medium === "wifi" ? p.shortRange.wifiBps : p.shortRange.bleBps);
   return (8 * p.loraFrameBytes) / bps;
 }
 
@@ -336,7 +504,7 @@ function bfsHops(adj: Map<string, string[]>, from: string | string[]): Map<strin
 
 export function snapshotLinks(nodes: NodeSpec[], t: number, p: ModelParams, extraLossDb = 0): { a: string; b: string; link: LinkState }[] {
   const out: { a: string; b: string; link: LinkState }[] = [];
-  const pos = nodes.map((n) => positionAt(n.path, t));
+  const pos = nodes.map((n) => nodePosition(n, t, p.env.terrain));
   for (let i = 0; i < nodes.length; i++) {
     if (!isOn(nodes[i], t)) continue;
     for (let j = i + 1; j < nodes.length; j++) {
@@ -492,7 +660,7 @@ export function simulate(opts: SimOptions): SimResult {
             want = bytes;
           } else {
             const key = pairKey(sender.id, nb);
-            const bps = link.medium === "wifi" ? p.shortRange.wifiBps : p.shortRange.bleBps;
+            const bps = link.rateBps ?? (link.medium === "wifi" ? p.shortRange.wifiBps : p.shortRange.bleBps);
             const left = shortBudget.get(key) ?? (bps / 8) * stepS;
             const bytes = Math.min(want, left);
             if (bytes <= 0) continue;

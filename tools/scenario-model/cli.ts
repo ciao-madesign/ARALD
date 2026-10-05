@@ -4,21 +4,61 @@
  *
  *   npm run scenario-model                                  # Scenario 1, Valle Maira
  *   npm run scenario-model -- --scenario alpino-frammentato # Scenario 2
+ *   npm run scenario-model -- --scenario eolie              # Scenario 3
  *   npm run scenario-model -- --max-sf 10 --horizon-h 24
+ *   npm run scenario-model -- --config tools/scenario-model/examples/eolie.json [--json]
+ *                                  # valuta una configurazione salvata (formato del futuro tool)
  */
+import { readFileSync } from "node:fs";
 import {
-  DEFAULT_PHY, DEFAULT_SHORT_RANGE, EU868_G1, EU868_G3, SPREADING_FACTORS, type ModelParams, type RegulatoryProfile,
-  type SpreadingFactor, destinationsOf, loraDutyLimitedAppBps, loraRawAppBps, loraTimeOnAir, positionAt, loraLink, simulate,
+  BUDGET_SHORT_RANGE, DEFAULT_PHY, DEFAULT_SHORT_RANGE, EU868_G1, EU868_G3, SPREADING_FACTORS, type ModelParams, type RegulatoryProfile,
+  type SpreadingFactor, destinationsOf, nodePosition, loraDutyLimitedAppBps, loraRawAppBps, loraTimeOnAir, loraLink, simulate,
 } from "./model.js";
 import type { Scenario } from "./scenario.js";
 import { valleMaira } from "./valle-maira.js";
 import { alpinoFrammentato } from "./alpino-frammentato.js";
+import { EOLIE_TERRAIN, eolie } from "./eolie.js";
+import { type LinkAssessment, assessLink, coverageGrid, qualityLabel } from "./assess.js";
+import { assessNetwork, parseNetworkConfig } from "./network-config.js";
+import { FLAT_TERRAIN, type Terrain } from "./terrain.js";
 
-const SCENARIOS: Record<string, Scenario> = { [valleMaira.id]: valleMaira, [alpinoFrammentato.id]: alpinoFrammentato };
+const SCENARIOS: Record<string, Scenario> = { [valleMaira.id]: valleMaira, [alpinoFrammentato.id]: alpinoFrammentato, [eolie.id]: eolie };
+/** Dataset di territorio noti al motore, referenziati per nome da una configurazione salvata. */
+const TERRAINS: Record<string, Terrain> = { "eolie-sintetico": EOLIE_TERRAIN };
 
 function arg(name: string, fallback: string): string {
   const i = process.argv.indexOf(`--${name}`);
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
+}
+
+function fmtRate(bps: number): string {
+  if (bps >= 1e6) return `${(bps / 1e6).toFixed(1)} Mbps`;
+  if (bps >= 1e3) return `${(bps / 1e3).toFixed(bps >= 1e4 ? 0 : 1)} kbps`;
+  return `${bps.toFixed(0)} bps`;
+}
+
+/** Pannello connessioni (docs/network-design-tool.md §7) da un elenco di valutazioni. */
+function connectionPanel(links: LinkAssessment[]): string[] {
+  const rows = ["| Connessione | Tecnologia | Distanza | Velocità stimata | Sostenuta | Qualità | Linea di vista |", "|---|---|---:|---:|---:|---|:---:|"];
+  for (const l of links) {
+    const b = l.best!;
+    rows.push(`| ${l.a} → ${l.b} | ${b.technology === "wifi" ? "Wi-Fi" : b.technology === "ble" ? "BLE" : "LoRa"} (${b.mode}) | ${l.distanceM >= 1000 ? `${(l.distanceM / 1000).toFixed(1)} km` : `${Math.round(l.distanceM)} m`} | ${fmtRate(b.rateBps)} | ${fmtRate(b.sustainedBps)} | ${qualityLabel(b.quality)} (${b.quality.toFixed(2)}) | ${l.terrain === null ? "—" : l.terrain.lineOfSight ? "sì" : "no"} |`);
+  }
+  return rows;
+}
+
+const configPath = arg("config", "");
+if (configPath) {
+  const cfg = parseNetworkConfig(JSON.parse(readFileSync(configPath, "utf8")));
+  const terrain = cfg.terrain === undefined ? FLAT_TERRAIN : Object.hasOwn(TERRAINS, cfg.terrain) ? TERRAINS[cfg.terrain] : undefined;
+  if (!terrain) {
+    console.error(`Territorio sconosciuto: ${cfg.terrain}. Disponibili: ${Object.keys(TERRAINS).join(", ")}`);
+    process.exit(1);
+  }
+  const links = assessNetwork(cfg, terrain);
+  if (process.argv.includes("--json")) console.log(JSON.stringify({ config: cfg.name, links }, null, 2));
+  else console.log([`### ${cfg.name} — connessioni (${cfg.environment}, ${cfg.regulatory}, territorio: ${terrain.name})\n`, ...connectionPanel(links)].join("\n"));
+  process.exit(0);
 }
 
 const policy = arg("policy", "custody") as "custody" | "epidemic";
@@ -39,7 +79,8 @@ function fmtClock(s: number): string {
 
 function params(envName: string, reg: RegulatoryProfile): ModelParams {
   return {
-    env: scenario.environments[envName], reg, phy: DEFAULT_PHY, shortRange: DEFAULT_SHORT_RANGE,
+    env: scenario.environments[envName], reg, phy: DEFAULT_PHY,
+    shortRange: scenario.shortRangeModel === "budget" ? BUDGET_SHORT_RANGE : DEFAULT_SHORT_RANGE,
     loraFrameBytes: 222, loraFrameOverheadBytes: 22, protocolOverhead: 1.45, channelEfficiency: 0.5, maxSf,
   };
 }
@@ -87,8 +128,8 @@ out.push(`|---|---:|${envNames.flatMap(() => regs.map(() => ":---:")).join("|")}
 for (const [a, b] of pairs) {
   const na = nodes.find((n) => n.id === a)!;
   const nb = nodes.find((n) => n.id === b)!;
-  const pa = positionAt(na.path, scenario.eventT);
-  const pb = positionAt(nb.path, scenario.eventT);
+  const pa = nodePosition(na, scenario.eventT, scenario.environments.tipico?.terrain);
+  const pb = nodePosition(nb, scenario.eventT, scenario.environments.tipico?.terrain);
   const d = Math.hypot(pa.x - pb.x, pa.y - pb.y, pa.z - pb.z);
   const cells = envNames.flatMap((e) => regs.map(([, reg]) => {
     const l = loraLink(na, pa, nb, pb, params(e, reg));
@@ -141,6 +182,71 @@ if (policy === "custody") {
   out.push(`\n### E. Stessa simulazione con instradamento a costo "airtime" invece che a numero di salti (coda relay ARALD attuale)\n`);
   for (const [regName, reg] of regs) resultsTable(`Metrica airtime · ${carryModels[0][0]} · profilo radio ${regName}`, reg, carryModels[0][1], "airtime");
 }
-out.push(`\nLegenda D: ${msgs.map((m) => `${m.id} = ${m.label} (${m.source}→${destinationsOf(m).join(" e ")})`).join("; ")}. "✗ (x%)" = non consegnato entro l'orizzonte, x% arrivato; "—" = destinazione non raggiunta. "${connSrc}→${connDst} connesso" = frazione del tempo con un percorso simultaneo (connettività istantanea): una consegna avvenuta con questo valore < 100% è passata (anche) per contatti opportunistici. "Airtime LoRa" = tempo di trasmissione LoRa consumato da tutti i file, tutte le copie. Varianti: ${Object.entries(scenario.variants).map(([k, v]) => `${k} = ${v}`).join("; ")}.`);
+out.push(`\nLegenda D/E: ${msgs.map((m) => `${m.id} = ${m.label} (${m.source}→${destinationsOf(m).join(" e ")})`).join("; ")}. "✗ (x%)" = non consegnato entro l'orizzonte, x% arrivato; "—" = destinazione non raggiunta. "${connSrc}→${connDst} connesso" = frazione del tempo con un percorso simultaneo (connettività istantanea): una consegna avvenuta con questo valore < 100% è passata (anche) per contatti opportunistici. "Airtime LoRa" = tempo di trasmissione LoRa consumato da tutti i file, tutte le copie. Varianti: ${Object.entries(scenario.variants).map(([k, v]) => `${k} = ${v}`).join("; ")}.`);
+
+const terrain = scenario.environments.tipico?.terrain;
+if (terrain) {
+  out.push(`\n### F. Pannello connessioni a t = ${fmtClock(scenario.eventT)} (variante \`${scenario.linkSnapshotVariant}\`, ambiente tipico) — formato del futuro tool\n`);
+  const snapNodes = scenario.buildNodes(scenario.linkSnapshotVariant);
+  for (const [regName, reg] of regs) {
+    const pr = params("tipico", reg);
+    const links: LinkAssessment[] = [];
+    for (let i = 0; i < snapNodes.length; i++) {
+      for (let j = i + 1; j < snapNodes.length; j++) {
+        const l = assessLink(snapNodes[i], nodePosition(snapNodes[i], scenario.eventT, terrain), snapNodes[j], nodePosition(snapNodes[j], scenario.eventT, terrain), pr);
+        if (l.best) links.push(l);
+      }
+    }
+    links.sort((x, y) => y.best!.quality - x.best!.quality);
+    out.push(`\n**Profilo radio ${regName}**\n`);
+    out.push(...connectionPanel(links));
+  }
+
+  out.push(`\n### G. Alone di copertura LoRa del Box (ricevitore di riferimento: Card), ambiente tipico, celle da 1 km\n`);
+  out.push("Legenda: `#` terra coperta, `+` mare coperto, `.` terra non coperta, spazio = mare non coperto, `B` posizione del Box.\n");
+  const box = snapNodes.find((n) => n.kind === "box")!;
+  const boxPos = nodePosition(box, scenario.eventT, terrain);
+  const xs = snapNodes.flatMap((n) => n.path.map((w) => w.x));
+  const ys = snapNodes.flatMap((n) => n.path.map((w) => w.y));
+  const bbox = { minX: Math.min(...xs) - 4000, maxX: Math.max(...xs) + 4000, minY: Math.min(...ys) - 4000, maxY: Math.max(...ys) + 4000 };
+  for (const [regName, reg] of regs) {
+    const g = coverageGrid(box, boxPos, "lora", params("tipico", reg), bbox, 1000);
+    const covered = g.cells.filter((c) => c.possible).length;
+    out.push(`\n**${regName}** — celle coperte: ${covered} su ${g.cells.length}\n`);
+    out.push("```text");
+    for (let r = 0; r < g.rows; r++) {
+      let line = "";
+      for (let c = 0; c < g.cols; c++) {
+        const cell = g.cells[r * g.cols + c];
+        const isBox = Math.abs(cell.x - boxPos.x) <= 500 && Math.abs(cell.y - boxPos.y) <= 500;
+        const land = terrain.landCoverAt(cell.x, cell.y) !== "sea";
+        line += isBox ? "B" : cell.possible ? (land ? "#" : "+") : land ? "." : " ";
+      }
+      out.push(line.replace(/\s+$/, ""));
+    }
+    out.push("```");
+  }
+
+  out.push(`\n### H. I tre livelli dell'alone del Box, uno per tecnologia (celle da 40 m, ±1 km, ambiente tipico, g1)\n`);
+  out.push("Ogni livello è calcolato separatamente verso il proprio ricevitore di riferimento (Wi-Fi e BLE → smartphone, LoRa → Card). `#` = coperto, `.` = non coperto, `B` = Box. Nel centro abitato denso Wi-Fi e BLE arrivano a ~50-60 m in ogni direzione, perché domina il clutter attorno al Box stesso; con questi parametri BLE e Wi-Fi verso uno smartphone hanno la stessa portata, ma il Wi-Fi è ~36 volte più veloce e vince. La forma dell'alone che segue il territorio si vede su LoRa, sezione G.\n");
+  const zoom = { minX: boxPos.x - 1000, maxX: boxPos.x + 1000, minY: boxPos.y - 1000, maxY: boxPos.y + 1000 };
+  const pz = params("tipico", EU868_G1);
+  const layers = (["wifi", "ble", "lora"] as const).map((tech) => coverageGrid(box, boxPos, tech, pz, zoom, 40));
+  const names = ["Wi-Fi", "BLE", "LoRa"];
+  out.push("```text");
+  out.push(names.map((nm) => nm.padEnd(layers[0].cols, " ")).join("   ").trimEnd());
+  for (let r = 0; r < layers[0].rows; r++) {
+    out.push(layers.map((g) => {
+      let line = "";
+      for (let c = 0; c < g.cols; c++) {
+        const cell = g.cells[r * g.cols + c];
+        line += Math.abs(cell.x - boxPos.x) <= 20 && Math.abs(cell.y - boxPos.y) <= 20 ? "B" : cell.possible ? "#" : ".";
+      }
+      return line;
+    }).join("   "));
+  }
+  out.push("```");
+  out.push(...layers.map((g, i) => `- ${names[i]}: ${g.cells.filter((x) => x.possible).length} celle coperte su ${g.cells.length}`));
+}
 
 console.log(out.join("\n"));

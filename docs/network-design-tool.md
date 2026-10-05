@@ -143,17 +143,19 @@ La simulazione va sviluppata tenendo presente questo uso. Al termine del lavoro 
 
 Annotazioni tecniche, non decisioni: servono a non allontanare il motore dall'obiettivo mentre si lavora sui prossimi scenari.
 
-| Requisito del tool | Cosa c'è già nel motore | Cosa manca |
-|---|---|---|
-| Parametri per tipo di dispositivo, non inseriti dall'utente (§2) | `KIND_DEFAULTS` in `model.ts`: tecnologie, potenza, antenna, perdita da corpo per `box`/`portable`/`card`/`phone` (+ `relay`) | Parametri BLE/Wi-Fi oggi uguali per tutti i dispositivi (portata e velocità fisse in `DEFAULT_SHORT_RANGE`) |
-| Copertura che dipende dal territorio (§1, §4) | Link budget con perdita di terreno pluggable: per coppia (`obstructionDb`) o per posizione (`obstructionFn`, Scenario 2 a zone) | Un vero modello di terreno da DEM (profilo tra i due punti, diffrazione) e una classificazione d'uso del suolo (urbano denso / bosco / aperto) al posto delle zone scritte a mano |
-| Alone per tecnologia (§4) | Il link budget sa dire se un punto è raggiungibile con LoRa (e con quale SF), BLE o Wi-Fi | Oggi si valuta solo tra due dispositivi: serve una valutazione su una griglia di punti verso un "ricevitore di riferimento" per ogni tecnologia |
-| Connessione e tecnologia tra due dispositivi (§5) | `bestLink()` restituisce tecnologia, SF, RSSI e margine | — |
-| Qualità/velocità numerica della linea (§6) | Time-on-air e throughput per SF (`loraRawAppBps`, `loraDutyLimitedAppBps`), velocità BLE/Wi-Fi nominali | Una funzione unica "qualità del link → valore numerico e colore", e una velocità BLE/Wi-Fi che dipenda dalla distanza |
-| Mappa e dispositivi posizionati dall'utente (§3) | Coordinate locali in metri | Conversione da latitudine/longitudine a coordinate locali, e un'interfaccia web (fuori dal motore) |
+Aggiornato al termine dello Scenario 3 (`docs/scenario-simulation.md` §11 risponde punto per punto al §12).
 
-| Interrogazione "A in X, B in Y, su questo territorio → connessione e prestazioni" (§10) | `bestLink()`/`loraLink()` sono già funzioni pure (dispositivo, posizione, parametri → tecnologia, SF, RSSI, margine) separate da `simulate()` e dalla CLI | Un tipo di risultato unico e documentato (tecnologia, velocità stimata, qualità normalizzata 0-1) e un "territorio" passato come input esplicito invece che dentro `Environment` |
-| Configurazione salvabile (§9) | — | Uno schema JSON di configurazione (dispositivi, posizioni, territorio, parametri) |
+| Requisito del tool | Cosa c'è nel motore | Cosa manca |
+|---|---|---|
+| Parametri per tipo di dispositivo, non inseriti dall'utente (§2) | `KIND_DEFAULTS` in `model.ts`: tecnologie, potenza LoRa, antenna, perdita da corpo, potenza BLE, EIRP Wi-Fi, altezza tipica dal suolo per `box`/`portable`/`card`/`phone` (+ `relay`) | Valori da verificare su hardware reale |
+| Copertura che dipende dal territorio (§1, §4) | Interfaccia `Terrain` (`terrain.ts`: quota e uso del suolo per punto), diffrazione sul profilo con curvatura terrestre, clutter per classe di suolo | Un caricatore di DEM e di uso del suolo reali che implementi `Terrain` (oggi solo terreni sintetici); diffrazione su più ostacoli |
+| Alone per tecnologia (§4) | `coverageGrid()` in `assess.ts`: celle coperte per LoRa/BLE/Wi-Fi verso un ricevitore di riferimento | Velocità di calcolo adatta all'interazione (griglia adattiva o per raggi) |
+| Connessione e tecnologia tra due dispositivi (§5) | `assessLink()`: le tre tecnologie valutate, la migliore scelta per velocità | — |
+| Qualità/velocità numerica della linea (§6) | `rateBps`, `sustainedBps` (LoRa con duty-cycle), `quality` 0-1 su scala logaritmica, `qualityLabel()`; BLE/Wi-Fi a link budget, velocità dipendente da distanza e territorio | Validazione delle soglie dei colori sul campo |
+| Pannello connessioni (§7) | `assessNetwork()` e `--config <file>` (tabella o `--json`) | — |
+| Mappa e dispositivi posizionati dall'utente (§3) | `toLocal()`/`toGeo()` tra latitudine/longitudine e metri | L'interfaccia web (fuori dal motore) |
+| Interrogazione "A in X, B in Y, su questo territorio → connessione e prestazioni" (§10) | `assessLink()` deterministica e senza stato, separata da simulazione e CLI | — |
+| Configurazione salvabile (§9) | `NetworkConfig` versionata, `parseNetworkConfig()` con validazione, esempio `tools/scenario-model/examples/eolie.json` | Screenshot/export della mappa (lato interfaccia) |
 
 Regole di lavoro che ne seguono per i prossimi scenari:
 
