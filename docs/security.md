@@ -1848,7 +1848,17 @@ Un relay instrada `PRIVATE_MESSAGE`/`GROUP_MESSAGE` senza poter leggerne il payl
 
     Nessuna modifica a `node/src/`, nessuna nuova dipendenza.
 
-124. **Simulazione teorica — risultati rigenerati con la coda corretta e Scenario 4 (deserto di Atacama, regione radio 915-928 MHz)**, 5 ottobre 2026 — su ok esplicito dell'utente ("rigenera i risultati e poi procedi col prossimo scenario").
+124. **ARALD GEO CORE, passo 1 — consolidamento dei tre renderer pin di `mobile/www/mapview.js`**, 5 ottobre 2026 — primo passo dell'idea "ARALD GEO CORE" (`docs/external-inspiration.md`, priorità alta su richiesta esplicita dell'utente), scope deliberatamente minimo scelto dall'utente tra tre opzioni proposte (minimo/medio/completo): solo la duplicazione realmente misurabile oggi, non il consolidamento cross-piattaforma più ampio descritto nella proposta originale (quella parte resta "da valutare", non promossa — vedi sotto).
+
+    **Cosa c'era**: `renderMapPins()`/`renderMapRelays()`/`renderMapBeacons()` ripetevano la stessa sequenza — pulisci layer, verifica `mapState`/sorgente dati, calcola la posizione world-pixel (`lonLatToWorldPx()`), costruisci un `<div>` pin (classe/posizione/title/SVG), append — differendo solo nell'icona/classe/titolo per drop/relay/beacon.
+
+    **Fix**: estratta `renderMapPinLayer(layerElementId, items, describe)`, condivisa dalle tre funzioni originali (firma e comportamento esterno invariati — gli altri chiamanti in `app.js` non cambiano). Ogni funzione passa un `describe()` che riproduce esattamente la propria logica precedente (classi concatenate, scelta icona, fallback del title con `||`). Preservato il guard `typeof knownDrops/knownRelays/knownBeacons === "undefined"` a ogni call site (non spostato dentro la funzione condivisa) — `mapview.js` è caricato prima di `app.js` nell'ordine degli script classici di `index.html`, quindi referenziare una di quelle variabili globali `let` prima che `app.js` le dichiari lancerebbe un `ReferenceError`, non un semplice "non definita".
+
+    **Verifica**: nessuna suite di unit test diretta esiste per questo file (script classico non-modulo a stato globale condiviso con `app.js`, stessa scelta architetturale già documentata per `ble-client.js`) — verificato invece con un confronto diretto in un browser headless reale (Playwright/Chromium): stesso input sintetico (drop emergency/hazard/info con e senza posizione, relay online/offline, beacon con/senza messaggio) passato alla versione originale (salvata a parte) e a quella refactored, output HTML dei tre layer risultato **byte-per-byte identico**, nessun errore. Code-review (livello medio): nessun problema trovato.
+
+    **Cosa NON è stato fatto in questo passo** (scope esplicitamente ridotto dall'utente, non dimenticato): `haversineDistanceMeters()` (`app.js`) non è stata estratta in un modulo condiviso — oggi ha un solo punto d'uso, nessuna vera duplicazione da eliminare ancora; nessuna funzione di bearing è stata aggiunta — nessuna UI la userebbe oggi (nessuna modalità CERCA costruita), aggiungerla ora sarebbe stata una funzionalità speculativa senza chiamante reale. Il consolidamento cross-piattaforma più ampio della proposta originale (un modulo ES condiviso `geo-core.js`, convertire `app.js` a `type="module"` per poterlo importare) resta `docs/external-inspiration.md`, "Da valutare" — non promosso a `docs/next-steps.md`.
+
+125. **Simulazione teorica — risultati rigenerati con la coda corretta e Scenario 4 (deserto di Atacama, regione radio 915-928 MHz)**, 5 ottobre 2026 — su ok esplicito dell'utente ("rigenera i risultati e poi procedi col prossimo scenario").
 
     **Rigenerazione**: la coda dei relay del modello segue ora `PendingDeliveryQueue` dopo la voce #120 (`ARALD_QUEUE_TTL_S`: `Priority.EMERGENCY` senza scadenza, il resto 5 minuti). Il comportamento precedente resta come `LEGACY_QUEUE_TTL_S`, per confronto e per i test storici. Tabelle e conclusioni dei tre scenari riscritte in `docs/scenario-simulation.md`: con la coda corretta il data mule porta l'SOS in tutti i casi in cui prima lo perdeva, ma rapporto e foto continuano a perdersi dopo 5 minuti di isolamento e arrivano via mulo solo con una coda DTN. La proposta "TTL di custodia" è segnata come fatta per l'SOS e resta aperta per gli altri contenuti (bundle-store DTN per i nodi mobili).
 
@@ -1876,4 +1886,3 @@ Un relay instrada `PRIVATE_MESSAGE`/`GROUP_MESSAGE` senza poter leggerne il payl
     2. il §14 punto 4 indicava ancora una frequenza LoRa fissa a 868 MHz.
 
     Aggiunta anche la guardia sul caso limite, non raggiungibile con i parametri attuali, di un frame non più grande dell'intestazione (nessuna divisione per zero), con test. Nessuna modifica a `node/src/`, nessuna nuova dipendenza.
-
