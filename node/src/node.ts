@@ -113,10 +113,8 @@ export interface NomadNodeOptions {
   contentRequestTimeoutMs?: number;
   /** How long a content provider may stay silent before getContent() tries the next known candidate, instead of waiting out contentRequestTimeoutMs on one unresponsive provider. */
   contentProviderTimeoutMs?: number;
-  /** How long an undeliverable unicast packet is held before being dropped (spec §30, milestone 12). Does not apply to Priority.EMERGENCY packets — see storeAndForwardEmergencyTtlMs. */
+  /** How long an undeliverable unicast packet is held before being dropped (spec §30, milestone 12). Never applies to Priority.EMERGENCY packets, which have no wall-clock TTL at all — see `PendingDeliveryQueue`'s own doc comment, "No wall-clock TTL for Priority.EMERGENCY". */
   storeAndForwardTtlMs?: number;
-  /** How long an undeliverable Priority.EMERGENCY packet is held before being dropped — longer than storeAndForwardTtlMs by default (docs/beacon.md, "NOMAD Mobile Relay" §9). See PendingDeliveryQueue's own doc comment for why. */
-  storeAndForwardEmergencyTtlMs?: number;
   /** Max packets held in the store-and-forward queue at once (spec §57 resource limits). */
   maxPendingDeliveries?: number;
   /** Max entries held in the remote (metadata-only) content catalog at once (spec §57 resource limits). */
@@ -485,7 +483,7 @@ export type IngestSignedContentResult = "accepted" | "rate-limited" | "rejected"
 const MAX_EMERGENCY_BEACON_PER_WINDOW = 3;
 const EMERGENCY_BEACON_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 
-/** Default/maximum lifetime for an emergency beacon's underlying content (`NomadNode.sendEmergencyBeacon()`) — long enough that a delay-tolerant relay/sync can still deliver it well after the fact, same reasoning `PendingDeliveryQueue.emergencyTtlMs` (`store-and-forward.ts`, voce #55) already uses for EMERGENCY-priority traffic. */
+/** Default/maximum lifetime for an emergency beacon's underlying content (`NomadNode.sendEmergencyBeacon()`) — long enough that a delay-tolerant relay/sync can still deliver it well after the fact. Distinct from, and much more conservative than, `PendingDeliveryQueue`'s own handling of `Priority.EMERGENCY` (`store-and-forward.ts`, voce #120): that queue no longer expires an EMERGENCY entry by wall-clock at all (so it survives exactly as long as the courier holding it does), whereas this bound still caps how long the *content itself* stays valid/fetchable regardless of who's carrying it. */
 const DEFAULT_BEACON_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_BEACON_TTL_MS = 72 * 60 * 60 * 1000;
 
@@ -1206,7 +1204,6 @@ export class NomadNode extends EventEmitter {
     this.minTrustToRelay = options.minTrustToRelay;
     this.pendingDeliveries = new PendingDeliveryQueue({
       ttlMs: options.storeAndForwardTtlMs,
-      emergencyTtlMs: options.storeAndForwardEmergencyTtlMs,
       maxSize: options.maxPendingDeliveries,
     });
     this.trust = new TrustManager({ maxSize: options.maxTrustEntries });

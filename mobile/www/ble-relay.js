@@ -85,14 +85,21 @@ function priorityRank(priority) {
 }
 
 const DEFAULT_TTL_MS = 5 * 60 * 1000;
-const DEFAULT_EMERGENCY_TTL_MS = 30 * 60 * 1000; // stesso rapporto 6x di store-and-forward.ts
 const DEFAULT_MAX_SIZE = 256;
 
 /**
  * Porto semplificato di node/src/store-and-forward.ts's PendingDeliveryQueue: bounded, eviction
  * pesata sulla priorità (mai plain FIFO — una voce EMERGENCY non deve mai essere sfrattata per fare
- * spazio a traffico ordinario), due livelli di TTL wall-clock (EMERGENCY sopravvive più a lungo).
- * Solo pacchetti unicast (un `destination` noto) — un broadcast non ha "un prossimo hop" da
+ * spazio a traffico ordinario). Nessun TTL wall-clock per EMERGENCY (stesso fix, stesso motivo,
+ * dell'originale Node — voce #120, docs/next-steps.md, 5 ottobre 2026): un telefono-corriere che
+ * raccoglie un SOS e poi resta isolato per ore non deve perderlo per scadenza, dato che l'eviction
+ * pesata sulla priorità sopra lo protegge già meglio di chiunque altro sotto pressione di memoria —
+ * l'unica uscita da questa coda per una voce EMERGENCY resta una consegna riuscita o un'eviction
+ * genuina (coda piena di voci altrettanto/più urgenti, caso estremo). Una consegna tardiva e
+ * ridondante dello stesso SOS resta comunque sicura: ogni punto che la riceverebbe dedupe già per
+ * `beaconContentId`/`contentId`, non per orario di arrivo (`node/src/store-and-forward.ts`'s class
+ * doc comment ha il dettaglio completo di dove). Solo pacchetti unicast (un `destination` noto) — un
+ * broadcast non ha "un prossimo hop" da
  * aspettare, si inoltra subito e basta, stesso limite già dichiarato nell'originale Node.
  * Nessuna persistenza (deciso con l'utente per questo pezzo): tutto in memoria, azzerato se l'app
  * viene chiusa — coerente con un corriere opportunistico, non l'unica copia di un messaggio
@@ -101,12 +108,10 @@ const DEFAULT_MAX_SIZE = 256;
 export class PendingRelayQueue {
   #entries = new Map();
   #ttlMs;
-  #emergencyTtlMs;
   #maxSize;
 
   constructor(options = {}) {
     this.#ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
-    this.#emergencyTtlMs = options.emergencyTtlMs ?? DEFAULT_EMERGENCY_TTL_MS;
     this.#maxSize = options.maxSize ?? DEFAULT_MAX_SIZE;
   }
 
@@ -117,8 +122,9 @@ export class PendingRelayQueue {
   enqueue(packet, exceptPeerId) {
     if (this.#entries.has(packet.id)) return;
     if (this.#entries.size >= this.#maxSize) this.#evictLowestPriority();
-    const ttlMs = priorityRank(packet.priority) === PRIORITY_EMERGENCY ? this.#emergencyTtlMs : this.#ttlMs;
-    this.#entries.set(packet.id, { packet, exceptPeerId, expiresAt: Date.now() + ttlMs });
+    // Infinity, mai una finestra lunga-ma-finita, per EMERGENCY — vedi il doc comment della classe.
+    const expiresAt = priorityRank(packet.priority) === PRIORITY_EMERGENCY ? Infinity : Date.now() + this.#ttlMs;
+    this.#entries.set(packet.id, { packet, exceptPeerId, expiresAt });
   }
 
   /** Reinserisce una entry già estratta (stessa expiresAt originale, mai una fresca) — stesso schema di requeue() nell'originale Node, anche se questo pezzo non ha ancora un percorso che lo chiama (nessun gate di relay-policy qui da negare); esposto per coerenza/uso futuro. */

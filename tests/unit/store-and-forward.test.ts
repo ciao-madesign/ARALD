@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createPacket, MessageType, Priority } from "../../node/src/packet.js";
 import { PendingDeliveryQueue } from "../../node/src/store-and-forward.js";
 
@@ -86,17 +86,37 @@ describe("PendingDeliveryQueue", () => {
   });
 
   it("holds an EMERGENCY packet past the point an ordinary-priority one would already have expired", async () => {
-    const queue = new PendingDeliveryQueue({ ttlMs: 20, emergencyTtlMs: 200 });
+    const queue = new PendingDeliveryQueue({ ttlMs: 20 });
     queue.enqueue(packetTo("C", Priority.CONTENT));
     queue.enqueue(packetTo("D", Priority.EMERGENCY));
 
     await new Promise((resolve) => setTimeout(resolve, 60));
 
     // Draining removes every entry regardless of expiry, keeping only what's still ready — the
-    // ordinary packet is gone, the emergency one is still well within its own longer TTL.
+    // ordinary packet is gone, the emergency one has no wall-clock TTL to have expired at all.
     const drained = queue.drain();
     expect(drained).toHaveLength(1);
     expect(drained[0].packet.priority).toBe(Priority.EMERGENCY);
+  });
+
+  it("an EMERGENCY packet is still deliverable after a multi-day simulated isolation — no wall-clock TTL at all (docs/next-steps.md, proposto dall'utente 5 ottobre 2026: un corriere isolato per ore non deve perdere l'SOS per scadenza)", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(0);
+      const queue = new PendingDeliveryQueue({ ttlMs: 5 * 60 * 1000 }); // default-sized ordinary TTL, irrelevant here
+      queue.enqueue(packetTo("C", Priority.EMERGENCY), "A");
+
+      // Far beyond the old 30-minute emergencyTtlMs this queue used to apply — a courier physically
+      // isolated for days, not just the ~2 hours in the reported scenario.
+      vi.setSystemTime(7 * 24 * 60 * 60 * 1000);
+
+      const drained = queue.drain();
+      expect(drained).toHaveLength(1);
+      expect(drained[0].packet.priority).toBe(Priority.EMERGENCY);
+      expect(drained[0].expiresAt).toBe(Infinity);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("never lets a forged/out-of-range priority evade eviction ahead of a real EMERGENCY entry (regression, docs/security.md voce #55)", () => {
@@ -161,8 +181,8 @@ describe("PendingDeliveryQueue", () => {
     expect(queue.size).toBe(0);
   });
 
-  it("simulating unbounded reconnect/retry churn on an EMERGENCY entry still lets it expire on schedule", async () => {
-    const queue = new PendingDeliveryQueue({ ttlMs: 1_000_000, emergencyTtlMs: 40 });
+  it("simulating unbounded reconnect/retry churn on an EMERGENCY entry never expires it, by design (updated for voce #120 — the entry no longer has any wall-clock TTL to expire at all)", async () => {
+    const queue = new PendingDeliveryQueue({ ttlMs: 1_000_000 });
     queue.enqueue(packetTo("C", Priority.EMERGENCY), "A");
 
     // A courier reconnecting repeatedly while the gate keeps denying the retry — drain+requeue many
@@ -172,7 +192,22 @@ describe("PendingDeliveryQueue", () => {
       queue.requeue(delivery);
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 60)); // past the original 40ms emergencyTtlMs
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const drained = queue.drain();
+    expect(drained).toHaveLength(1);
+    expect(drained[0].packet.priority).toBe(Priority.EMERGENCY);
+  });
+
+  it("simulating the same unbounded reconnect/retry churn on a non-EMERGENCY entry still lets it expire on schedule (regression, docs/security.md voce #55 — the property this test originally protected, now split from the EMERGENCY case above)", async () => {
+    const queue = new PendingDeliveryQueue({ ttlMs: 40 });
+    queue.enqueue(packetTo("C", Priority.CONTENT), "A");
+
+    for (let i = 0; i < 20; i++) {
+      const [delivery] = queue.drain();
+      queue.requeue(delivery);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 60)); // past the original 40ms ttlMs
     expect(queue.drain()).toEqual([]);
   });
 });
