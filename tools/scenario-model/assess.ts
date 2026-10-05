@@ -10,7 +10,7 @@
  */
 import {
   KIND_DEFAULTS, type Medium, type ModelParams, type NodeKind, type NodeSpec, type Point3,
-  distance3, evaluateBle, evaluateLora, evaluateWifi, loraDutyLimitedAppBps,
+  distance3, evaluateBle, evaluateLora, evaluateWifi, loraDutyLimitedAppBps, loraFreqHz,
 } from "./model.js";
 import { terrainProfileLoss } from "./terrain.js";
 
@@ -63,7 +63,7 @@ export interface LinkAssessment {
   a: string;
   b: string;
   distanceM: number;
-  /** Linea di vista geometrica e perdita di diffrazione (a 868 MHz), se il territorio è noto. */
+  /** Linea di vista geometrica e perdita di diffrazione (alla frequenza LoRa del profilo), se il territorio è noto. */
   terrain: { lineOfSight: boolean; diffractionLossDb: number } | null;
   perTechnology: TechAssessment[];
   /** Tecnologia con la velocità istantanea più alta tra quelle possibili, o null. */
@@ -89,7 +89,7 @@ export function assessLink(a: NodeSpec, pa: Point3, b: NodeSpec, pb: Point3, p: 
     };
   });
   const possible = perTechnology.filter((t) => t.possible).sort((x, y) => y.rateBps - x.rateBps);
-  const prof = p.env.terrain ? terrainProfileLoss(p.env.terrain, pa, pb, 868e6) : null;
+  const prof = p.env.terrain ? terrainProfileLoss(p.env.terrain, pa, pb, loraFreqHz(p.reg)) : null;
   return {
     a: a.id,
     b: b.id,

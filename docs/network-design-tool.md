@@ -258,7 +258,7 @@ con **priorità regolabili dall'utente** (resilienza, copertura, costo, accessib
 
 Annotazioni tecniche, non decisioni: servono a non allontanare il motore dall'obiettivo mentre si lavora sui prossimi scenari.
 
-Aggiornato al termine dello Scenario 3 (`docs/scenario-simulation.md` §11 risponde punto per punto al §12).
+Aggiornato al termine dello Scenario 4 (`docs/scenario-simulation.md` §14 risponde punto per punto al §12).
 
 | Requisito del tool | Cosa c'è nel motore | Cosa manca |
 |---|---|---|
@@ -268,6 +268,7 @@ Aggiornato al termine dello Scenario 3 (`docs/scenario-simulation.md` §11 rispo
 | Connessione e tecnologia tra due dispositivi (§5) | `assessLink()`: le tre tecnologie valutate, la migliore scelta per velocità | — |
 | Qualità/velocità numerica della linea (§6) | `rateBps`, `sustainedBps` (LoRa con duty-cycle), `quality` 0-1 su scala logaritmica, `qualityLabel()`; BLE/Wi-Fi a link budget, velocità dipendente da distanza e territorio | Validazione delle soglie dei colori sul campo |
 | Pannello connessioni (§7) | `assessNetwork()` e `--config <file>` (tabella o `--json`) | — |
+| Regole radio della regione (potenza, duty-cycle, dwell time, frequenza) | `RegulatoryProfile` con ERP, duty-cycle, frequenza centrale e dwell time; profili `EU868_G1`, `EU868_G3`, `AU915`; `"regulatory"` nella configurazione salvata (Scenario 4) | Profili verificati sulla normativa delle regioni di interesse e altri piani (US915, AS923, IN865, …) |
 | Mappa e dispositivi posizionati dall'utente (§3) | `toLocal()`/`toGeo()` tra latitudine/longitudine e metri | L'interfaccia web (fuori dal motore) |
 | Interrogazione "A in X, B in Y, su questo territorio → connessione e prestazioni" (§10) | `assessLink()` deterministica e senza stato, separata da simulazione e CLI | — |
 | Configurazione salvabile (§9) | `NetworkConfig` versionata, `parseNetworkConfig()` con validazione, esempio `tools/scenario-model/examples/eolie.json` | Screenshot/export della mappa (lato interfaccia) |

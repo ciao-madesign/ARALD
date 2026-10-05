@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "name": "Atacama — Box a San Pedro, Portable a Toconao, Fixed Relay sul rilievo sopra il salar",
+  "frame": { "lat0": -23.2, "lon0": -68.0 },
+  "environment": "tipico",
+  "regulatory": "au915",
+  "terrain": "atacama-sintetico",
+  "devices": [
+    { "id": "BOX", "kind": "box", "lat": -22.911, "lon": -68.2, "label": "San Pedro de Atacama" },
+    { "id": "PORT", "kind": "portable", "lat": -23.187, "lon": -68.005, "label": "Toconao" },
+    { "id": "FR", "kind": "relay", "lat": -23.42, "lon": -67.94, "label": "Rilievo panoramico (ipotetico)" },
+    { "id": "C1", "kind": "card", "lat": -22.925, "lon": -68.285, "label": "Valle de la Luna" },
+    { "id": "C2", "kind": "card", "lat": -23.29, "lon": -68.18, "label": "Laguna Chaxa" },
+    { "id": "C3", "kind": "card", "lat": -23.59, "lon": -67.89, "label": "Socaire" },
+    { "id": "C5", "kind": "card", "lat": -23.73, "lon": -67.77, "label": "Laguna Miscanti" }
+  ]
+}

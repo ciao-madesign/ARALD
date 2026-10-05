@@ -2,8 +2,9 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { assessLink, coverageGrid, qualityFromRate, qualityLabel } from "../../tools/scenario-model/assess.js";
 import * as S3 from "../../tools/scenario-model/eolie.js";
+import * as S4 from "../../tools/scenario-model/atacama.js";
 import {
-  ARALD_QUEUE_TTL_S, BUDGET_SHORT_RANGE, DEFAULT_PHY, LEGACY_QUEUE_TTL_S, EU868_G1, EU868_G3, type Environment, type ModelParams, type NodeSpec,
+  ARALD_QUEUE_TTL_S, AU915, BUDGET_SHORT_RANGE, DEFAULT_PHY, LEGACY_QUEUE_TTL_S, loraDutyLimitedAppBps, loraFrameBytesFor, loraRawAppBps, loraTimeOnAir, EU868_G1, EU868_G3, type Environment, type ModelParams, type NodeSpec,
   evaluateBle, evaluateLora, nodePosition, positionAt, simulate,
 } from "../../tools/scenario-model/model.js";
 import { TERRAIN_ENVIRONMENTS, assessNetwork, parseNetworkConfig, placeDevices } from "../../tools/scenario-model/network-config.js";
@@ -230,5 +231,109 @@ describe("Scenario 3 (Eolie)", () => {
     }
     // senza territorio si torna all'interpolazione dei waypoint
     expect(nodePosition(c5, 0.2 * H)).toEqual(positionAt(c5.path, 0.2 * H));
+  });
+});
+
+describe("profili regolatori per regione: dwell time (AU915)", () => {
+  const p = (reg = AU915): ModelParams => params(FLAT_TERRAIN, reg);
+
+  it("senza dwell time il frame resta pieno a ogni SF (risultati europei invariati)", () => {
+    for (const sf of [7, 9, 12] as const) expect(loraFrameBytesFor(sf, p(EU868_G3))).toBe(222);
+  });
+
+  it("con dwell 400 ms il frame si accorcia agli SF lenti e SF11/SF12 diventano inutilizzabili", () => {
+    expect(loraFrameBytesFor(7, p())).toBe(222);
+    const f8 = loraFrameBytesFor(8, p());
+    const f10 = loraFrameBytesFor(10, p());
+    expect(f8).toBeLessThan(222);
+    expect(f10).toBeLessThan(f8);
+    expect(f10).toBeGreaterThan(22); // almeno un byte utile oltre al framing ARALD
+    expect(loraTimeOnAir(f10, 10)).toBeLessThanOrEqual(0.4);
+    expect(loraTimeOnAir(f10 + 1, 10)).toBeGreaterThan(0.4);
+    expect(loraFrameBytesFor(11, p())).toBe(0);
+    expect(loraFrameBytesFor(12, p())).toBe(0);
+    expect(loraRawAppBps(11, p())).toBe(0);
+  });
+
+  it("un frame non più grande dell'intestazione ARALD rende LoRa inutilizzabile (nessuna divisione per zero)", () => {
+    const tiny = { ...p(EU868_G3), loraFrameBytes: 22 };
+    expect(loraFrameBytesFor(7, tiny)).toBe(0);
+    expect(loraRawAppBps(7, tiny)).toBe(0);
+    const [a, pa] = node("A", "card", 0, 1.2);
+    const [b, pb] = node("B", "card", 100, 1.2);
+    expect(evaluateLora(a, pa, b, pb, tiny).link).toBeNull();
+  });
+
+  it("nessun duty-cycle in AU915: velocità sostenuta = istantanea", () => {
+    expect(loraDutyLimitedAppBps(7, p())).toBeCloseTo(loraRawAppBps(7, p()), 9);
+  });
+
+  it("un link che chiude solo a SF11 in Europa non esiste con le regole AU915", () => {
+    const [a, pa] = node("A", "box", 0, 4);
+    for (let d = 5000; d < 200_000; d += 1000) {
+      const [b, pb] = node("B", "card", d, 1.2);
+      const eu = evaluateLora(a, pa, b, pb, p(EU868_G3)).link;
+      if (eu?.sf === 11) {
+        expect(evaluateLora(a, pa, b, pb, p()).link).toBeNull();
+        return;
+      }
+    }
+    throw new Error("nessuna distanza con SF11 in EU868 g3: test da rivedere");
+  });
+
+  it("la configurazione salvata accetta au915 e l'esempio Atacama è valido", () => {
+    const cfg = parseNetworkConfig(JSON.parse(readFileSync("tools/scenario-model/examples/atacama.json", "utf8")));
+    expect(cfg.regulatory).toBe("au915");
+    const links = assessNetwork(cfg, S4.ATACAMA_TERRAIN);
+    expect(links.every((l) => l.best!.technology !== "lora" || !["SF11", "SF12"].includes(l.best!.mode!))).toBe(true);
+  });
+});
+
+describe("terreno sintetico generico e Scenario 4 (Atacama)", () => {
+  const ARALD = ARALD_QUEUE_TTL_S;
+  const run = (variant: S4.Variant, reg = AU915, extra: Partial<Parameters<typeof simulate>[0]> = {}, env: keyof typeof S4.ENVIRONMENTS = "tipico") =>
+    simulate({
+      nodes: S4.buildNodes(variant), messages: S4.benchmarkMessages(),
+      params: { ...params(S4.ATACAMA_TERRAIN, reg), env: S4.ENVIRONMENTS[env] }, horizonS: 6 * H, stepS: 10, policy: "custody", ...extra,
+    }).deliveries;
+
+  it("syntheticLandscape: altopiano che sale verso est, cresta e coni sopra la base", () => {
+    const t = S4.ATACAMA_TERRAIN;
+    const at = (g: { lat: number; lon: number }) => { const q = toLocal(S4.ATACAMA_FRAME, g); return t.elevationAt(q.x, q.y); };
+    expect(at(S4.ATACAMA_PLACES.miscanti)).toBeGreaterThan(at(S4.ATACAMA_PLACES.toconao) + 1000);
+    expect(at({ lat: -22.83, lon: -67.88 })).toBeGreaterThan(5000); // Licancabur
+    expect(at({ lat: -22.97, lon: -68.275 })).toBeGreaterThan(at(S4.ATACAMA_PLACES.sanPedro) + 250); // Cordillera de la Sal
+  });
+
+  it("la Cordillera de la Sal oscura la Valle de la Luna dal Box di San Pedro (~9 km)", () => {
+    const nodes = S4.buildNodes("static");
+    const box = nodes.find((n) => n.id === "BOX")!;
+    const c1 = nodes.find((n) => n.id === "C1")!;
+    const pb = nodePosition(box, 0, S4.ATACAMA_TERRAIN);
+    const pc = nodePosition(c1, 0, S4.ATACAMA_TERRAIN);
+    expect(terrainProfileLoss(S4.ATACAMA_TERRAIN, pb, pc, 920e6).lineOfSight).toBe(false);
+    expect(assessLink(box, pb, c1, pc, { ...params(S4.ATACAMA_TERRAIN), env: S4.ENVIRONMENTS.favorevole }).best).toBeNull();
+  });
+
+  it("senza fuoristrada l'SOS dalla Laguna Miscanti non arriva a nessuna infrastruttura", () => {
+    const f1 = run("static", AU915, { relayCarryTtlS: ARALD }).find((d) => d.messageId === "F1")!;
+    expect(f1.deliveredAtByDest.PORT).toBeNull();
+    expect(f1.deliveredAtByDest.BOX).toBeNull();
+  });
+
+  it("fuoristrada come data mule: l'SOS arriva con la coda attuale; le foto solo con coda DTN", () => {
+    const arald = run("vehicle", AU915, { relayCarryTtlS: ARALD });
+    const dtn = run("vehicle");
+    expect(arald.find((d) => d.messageId === "F1")!.deliveredAtByDest.BOX).not.toBeNull();
+    expect(arald.find((d) => d.messageId === "F3")!.deliveredAt).toBeNull();
+    expect(dtn.find((d) => d.messageId === "F3")!.deliveredAt).not.toBeNull();
+  });
+
+  it("con il Fixed Relay, in condizioni favorevoli l'SOS arriva in pochi minuti con le regole EU (SF11) ma non con AU915", () => {
+    const eu = run("andes-relay", EU868_G3, { relayCarryTtlS: ARALD }, "favorevole").find((d) => d.messageId === "F1")!;
+    const au = run("andes-relay", AU915, { relayCarryTtlS: ARALD }, "favorevole").find((d) => d.messageId === "F1")!;
+    expect(eu.deliveredAtByDest.BOX).not.toBeNull();
+    expect(eu.deliveredAtByDest.BOX!).toBeLessThan(10 * 60);
+    expect(au.deliveredAtByDest.BOX).toBeNull();
   });
 });

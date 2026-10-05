@@ -12,19 +12,20 @@
 import { readFileSync } from "node:fs";
 import {
   BUDGET_SHORT_RANGE, DEFAULT_PHY, DEFAULT_SHORT_RANGE, EU868_G1, EU868_G3, SPREADING_FACTORS, type ModelParams, type RegulatoryProfile,
-  type SpreadingFactor, ARALD_QUEUE_TTL_S, destinationsOf, nodePosition, loraDutyLimitedAppBps, loraRawAppBps, loraTimeOnAir, loraLink, simulate,
+  type SpreadingFactor, ARALD_QUEUE_TTL_S, loraFrameBytesFor, destinationsOf, nodePosition, loraDutyLimitedAppBps, loraRawAppBps, loraTimeOnAir, loraLink, simulate,
 } from "./model.js";
 import type { Scenario } from "./scenario.js";
 import { valleMaira } from "./valle-maira.js";
 import { alpinoFrammentato } from "./alpino-frammentato.js";
 import { EOLIE_TERRAIN, eolie } from "./eolie.js";
+import { ATACAMA_TERRAIN, atacama } from "./atacama.js";
 import { type LinkAssessment, assessLink, coverageGrid, qualityLabel } from "./assess.js";
 import { assessNetwork, parseNetworkConfig } from "./network-config.js";
 import { FLAT_TERRAIN, type Terrain } from "./terrain.js";
 
-const SCENARIOS: Record<string, Scenario> = { [valleMaira.id]: valleMaira, [alpinoFrammentato.id]: alpinoFrammentato, [eolie.id]: eolie };
+const SCENARIOS: Record<string, Scenario> = { [valleMaira.id]: valleMaira, [alpinoFrammentato.id]: alpinoFrammentato, [eolie.id]: eolie, [atacama.id]: atacama };
 /** Dataset di territorio noti al motore, referenziati per nome da una configurazione salvata. */
-const TERRAINS: Record<string, Terrain> = { "eolie-sintetico": EOLIE_TERRAIN };
+const TERRAINS: Record<string, Terrain> = { "eolie-sintetico": EOLIE_TERRAIN, "atacama-sintetico": ATACAMA_TERRAIN };
 
 function arg(name: string, fallback: string): string {
   const i = process.argv.indexOf(`--${name}`);
@@ -118,10 +119,25 @@ for (const [label, bytes] of SIZES) {
   out.push(`| ${label} | ${fmtDuration(t(7, EU868_G1))} | ${fmtDuration(t(7, EU868_G3))} | ${fmtDuration(t(10, EU868_G1))} | ${fmtDuration(t(10, EU868_G3))} | ${fmtDuration(t(12, EU868_G3))} |`);
 }
 
+if (scenario.regulatoryProfiles) {
+  out.push(`\n### B2. Capacità LoRa per SF con i profili regolatori di questo scenario\n`);
+  out.push("Con un dwell time massimo il frame si accorcia agli SF lenti; \"—\" = SF inutilizzabile (nemmeno un frame minimo sta nel dwell time).\n");
+  out.push(`| SF | ${scenario.regulatoryProfiles.map(([n]) => `${n}: frame · istantanea · sostenuta`).join(" | ")} |`);
+  out.push(`|---|${scenario.regulatoryProfiles.map(() => "---:").join("|")}|`);
+  for (const sf of SPREADING_FACTORS) {
+    const cells = scenario.regulatoryProfiles.map(([, reg]) => {
+      const pr = params("tipico", reg);
+      const frame = loraFrameBytesFor(sf, pr);
+      return frame === 0 ? "—" : `${frame} B · ${fmtRate(loraRawAppBps(sf, pr))} · ${fmtRate(loraDutyLimitedAppBps(sf, pr))}`;
+    });
+    out.push(`| SF${sf} | ${cells.join(" | ")} |`);
+  }
+}
+
 out.push(`\n### C. ${scenario.title} — link LoRa stimati a t = ${fmtClock(scenario.eventT)} (variante \`${scenario.linkSnapshotVariant}\`), SF minimo che chiude il link\n`);
 const nodes = scenario.buildNodes(scenario.linkSnapshotVariant);
 const pairs = scenario.linkPairs;
-const regs: [string, RegulatoryProfile][] = [["g1 14 dBm ERP/1%", EU868_G1], ["g3 27 dBm ERP/10%", EU868_G3]];
+const regs: [string, RegulatoryProfile][] = scenario.regulatoryProfiles ?? [["g1 14 dBm ERP/1%", EU868_G1], ["g3 27 dBm ERP/10%", EU868_G3]];
 const envNames = Object.keys(scenario.environments);
 out.push(`| Link | Distanza | ${envNames.flatMap((e) => regs.map(([r]) => `${e} ${r}`)).join(" | ")} |`);
 out.push(`|---|---:|${envNames.flatMap(() => regs.map(() => ":---:")).join("|")}|`);
@@ -202,7 +218,12 @@ if (terrain) {
     out.push(...connectionPanel(links));
   }
 
-  out.push(`\n### G. Alone di copertura LoRa del Box (ricevitore di riferimento: Card), ambiente tipico, celle da 1 km\n`);
+  const xsAll = snapNodes.flatMap((n) => n.path.map((w) => w.x));
+  const ysAll = snapNodes.flatMap((n) => n.path.map((w) => w.y));
+  // Celle da 1 km, più grandi solo se l'area supera ~60 km (mappa leggibile).
+  const span = Math.max(Math.max(...xsAll) - Math.min(...xsAll), Math.max(...ysAll) - Math.min(...ysAll)) + 8000;
+  const gCell = Math.max(1000, Math.ceil(span / 60 / 500) * 500);
+  out.push(`\n### G. Alone di copertura LoRa del Box (ricevitore di riferimento: Card), ambiente tipico, celle da ${gCell / 1000} km\n`);
   out.push("Legenda: `#` terra coperta, `+` mare coperto, `.` terra non coperta, spazio = mare non coperto, `B` posizione del Box.\n");
   const box = snapNodes.find((n) => n.kind === "box")!;
   const boxPos = nodePosition(box, scenario.eventT, terrain);
@@ -210,7 +231,7 @@ if (terrain) {
   const ys = snapNodes.flatMap((n) => n.path.map((w) => w.y));
   const bbox = { minX: Math.min(...xs) - 4000, maxX: Math.max(...xs) + 4000, minY: Math.min(...ys) - 4000, maxY: Math.max(...ys) + 4000 };
   for (const [regName, reg] of regs) {
-    const g = coverageGrid(box, boxPos, "lora", params("tipico", reg), bbox, 1000);
+    const g = coverageGrid(box, boxPos, "lora", params("tipico", reg), bbox, gCell);
     const covered = g.cells.filter((c) => c.possible).length;
     out.push(`\n**${regName}** — celle coperte: ${covered} su ${g.cells.length}\n`);
     out.push("```text");
@@ -218,7 +239,7 @@ if (terrain) {
       let line = "";
       for (let c = 0; c < g.cols; c++) {
         const cell = g.cells[r * g.cols + c];
-        const isBox = Math.abs(cell.x - boxPos.x) <= 500 && Math.abs(cell.y - boxPos.y) <= 500;
+        const isBox = Math.abs(cell.x - boxPos.x) <= gCell / 2 && Math.abs(cell.y - boxPos.y) <= gCell / 2;
         const land = terrain.landCoverAt(cell.x, cell.y) !== "sea";
         line += isBox ? "B" : cell.possible ? (land ? "#" : "+") : land ? "." : " ";
       }
@@ -227,10 +248,10 @@ if (terrain) {
     out.push("```");
   }
 
-  out.push(`\n### H. I tre livelli dell'alone del Box, uno per tecnologia (celle da 40 m, ±1 km, ambiente tipico, g1)\n`);
+  out.push(`\n### H. I tre livelli dell'alone del Box, uno per tecnologia (celle da 40 m, ±1 km, ambiente tipico, ${regs[0][0]})\n`);
   out.push("Ogni livello è calcolato separatamente verso il proprio ricevitore di riferimento (Wi-Fi e BLE → smartphone, LoRa → Card). `#` = coperto, `.` = non coperto, `B` = Box. Nel centro abitato denso Wi-Fi e BLE arrivano a ~50-60 m in ogni direzione, perché domina il clutter attorno al Box stesso; con questi parametri BLE e Wi-Fi verso uno smartphone hanno la stessa portata, ma il Wi-Fi è ~36 volte più veloce e vince. La forma dell'alone che segue il territorio si vede su LoRa, sezione G.\n");
   const zoom = { minX: boxPos.x - 1000, maxX: boxPos.x + 1000, minY: boxPos.y - 1000, maxY: boxPos.y + 1000 };
-  const pz = params("tipico", EU868_G1);
+  const pz = params("tipico", regs[0][1]);
   const layers = (["wifi", "ble", "lora"] as const).map((tech) => coverageGrid(box, boxPos, tech, pz, zoom, 40));
   const names = ["Wi-Fi", "BLE", "LoRa"];
   out.push("```text");

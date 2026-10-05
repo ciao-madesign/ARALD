@@ -8,7 +8,7 @@
  */
 import { type LinkAssessment, assessLink } from "./assess.js";
 import {
-  BUDGET_SHORT_RANGE, DEFAULT_PHY, EU868_G1, EU868_G3, KIND_DEFAULTS, type Environment, type ModelParams,
+  AU915, BUDGET_SHORT_RANGE, DEFAULT_PHY, EU868_G1, EU868_G3, KIND_DEFAULTS, type Environment, type ModelParams,
   type NodeKind, type NodeSpec, type Point3,
 } from "./model.js";
 import { type LocalFrame, type Terrain, toLocal } from "./terrain.js";
@@ -26,7 +26,7 @@ export interface DeviceConfig {
 }
 
 export type EnvironmentName = "favorevole" | "tipico" | "severo";
-export type RegulatoryName = "g1" | "g3";
+export type RegulatoryName = "g1" | "g3" | "au915";
 
 export interface NetworkConfig {
   version: typeof NETWORK_CONFIG_VERSION;
@@ -55,7 +55,7 @@ export const TERRAIN_ENVIRONMENTS: Record<EnvironmentName, Omit<Environment, "te
   severo: { name: "severo", pathLossExponent: 2.5, fadeMarginDb: 12, obstructionDb: {}, obstructionScale: 1, interferenceDb: 5 },
 };
 
-export const REGULATORY: Record<RegulatoryName, typeof EU868_G1> = { g1: EU868_G1, g3: EU868_G3 };
+export const REGULATORY: Record<RegulatoryName, typeof EU868_G1> = { g1: EU868_G1, g3: EU868_G3, au915: AU915 };
 
 const KINDS = Object.keys(KIND_DEFAULTS) as NodeKind[];
 
@@ -81,7 +81,7 @@ export function parseNetworkConfig(raw: unknown): NetworkConfig {
   // Object.hasOwn, non `in`: "constructor"/"toString" passerebbero altrimenti la validazione
   // e farebbero crashare il motore più avanti (trovato dalla revisione).
   if (!(typeof o.environment === "string" && Object.hasOwn(TERRAIN_ENVIRONMENTS, o.environment))) fail("environment deve essere favorevole, tipico o severo");
-  if (!(typeof o.regulatory === "string" && Object.hasOwn(REGULATORY, o.regulatory))) fail("regulatory deve essere g1 o g3");
+  if (!(typeof o.regulatory === "string" && Object.hasOwn(REGULATORY, o.regulatory))) fail("regulatory deve essere g1, g3 o au915");
   if (!Array.isArray(o.devices)) fail("devices deve essere un elenco");
   const ids = new Set<string>();
   const devices = o.devices.map((d, i): DeviceConfig => {

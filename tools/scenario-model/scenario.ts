@@ -2,7 +2,7 @@
  * Contratto comune di uno scenario: `cli.ts` e `model.ts` non conoscono nessuno
  * scenario specifico, ogni scenario è un file che esporta un oggetto `Scenario`.
  */
-import type { Environment, Message, NodeSpec } from "./model.js";
+import type { Environment, Message, NodeSpec, RegulatoryProfile } from "./model.js";
 
 export interface Scenario {
   id: string;
@@ -21,6 +21,11 @@ export interface Scenario {
   linkSnapshotVariant: string;
   /** Coppia sorgente→destinazione di cui riportare la connettività istantanea. */
   connectivityPair: [string, string];
+  /**
+   * Profili regolatori da confrontare nelle tabelle (etichetta, profilo). Default: EU868 g1 e g3.
+   * Uno scenario fuori dall'Europa indica quelli della propria regione.
+   */
+  regulatoryProfiles?: [string, RegulatoryProfile][];
   /** Modello BLE/Wi-Fi: "fixed" (default, Scenari 1-2) o "budget" (link budget a 2,4 GHz). */
   shortRangeModel?: "fixed" | "budget";
 }

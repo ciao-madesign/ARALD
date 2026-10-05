@@ -82,11 +82,32 @@ export function pathLossDb(distanceM: number, exponent: number, freqHz = 868e6):
 export interface RegulatoryProfile {
   name: string;
   maxErpDbm: number;  // ERP massimo consentito nella sotto-banda (EIRP = ERP + 2,15 dB)
-  dutyCycle: number;  // frazione (0.01 = 1%)
+  dutyCycle: number;  // frazione (0.01 = 1%; 1 = nessun limite di duty-cycle)
+  /** Frequenza centrale usata per path loss e diffrazione (default 868 MHz). */
+  centerFreqHz?: number;
+  /**
+   * Durata massima di una singola trasmissione (dwell time, s), dove la regola della
+   * regione la impone (es. 400 ms per canale nelle bande 915-928 MHz con salto di
+   * frequenza): il frame si accorcia per rispettarla, e gli SF in cui nemmeno un
+   * frame minimo ci sta diventano inutilizzabili.
+   */
+  maxDwellS?: number;
 }
 
 export const EU868_G1: RegulatoryProfile = { name: "EU868 g1 (868,0-868,6 MHz) 14 dBm ERP / 1%", maxErpDbm: 14, dutyCycle: 0.01 };
 export const EU868_G3: RegulatoryProfile = { name: "EU868 g3 (869,4-869,65 MHz) 27 dBm ERP / 10%", maxErpDbm: 27, dutyCycle: 0.10 };
+/**
+ * Banda 915-928 MHz con il piano "AU915" dei parametri regionali LoRaWAN, adottato
+ * anche in Cile (ricostruito da conoscenza generale, NON verificato sulla normativa
+ * cilena in questo ambiente): 30 dBm EIRP (= 27,85 dBm ERP), nessun duty-cycle,
+ * dwell time di 400 ms per trasmissione.
+ */
+export const AU915: RegulatoryProfile = { name: "AU915 (915-928 MHz) 30 dBm EIRP / dwell 400 ms", maxErpDbm: 27.85, dutyCycle: 1, centerFreqHz: 920e6, maxDwellS: 0.4 };
+
+/** Frequenza LoRa del profilo regolatorio. */
+export function loraFreqHz(reg: RegulatoryProfile): number {
+  return reg.centerFreqHz ?? 868e6;
+}
 
 /** EIRP effettiva del trasmettitore: limitata sia dall'hardware (potenza + antenna) sia dalla norma. */
 export function effectiveEirpDbm(txDbm: number, antennaDbi: number, reg: RegulatoryProfile): number {
@@ -258,7 +279,6 @@ export interface ModelParams {
   maxSf: SpreadingFactor;
 }
 
-const LORA_FREQ_HZ = 868e6;
 const ISM24_FREQ_HZ = 2.44e9;
 
 /** Perdite comuni a ogni tecnologia, territorio escluso: percorso, ostruzioni dello scenario, interferenza, evento. */
@@ -303,10 +323,11 @@ export function evaluateLora(a: NodeSpec, pa: Point3, b: NodeSpec, pb: Point3, p
   const eirpA = effectiveEirpDbm(da.txDbm, da.antennaDbi, p.reg);
   const eirpB = effectiveEirpDbm(db.txDbm, db.antennaDbi, p.reg);
   const weakest = Math.min(eirpA + db.antennaDbi, eirpB + da.antennaDbi);
-  const bestSens = SX1262_SENSITIVITY_125K[p.maxSf];
-  const { rssi, upperBound } = rssiWithTerrain(weakest - da.bodyLossDb - db.bodyLossDb - baseLossDb(a, pa, b, pb, p, LORA_FREQ_HZ, extraLossDb), bestSens, pa, pb, p, LORA_FREQ_HZ);
-  for (const sf of SPREADING_FACTORS) {
-    if (sf > p.maxSf) break;
+  const allowed = SPREADING_FACTORS.filter((sf) => sf <= p.maxSf && loraFrameBytesFor(sf, p) > 0);
+  if (allowed.length === 0) return { medium: "lora", applicable: true, rssiDbm: null, rssiIsUpperBound: false, link: null };
+  const bestSens = SX1262_SENSITIVITY_125K[allowed[allowed.length - 1]];
+  const { rssi, upperBound } = rssiWithTerrain(weakest - da.bodyLossDb - db.bodyLossDb - baseLossDb(a, pa, b, pb, p, loraFreqHz(p.reg), extraLossDb), bestSens, pa, pb, p, loraFreqHz(p.reg));
+  for (const sf of allowed) {
     const margin = rssi - p.env.fadeMarginDb - SX1262_SENSITIVITY_125K[sf];
     if (margin >= 0) {
       return { medium: "lora", applicable: true, rssiDbm: rssi, rssiIsUpperBound: upperBound, link: { medium: "lora", sf, rssiDbm: rssi, marginDb: margin, rateBps: loraRawAppBps(sf, p), mode: `SF${sf}` } };
@@ -371,13 +392,36 @@ export function bestLink(a: NodeSpec, pa: Point3, b: NodeSpec, pb: Point3, p: Mo
 }
 
 /** Byte applicativi trasferibili in un frame LoRa. */
-export function loraAppBytesPerFrame(p: ModelParams): number {
-  return (p.loraFrameBytes - p.loraFrameOverheadBytes) / p.protocolOverhead;
+/**
+ * Byte del frame LoRa effettivamente usato a un dato SF: `loraFrameBytes`, o meno se il
+ * dwell time della regione lo impone. 0 = SF inutilizzabile (nemmeno un frame con un
+ * solo byte utile oltre al framing ARALD sta nel dwell time).
+ */
+export function loraFrameBytesFor(sf: SpreadingFactor, p: ModelParams): number {
+  if (p.loraFrameBytes <= p.loraFrameOverheadBytes) return 0; // nessun byte utile: configurazione inutilizzabile
+  const dwell = p.reg.maxDwellS;
+  if (dwell === undefined || loraTimeOnAir(p.loraFrameBytes, sf, p.phy) <= dwell) return p.loraFrameBytes;
+  let lo = p.loraFrameOverheadBytes + 1;
+  if (loraTimeOnAir(lo, sf, p.phy) > dwell) return 0;
+  let hi = p.loraFrameBytes;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (loraTimeOnAir(mid, sf, p.phy) <= dwell) lo = mid; else hi = mid;
+  }
+  return lo;
+}
+
+/** Byte applicativi trasferibili in un frame LoRa (allo SF indicato, se il dwell time accorcia il frame). */
+export function loraAppBytesPerFrame(p: ModelParams, sf?: SpreadingFactor): number {
+  const frame = sf === undefined ? p.loraFrameBytes : loraFrameBytesFor(sf, p);
+  return Math.max(0, frame - p.loraFrameOverheadBytes) / p.protocolOverhead;
 }
 
 /** Throughput applicativo LoRa a canale libero, senza duty-cycle (bit/s). */
 export function loraRawAppBps(sf: SpreadingFactor, p: ModelParams): number {
-  return (8 * loraAppBytesPerFrame(p)) / loraTimeOnAir(p.loraFrameBytes, sf, p.phy);
+  const frame = loraFrameBytesFor(sf, p);
+  if (frame === 0) return 0;
+  return (8 * loraAppBytesPerFrame(p, sf)) / loraTimeOnAir(frame, sf, p.phy);
 }
 
 /** Throughput applicativo LoRa sostenuto con il duty-cycle legale (bit/s). */
@@ -467,7 +511,8 @@ function isOn(n: NodeSpec, t: number): boolean {
 
 /** Costo di un link per la metrica "airtime": secondi di trasmissione per un frame equivalente. */
 function linkAirtimeCost(link: LinkState, p: ModelParams): number {
-  if (link.medium === "lora") return loraTimeOnAir(p.loraFrameBytes, link.sf!, p.phy);
+  // Costo per byte utile, normalizzato a un frame pieno: senza dwell time coincide con il ToA del frame.
+  if (link.medium === "lora") return (loraTimeOnAir(loraFrameBytesFor(link.sf!, p), link.sf!, p.phy) / loraAppBytesPerFrame(p, link.sf!)) * loraAppBytesPerFrame(p);
   const bps = link.rateBps ?? (link.medium === "wifi" ? p.shortRange.wifiBps : p.shortRange.bleBps);
   return (8 * p.loraFrameBytes) / bps;
 }
@@ -657,8 +702,8 @@ export function simulate(opts: SimOptions): SimResult {
           let want = have - recvHeld;
           if (link.medium === "lora") {
             if (loraBlocked.has(sender.id)) continue;
-            const frameApp = loraAppBytesPerFrame(p);
-            const toa = loraTimeOnAir(p.loraFrameBytes, link.sf!, p.phy);
+            const frameApp = loraAppBytesPerFrame(p, link.sf!);
+            const toa = loraTimeOnAir(loraFrameBytesFor(link.sf!, p), link.sf!, p.phy);
             const budgetS = Math.min(bucket.get(sender.id)!, channelCredit);
             const frames = Math.min(Math.floor(budgetS / toa), Math.ceil(want / frameApp));
             if (frames <= 0) { loraBlocked.add(sender.id); continue; }
