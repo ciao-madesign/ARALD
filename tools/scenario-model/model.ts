@@ -94,7 +94,7 @@ export function effectiveEirpDbm(txDbm: number, antennaDbi: number, reg: Regulat
 
 // ---------------------------------------------------------------- nodi e ambiente
 
-export type NodeKind = "box" | "portable" | "card" | "phone";
+export type NodeKind = "box" | "portable" | "card" | "phone" | "relay";
 
 export interface RadioCaps { lora: boolean; ble: boolean; wifi: boolean }
 
@@ -104,6 +104,8 @@ export const KIND_DEFAULTS: Record<NodeKind, { caps: RadioCaps; txDbm: number; a
   portable: { caps: { lora: true,  ble: true, wifi: true  }, txDbm: 22, antennaDbi: 0,  bodyLossDb: 2 },
   card:     { caps: { lora: true,  ble: true, wifi: false }, txDbm: 22, antennaDbi: -3, bodyLossDb: 4 },
   phone:    { caps: { lora: false, ble: true, wifi: true  }, txDbm: 0,  antennaDbi: 0,  bodyLossDb: 0 },
+  // ARALD Fixed Relay (docs/beacon.md): palo/supporto fisso in quota, antenna esterna, nessun corpo.
+  relay:    { caps: { lora: true,  ble: true, wifi: false }, txDbm: 22, antennaDbi: 3,  bodyLossDb: 0 },
 };
 
 export interface NodeSpec {
@@ -121,6 +123,12 @@ export interface Environment {
   fadeMarginDb: number;
   /** Perdita aggiuntiva per coppia (creste, pareti) — chiave "A|B" ordinata. */
   obstructionDb: Record<string, number>;
+  /**
+   * Alternativa a `obstructionDb` per nodi che si spostano attraverso il terreno
+   * (es. chi valica una cresta): perdita in funzione delle posizioni, sommata a
+   * quella per coppia.
+   */
+  obstructionFn?: (pa: Point3, pb: Point3) => number;
   /** Moltiplicatore applicato alle ostruzioni (favorevole < 1, severo > 1). */
   obstructionScale: number;
   interferenceDb: number;
@@ -165,16 +173,22 @@ export interface ModelParams {
   maxSf: SpreadingFactor;
 }
 
-/** Link LoRa diretto tra due nodi: SF più veloce che chiude il budget, altrimenti null. */
-export function loraLink(a: NodeSpec, pa: Point3, b: NodeSpec, pb: Point3, p: ModelParams): LinkState | null {
+/**
+ * Link LoRa diretto tra due nodi: SF più veloce che chiude il budget, altrimenti null.
+ * `extraLossDb` = perdita aggiuntiva dipendente dal tempo (meteo, neve bagnata, ghiaccio sulle antenne).
+ */
+export function loraLink(a: NodeSpec, pa: Point3, b: NodeSpec, pb: Point3, p: ModelParams, extraLossDb = 0): LinkState | null {
   const da = KIND_DEFAULTS[a.kind];
   const db = KIND_DEFAULTS[b.kind];
   if (!da.caps.lora || !db.caps.lora) return null;
-  // Link simmetrico per semplicità: si usa l'EIRP del più debole dei due (il link utile è bidirezionale).
-  const eirp = Math.min(effectiveEirpDbm(da.txDbm, da.antennaDbi, p.reg), effectiveEirpDbm(db.txDbm, db.antennaDbi, p.reg));
-  const obstruction = (p.env.obstructionDb[pairKey(a.id, b.id)] ?? 0) * p.env.obstructionScale;
-  const rssi = eirp + db.antennaDbi - da.bodyLossDb - db.bodyLossDb
-    - pathLossDb(distance3(pa, pb), p.env.pathLossExponent) - obstruction - p.env.interferenceDb;
+  // Il link utile è bidirezionale (dati in un verso, risposte/ACK nell'altro): vale la direzione più
+  // debole. Ogni direzione = EIRP del trasmettitore + guadagno d'antenna del ricevitore.
+  const eirpA = effectiveEirpDbm(da.txDbm, da.antennaDbi, p.reg);
+  const eirpB = effectiveEirpDbm(db.txDbm, db.antennaDbi, p.reg);
+  const weakest = Math.min(eirpA + db.antennaDbi, eirpB + da.antennaDbi);
+  const obstruction = ((p.env.obstructionDb[pairKey(a.id, b.id)] ?? 0) + (p.env.obstructionFn?.(pa, pb) ?? 0)) * p.env.obstructionScale;
+  const rssi = weakest - da.bodyLossDb - db.bodyLossDb
+    - pathLossDb(distance3(pa, pb), p.env.pathLossExponent) - obstruction - p.env.interferenceDb - extraLossDb;
   for (const sf of SPREADING_FACTORS) {
     if (sf > p.maxSf) break;
     const margin = rssi - p.env.fadeMarginDb - SX1262_SENSITIVITY_125K[sf];
@@ -184,7 +198,7 @@ export function loraLink(a: NodeSpec, pa: Point3, b: NodeSpec, pb: Point3, p: Mo
 }
 
 /** Miglior mezzo disponibile tra due nodi a un istante: Wi-Fi > BLE > LoRa. */
-export function bestLink(a: NodeSpec, pa: Point3, b: NodeSpec, pb: Point3, p: ModelParams): LinkState | null {
+export function bestLink(a: NodeSpec, pa: Point3, b: NodeSpec, pb: Point3, p: ModelParams, extraLossDb = 0): LinkState | null {
   const ca = KIND_DEFAULTS[a.kind].caps;
   const cb = KIND_DEFAULTS[b.kind].caps;
   const d = distance3(pa, pb);
@@ -192,7 +206,7 @@ export function bestLink(a: NodeSpec, pa: Point3, b: NodeSpec, pb: Point3, p: Mo
   const apInvolved = a.kind === "box" || a.kind === "portable" || b.kind === "box" || b.kind === "portable";
   if (ca.wifi && cb.wifi && apInvolved && d <= p.shortRange.wifiRangeM) return { medium: "wifi" };
   if (ca.ble && cb.ble && d <= p.shortRange.bleRangeM) return { medium: "ble" };
-  return loraLink(a, pa, b, pb, p);
+  return loraLink(a, pa, b, pb, p, extraLossDb);
 }
 
 /** Byte applicativi trasferibili in un frame LoRa. */
@@ -218,8 +232,17 @@ export interface Message {
   sizeBytes: number;
   priority: number; // più basso = più urgente (come Priority in packet.ts: 0 = EMERGENCY)
   source: string;
-  destination: string;
+  /**
+   * Una o più destinazioni. Con più destinazioni (es. "qualunque infrastruttura": Box o
+   * Portable) il messaggio si considera consegnato quando le ha raggiunte tutte; ogni
+   * destinazione raggiunta continua a inoltrare verso le altre.
+   */
+  destination: string | string[];
   createdAt: number;
+}
+
+export function destinationsOf(m: Message): string[] {
+  return Array.isArray(m.destination) ? m.destination : [m.destination];
 }
 
 export interface SimOptions {
@@ -243,12 +266,22 @@ export interface SimOptions {
    * L'origine non scade mai (il contenuto resta nel suo store).
    */
   relayCarryTtlS?: (priority: number) => number;
+  /** Perdita LoRa aggiuntiva in funzione del tempo, uguale per tutti i link (es. una perturbazione). */
+  extraLossDb?: (t: number) => number;
+  /**
+   * Costo di un percorso per la policy "custody". "hops" = numero di salti, come
+   * `routing-table.ts` oggi (default). "airtime" = tempo di trasmissione di un frame
+   * su ogni link (uno SF lento costa molto più di uno veloce) — un'alternativa da valutare.
+   */
+  routingMetric?: "hops" | "airtime";
 }
 
 export interface DeliveryResult {
   messageId: string;
-  deliveredAt: number | null; // secondi dall'inizio, null = non consegnato entro l'orizzonte
-  bytesAtDestination: number;
+  deliveredAt: number | null; // secondi dalla generazione a tutte le destinazioni, null = non entro l'orizzonte
+  /** Secondi dalla generazione per ciascuna destinazione (null = non raggiunta). */
+  deliveredAtByDest: Record<string, number | null>;
+  bytesAtDestination: number; // massimo tra le destinazioni
   loraAirtimeS: number;       // airtime LoRa totale consumato da questo messaggio (tutte le copie)
 }
 
@@ -264,9 +297,34 @@ function isOn(n: NodeSpec, t: number): boolean {
   return n.offFrom === undefined || t < n.offFrom;
 }
 
-function bfsHops(adj: Map<string, string[]>, from: string): Map<string, number> {
-  const dist = new Map<string, number>([[from, 0]]);
-  const queue = [from];
+/** Costo di un link per la metrica "airtime": secondi di trasmissione per un frame equivalente. */
+function linkAirtimeCost(link: LinkState, p: ModelParams): number {
+  if (link.medium === "lora") return loraTimeOnAir(p.loraFrameBytes, link.sf!, p.phy);
+  const bps = link.medium === "wifi" ? p.shortRange.wifiBps : p.shortRange.bleBps;
+  return (8 * p.loraFrameBytes) / bps;
+}
+
+/** Dijkstra multi-sorgente (grafo piccolo: selezione lineare del minimo è sufficiente). */
+function dijkstra(adj: Map<string, { nb: string; link: LinkState }[]>, from: string[], cost: (l: LinkState) => number): Map<string, number> {
+  const dist = new Map<string, number>(from.map((r) => [r, 0]));
+  const done = new Set<string>();
+  for (;;) {
+    let cur: string | undefined;
+    for (const [n, d] of dist) if (!done.has(n) && (cur === undefined || d < dist.get(cur)!)) cur = n;
+    if (cur === undefined) return dist;
+    done.add(cur);
+    for (const { nb, link } of adj.get(cur) ?? []) {
+      const nd = dist.get(cur)! + cost(link);
+      if (nd < (dist.get(nb) ?? Infinity)) dist.set(nb, nd);
+    }
+  }
+}
+
+/** Distanza in hop da un insieme di nodi (BFS multi-sorgente). */
+function bfsHops(adj: Map<string, string[]>, from: string | string[]): Map<string, number> {
+  const roots = Array.isArray(from) ? from : [from];
+  const dist = new Map<string, number>(roots.map((r) => [r, 0]));
+  const queue = [...roots];
   while (queue.length > 0) {
     const cur = queue.shift()!;
     for (const nb of adj.get(cur) ?? []) {
@@ -276,14 +334,14 @@ function bfsHops(adj: Map<string, string[]>, from: string): Map<string, number> 
   return dist;
 }
 
-export function snapshotLinks(nodes: NodeSpec[], t: number, p: ModelParams): { a: string; b: string; link: LinkState }[] {
+export function snapshotLinks(nodes: NodeSpec[], t: number, p: ModelParams, extraLossDb = 0): { a: string; b: string; link: LinkState }[] {
   const out: { a: string; b: string; link: LinkState }[] = [];
   const pos = nodes.map((n) => positionAt(n.path, t));
   for (let i = 0; i < nodes.length; i++) {
     if (!isOn(nodes[i], t)) continue;
     for (let j = i + 1; j < nodes.length; j++) {
       if (!isOn(nodes[j], t)) continue;
-      const link = bestLink(nodes[i], pos[i], nodes[j], pos[j], p);
+      const link = bestLink(nodes[i], pos[i], nodes[j], pos[j], p, extraLossDb);
       if (link) out.push({ a: nodes[i].id, b: nodes[j].id, link });
     }
   }
@@ -306,7 +364,9 @@ export function simulate(opts: SimOptions): SimResult {
   for (const n of nodes) held.set(n.id, new Map());
   const isolatedSince = new Map<string, number>(); // "nodo|msg" -> istante da cui il relay non ha percorso
   const dropped = new Set<string>();               // "nodo|msg" scartati dalla coda (SeenCache: mai riaccettati)
-  const delivered = new Map<string, number>();
+  const delivered = new Map<string, number>();             // msg -> istante in cui ha raggiunto tutte le destinazioni
+  const reachedAt = new Map<string, Map<string, number>>(); // msg -> destinazione -> istante
+  for (const m of messages) reachedAt.set(m.id, new Map());
   const airtime = new Map<string, number>(messages.map((m) => [m.id, 0]));
   // Token bucket duty-cycle: capacità = duty × 3600 s, ricarica = duty s/s. Parte pieno.
   const bucketCap = p.reg.dutyCycle * 3600;
@@ -314,7 +374,7 @@ export function simulate(opts: SimOptions): SimResult {
   const channelCreditCap = stepS * p.channelEfficiency + 2 * loraTimeOnAir(p.loraFrameBytes, 12, p.phy);
   let channelCredit = 0;
   const instantCount: Record<string, number> = {};
-  const pairs = [...new Set(messages.map((m) => `${m.source}->${m.destination}`))];
+  const pairs = [...new Set(messages.flatMap((m) => destinationsOf(m).map((d) => `${m.source}->${d}`)))];
   for (const k of pairs) instantCount[k] = 0;
   const linkSnapshots: SimResult["linkSnapshots"] = [];
   let steps = 0;
@@ -328,7 +388,7 @@ export function simulate(opts: SimOptions): SimResult {
     }
     for (const n of nodes) bucket.set(n.id, Math.min(bucketCap, bucket.get(n.id)! + p.reg.dutyCycle * stepS));
 
-    const links = snapshotLinks(nodes, t, p);
+    const links = snapshotLinks(nodes, t, p, opts.extraLossDb?.(t) ?? 0);
     if (t % 1800 === 0) linkSnapshots.push({ t, links });
     const adj = new Map<string, { nb: string; link: LinkState }[]>();
     const plainAdj = new Map<string, string[]>();
@@ -344,9 +404,18 @@ export function simulate(opts: SimOptions): SimResult {
       if (bfsHops(plainAdj, s).has(d)) instantCount[k]++;
     }
     const hopsToDest = new Map<string, Map<string, number>>();
-    const hopsFor = (dest: string) => {
-      if (!hopsToDest.has(dest)) hopsToDest.set(dest, bfsHops(plainAdj, dest));
-      return hopsToDest.get(dest)!;
+    const hopsFor = (dests: string[]) => {
+      const key = [...dests].sort().join(",");
+      if (!hopsToDest.has(key)) hopsToDest.set(key, bfsHops(plainAdj, dests));
+      return hopsToDest.get(key)!;
+    };
+    const metric = opts.routingMetric ?? "hops";
+    const costToDest = new Map<string, Map<string, number>>();
+    const costFor = (dests: string[]) => {
+      if (metric === "hops") return hopsFor(dests);
+      const key = [...dests].sort().join(",");
+      if (!costToDest.has(key)) costToDest.set(key, dijkstra(adj, dests, (l) => linkAirtimeCost(l, p)));
+      return costToDest.get(key)!;
     };
 
     // Credito del canale condiviso riportato tra un passo e l'altro: un frame lungo (SF12 ≈ 8 s)
@@ -361,26 +430,31 @@ export function simulate(opts: SimOptions): SimResult {
     const loraBlocked = new Set<string>();
     for (const m of sorted) {
       if (m.createdAt > t || delivered.has(m.id)) continue;
-      const reach = hopsFor(m.destination);
-      const hops = opts.policy === "custody" ? reach : null;
+      const reached = reachedAt.get(m.id)!;
+      const pending = destinationsOf(m).filter((d) => !reached.has(d) && isOn(byId.get(d)!, t));
+      if (pending.length === 0) continue; // destinazioni rimaste tutte spente: niente da fare ora
+      const reach = hopsFor(pending);
+      const cost = opts.policy === "custody" ? costFor(pending) : null;
       for (const sender of nodes) {
         if (!isOn(sender, t)) continue;
         const have = startHeld.get(sender.id)!.get(m.id) ?? 0;
         if (have === 0) continue;
         let candidates = adj.get(sender.id)!;
-        if (hops) {
-          const dSender = hops.get(sender.id);
+        if (cost) {
+          const dSender = cost.get(sender.id);
           if (dSender !== undefined) {
-            // Destinazione raggiungibile ora: un solo next hop (routing-table.ts), il più vicino
-            // in hop e, a parità, quello col mezzo più veloce.
+            // Destinazione raggiungibile ora: un solo next hop (routing-table.ts) lungo un percorso
+            // di costo minimo; a parità di costo, quello col mezzo più veloce.
             const rank = (l: LinkState) => (l.medium === "wifi" ? 0 : l.medium === "ble" ? 1 : 1 + l.sf!);
+            const edge = (l: LinkState) => (metric === "hops" ? 1 : linkAirtimeCost(l, p));
             const best = candidates
-              .filter((c) => (hops.get(c.nb) ?? Infinity) < dSender)
-              .sort((x, y) => hops.get(x.nb)! - hops.get(y.nb)! || rank(x.link) - rank(y.link))[0];
+              .filter((c) => (cost.get(c.nb) ?? Infinity) < dSender)
+              .sort((x, y) => edge(x.link) + cost.get(x.nb)! - (edge(y.link) + cost.get(y.nb)!) || rank(x.link) - rank(y.link))[0];
             candidates = best ? [best] : [];
           }
         }
-        if (sender.id !== m.source && sender.id !== m.destination && opts.relayCarryTtlS) {
+        // Origine e destinazioni già raggiunte custodiscono il messaggio nel proprio store: niente TTL.
+        if (sender.id !== m.source && !reached.has(sender.id) && opts.relayCarryTtlS) {
           // Come floodExcept(): finché esiste un percorso il relay inoltra subito (code del transport,
           // nessuna scadenza). Solo quando resta isolato dalla destinazione la copia finisce in
           // PendingDeliveryQueue, che la scarta dopo il TTL (scadenza pigra) — e SeenCache impedisce
@@ -427,7 +501,10 @@ export function simulate(opts: SimOptions): SimResult {
           }
           const newHeld = recvHeld + want;
           held.get(nb)!.set(m.id, newHeld);
-          if (nb === m.destination && newHeld >= m.sizeBytes - 1e-6) delivered.set(m.id, t + stepS);
+          if (pending.includes(nb) && newHeld >= m.sizeBytes - 1e-6 && !reached.has(nb)) {
+            reached.set(nb, t + stepS);
+            if (destinationsOf(m).every((d) => reached.has(d))) delivered.set(m.id, t + stepS);
+          }
         }
       }
     }
@@ -437,7 +514,11 @@ export function simulate(opts: SimOptions): SimResult {
     deliveries: messages.map((m) => ({
       messageId: m.id,
       deliveredAt: delivered.has(m.id) ? delivered.get(m.id)! - m.createdAt : null,
-      bytesAtDestination: Math.min(held.get(m.destination)!.get(m.id) ?? 0, m.sizeBytes),
+      deliveredAtByDest: Object.fromEntries(destinationsOf(m).map((d) => {
+        const at = reachedAt.get(m.id)!.get(d);
+        return [d, at === undefined ? null : at - m.createdAt];
+      })),
+      bytesAtDestination: Math.min(Math.max(...destinationsOf(m).map((d) => held.get(d)!.get(m.id) ?? 0)), m.sizeBytes),
       loraAirtimeS: airtime.get(m.id)!,
     })),
     instantConnectivity: Object.fromEntries(pairs.map((k) => [k, instantCount[k] / steps])),

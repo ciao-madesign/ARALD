@@ -4,6 +4,7 @@ import {
   effectiveEirpDbm, loraLink, loraTimeOnAir, pathLossDb, positionAt, simulate,
 } from "../../tools/scenario-model/model.js";
 import { ENVIRONMENTS, benchmarkMessages, buildNodes } from "../../tools/scenario-model/valle-maira.js";
+import * as S2 from "../../tools/scenario-model/alpino-frammentato.js";
 
 const params = (env: keyof typeof ENVIRONMENTS, reg = EU868_G1): ModelParams => ({
   env: ENVIRONMENTS[env], reg, phy: DEFAULT_PHY, shortRange: DEFAULT_SHORT_RANGE,
@@ -94,5 +95,99 @@ describe("scenario-model: simulazione Valle Maira", () => {
   it("perdita della Card intermedia C4 in condizioni tipiche isola C5 (punto singolo di guasto)", () => {
     const r = simulate({ nodes: buildNodes("card-failure"), messages: benchmarkMessages(), params: params("tipico"), horizonS: 10 * H, stepS: 10, policy: "custody" });
     expect(r.deliveries.find((d) => d.messageId === "F1")!.deliveredAt).toBeNull();
+  });
+});
+
+describe("scenario-model: estensioni per lo Scenario 2", () => {
+  const H = 3600;
+  const card = (id: string, x: number): NodeSpec => ({ id, kind: "card", path: [{ x, y: 0, z: 0, t: 0 }] });
+
+  it("il link budget è simmetrico: non dipende dall'ordine dei due nodi (regressione)", () => {
+    const box: NodeSpec = { id: "B", kind: "box", path: [{ x: 0, y: 0, z: 0, t: 0 }] };
+    const c: NodeSpec = { id: "C", kind: "card", path: [{ x: 4500, y: 0, z: 0, t: 0 }] };
+    for (const reg of [EU868_G1, EU868_G3]) {
+      const ab = loraLink(box, positionAt(box.path, 0), c, positionAt(c.path, 0), params("tipico", reg));
+      const ba = loraLink(c, positionAt(c.path, 0), box, positionAt(box.path, 0), params("tipico", reg));
+      expect(ab?.sf).toBe(ba?.sf);
+      expect(ab?.rssiDbm).toBeCloseTo(ba?.rssiDbm ?? NaN, 6);
+    }
+  });
+
+  it("più destinazioni: tempi per destinazione, consegnato solo quando le raggiunge tutte", () => {
+    const nodes = [card("S", 0), card("D1", 20), card("D2", 40)];
+    const r = simulate({ nodes, messages: [{ id: "M", label: "", sizeBytes: 100, priority: 0, source: "S", destination: ["D1", "D2"], createdAt: 0 }], params: params("tipico"), horizonS: 120, stepS: 10, policy: "custody" });
+    const d = r.deliveries[0];
+    expect(d.deliveredAtByDest.D1).not.toBeNull();
+    expect(d.deliveredAtByDest.D2).not.toBeNull();
+    expect(d.deliveredAtByDest.D2!).toBeGreaterThanOrEqual(d.deliveredAtByDest.D1!);
+    expect(d.deliveredAt).toBe(d.deliveredAtByDest.D2);
+  });
+
+  it("una destinazione spenta non viene mai raggiunta, le altre sì", () => {
+    const nodes = [card("S", 0), card("D1", 20), { ...card("D2", 40), offFrom: 0 }];
+    const r = simulate({ nodes, messages: [{ id: "M", label: "", sizeBytes: 100, priority: 0, source: "S", destination: ["D1", "D2"], createdAt: 0 }], params: params("tipico"), horizonS: 120, stepS: 10, policy: "custody" });
+    expect(r.deliveries[0].deliveredAtByDest.D1).not.toBeNull();
+    expect(r.deliveries[0].deliveredAtByDest.D2).toBeNull();
+    expect(r.deliveries[0].deliveredAt).toBeNull();
+  });
+
+  it("metrica airtime: preferisce due salti veloci a un salto diretto lento", () => {
+    // S–D diretto a ~6 km (SF lento), S–R e R–D a ~3 km (SF veloce): R deve ricevere il messaggio solo con "airtime".
+    const nodes = [card("S", 0), card("R", 3000), card("D", 6000)];
+    const msg = [{ id: "M", label: "", sizeBytes: 20_000, priority: 0, source: "S", destination: "D", createdAt: 0 }];
+    const p = params("tipico", EU868_G3);
+    const direct = loraLink(nodes[0], positionAt(nodes[0].path, 0), nodes[2], positionAt(nodes[2].path, 0), p);
+    const half = loraLink(nodes[0], positionAt(nodes[0].path, 0), nodes[1], positionAt(nodes[1].path, 0), p);
+    expect(direct).not.toBeNull();
+    expect(half!.sf!).toBeLessThan(direct!.sf!);
+    const hops = simulate({ nodes, messages: msg, params: p, horizonS: 3 * H, stepS: 10, policy: "custody", routingMetric: "hops" });
+    const air = simulate({ nodes, messages: msg, params: p, horizonS: 3 * H, stepS: 10, policy: "custody", routingMetric: "airtime" });
+    expect(air.deliveries[0].deliveredAt).not.toBeNull();
+    expect(hops.deliveries[0].deliveredAt === null || air.deliveries[0].deliveredAt! < hops.deliveries[0].deliveredAt!).toBe(true);
+  });
+
+  it("perdita aggiuntiva nel tempo (perturbazione) può spezzare un link", () => {
+    const nodes = [card("S", 0), card("D", 3000)];
+    const msg = [{ id: "M", label: "", sizeBytes: 100, priority: 0, source: "S", destination: "D", createdAt: 0 }];
+    const ok = simulate({ nodes, messages: msg, params: params("tipico"), horizonS: 600, stepS: 10, policy: "custody" });
+    const storm = simulate({ nodes, messages: msg, params: params("tipico"), horizonS: 600, stepS: 10, policy: "custody", extraLossDb: () => 40 });
+    expect(ok.deliveries[0].deliveredAt).not.toBeNull();
+    expect(storm.deliveries[0].deliveredAt).toBeNull();
+  });
+});
+
+describe("scenario-model: Scenario 2 (alpino frammentato)", () => {
+  const H = 3600;
+  const p2 = (env: keyof typeof S2.ENVIRONMENTS, reg = EU868_G1): ModelParams => ({ ...params("tipico", reg), env: S2.ENVIRONMENTS[env] });
+  const run = (variant: S2.Variant, env: keyof typeof S2.ENVIRONMENTS, extra: Partial<Parameters<typeof simulate>[0]> = {}) =>
+    simulate({ nodes: S2.buildNodes(variant), messages: S2.benchmarkMessages(), params: p2(env), horizonS: 10 * H, stepS: 10, policy: "custody", ...extra });
+
+  it("le zone di terreno: colle visibile da entrambe le valli, cresta tra le valli", () => {
+    const P = S2.PLACES;
+    expect(S2.zoneOf(P.colle)).toBe("colle");
+    expect(S2.zoneOf(P.boxA)).toBe("A");
+    expect(S2.zoneOf(P.rifugioB)).toBe("B");
+    expect(S2.zoneOf(P.laterale)).toBe("Alat");
+    expect(S2.terrainLossDb(P.boxA, P.rifugioB)).toBeGreaterThan(S2.terrainLossDb(P.colle, P.rifugioB));
+  });
+
+  it("senza ponte, in condizioni tipiche l'SOS raggiunge il Portable ma non il Box oltre la cresta", () => {
+    const f1 = run("static", "tipico").deliveries.find((d) => d.messageId === "F1")!;
+    expect(f1.deliveredAtByDest.PORT).not.toBeNull();
+    expect(f1.deliveredAtByDest.BOX).toBeNull();
+  });
+
+  it("un Fixed Relay al colle porta l'SOS al Box in meno di un minuto (condizioni tipiche)", () => {
+    const f1 = run("fixed-relay", "tipico").deliveries.find((d) => d.messageId === "F1")!;
+    expect(f1.deliveredAtByDest.BOX).not.toBeNull();
+    expect(f1.deliveredAtByDest.BOX!).toBeLessThan(60);
+  });
+
+  it("il data mule che rivalica consegna l'SOS al Box solo con una coda DTN", () => {
+    const ttl = (prio: number) => (prio === 0 ? 0.5 * H : 300);
+    const withTtl = run("crossing", "tipico", { relayCarryTtlS: ttl }).deliveries.find((d) => d.messageId === "F1")!;
+    const dtn = run("crossing", "tipico").deliveries.find((d) => d.messageId === "F1")!;
+    expect(withTtl.deliveredAtByDest.BOX).toBeNull();
+    expect(dtn.deliveredAtByDest.BOX).not.toBeNull();
   });
 });

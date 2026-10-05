@@ -7,6 +7,7 @@
  */
 import type { Environment, Message, NodeSpec, Point3, Waypoint } from "./model.js";
 import { pairKey } from "./model.js";
+import type { Scenario } from "./scenario.js";
 
 const H = 3600;
 
@@ -113,3 +114,16 @@ export function benchmarkMessages(): Message[] {
     { id: "F3", label: "8 JPEG (12 MB)", sizeBytes: 12 * MB, priority: 5, source: "S5", destination: "BOX", createdAt: EVENT_T },
   ];
 }
+
+export const valleMaira: Scenario = {
+  id: "valle-maira",
+  title: "Scenario 1 — alta Valle Maira",
+  variants: VARIANTS,
+  environments: ENVIRONMENTS,
+  buildNodes: (variant) => buildNodes(variant as Variant),
+  messages: benchmarkMessages,
+  eventT: EVENT_T,
+  linkPairs: [["BOX", "C2"], ["BOX", "C3"], ["BOX", "C4"], ["BOX", "C5"], ["C2", "C3"], ["C3", "C4"], ["C4", "C5"], ["C3", "C5"], ["PORT", "C3"], ["PORT", "C4"], ["PORT", "C5"]],
+  linkSnapshotVariant: "static",
+  connectivityPair: ["C5", "BOX"],
+};

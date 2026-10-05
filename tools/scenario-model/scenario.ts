@@ -1,0 +1,24 @@
+/**
+ * Contratto comune di uno scenario: `cli.ts` e `model.ts` non conoscono nessuno
+ * scenario specifico, ogni scenario è un file che esporta un oggetto `Scenario`.
+ */
+import type { Environment, Message, NodeSpec } from "./model.js";
+
+export interface Scenario {
+  id: string;
+  title: string;
+  /** Variante di mobilità/evento → descrizione breve. */
+  variants: Record<string, string>;
+  environments: Record<string, Environment>;
+  buildNodes(variant: string): NodeSpec[];
+  messages(): Message[];
+  /** Istante (s) di generazione dei file benchmark. */
+  eventT: number;
+  /** Perdita aggiuntiva dipendente dal tempo per una variante (es. perturbazione), se presente. */
+  extraLossDb?(variant: string): ((t: number) => number) | undefined;
+  /** Coppie di nodi da mostrare nella tabella dei link, e la variante da cui leggerne le posizioni. */
+  linkPairs: [string, string][];
+  linkSnapshotVariant: string;
+  /** Coppia sorgente→destinazione di cui riportare la connettività istantanea. */
+  connectivityPair: [string, string];
+}

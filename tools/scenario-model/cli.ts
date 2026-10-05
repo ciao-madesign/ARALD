@@ -1,15 +1,20 @@
 /**
- * Esegue il modello parametrico sullo scenario Valle Maira e stampa i
- * risultati in Markdown (riprodotti in docs/scenario-simulation.md).
+ * Esegue il modello parametrico su uno scenario e stampa i risultati in
+ * Markdown (riprodotti in docs/scenario-simulation.md).
  *
- *   npm run scenario-model
+ *   npm run scenario-model                                  # Scenario 1, Valle Maira
+ *   npm run scenario-model -- --scenario alpino-frammentato # Scenario 2
  *   npm run scenario-model -- --max-sf 10 --horizon-h 24
  */
 import {
   DEFAULT_PHY, DEFAULT_SHORT_RANGE, EU868_G1, EU868_G3, SPREADING_FACTORS, type ModelParams, type RegulatoryProfile,
-  type SpreadingFactor, loraDutyLimitedAppBps, loraRawAppBps, loraTimeOnAir, positionAt, loraLink, simulate,
+  type SpreadingFactor, destinationsOf, loraDutyLimitedAppBps, loraRawAppBps, loraTimeOnAir, positionAt, loraLink, simulate,
 } from "./model.js";
-import { ENVIRONMENTS, EVENT_T, VARIANTS, type Variant, benchmarkMessages, buildNodes } from "./valle-maira.js";
+import type { Scenario } from "./scenario.js";
+import { valleMaira } from "./valle-maira.js";
+import { alpinoFrammentato } from "./alpino-frammentato.js";
+
+const SCENARIOS: Record<string, Scenario> = { [valleMaira.id]: valleMaira, [alpinoFrammentato.id]: alpinoFrammentato };
 
 function arg(name: string, fallback: string): string {
   const i = process.argv.indexOf(`--${name}`);
@@ -19,10 +24,22 @@ function arg(name: string, fallback: string): string {
 const policy = arg("policy", "custody") as "custody" | "epidemic";
 const maxSf = Number(arg("max-sf", "12")) as SpreadingFactor;
 const horizonH = Number(arg("horizon-h", "10"));
+const scenarioId = arg("scenario", valleMaira.id);
+const scenario = SCENARIOS[scenarioId];
+if (!scenario) {
+  console.error(`Scenario sconosciuto: ${scenarioId}. Disponibili: ${Object.keys(SCENARIOS).join(", ")}`);
+  process.exit(1);
+}
 
-function params(envName: keyof typeof ENVIRONMENTS, reg: RegulatoryProfile): ModelParams {
+function fmtClock(s: number): string {
+  const h = Math.floor(s / 3600);
+  const m = Math.round((s % 3600) / 60);
+  return m === 0 ? `${h}h` : `${h}h${String(m).padStart(2, "0")}`;
+}
+
+function params(envName: string, reg: RegulatoryProfile): ModelParams {
   return {
-    env: ENVIRONMENTS[envName], reg, phy: DEFAULT_PHY, shortRange: DEFAULT_SHORT_RANGE,
+    env: scenario.environments[envName], reg, phy: DEFAULT_PHY, shortRange: DEFAULT_SHORT_RANGE,
     loraFrameBytes: 222, loraFrameOverheadBytes: 22, protocolOverhead: 1.45, channelEfficiency: 0.5, maxSf,
   };
 }
@@ -60,18 +77,18 @@ for (const [label, bytes] of SIZES) {
   out.push(`| ${label} | ${fmtDuration(t(7, EU868_G1))} | ${fmtDuration(t(7, EU868_G3))} | ${fmtDuration(t(10, EU868_G1))} | ${fmtDuration(t(10, EU868_G3))} | ${fmtDuration(t(12, EU868_G3))} |`);
 }
 
-out.push(`\n### C. Link LoRa stimati a t = 3h15 (gruppo distribuito), SF minimo che chiude il link\n`);
-const nodes = buildNodes("static");
-const pairs: [string, string][] = [["BOX", "C2"], ["BOX", "C3"], ["BOX", "C4"], ["BOX", "C5"], ["C2", "C3"], ["C3", "C4"], ["C4", "C5"], ["C3", "C5"], ["PORT", "C3"], ["PORT", "C4"], ["PORT", "C5"]];
+out.push(`\n### C. ${scenario.title} — link LoRa stimati a t = ${fmtClock(scenario.eventT)} (variante \`${scenario.linkSnapshotVariant}\`), SF minimo che chiude il link\n`);
+const nodes = scenario.buildNodes(scenario.linkSnapshotVariant);
+const pairs = scenario.linkPairs;
 const regs: [string, RegulatoryProfile][] = [["g1 14 dBm ERP/1%", EU868_G1], ["g3 27 dBm ERP/10%", EU868_G3]];
-const envNames = Object.keys(ENVIRONMENTS) as (keyof typeof ENVIRONMENTS)[];
+const envNames = Object.keys(scenario.environments);
 out.push(`| Link | Distanza | ${envNames.flatMap((e) => regs.map(([r]) => `${e} ${r}`)).join(" | ")} |`);
 out.push(`|---|---:|${envNames.flatMap(() => regs.map(() => ":---:")).join("|")}|`);
 for (const [a, b] of pairs) {
   const na = nodes.find((n) => n.id === a)!;
   const nb = nodes.find((n) => n.id === b)!;
-  const pa = positionAt(na.path, EVENT_T);
-  const pb = positionAt(nb.path, EVENT_T);
+  const pa = positionAt(na.path, scenario.eventT);
+  const pb = positionAt(nb.path, scenario.eventT);
   const d = Math.hypot(pa.x - pb.x, pa.y - pb.y, pa.z - pb.z);
   const cells = envNames.flatMap((e) => regs.map(([, reg]) => {
     const l = loraLink(na, pa, nb, pb, params(e, reg));
@@ -80,34 +97,50 @@ for (const [a, b] of pairs) {
   out.push(`| ${a}–${b} | ${(d / 1000).toFixed(1)} km | ${cells.join(" | ")} |`);
 }
 
-out.push(`\n### D. Tempi di consegna end-to-end (policy ${policy}, SF max ${maxSf}, orizzonte ${horizonH} h dalla partenza; file generati a 3h15)\n`);
-const msgs = benchmarkMessages();
+out.push(`\n### D. Tempi di consegna end-to-end (policy ${policy}, SF max ${maxSf}, orizzonte ${horizonH} h dalla partenza; file generati a ${fmtClock(scenario.eventT)})\n`);
+const msgs = scenario.messages();
+// Un messaggio con più destinazioni ha una colonna per destinazione.
+const columns = msgs.flatMap((m) => {
+  const dests = destinationsOf(m);
+  return dests.length === 1 ? [{ m, dest: null as string | null, label: m.id }] : dests.map((d) => ({ m, dest: d as string | null, label: `${m.id}→${d}` }));
+});
+const [connSrc, connDst] = scenario.connectivityPair;
 const H = 3600;
 const carryModels: [string, ((prio: number) => number) | undefined][] = [
   ["ARALD attuale — coda relay 30 min SOS / 5 min resto", (prio) => (prio === 0 ? 0.5 * H : 300)],
   ["DTN — il relay trattiene la copia fino alla consegna", undefined],
 ];
-for (const [carryName, carry] of carryModels) {
-  for (const [regName, reg] of regs) {
-    out.push(`\n**${carryName} · profilo radio ${regName}**\n`);
-    out.push(`| Variante | Ambiente | ${msgs.map((m) => m.id).join(" | ")} | C5→BOX connesso (istantaneo) | Airtime LoRa |`);
-    out.push(`|---|---|${msgs.map(() => "---:").join("|")}|---:|---:|`);
-    for (const variant of Object.keys(VARIANTS) as Variant[]) {
-      for (const e of envNames) {
-        const r = simulate({ nodes: buildNodes(variant), messages: msgs, params: params(e, reg), horizonS: horizonH * H, stepS: 10, policy, relayCarryTtlS: carry });
-        const cells = r.deliveries.map((d) => {
-          if (d.deliveredAt !== null) return fmtDuration(d.deliveredAt);
-          const m = msgs.find((x) => x.id === d.messageId)!;
-          const pct = (100 * d.bytesAtDestination) / m.sizeBytes;
-          return pct > 0 ? `✗ (${pct.toFixed(pct < 1 ? 1 : 0)}%)` : "✗";
-        });
-        const conn = r.instantConnectivity["C5->BOX"];
-        const air = r.deliveries.reduce((s, d) => s + d.loraAirtimeS, 0);
-        out.push(`| ${variant} | ${e} | ${cells.join(" | ")} | ${conn === undefined ? "—" : `${(conn * 100).toFixed(0)}%`} | ${(air / 60).toFixed(1)} min |`);
-      }
+function resultsTable(title: string, reg: RegulatoryProfile, carry: ((prio: number) => number) | undefined, routingMetric: "hops" | "airtime") {
+  out.push(`\n**${title}**\n`);
+  out.push(`| Variante | Ambiente | ${columns.map((col) => col.label).join(" | ")} | ${connSrc}→${connDst} connesso (istantaneo) | Airtime LoRa |`);
+  out.push(`|---|---|${columns.map(() => "---:").join("|")}|---:|---:|`);
+  for (const variant of Object.keys(scenario.variants)) {
+    for (const e of envNames) {
+      const r = simulate({
+        nodes: scenario.buildNodes(variant), messages: msgs, params: params(e, reg), horizonS: horizonH * H, stepS: 10, policy,
+        relayCarryTtlS: carry, extraLossDb: scenario.extraLossDb?.(variant), routingMetric,
+      });
+      const cells = columns.map(({ m, dest }) => {
+        const d = r.deliveries.find((x) => x.messageId === m.id)!;
+        if (dest !== null) return fmtDuration(d.deliveredAtByDest[dest]);
+        if (d.deliveredAt !== null) return fmtDuration(d.deliveredAt);
+        const pct = (100 * d.bytesAtDestination) / m.sizeBytes;
+        return pct > 0 ? `✗ (${pct.toFixed(pct < 1 ? 1 : 0)}%)` : "✗";
+      });
+      const conn = r.instantConnectivity[`${connSrc}->${connDst}`];
+      const air = r.deliveries.reduce((s, d) => s + d.loraAirtimeS, 0);
+      out.push(`| ${variant} | ${e} | ${cells.join(" | ")} | ${conn === undefined ? "—" : `${(conn * 100).toFixed(0)}%`} | ${(air / 60).toFixed(1)} min |`);
     }
   }
 }
-out.push(`\nLegenda D: ${msgs.map((m) => `${m.id} = ${m.label} (${m.source}→${m.destination})`).join("; ")}. "✗ (x%)" = non consegnato entro l'orizzonte, x% arrivato. "C5→BOX connesso" = frazione del tempo con un percorso simultaneo (connettività istantanea): una consegna avvenuta con questo valore < 100% è passata (anche) per contatti opportunistici. "Airtime LoRa" = tempo di trasmissione LoRa consumato da tutti i file, tutte le copie. Varianti: ${Object.entries(VARIANTS).map(([k, v]) => `${k} = ${v}`).join("; ")}.`);
+
+for (const [carryName, carry] of carryModels) {
+  for (const [regName, reg] of regs) resultsTable(`${carryName} · profilo radio ${regName}`, reg, carry, "hops");
+}
+if (policy === "custody") {
+  out.push(`\n### E. Stessa simulazione con instradamento a costo "airtime" invece che a numero di salti (coda relay ARALD attuale)\n`);
+  for (const [regName, reg] of regs) resultsTable(`Metrica airtime · ${carryModels[0][0]} · profilo radio ${regName}`, reg, carryModels[0][1], "airtime");
+}
+out.push(`\nLegenda D: ${msgs.map((m) => `${m.id} = ${m.label} (${m.source}→${destinationsOf(m).join(" e ")})`).join("; ")}. "✗ (x%)" = non consegnato entro l'orizzonte, x% arrivato; "—" = destinazione non raggiunta. "${connSrc}→${connDst} connesso" = frazione del tempo con un percorso simultaneo (connettività istantanea): una consegna avvenuta con questo valore < 100% è passata (anche) per contatti opportunistici. "Airtime LoRa" = tempo di trasmissione LoRa consumato da tutti i file, tutte le copie. Varianti: ${Object.entries(scenario.variants).map(([k, v]) => `${k} = ${v}`).join("; ")}.`);
 
 console.log(out.join("\n"));
