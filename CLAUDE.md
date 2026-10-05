@@ -39,6 +39,7 @@ Il piano d'insieme originario (milestone 0-20 + i follow-up post-audit) è compl
 | Appunto grezzo di spunti/migliorie notati confrontando ARALD con repository esterni (analisi a comando, non un monitoraggio automatico) | [`docs/external-inspiration.md`](docs/external-inspiration.md) |
 | Specifica UX/UI per il nuovo giro di rifinimento (icone, stati, legenda, gerarchia, mappa-centrica, Operational/Configuration) — mobile, Mirror Portal, Web UI del nodo | [`docs/ux-ui-design-system.md`](docs/ux-ui-design-system.md) |
 | Simulazione teorica parametrica di efficienza della rete per scenario (link budget LoRa, duty-cycle EU868, mobilità, store-and-forward) — ipotesi, risultati, limiti | [`docs/scenario-simulation.md`](docs/scenario-simulation.md) |
+| Obiettivo finale della simulazione: tool interattivo di progettazione di reti ARALD su mappa reale (vincolo di progetto per `tools/scenario-model/`) | [`docs/network-design-tool.md`](docs/network-design-tool.md) |
 
 **Leggi la voce/il documento pertinente prima di toccare il codice corrispondente** — spiegano non solo cosa è stato fatto ma perché, inclusi i bug trovati dalla revisione prima di considerare ogni voce conclusa.
 

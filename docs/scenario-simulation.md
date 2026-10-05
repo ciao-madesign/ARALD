@@ -2,6 +2,8 @@
 
 **Stato**: Scenario 1 (alta Valle Maira) e Scenario 2 (alpino frammentato, due valli separate da una cresta) completati. Scenari successivi (Eolie, Atacama, Kampala, …) da aggiungere come nuovi file di scenario sullo stesso motore.
 
+**Obiettivo finale**: questo modello è il motore di un futuro tool interattivo di progettazione di reti ARALD su mappa reale — vedi [`docs/network-design-tool.md`](network-design-tool.md), da rispettare come vincolo di progetto.
+
 **Cosa è e cosa non è.** È un modello **teorico e parametrico** (`tools/scenario-model/`, `npm run scenario-model`) per confrontare scenari e ordini di grandezza. **Non** è una misura: nessun parametro radio di questo documento è stato verificato su hardware o sul terreno (nessun accesso a hardware né a internet reale in questo ambiente). Coordinate, quote, ostruzioni e sensibilità sono ipotesi dichiarate qui sotto, da sostituire con misure (Fase 2 di `docs/test-protocol.md`) quando disponibili. È separato da `tools/simulator/`, che invece esegue istanze reali di `NomadNode` su TCP locale senza alcuna fisica radio.
 
 ## 1. Modello
