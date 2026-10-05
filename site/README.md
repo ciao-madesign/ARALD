@@ -39,7 +39,7 @@ Every scenario/hero slot is filled — no CSS placeholders left:
 | `img/scenario-expeditions.jpg` | "Expeditions & remote stations" |
 | `img/scenario-rural.jpg` | "Rural & isolated communities" |
 | `img/scenario-forests.jpg` | "Forests & nature reserves" |
-| `img/scenario-wildfire.jpg` | "Wildfire response" — currently a duplicate of `scenario-forests.jpg`, see `img/CREDITS.md` |
+| `img/scenario-wildfire.jpg` | "Wildfire response" |
 | `img/scenario-events.jpg` | "Crowded events" |
 | `img/scenario-schools.jpg` | "Schools" |
 | `img/scenario-crisis.jpg` | "Temporary & crisis infrastructure" |
