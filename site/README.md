@@ -5,7 +5,7 @@ A static site — plain HTML/CSS/JS, no build step, no framework. Separate from 
 Four pages, kept deliberately separate so the landing page stays short and visual — deep-dive content lives one click away, not stacked on the homepage:
 
 - `index.html` — the landing page: hero, a one-request example, the three primary scenarios (photo cards), a device strip, an "open project" section, status stats, CTA.
-- `overview.html` — "Where it works": the full gallery of all ten scenarios (the three primary ones plus seven more), each with a photo and a short description.
+- `overview.html` — "Where it works": the full gallery of all eleven scenarios (the three primary ones plus eight more), each with a photo and a short description.
 - `how-it-works.html` — the mechanism (three steps), the full device family (five cards), and the honest "what's real today" status detail.
 - `contribute.html` — "Get involved": contributing code (GitHub, MIT license), and the hardware round (three device tiers with BOMs, why LoRa/BLE/Wi-Fi are all part of the architecture, contribution priorities, what a contribution funds).
 
@@ -39,6 +39,7 @@ Every scenario/hero slot is filled — no CSS placeholders left:
 | `img/scenario-expeditions.jpg` | "Expeditions & remote stations" |
 | `img/scenario-rural.jpg` | "Rural & isolated communities" |
 | `img/scenario-forests.jpg` | "Forests & nature reserves" |
+| `img/scenario-wildfire.jpg` | "Wildfire response" — currently a duplicate of `scenario-forests.jpg`, see `img/CREDITS.md` |
 | `img/scenario-events.jpg` | "Crowded events" |
 | `img/scenario-schools.jpg` | "Schools" |
 | `img/scenario-crisis.jpg` | "Temporary & crisis infrastructure" |

@@ -4,6 +4,20 @@ Riferimento: [`docs/roadmap.md`](./roadmap.md) per lo stato di tutte le mileston
 
 ---
 
+## Priorità immediata — gap scoperto durante la voce #120 (5 ottobre 2026)
+
+### `ContentStore`: eviction sempre per fiducia, mai per priorità del contenuto — nessuna protezione per un SOS broadcast in un relay affollato
+
+**Non bloccata su alcun prerequisito esterno — puro software, candidato alla prossima iterazione.**
+
+La voce #120 (`docs/security.md`) ha eliminato il TTL a orologio per `Priority.EMERGENCY` in `PendingDeliveryQueue`, ma quella coda copre solo pacchetti **unicast**. L'Emergency Beacon vero e proprio viaggia come `CONTENT_ANNOUNCE` broadcast e non passa mai da `PendingDeliveryQueue` — la sua "memoria" in un relay isolato è `ContentStore` (`node/src/content.ts`), la cui eviction è **sempre** pesata sulla fiducia del publisher (`trustRank`), mai sulla priorità/kind del contenuto.
+
+**Perché è un problema concreto**: un Beacon SOS arriva quasi sempre da un'identità "usa-e-getta" per design (`emergency-beacon.ts` è deliberatamente senza `trustRank` — un'identità mai vista prima è il caso atteso per un SOS, la difesa anti-flood vive a monte). Fiducia minima significa che quel contenuto è il **primo candidato a essere sfrattato** da `ContentStore` in un relay affollato da altro traffico a fiducia più alta — esattamente il caso che la voce #120 intendeva risolvere, ma lato broadcast invece che unicast.
+
+**Nessuna decisione presa su come affrontarlo** — richiede un cambio architetturale distinto (rendere l'eviction di `ContentStore` consapevole anche di una priorità/kind del contenuto, non solo della fiducia del publisher), da progettare con attenzione per non rompere il comportamento esistente per ogni altro tipo di contenuto. Punto di partenza naturale: lo stesso schema a due assi già usato da `priorityRank()`/`store-and-forward.ts`, applicato come score aggiuntivo (non sostitutivo) nell'eviction esistente di `ContentStore`.
+
+---
+
 ## Candidati aperti, bloccati su un prerequisito esterno
 
 ### Opzione A — BLE transport reale (roadmap Milestone 8)
