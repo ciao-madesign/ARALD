@@ -122,9 +122,9 @@ describe("mobile/www/ble-relay (phone-side relay/store-and-forward logic)", () =
       expect(queue.size).toBe(0);
     });
 
-    it("gives an EMERGENCY-priority entry a longer TTL than an ordinary one", () => {
-      const queue = new PendingRelayQueue({ ttlMs: -1, emergencyTtlMs: 60000 });
-      queue.enqueue(packet({ id: "p7", destination: "clip-1", priority: 0 })); // EMERGENCY
+    it("gives an EMERGENCY-priority entry no wall-clock TTL at all, unlike an ordinary one (voce #120, docs/next-steps.md)", () => {
+      const queue = new PendingRelayQueue({ ttlMs: -1 }); // ordinary entries are instantly expired
+      queue.enqueue(packet({ id: "p7", destination: "clip-1", priority: 0 })); // EMERGENCY — never expires
       queue.enqueue(packet({ id: "p8", destination: "clip-1", priority: 4 })); // ordinary, already expired
       const drained = queue.drainFor("clip-1");
       const ids = drained.map((d) => d.packet.id);

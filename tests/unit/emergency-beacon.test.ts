@@ -107,7 +107,7 @@ describe("EmergencyBeacons", () => {
     expect(new EmergencyBeacons().list()).toEqual([]);
   });
 
-  it("ignores a second record() for the same beaconContentId — never overwrites the original sighting (receivedFrom/observedAt included)", () => {
+  it("ignores a second record() for the same beaconContentId — never overwrites the original sighting (receivedFrom/observedAt included); this is exactly what keeps a late, redundant delivery by an isolated courier from looking like a fresh re-ignition once another carrier already delivered it (voce #120, docs/next-steps.md, store-and-forward.ts's own class doc comment has the full chain)", () => {
     const beacons = new EmergencyBeacons();
     beacons.record(sighting({ beaconContentId: "same-id", observedAt: 100, receivedFrom: "relay-a" }));
     beacons.record(sighting({ beaconContentId: "same-id", observedAt: 999, receivedFrom: "relay-b" }));

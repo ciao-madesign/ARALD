@@ -124,7 +124,7 @@ La configurazione "1 Box + 2 Portable + 3 Card + 3 smartphone" (Fase 4-6) è una
 
 - **T3.1 — Delayed delivery**: Card crea SOS → Portable non raggiungibile → Card conserva il pacchetto → Portable entra nel range → Card trasferisce → Portable conserva → Portable incontra Box → Box riceve. Sequenza: `t0 SOS → STORE → STORE → DELIVER`.
 - **T3.2 — Nodo spento**: ripetere con Portable spento durante la creazione del messaggio; accenderlo successivamente — il messaggio deve essere trasferito.
-- **T3.3 — TTL**: creare un messaggio con TTL breve, verificare l'eliminazione dopo la scadenza (`PendingDeliveryQueue.ttlMs`/`emergencyTtlMs`, voce #55).
+- **T3.3 — TTL**: creare un messaggio con TTL breve, verificare l'eliminazione dopo la scadenza (`PendingDeliveryQueue.ttlMs`). Non applicabile a un SOS (`Priority.EMERGENCY`): dalla voce #120 non ha più alcun TTL wall-clock — verificare invece che resti in coda indefinitamente fino a consegna o eviction genuina sotto pressione di memoria.
 - **T3.4 — Deduplication**: trasmettere più volte lo stesso Packet ID — il destinatario conserva una sola copia logica.
 
 **Pass criteria**: dimostrare concretamente `Receive → Authenticate → Store → Forward` anche senza connessione continua.
