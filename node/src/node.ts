@@ -1443,6 +1443,15 @@ export class NomadNode extends EventEmitter {
    * for routine publishing. `options.priority` sets that announce's
    * priority (default `Priority.CONTENT`, unchanged from before this
    * option existed); ignored if `announce` is not set.
+   *
+   * `options.priority` is now *also* carried into the stored/signed `ContentMetadata.priority`
+   * (`docs/next-steps.md`, "Priorità immediata"), independent of whether `announce` is set — a
+   * passively-cached piece of content (never announced, only pulled or relay-cached) deserves the
+   * same priority-aware eviction protection as one that was. Left `undefined` when the caller
+   * doesn't pass it, same as every other optional signed field here — never defaulted to
+   * `Priority.CONTENT` at this layer, unlike the announce packet's own fallback just above, so a
+   * caller that only cares about announce urgency and never asked for persisted priority doesn't
+   * silently start tagging its content either.
    */
   publishContent(name: string, mimeType: string, data: Buffer, options: { ttlMs?: number; announce?: boolean; priority?: Priority } = {}): ContentMetadata {
     // "ARALD Content Compression & Optimization" (docs/next-steps.md): tried, kept only if it
@@ -1454,8 +1463,9 @@ export class NomadNode extends EventEmitter {
     const size = storedData.length;
     const publisherId = this.nodeId;
     const expiresAt = options.ttlMs !== undefined ? Date.now() + options.ttlMs : undefined;
+    const priority = options.priority;
     const signature = this.identity
-      .sign(contentSigningPayload({ contentId, name, mimeType, size, publisherId, expiresAt, encoding, originalSize }))
+      .sign(contentSigningPayload({ contentId, name, mimeType, size, publisherId, expiresAt, encoding, originalSize, priority }))
       .toString("hex");
     const metadata: ContentMetadata = {
       contentId,
@@ -1468,6 +1478,7 @@ export class NomadNode extends EventEmitter {
       expiresAt,
       encoding,
       originalSize,
+      priority,
     };
     if (!this.contentStore.putVerified(metadata, storedData)) {
       throw new Error("internal error: freshly signed content failed its own verification (bad signature, or ttlMs too small to survive publishing)");
@@ -2758,7 +2769,11 @@ export class NomadNode extends EventEmitter {
     const data = this.emergencyBeaconKey
       ? Buffer.from(JSON.stringify({ encrypted: true, ...encryptForPeer(this.emergencyBeaconKey, Buffer.from(JSON.stringify(payload), "utf8")) }), "utf8")
       : Buffer.from(JSON.stringify(payload), "utf8");
-    const metadata = this.publishContent(EMERGENCY_BEACON_CONTENT_NAME, "application/json", data, { ttlMs });
+    // priority: Priority.EMERGENCY (docs/next-steps.md, "Priorità immediata" — the gap this closes):
+    // without it, this content's ContentStore eviction score would default to Priority.CONTENT,
+    // the same tier as any routine publish, leaving a throwaway Beacon identity's SOS the first
+    // candidate evicted from a busy relay purely on trust — exactly the risk voce #120 left open.
+    const metadata = this.publishContent(EMERGENCY_BEACON_CONTENT_NAME, "application/json", data, { ttlMs, priority: Priority.EMERGENCY });
     // "ARALD Content Compression & Optimization" may have compressed `data` before signing it —
     // metadata.contentId/size describe whatever publishContent() actually stored, not necessarily
     // `data` itself any more. The inline announce below must carry exactly those bytes (found by

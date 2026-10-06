@@ -4,6 +4,7 @@ import { WebUiServer } from "../../node/src/web-ui.js";
 import { Identity } from "../../node/src/identity.js";
 import { compressForTransfer, computeContentId, contentSigningPayload, type ContentMetadata } from "../../node/src/content.js";
 import { DROP_CONTENT_NAME, type DropPayload } from "../../node/src/drops.js";
+import { Priority } from "../../node/src/packet.js";
 
 /**
  * `POST /api/ingest-signed-content` (`node/src/web-ui.ts`) — "Pezzo 1" del
@@ -123,6 +124,39 @@ describe("WebUiServer POST /api/ingest-signed-content", () => {
     expect(stored?.data.equals(compressed)).toBe(true);
     expect(stored?.metadata.encoding).toBe("zstd");
     expect(stored?.metadata.originalSize).toBe(original.length);
+  });
+
+  it("accepts a priority-tagged submission — priority survives extractIngestMetadata() and is honored by signature verification (docs/next-steps.md, 'Priorità immediata', docs/security.md voce #124 — found missing from extractIngestMetadata() by code-review, same gap this closes for every other signed-but-optional field)", async () => {
+    const { node, webUi } = makeGateway();
+    await Promise.all([node.start(), webUi.start()]);
+    const operator = Identity.generate();
+
+    const bytes = Buffer.from("SOS dall'operatore", "utf8");
+    const contentId = computeContentId(bytes);
+    const size = bytes.length;
+    const publisherId = operator.nodeId;
+    const signature = operator
+      .sign(contentSigningPayload({ contentId, name: "bulletin", mimeType: "text/plain", size, publisherId, priority: Priority.EMERGENCY }))
+      .toString("hex");
+    const metadata: ContentMetadata = { contentId, name: "bulletin", mimeType: "text/plain", size, createdAt: Date.now(), publisherId, signature, priority: Priority.EMERGENCY };
+
+    const res = await authedFetch(webUi, { metadata, data: bytes.toString("base64") });
+
+    expect(res.status).toBe(200);
+    expect(node.contentStore.get(metadata.contentId)?.metadata.priority).toBe(Priority.EMERGENCY);
+  });
+
+  it("rejects a malformed/out-of-range 'priority' outright, before it ever reaches signature verification", async () => {
+    const { node, webUi } = makeGateway();
+    await Promise.all([node.start(), webUi.start()]);
+    const operator = Identity.generate();
+    const { metadata, data } = signedBulletin(operator);
+
+    for (const malformed of [-1, 999, 1.5, "0", null]) {
+      const res = await authedFetch(webUi, { metadata: { ...metadata, priority: malformed }, data });
+      expect(res.status).toBe(400);
+    }
+    expect(node.contentStore.has(metadata.contentId)).toBe(false);
   });
 
   it("responds 422 (never 200/500) for a submission whose signature doesn't verify — never trusts the caller", async () => {

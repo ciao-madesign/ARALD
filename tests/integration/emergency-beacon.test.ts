@@ -3,6 +3,7 @@ import { NomadNode } from "../../node/src/node.js";
 import { TcpTransport } from "../../node/src/transports/tcp.js";
 import { BleMedium, BleSimulatedTransport } from "../../node/src/transports/ble.js";
 import { BeaconBroadcastTransport } from "../../node/src/transports/beacon-broadcast.js";
+import { Priority } from "../../node/src/packet.js";
 
 /**
  * docs/beacon.md, "NOMAD Card" Beacon Mode — end-to-end proof of the
@@ -83,6 +84,14 @@ describe("Emergency beacon: broadcast Beacon Mode -> connected Relay Mode -> Eme
     // The beacon itself already recorded its own origination as a sighting.
     expect(beacon.emergencyBeacons.list()).toHaveLength(1);
     expect(beacon.emergencyBeacons.list()[0].beaconContentId).toBe(sighting.beaconContentId);
+
+    // docs/next-steps.md, "Priorità immediata": the underlying ContentStore entry must carry
+    // priority: Priority.EMERGENCY, on every node that cached it — not just the originator — so
+    // ContentStore's priority-aware eviction can actually protect it under memory pressure
+    // (tests/integration/trust-aware-eviction.test.ts has the eviction-under-pressure proof).
+    expect(beacon.contentStore.get(sighting.beaconContentId)?.metadata.priority).toBe(Priority.EMERGENCY);
+    expect(relay.contentStore.get(sighting.beaconContentId)?.metadata.priority).toBe(Priority.EMERGENCY);
+    expect(emergencyNode.contentStore.get(sighting.beaconContentId)?.metadata.priority).toBe(Priority.EMERGENCY);
   });
 
   it("lets the Emergency Node reply to the beacon, even though it never connected to it — the beacon's encryption key travels inline with the announce (found necessary during implementation: sendPrivateMessage() requires a known peerDirectory key, normally only exchanged on peer:connected, which never happens for a pure Beacon Mode device)", async () => {

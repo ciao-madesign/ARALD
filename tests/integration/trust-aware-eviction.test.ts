@@ -2,7 +2,7 @@ import { createConnection, type Socket } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { NomadNode } from "../../node/src/node.js";
 import { TcpTransport } from "../../node/src/transports/tcp.js";
-import { MessageType, createPacket, encodePacket } from "../../node/src/packet.js";
+import { MessageType, Priority, createPacket, encodePacket } from "../../node/src/packet.js";
 import { computeContentId, contentSigningPayload } from "../../node/src/content.js";
 import { EncryptionIdentity, signIdentityAnnouncement } from "../../node/src/encryption.js";
 import { Identity } from "../../node/src/identity.js";
@@ -201,6 +201,150 @@ describe("trust-aware eviction resists a flood of throwaway identities", () => {
 
     expect(victim.contentStore.has(ownMetadata.contentId)).toBe(true);
     expect(victim.contentStore.size).toBe(2); // own content plus only the *last* throwaway
+  });
+
+  /**
+   * The gap left open by docs/security.md voce #120 ("Nessun TTL wall-clock per Priority.EMERGENCY
+   * in PendingDeliveryQueue"): that fix only ever covered unicast traffic through
+   * PendingDeliveryQueue. A real Emergency Beacon travels as a broadcast CONTENT_ANNOUNCE, cached
+   * directly into ContentStore (handleContentAnnounce's inline-data path, node.ts) — and until this
+   * fix, ContentStore's eviction was purely trust-based, so a Beacon sighting (always from a
+   * never-seen-before identity by design, emergency-beacon.ts has no trustRank of its own) was the
+   * first candidate evicted from a relay already busy caching other peers' routine content,
+   * regardless of how urgent the SOS itself was. This exercises the real end-to-end path —
+   * NomadNode.sendEmergencyBeacon() -> real CONTENT_ANNOUNCE with inline data -> a connected
+   * relay's ContentStore.putVerified() — not a hand-built metadata object, proving the fix actually
+   * reaches production code, not just ContentStore's own unit tests (tests/unit/content.test.ts).
+   */
+  it("ContentStore: a real Emergency Beacon sighting from a never-seen-before identity survives eviction over routine content already cached from other throwaway publishers", async () => {
+    victim = new NomadNode({ displayName: "victim", maxContentStoreEntries: 2 });
+    const victimTransport = new TcpTransport(victim.nodeId, 0);
+    victim.addTransport(victimTransport);
+    await victim.start();
+
+    // Fill the store to capacity with two ordinary (default-priority) pieces of content from two
+    // different throwaway publishers — same passive relay-caching technique as the test above,
+    // establishing the "busy relay" precondition the gap was about.
+    attackerSocket = await connectAttacker(victimTransport.port, "7".repeat(64));
+    const relayDestination = "3".repeat(64); // neither victim nor attacker — relay-only, not delivered
+    for (let i = 0; i < 2; i++) {
+      const throwaway = Identity.generate();
+      const data = Buffer.from(`routine content ${i}`);
+      const fields = {
+        contentId: computeContentId(data),
+        name: `routine-${i}.txt`,
+        mimeType: "text/plain",
+        size: data.length,
+        publisherId: throwaway.nodeId,
+      };
+      const metadata = { ...fields, createdAt: Date.now(), signature: throwaway.sign(contentSigningPayload(fields)).toString("hex") };
+      attackerSocket.write(
+        encodePacket(
+          createPacket({
+            type: MessageType.CONTENT_CHUNK,
+            source: throwaway.nodeId,
+            destination: relayDestination,
+            payload: { contentId: metadata.contentId, chunkIndex: 0, totalChunks: 1, data: data.toString("base64") },
+          }),
+        ),
+      );
+      attackerSocket.write(
+        encodePacket(
+          createPacket({
+            type: MessageType.CONTENT_COMPLETE,
+            source: throwaway.nodeId,
+            destination: relayDestination,
+            payload: { contentId: metadata.contentId, metadata },
+          }),
+        ),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    }
+    expect(victim.contentStore.size).toBe(2);
+
+    // A genuine SOS now arrives from a connected peer the victim has never heard of before —
+    // exactly the "throwaway identity" case emergency-beacon.ts expects as the norm.
+    legit = new NomadNode({ displayName: "beacon" });
+    const beaconTransport = new TcpTransport(legit.nodeId, 0);
+    legit.addTransport(beaconTransport);
+    await legit.start();
+    await legit.connect({ host: "127.0.0.1", port: victimTransport.port });
+
+    const sighting = legit.sendEmergencyBeacon({ message: "SOS da un'identità mai vista prima", lat: 46.0, lon: 10.0 });
+
+    await new Promise((resolve) => {
+      const check = (): void => {
+        if (victim!.contentStore.has(sighting.beaconContentId)) resolve(undefined);
+        else setTimeout(check, 15);
+      };
+      check();
+    });
+
+    expect(victim.contentStore.has(sighting.beaconContentId)).toBe(true);
+    expect(victim.contentStore.get(sighting.beaconContentId)?.metadata.priority).toBe(Priority.EMERGENCY);
+    expect(victim.contentStore.size).toBe(2); // the beacon plus only one of the two routine entries
+  });
+
+  /**
+   * Regression for a bypass found by a later code-review pass on `MAX_UNVETTED_ELEVATED_ENTRIES`
+   * (`content.ts`): the budget's original "unvetted" threshold was `trustRank <= 0` (strictly
+   * `TrustLevel.UNKNOWN`) — but `NomadNode` promotes a publisher past UNKNOWN automatically and for
+   * free in two ways that have nothing to do with operator trust: merely connecting marks it `SEEN`
+   * (`addTransport()`'s `onPeerConnected`, keyed on the never-authenticated `packet.source`), and any
+   * syntactically-valid self-signature marks it `VERIFIED` (`acceptCatalogEntry()`, which runs
+   * *before* `ContentStore.putVerified()` for a `CONTENT_ANNOUNCE`). A directly-connected attacker
+   * self-publishing its own content — exactly `sendEmergencyBeacon()`'s own realistic shape, unlike
+   * the earlier relay-caching tests above which never connect as the content's own publisher — would
+   * reach `VERIFIED` before the budget ever got a chance to see it as "unvetted", bypassing the cap
+   * entirely. Fixed by raising the ceiling to cover everything up to (and including) `VERIFIED` —
+   * only `TRUSTED`/`ADMIN` (genuine operator action, spec §54) are exempt.
+   */
+  it("ContentStore: the MAX_UNVETTED_ELEVATED_ENTRIES budget still engages for a single already-connected throwaway identity self-publishing its own flood of EMERGENCY-tagged content — not just the UNKNOWN-trust relay-caching case above", async () => {
+    victim = new NomadNode({ displayName: "victim", maxContentStoreEntries: 11 });
+    const victimTransport = new TcpTransport(victim.nodeId, 0);
+    victim.addTransport(victimTransport);
+    await victim.start();
+
+    const trustedEntries = Array.from({ length: 11 }, (_, i) => victim.publishContent(`mappa-${i}.txt`, "text/plain", Buffer.from(`mappa ufficiale ${i}`)));
+    expect(victim.contentStore.size).toBe(11);
+
+    // One throwaway identity connects (-> trust.markSeen(), TrustLevel.SEEN) and then self-signs 11
+    // distinct pieces of EMERGENCY-tagged junk via ordinary CONTENT_ANNOUNCE packets (-> each one
+    // additionally runs through acceptCatalogEntry()'s trust.markVerified(), TrustLevel.VERIFIED) —
+    // far more than the budget (8), from a single already-"vetted-by-the-cheap-path" identity.
+    const attacker = Identity.generate();
+    attackerSocket = await connectAttacker(victimTransport.port, attacker.nodeId);
+
+    for (let i = 0; i < 11; i++) {
+      const data = Buffer.from(`attack payload ${i}`);
+      const fields = {
+        contentId: computeContentId(data),
+        name: `attack-${i}.json`,
+        mimeType: "application/json",
+        size: data.length,
+        publisherId: attacker.nodeId,
+        priority: Priority.EMERGENCY,
+      };
+      const metadata = { ...fields, createdAt: Date.now(), signature: attacker.sign(contentSigningPayload(fields)).toString("hex") };
+      attackerSocket.write(
+        encodePacket(
+          createPacket({
+            type: MessageType.CONTENT_ANNOUNCE,
+            source: attacker.nodeId,
+            payload: { metadata, data: data.toString("base64") },
+          }),
+        ),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    }
+
+    // Same bound as the pure-unit-test version of this scenario (tests/unit/content.test.ts): at
+    // most cap+1 = 9 trusted entries ever lost, never all 11 — proving the budget actually engages
+    // against a directly-connected, self-publishing attacker, not just the never-connected
+    // third-party-publisherId relay-caching shape the test above already covered.
+    const survivingTrusted = trustedEntries.filter((m) => victim!.contentStore.has(m.contentId));
+    expect(survivingTrusted.length).toBeGreaterThanOrEqual(11 - 9);
+    expect(survivingTrusted.length).toBeLessThan(11); // sanity: the flood did cost *something*, this isn't a no-op
   });
 
   /**

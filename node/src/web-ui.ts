@@ -11,7 +11,7 @@ import { raceTimeout } from "./async-timeout.js";
 import type { MbtilesReader } from "./map-tiles.js";
 import { BoundedFifoMap } from "./bounded-map.js";
 import { extractRelayRegistration } from "./relay-registry.js";
-import { priorityRank, type Packet } from "./packet.js";
+import { PRIORITY_LEVEL_COUNT, priorityRank, type Packet, type Priority } from "./packet.js";
 
 export interface WebUiOptions {
   /** Port to listen on; 0 (default) lets the OS assign one — useful in tests, mirrors TcpTransport's own `port` convention. */
@@ -496,6 +496,14 @@ function extractIngestMetadata(raw: unknown): ContentMetadata | undefined {
   // a real caller that compresses here, not a bug found in production.
   if (r.encoding !== undefined && r.encoding !== "zstd") return undefined;
   if (r.originalSize !== undefined && (typeof r.originalSize !== "number" || !Number.isFinite(r.originalSize) || r.originalSize < 0)) return undefined;
+  // Same reasoning as encoding/originalSize above, now also signed (docs/next-steps.md, "Priorità
+  // immediata", docs/security.md voce #124) — found by code-review: dropping it here would make
+  // verifyContentSignature() fail closed on a legitimate priority-tagged submission exactly like a
+  // dropped encoding would. Validated strictly (a real Priority enum value, not just any number) so
+  // a malformed claim is rejected outright here rather than silently reaching ContentStore.
+  if (r.priority !== undefined && (typeof r.priority !== "number" || !Number.isInteger(r.priority) || r.priority < 0 || r.priority >= PRIORITY_LEVEL_COUNT)) {
+    return undefined;
+  }
   return {
     contentId: r.contentId,
     name: r.name,
@@ -507,6 +515,7 @@ function extractIngestMetadata(raw: unknown): ContentMetadata | undefined {
     expiresAt: r.expiresAt as number | undefined,
     encoding: r.encoding as ContentEncoding | undefined,
     originalSize: r.originalSize as number | undefined,
+    priority: r.priority as Priority | undefined,
   };
 }
 
