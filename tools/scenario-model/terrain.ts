@@ -186,3 +186,61 @@ export function syntheticIslands(name: string, frame: LocalFrame, islands: Synth
     },
   };
 }
+
+// ---------------------------------------------------------------- paesaggio sintetico generico
+
+/** Rilievo conico (vulcano, collina): quota aggiunta a distanza `d` dal centro. */
+export function coneElevation(d: number, radiusM: number, heightM: number, shape = 1.5): number {
+  return d < radiusM ? heightM * (1 - d / radiusM) ** shape : 0;
+}
+
+/** Distanza di un punto da un segmento (m). */
+export function distanceToSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+  const vx = bx - ax;
+  const vy = by - ay;
+  const len2 = vx * vx + vy * vy;
+  const f = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / len2));
+  return Math.hypot(px - (ax + f * vx), py - (ay + f * vy));
+}
+
+export interface SyntheticRidge {
+  name: string;
+  from: GeoPoint;
+  to: GeoPoint;
+  /** Altezza della cresta sopra la quota di base (m). */
+  heightM: number;
+  /** Semi-larghezza alla base (m): a questa distanza dalla linea di cresta il rilievo è nullo. */
+  halfWidthM: number;
+}
+
+export interface SyntheticLandscape {
+  /** Quota di base in coordinate locali (es. un altopiano che sale verso est). */
+  baseElevation: (x: number, y: number) => number;
+  cones?: SyntheticIsland[];
+  ridges?: SyntheticRidge[];
+  settlements?: SyntheticSettlement[];
+  defaultLandCover?: LandCover;
+}
+
+/**
+ * Terreno sintetico generico: quota di base + coni + creste lineari (profilo a cono
+ * trasversale), insediamenti circolari. Stand-in per un DEM reale, forme NON rilevate.
+ */
+export function syntheticLandscape(name: string, frame: LocalFrame, l: SyntheticLandscape): Terrain {
+  const cones = (l.cones ?? []).map((c) => ({ ...c, c: toLocal(frame, c.center) }));
+  const ridges = (l.ridges ?? []).map((r) => ({ ...r, a: toLocal(frame, r.from), b: toLocal(frame, r.to) }));
+  const settlements = (l.settlements ?? []).map((s) => ({ ...s, c: toLocal(frame, s.center) }));
+  return {
+    name,
+    elevationAt(x, y) {
+      let extra = 0;
+      for (const c of cones) extra = Math.max(extra, coneElevation(Math.hypot(x - c.c.x, y - c.c.y), c.radiusM, c.summitM, c.shape));
+      for (const r of ridges) extra = Math.max(extra, coneElevation(distanceToSegment(x, y, r.a.x, r.a.y, r.b.x, r.b.y), r.halfWidthM, r.heightM, 1));
+      return l.baseElevation(x, y) + extra;
+    },
+    landCoverAt(x, y) {
+      for (const s of settlements) if (Math.hypot(x - s.c.x, y - s.c.y) <= s.radiusM) return s.cover;
+      return l.defaultLandCover ?? "open";
+    },
+  };
+}

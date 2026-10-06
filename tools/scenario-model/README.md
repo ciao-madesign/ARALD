@@ -8,14 +8,16 @@ Modello **teorico e parametrico** di efficienza della rete ARALD: grafo dinamico
 - `alpino-frammentato.ts` — Scenario 2, due valli separate da una cresta (terreno per zone, Fixed Relay al colle, perturbazione, guasto del Box).
 - `terrain.ts` — territorio interrogabile (`Terrain`: quota e uso del suolo), coordinate geografiche ↔ locali, diffrazione sul profilo, clutter; terreno sintetico a isole.
 - `assess.ts` — interrogazione per il futuro tool: `assessLink()` (A in X, B in Y → tecnologia, velocità, qualità) e `coverageGrid()` (alone per tecnologia).
-- `network-config.ts` — configurazione salvabile (`NetworkConfig`), validazione, `assessNetwork()`; esempio in `examples/eolie.json`.
+- `network-config.ts` — configurazione salvabile (`NetworkConfig`), validazione, `assessNetwork()`; esempi in `examples/`.
 - `eolie.ts` — Scenario 3, Isole Eolie (rete tra isole, aliscafo come data mule, Fixed Relay su Panarea).
+- `atacama.ts` — Scenario 4, deserto di Atacama (distanze lunghe, fuoristrada come data mule, banda 915-928 MHz con dwell time).
 - `cli.ts` — stampa i risultati in Markdown.
 
 ```bash
 npm run scenario-model                                  # Scenario 1
 npm run scenario-model -- --scenario alpino-frammentato # Scenario 2
 npm run scenario-model -- --scenario eolie --horizon-h 6 # Scenario 3
+npm run scenario-model -- --scenario atacama --horizon-h 6 # Scenario 4
 npm run scenario-model -- --config tools/scenario-model/examples/eolie.json [--json]
 npm run scenario-model -- --max-sf 10 --horizon-h 24
 ```

@@ -1,8 +1,8 @@
 # Simulazione teorica di efficienza della rete ARALD — modello parametrico
 
-**Stato**: Scenario 1 (alta Valle Maira), Scenario 2 (alpino frammentato, due valli separate da una cresta) e Scenario 3 (Isole Eolie, primo costruito nel formato del futuro tool) completati. Scenari successivi (Atacama, Kampala, …) da aggiungere come nuovi file di scenario sullo stesso motore.
+**Stato**: Scenario 1 (alta Valle Maira), Scenario 2 (alpino frammentato, due valli separate da una cresta) e Scenario 3 (Isole Eolie, primo costruito nel formato del futuro tool) e Scenario 4 (deserto di Atacama, prima regione radio fuori dall'Europa) completati. Scenari successivi (Kampala, …) da aggiungere come nuovi file di scenario sullo stesso motore.
 
-**Aggiornamento sul comportamento della coda (5 ottobre 2026)**: dopo che questi tre scenari sono stati calcolati, `PendingDeliveryQueue` è stata corretta (`docs/security.md` voce #120). I pacchetti `Priority.EMERGENCY` non scadono più; gli altri mantengono il TTL di 5 minuti. Le tabelle etichettate "ARALD attuale — coda relay 30 min SOS / 5 min resto" descrivono quindi il comportamento **precedente** alla correzione. Il problema che avevano messo in luce, l'SOS perso dal data mule, è proprio quello che la correzione risolve. Per l'SOS il nuovo comportamento corrisponde a quello della coda DTN; per gli altri file resta il TTL di 5 minuti. Le tabelle vanno rigenerate con il nuovo modello della coda: non ancora fatto.
+**Aggiornamento sul comportamento della coda (5 ottobre 2026)**: dopo che questi tre scenari sono stati calcolati, `PendingDeliveryQueue` è stata corretta (`docs/security.md` voce #120). I pacchetti `Priority.EMERGENCY` non scadono più; gli altri mantengono il TTL di 5 minuti. Le tabelle "ARALD attuale" sono state **rigenerate** con il comportamento corretto (`ARALD_QUEUE_TTL_S` in `model.ts`); quello precedente resta disponibile come `LEGACY_QUEUE_TTL_S`, per confronto e per i test storici. Il problema che la prima versione aveva messo in luce, l'SOS perso dal data mule, è proprio quello che la correzione risolve. I punti "cosa dice il modello" sotto descrivono entrambi i comportamenti dove la differenza conta.
 
 **Obiettivo finale**: questo modello è il motore di un futuro tool interattivo di progettazione di reti ARALD su mappa reale — vedi [`docs/network-design-tool.md`](network-design-tool.md), da rispettare come vincolo di progetto.
 
@@ -90,7 +90,7 @@ Output integrale di `npm run scenario-model` (default: policy `custody`, SF max 
 ### D. Tempi di consegna end-to-end (policy custody, SF max 12, orizzonte 10 h dalla partenza; file generati a 3h15)
 
 
-**ARALD attuale — coda relay 30 min SOS / 5 min resto · profilo radio g1 14 dBm ERP/1%**
+**ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g1 14 dBm ERP/1%**
 
 | Variante | Ambiente | F1 | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
@@ -99,7 +99,7 @@ Output integrale di `npm run scenario-model` (default: policy `custody`, SF max 
 | static | severo | ✗ | ✗ | ✗ | ✗ | ✗ | 13% | 1.6 min |
 | ferry | favorevole | 10 s | 3.7 h | 4.2 h | ✗ (20%) | ✗ | 100% | 11.4 min |
 | ferry | tipico | 30 s | 3.7 h | ✗ (22%) | ✗ (16%) | ✗ | 100% | 22.0 min |
-| ferry | severo | ✗ | ✗ | ✗ | ✗ | ✗ | 13% | 2.3 min |
+| ferry | severo | 3.2 h | ✗ | ✗ | ✗ | ✗ | 13% | 3.7 min |
 | return | favorevole | 10 s | 2.2 h | 2.2 h | 2.2 h | 2.2 h | 100% | 7.7 min |
 | return | tipico | 30 s | 2.2 h | 2.2 h | 2.2 h | 2.2 h | 100% | 10.1 min |
 | return | severo | 1.7 h | 2.2 h | 2.2 h | 2.2 h | 2.2 h | 62% | 5.4 min |
@@ -107,7 +107,7 @@ Output integrale di `npm run scenario-model` (default: policy `custody`, SF max 
 | card-failure | tipico | ✗ | ✗ | ✗ | ✗ | ✗ | 30% | 2.6 min |
 | card-failure | severo | ✗ | ✗ | ✗ | ✗ | ✗ | 13% | 1.6 min |
 
-**ARALD attuale — coda relay 30 min SOS / 5 min resto · profilo radio g3 27 dBm ERP/10%**
+**ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g3 27 dBm ERP/10%**
 
 | Variante | Ambiente | F1 | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
@@ -116,7 +116,7 @@ Output integrale di `npm run scenario-model` (default: policy `custody`, SF max 
 | static | severo | ✗ | ✗ | ✗ | ✗ | ✗ | 15% | 7.6 min |
 | ferry | favorevole | 10 s | 13 min | 19 min | ✗ (54%) | ✗ | 100% | 85.6 min |
 | ferry | tipico | 1.5 min | 2.4 h | 1.6 h | ✗ (31%) | ✗ | 100% | 119.4 min |
-| ferry | severo | ✗ | ✗ | ✗ | ✗ | ✗ | 15% | 8.7 min |
+| ferry | severo | 2.6 h | ✗ | ✗ | ✗ | ✗ | 15% | 10.9 min |
 | return | favorevole | 10 s | 13 min | 19 min | 2.2 h | 2.2 h | 100% | 45.3 min |
 | return | tipico | 1.5 min | 1.8 h | 1.7 h | 2.2 h | 2.2 h | 100% | 67.4 min |
 | return | severo | 1.6 h | 2.0 h | 2.2 h | 2.2 h | 2.2 h | 64% | 25.5 min |
@@ -161,7 +161,7 @@ Output integrale di `npm run scenario-model` (default: policy `custody`, SF max 
 ### E. Stessa simulazione con instradamento a costo "airtime" invece che a numero di salti (coda relay ARALD attuale)
 
 
-**Metrica airtime · ARALD attuale — coda relay 30 min SOS / 5 min resto · profilo radio g1 14 dBm ERP/1%**
+**Metrica airtime · ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g1 14 dBm ERP/1%**
 
 | Variante | Ambiente | F1 | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
@@ -170,7 +170,7 @@ Output integrale di `npm run scenario-model` (default: policy `custody`, SF max 
 | static | severo | ✗ | ✗ | ✗ | ✗ | ✗ | 13% | 1.6 min |
 | ferry | favorevole | 10 s | 3.7 h | 4.2 h | 3.8 h | 4.0 h | 100% | 7.9 min |
 | ferry | tipico | 30 s | 3.7 h | ✗ (46%) | 3.8 h | 4.0 h | 100% | 16.3 min |
-| ferry | severo | ✗ | ✗ | ✗ | ✗ | ✗ | 13% | 2.3 min |
+| ferry | severo | 3.2 h | ✗ | ✗ | ✗ | ✗ | 13% | 3.7 min |
 | return | favorevole | 10 s | 2.2 h | 2.2 h | 2.2 h | 2.2 h | 100% | 7.7 min |
 | return | tipico | 30 s | 2.2 h | 2.2 h | 2.2 h | 2.2 h | 100% | 9.3 min |
 | return | severo | 1.7 h | 2.2 h | 2.2 h | 2.2 h | 2.2 h | 62% | 5.6 min |
@@ -178,7 +178,7 @@ Output integrale di `npm run scenario-model` (default: policy `custody`, SF max 
 | card-failure | tipico | ✗ | ✗ | ✗ | ✗ | ✗ | 30% | 2.6 min |
 | card-failure | severo | ✗ | ✗ | ✗ | ✗ | ✗ | 13% | 1.6 min |
 
-**Metrica airtime · ARALD attuale — coda relay 30 min SOS / 5 min resto · profilo radio g3 27 dBm ERP/10%**
+**Metrica airtime · ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g3 27 dBm ERP/10%**
 
 | Variante | Ambiente | F1 | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
@@ -187,7 +187,7 @@ Output integrale di `npm run scenario-model` (default: policy `custody`, SF max 
 | static | severo | ✗ | ✗ | ✗ | ✗ | ✗ | 15% | 7.6 min |
 | ferry | favorevole | 10 s | 13 min | 19 min | 3.8 h | 4.0 h | 100% | 50.6 min |
 | ferry | tipico | 30 s | 41 min | 59 min | 3.8 h | 4.0 h | 100% | 83.6 min |
-| ferry | severo | ✗ | ✗ | ✗ | ✗ | ✗ | 15% | 8.7 min |
+| ferry | severo | 2.6 h | ✗ | ✗ | ✗ | ✗ | 15% | 10.9 min |
 | return | favorevole | 10 s | 13 min | 19 min | 2.2 h | 2.2 h | 100% | 45.3 min |
 | return | tipico | 30 s | 41 min | 59 min | 2.2 h | 2.2 h | 100% | 65.3 min |
 | return | severo | 1.6 h | 2.0 h | 2.2 h | 2.2 h | 2.2 h | 64% | 25.3 min |
@@ -205,7 +205,10 @@ Con `--horizon-h 30` (quasi 27 h dopo l'evento), nella variante `static` in cond
 2. **I throughput "10-20 kbps" dell'analisi di partenza sono irrealistici in EU868.** Al netto dell'overhead ARALD, LoRa SF7/125 kHz rende ~3,2 kbps *a canale libero*; con il duty-cycle legale si scende a **~32 bps (1%) o ~320 bps (10%)** sostenuti per nodo. Di conseguenza 12 MB via LoRa richiedono **giorni o settimane** (3,6 giorni nel caso migliore SF7/10% su un solo hop, ~37 giorni all'1%), non 1-22 ore. Anche 70-150 KB (Wiki, audio) arrivano in minuti/decine di minuti solo in g3 (10%); in g1 (1%) richiedono ore.
 3. **Per i file grandi l'unico canale che conta è fisico: la persona che porta il telefono vicino al Box.** Nella variante `return` tutti i file arrivano in ~2,2 h (= tempo di cammino + qualche secondo di Wi-Fi), in qualunque condizione radio. La rete "Wi-Fi/BLE locale + mobilità" batte LoRa di 2-3 ordini di grandezza per F3/F4. Conferma la conclusione architetturale di partenza (LoRa = controllo e piccoli dati; mobilità = estensione temporale), ma con un divario molto più netto.
 4. **La scelta della sotto-banda conta molto per i dati medi, poco per l'SOS**: passare da g1 (1%) a g3 (10%) porta F5 (150 KB) da "non arriva in 6h45" a 13 min in condizioni favorevoli; in tipico a 41 min, ma solo con la metrica `airtime` (punto 8). Il guadagno viene **soprattutto dal duty-cycle**, non dalla potenza: con l'SX1262 a +22 dBm il Box guadagna ~9 dB di EIRP passando a g3, ma una Card con antenna −3 dBi solo ~3 dB, quindi i link Card–Card cambiano poco. In tipico l'unico link aggiuntivo è Box–C4, che però chiude solo a SF11 (lento: vedi punto 8).
-5. **Il "data mule" oggi non funziona davvero nel codice ARALD.** Nella variante `ferry` in condizioni severe (unico caso in cui il mulo è l'unico ponte), con la coda attuale di `PendingDeliveryQueue` (30 min EMERGENCY, 5 min resto) **anche l'SOS va perso**: il mulo resta isolato ~2 h tra il contatto con C5 e il rientro, e la copia scade prima. Con una coda in stile DTN lo stesso mulo consegna l'SOS in ~3,4 h (g1) / ~2,7 h (g3) e i file grandi in ~3,7 h (via Wi-Fi al rientro). Questo è il risultato più concreto per il codice: il TTL di 30 min per gli SOS dichiarato per il "courier" è più corto di un tipico attraversamento a piedi di un gap alpino.
+5. **Il "data mule" ora porta l'SOS, ma non ancora i dati.** Nella variante `ferry` in condizioni severe, il mulo è l'unico ponte e resta isolato ~2 h tra il contatto con C5 e il rientro.
+   - Prima della correzione della coda (`docs/security.md` voce #120) **anche l'SOS andava perso**: il TTL di 30 minuti per `Priority.EMERGENCY` era più corto dell'attraversamento a piedi del gap. Questo risultato ha motivato la correzione.
+   - Con la coda corretta l'SOS arriva in 3,2 h (g1) / 2,6 h (g3).
+   - Rapporto e foto scadono ancora dopo 5 minuti di isolamento e si perdono. Con una coda in stile DTN arriverebbero in ~3,7 h, via Wi-Fi al rientro.
 6. **Robustezza: la catena di Card è fragile.** In condizioni tipiche la sola Card C4 al rifugio è punto singolo di guasto: spenta lei, C5 resta isolata (connettività istantanea C5→Box dal 100% al 30%, solo prima delle 3h) e nulla viene consegnato. In condizioni severe la rete fissa non raggiunge mai C5 (connettività 13-15%, solo nella fase di salita) e serve sempre la mobilità.
 7. **Connettività istantanea ≠ capacità.** In condizioni tipiche C5→Box è connessa il 100% del tempo, eppure F5 (150 KB) arriva solo al 40% in 6h45 in g1 (1%): il collo di bottiglia è l'airtime legale, non la topologia.
 8. **L'instradamento a numero di salti spreca airtime.** `routing-table.ts` sceglie il percorso con meno salti; quando esiste un link diretto lento (es. Box–C4 a SF11 in g3) lo preferisce a due o tre salti a SF7, anche se costa ~10-20 volte più tempo di trasmissione. In g3 tipico, passando alla metrica `airtime` (sezione E), F5 scende da 13,4 h a 41 min e la Wiki da 5,9 h a 59 min. In g1 i dati medi cambiano poco (i link lenti lì quasi non chiudono), ma nella variante `ferry` rapporto e foto (F4/F3), in condizioni tipiche, passano da non consegnati (in g1 16% e 0%, in g3 31% e 0%) a 3,8 h / 4,0 h: quando il mulo è accanto a C5 il percorso a costo minimo preferisce il BLE verso di lui al LoRa lento, e i file arrivano col mulo al Campo Base.
@@ -258,7 +261,7 @@ Output di `npm run scenario-model -- --scenario alpino-frammentato` (stessi para
 ### D. Tempi di consegna end-to-end (policy custody, SF max 12, orizzonte 10 h dalla partenza; file generati a 4h)
 
 
-**ARALD attuale — coda relay 30 min SOS / 5 min resto · profilo radio g1 14 dBm ERP/1%**
+**ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g1 14 dBm ERP/1%**
 
 | Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -272,8 +275,8 @@ Output di `npm run scenario-model -- --scenario alpino-frammentato` (stessi para
 | fixed-relay | tipico | 10 s | 30 s | ✗ (11%) | ✗ (14%) | ✗ | ✗ | 100% | 12.6 min |
 | fixed-relay | severo | — | — | ✗ | ✗ | ✗ | ✗ | 10% | 0.0 min |
 | crossing | favorevole | 10 s | 40 s | 4.0 h | ✗ (6%) | 4.1 h | 4.2 h | 100% | 10.0 min |
-| crossing | tipico | 10 s | — | ✗ | ✗ (1%) | ✗ | ✗ | 33% | 4.7 min |
-| crossing | severo | 29 min | — | ✗ | ✗ | ✗ | ✗ | 10% | 1.7 min |
+| crossing | tipico | 10 s | 2.5 h | ✗ | ✗ | ✗ | ✗ | 33% | 4.8 min |
+| crossing | severo | 29 min | 3.6 h | ✗ | ✗ | ✗ | ✗ | 10% | 2.8 min |
 | storm | favorevole | 10 s | 30 s | ✗ (38%) | ✗ (62%) | ✗ | ✗ | 100% | 12.5 min |
 | storm | tipico | 40 s | 3.0 h | ✗ | ✗ | ✗ | ✗ | 70% | 1.9 min |
 | storm | severo | — | — | ✗ | ✗ | ✗ | ✗ | 10% | 0.0 min |
@@ -281,7 +284,7 @@ Output di `npm run scenario-model -- --scenario alpino-frammentato` (stessi para
 | box-failure | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 39% | 0.0 min |
 | box-failure | severo | — | — | ✗ | ✗ | ✗ | ✗ | 10% | 0.0 min |
 
-**ARALD attuale — coda relay 30 min SOS / 5 min resto · profilo radio g3 27 dBm ERP/10%**
+**ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g3 27 dBm ERP/10%**
 
 | Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -295,8 +298,8 @@ Output di `npm run scenario-model -- --scenario alpino-frammentato` (stessi para
 | fixed-relay | tipico | 10 s | 30 s | 26 min | 49 min | ✗ (14%) | ✗ | 100% | 85.8 min |
 | fixed-relay | severo | 40 s | — | ✗ | ✗ | ✗ | ✗ | 34% | 5.7 min |
 | crossing | favorevole | 10 s | 20 s | 46 min | 28 min | 4.0 h | 4.2 h | 100% | 61.9 min |
-| crossing | tipico | 10 s | — | ✗ | ✗ (17%) | ✗ | ✗ | 33% | 19.2 min |
-| crossing | severo | 40 s | — | ✗ | ✗ | ✗ | ✗ | 24% | 13.1 min |
+| crossing | tipico | 10 s | 2.1 h | ✗ | ✗ (16%) | ✗ | ✗ | 33% | 19.3 min |
+| crossing | severo | 40 s | 2.5 h | ✗ | ✗ | ✗ | ✗ | 24% | 14.2 min |
 | storm | favorevole | 10 s | 1.5 min | 3.5 h | 46 min | ✗ (9%) | ✗ | 100% | 84.9 min |
 | storm | tipico | 10 s | 50 s | 3.8 h | 4.1 h | ✗ (5%) | ✗ | 100% | 92.4 min |
 | storm | severo | 3.0 h | — | ✗ | ✗ | ✗ | ✗ | 34% | 3.3 min |
@@ -353,7 +356,7 @@ Output di `npm run scenario-model -- --scenario alpino-frammentato` (stessi para
 ### E. Stessa simulazione con instradamento a costo "airtime" invece che a numero di salti (coda relay ARALD attuale)
 
 
-**Metrica airtime · ARALD attuale — coda relay 30 min SOS / 5 min resto · profilo radio g1 14 dBm ERP/1%**
+**Metrica airtime · ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g1 14 dBm ERP/1%**
 
 | Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -367,8 +370,8 @@ Output di `npm run scenario-model -- --scenario alpino-frammentato` (stessi para
 | fixed-relay | tipico | 10 s | 30 s | ✗ (36%) | ✗ | ✗ | ✗ | 100% | 16.8 min |
 | fixed-relay | severo | — | — | ✗ | ✗ | ✗ | ✗ | 10% | 0.0 min |
 | crossing | favorevole | 10 s | 50 s | 4.0 h | ✗ (22%) | 4.0 h | 4.2 h | 100% | 13.9 min |
-| crossing | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 33% | 3.8 min |
-| crossing | severo | 29 min | — | ✗ | ✗ | ✗ | ✗ | 10% | 1.7 min |
+| crossing | tipico | 10 s | 2.1 h | ✗ | ✗ | ✗ | ✗ | 33% | 4.1 min |
+| crossing | severo | 29 min | 3.6 h | ✗ | ✗ | ✗ | ✗ | 10% | 2.8 min |
 | storm | favorevole | 10 s | 30 s | ✗ (64%) | ✗ | ✗ | ✗ | 100% | 11.5 min |
 | storm | tipico | 40 s | 3.0 h | ✗ | ✗ | ✗ | ✗ | 70% | 1.9 min |
 | storm | severo | — | — | ✗ | ✗ | ✗ | ✗ | 10% | 0.0 min |
@@ -376,7 +379,7 @@ Output di `npm run scenario-model -- --scenario alpino-frammentato` (stessi para
 | box-failure | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 39% | 0.0 min |
 | box-failure | severo | — | — | ✗ | ✗ | ✗ | ✗ | 10% | 0.0 min |
 
-**Metrica airtime · ARALD attuale — coda relay 30 min SOS / 5 min resto · profilo radio g3 27 dBm ERP/10%**
+**Metrica airtime · ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g3 27 dBm ERP/10%**
 
 | Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -390,8 +393,8 @@ Output di `npm run scenario-model -- --scenario alpino-frammentato` (stessi para
 | fixed-relay | tipico | 10 s | 30 s | 26 min | 49 min | ✗ (14%) | ✗ | 100% | 85.8 min |
 | fixed-relay | severo | 40 s | — | ✗ | ✗ | ✗ | ✗ | 34% | 5.7 min |
 | crossing | favorevole | 10 s | 20 s | 46 min | 28 min | 4.0 h | 4.2 h | 100% | 61.8 min |
-| crossing | tipico | 10 s | — | ✗ | ✗ (55%) | ✗ | ✗ | 33% | 19.3 min |
-| crossing | severo | 40 s | — | ✗ | ✗ | ✗ | ✗ | 24% | 13.1 min |
+| crossing | tipico | 10 s | 2.1 h | ✗ | ✗ (54%) | ✗ | ✗ | 33% | 19.3 min |
+| crossing | severo | 40 s | 2.5 h | ✗ | ✗ | ✗ | ✗ | 24% | 14.2 min |
 | storm | favorevole | 10 s | 30 s | 26 min | 49 min | ✗ (12%) | ✗ | 100% | 70.5 min |
 | storm | tipico | 10 s | 50 s | 3.0 h | 3.5 h | ✗ (7%) | ✗ | 100% | 113.9 min |
 | storm | severo | 3.0 h | — | ✗ | ✗ | ✗ | ✗ | 34% | 3.3 min |
@@ -401,12 +404,16 @@ Output di `npm run scenario-model -- --scenario alpino-frammentato` (stessi para
 
 Legenda D/E: F1 = SOS + coordinate (1 KB) (C5→PORT e BOX); F5 = GPS + audio 10 s (150 KB) (S5→BOX); F2 = Articolo Wiki (200 KB → ~70 KB compresso) (BOX→S5); F4 = Rapporto 5 pag. + 3 JPEG (5 MB) (S5→BOX); F3 = 8 JPEG (12 MB) (S5→BOX). "✗ (x%)" = non consegnato entro l'orizzonte, x% arrivato; "—" = destinazione non raggiunta. "C5→BOX connesso" = frazione del tempo con un percorso simultaneo (connettività istantanea): una consegna avvenuta con questo valore < 100% è passata (anche) per contatti opportunistici. "Airtime LoRa" = tempo di trasmissione LoRa consumato da tutti i file, tutte le copie. Varianti: static = nessun ponte sul colle: tre isole radio (valle A, vallone laterale, valle B); col-card = C3 sale al colle e ci resta: una persona con la Card fa da ponte tra le valli; fixed-relay = ARALD Fixed Relay installato al colle (13° dispositivo), C3 resta all'alpe; crossing = nessun ponte; C4 raggiunge l'infortunato e poi rivalica fino al Box (data mule); storm = come 'fixed-relay', con una perturbazione (+12 dB su ogni link LoRa) dalle 4h alle 7h; box-failure = come 'fixed-relay', ma il Box va offline a 3h54 (prima dell'evento).
 
+
 ## 7. Scenario 2 — cosa dice il modello
 
 1. **La frammentazione è reale e la cresta la decide.** Senza ponte, in condizioni tipiche, la valle B è un'isola: l'SOS raggiunge il Portable in 10 s ma **non raggiunge mai il Box**, con qualunque sotto-banda e coda. C5→Box è connesso solo il 29% del tempo, cioè prima che C5 valichi. In condizioni severe e in g1 nemmeno il Portable, a 2 km nella stessa valle, viene raggiunto; in g3 sì (40 s).
 2. **Un ponte sul colle ricuce la rete per i messaggi.** Con un Fixed Relay l'SOS arriva al Box in 30 s (tipico, entrambe le sotto-bande); con una persona e la sua Card al colle in 2,7 min (g1) / 30 s (g3): il Fixed Relay rende di più grazie all'antenna esterna e all'assenza del corpo. **Ma in condizioni severe nessun ponte funziona**: i link del colle (3,6-4,3 km) non chiudono, e resta solo la mobilità.
 3. **Anche con il ponte, il colle diventa il collo di bottiglia.** Tutto il traffico tra le valli passa da un solo dispositivo, e il suo budget di duty-cycle (36 s/h in g1) è la capacità dell'intero collegamento: in g1 né l'audio (150 KB) né la Wiki arrivano in 6 h. In g3 (tipico) l'audio arriva in 26 min e la Wiki in 49 min.
-4. **Il data mule che rivalica è l'unico modo di portare l'SOS al Box senza ponte, e oggi fallisce come nello Scenario 1.** Con la coda attuale l'SOS verso il Box va perso (tipico e severo). Con una coda DTN arriva in 2,5 h / 3,7 h (g1) e in 2,1 h / 2,5 h (g3), e rapporto e foto arrivano in 4 h via Wi-Fi al rientro: l'unico caso in tutto lo scenario in cui F3/F4 arrivano.
+4. **Il data mule che rivalica è l'unico modo di portare l'SOS al Box senza ponte.**
+   - Con la coda precedente alla correzione l'SOS si perdeva, come nello Scenario 1.
+   - Con la coda corretta arriva in 2,5 h / 3,6 h (g1, tipico / severo) e in 2,1 h / 2,5 h (g3).
+   - Rapporto e foto (F4/F3) arrivano in 4 h via Wi-Fi al rientro **solo con una coda DTN**: l'unico caso in tutto lo scenario. Con la coda attuale scadono dopo 5 minuti.
 5. **Il meteo pesa molto meno in g3.** Con la perturbazione (+12 dB per 3 h) e il Fixed Relay, in tipico l'SOS al Box impiega 3 h in g1 (deve aspettare la fine della perturbazione) e 50 s in g3: i ~9 dB di EIRP in più del Box e del relay valgono come margine contro il maltempo.
 6. **Il guasto del Box non ferma l'SOS, ma ferma tutto il resto.** Con il Box offline l'SOS raggiunge comunque il Portable in 10 s (tipico): avere due infrastrutture in valli diverse dà ridondanza all'emergenza. Ogni altro file però non ha una destinazione alternativa (la Wiki vive solo sul Box, i report sono indirizzati al Box) e resta fermo.
 7. **Metrica airtime: aiuta, ma sposta il problema sul relay.** Con la metrica `airtime` l'audio passa dal 3% al 64% (favorevole, g1) e, con la Card al colle in g3 tipico, da non consegnato (51%) a 1,0 h. Ma con il Fixed Relay in g1 tipico la Wiki scende dal 14% a 0: più audio attraversa il relay del colle, il cui duty-cycle è condiviso tra i due versi e servito per priorità, così la Wiki (meno urgente) resta indietro. Una metrica migliore dovrebbe tenere conto anche del carico (budget residuo del duty-cycle), non solo dell'airtime.
@@ -458,27 +465,27 @@ Output di `npm run scenario-model -- --scenario eolie --horizon-h 6`. Le sezioni
 ### D. Tempi di consegna end-to-end (policy custody, SF max 12, orizzonte 6 h dalla partenza; file generati a 0h30)
 
 
-**ARALD attuale — coda relay 30 min SOS / 5 min resto · profilo radio g1 14 dBm ERP/1%**
+**ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g1 14 dBm ERP/1%**
 
 | Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
 | static | favorevole | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.5 min |
 | static | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.9 min |
 | static | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.3 min |
-| hydrofoil | favorevole | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.9 min |
-| hydrofoil | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 2.3 min |
-| hydrofoil | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.7 min |
+| hydrofoil | favorevole | 10 s | 2.7 h | ✗ | ✗ | ✗ | ✗ | 0% | 4.6 min |
+| hydrofoil | tipico | 10 s | 3.0 h | ✗ | ✗ | ✗ | ✗ | 0% | 3.1 min |
+| hydrofoil | severo | 10 s | 3.2 h | ✗ | ✗ | ✗ | ✗ | 0% | 2.9 min |
 | panarea-relay | favorevole | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 2.6 min |
 | panarea-relay | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 2.2 min |
 | panarea-relay | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.3 min |
 | relay-hydrofoil | favorevole | 10 s | 1.2 h | ✗ | ✗ | ✗ | ✗ | 1% | 3.9 min |
 | relay-hydrofoil | tipico | 10 s | 2.4 h | ✗ | ✗ | ✗ | ✗ | 0% | 4.0 min |
-| relay-hydrofoil | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.7 min |
+| relay-hydrofoil | severo | 10 s | 3.1 h | ✗ | ✗ | ✗ | ✗ | 0% | 3.1 min |
 | box-harbour | favorevole | 10 s | 1.2 h | ✗ | ✗ | ✗ | ✗ | 1% | 3.5 min |
-| box-harbour | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.9 min |
-| box-harbour | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.2 min |
+| box-harbour | tipico | 10 s | 2.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 2.9 min |
+| box-harbour | severo | 10 s | 2.9 h | ✗ | ✗ | ✗ | ✗ | 0% | 2.3 min |
 
-**ARALD attuale — coda relay 30 min SOS / 5 min resto · profilo radio g3 27 dBm ERP/10%**
+**ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g3 27 dBm ERP/10%**
 
 | Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -486,17 +493,17 @@ Output di `npm run scenario-model -- --scenario eolie --horizon-h 6`. Le sezioni
 | static | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 5.7 min |
 | static | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.3 min |
 | hydrofoil | favorevole | 10 s | 1.6 h | ✗ | ✗ | ✗ | ✗ | 1% | 7.1 min |
-| hydrofoil | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 6.4 min |
-| hydrofoil | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 6.8 min |
+| hydrofoil | tipico | 10 s | 2.5 h | ✗ | ✗ | ✗ | ✗ | 0% | 8.9 min |
+| hydrofoil | severo | 10 s | 2.9 h | ✗ | ✗ | ✗ | ✗ | 0% | 8.6 min |
 | panarea-relay | favorevole | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 8.5 min |
 | panarea-relay | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 8.4 min |
 | panarea-relay | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.3 min |
 | relay-hydrofoil | favorevole | 10 s | 1.2 h | ✗ | ✗ | ✗ | ✗ | 6% | 9.8 min |
 | relay-hydrofoil | tipico | 10 s | 1.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 6.9 min |
-| relay-hydrofoil | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 7.9 min |
+| relay-hydrofoil | severo | 10 s | 2.9 h | ✗ | ✗ | ✗ | ✗ | 0% | 8.8 min |
 | box-harbour | favorevole | 10 s | 1.2 h | ✗ | ✗ | ✗ | ✗ | 2% | 6.6 min |
 | box-harbour | tipico | 10 s | 1.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 6.9 min |
-| box-harbour | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.8 min |
+| box-harbour | severo | 10 s | 2.5 h | ✗ | ✗ | ✗ | ✗ | 0% | 5.8 min |
 
 **DTN — il relay trattiene la copia fino alla consegna · profilo radio g1 14 dBm ERP/1%**
 
@@ -541,27 +548,27 @@ Output di `npm run scenario-model -- --scenario eolie --horizon-h 6`. Le sezioni
 ### E. Stessa simulazione con instradamento a costo "airtime" invece che a numero di salti (coda relay ARALD attuale)
 
 
-**Metrica airtime · ARALD attuale — coda relay 30 min SOS / 5 min resto · profilo radio g1 14 dBm ERP/1%**
+**Metrica airtime · ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g1 14 dBm ERP/1%**
 
 | Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
 | static | favorevole | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.5 min |
 | static | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.9 min |
 | static | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.3 min |
-| hydrofoil | favorevole | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.9 min |
-| hydrofoil | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 2.3 min |
-| hydrofoil | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.7 min |
+| hydrofoil | favorevole | 10 s | 2.7 h | ✗ | ✗ | ✗ | ✗ | 0% | 4.7 min |
+| hydrofoil | tipico | 10 s | 3.0 h | ✗ | ✗ | ✗ | ✗ | 0% | 3.1 min |
+| hydrofoil | severo | 10 s | 3.2 h | ✗ | ✗ | ✗ | ✗ | 0% | 2.9 min |
 | panarea-relay | favorevole | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 2.6 min |
 | panarea-relay | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 2.2 min |
 | panarea-relay | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.3 min |
 | relay-hydrofoil | favorevole | 10 s | 1.2 h | ✗ | ✗ | ✗ | ✗ | 1% | 3.9 min |
 | relay-hydrofoil | tipico | 10 s | 2.4 h | ✗ | ✗ | ✗ | ✗ | 0% | 4.0 min |
-| relay-hydrofoil | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.7 min |
+| relay-hydrofoil | severo | 10 s | 3.1 h | ✗ | ✗ | ✗ | ✗ | 0% | 3.1 min |
 | box-harbour | favorevole | 10 s | 1.2 h | ✗ | ✗ | ✗ | ✗ | 1% | 3.4 min |
-| box-harbour | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.9 min |
-| box-harbour | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.2 min |
+| box-harbour | tipico | 10 s | 2.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 2.9 min |
+| box-harbour | severo | 10 s | 2.9 h | ✗ | ✗ | ✗ | ✗ | 0% | 2.3 min |
 
-**Metrica airtime · ARALD attuale — coda relay 30 min SOS / 5 min resto · profilo radio g3 27 dBm ERP/10%**
+**Metrica airtime · ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g3 27 dBm ERP/10%**
 
 | Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -569,17 +576,17 @@ Output di `npm run scenario-model -- --scenario eolie --horizon-h 6`. Le sezioni
 | static | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 5.7 min |
 | static | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.3 min |
 | hydrofoil | favorevole | 10 s | 1.6 h | ✗ | ✗ | ✗ | ✗ | 1% | 7.1 min |
-| hydrofoil | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 6.4 min |
-| hydrofoil | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 6.8 min |
+| hydrofoil | tipico | 10 s | 2.5 h | ✗ | ✗ | ✗ | ✗ | 0% | 8.9 min |
+| hydrofoil | severo | 10 s | 2.9 h | ✗ | ✗ | ✗ | ✗ | 0% | 8.6 min |
 | panarea-relay | favorevole | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 8.5 min |
 | panarea-relay | tipico | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 8.4 min |
 | panarea-relay | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.3 min |
 | relay-hydrofoil | favorevole | 10 s | 1.2 h | ✗ | ✗ | ✗ | ✗ | 6% | 9.4 min |
 | relay-hydrofoil | tipico | 10 s | 1.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 6.9 min |
-| relay-hydrofoil | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 7.9 min |
+| relay-hydrofoil | severo | 10 s | 2.9 h | ✗ | ✗ | ✗ | ✗ | 0% | 8.8 min |
 | box-harbour | favorevole | 10 s | 1.2 h | ✗ | ✗ | ✗ | ✗ | 2% | 6.6 min |
 | box-harbour | tipico | 10 s | 1.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 6.9 min |
-| box-harbour | severo | 10 s | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.8 min |
+| box-harbour | severo | 10 s | 2.5 h | ✗ | ✗ | ✗ | ✗ | 0% | 5.8 min |
 
 Legenda D/E: F1 = SOS + coordinate (1 KB) (C5→PORT e BOX); F5 = GPS + audio 10 s (150 KB) (S5→BOX); F2 = Articolo Wiki (200 KB → ~70 KB compresso) (BOX→S5); F4 = Rapporto 5 pag. + 3 JPEG (5 MB) (S5→BOX); F3 = 8 JPEG (12 MB) (S5→BOX). "✗ (x%)" = non consegnato entro l'orizzonte, x% arrivato; "—" = destinazione non raggiunta. "C5→BOX connesso" = frazione del tempo con un percorso simultaneo (connettività istantanea): una consegna avvenuta con questo valore < 100% è passata (anche) per contatti opportunistici. "Airtime LoRa" = tempo di trasmissione LoRa consumato da tutti i file, tutte le copie. Varianti: static = aliscafo fermo: C4 resta al porto di Lipari; hydrofoil = C4 è a bordo dell'aliscafo Lipari → Panarea → Stromboli → Panarea → Lipari (data mule); panarea-relay = ARALD Fixed Relay sulla vetta di Panarea (~420 m), aliscafo fermo; relay-hydrofoil = Fixed Relay a Panarea e aliscafo in servizio; box-harbour = come 'hydrofoil', ma il Box è sul molo di Lipari (dove attracca l'aliscafo) invece che nel centro abitato denso.
 
@@ -739,7 +746,7 @@ Legenda: `#` terra coperta, `+` mare coperto, `.` terra non coperta, spazio = ma
 ++++++++.......+++++++
 ```
 
-### H. I tre livelli dell'alone del Box, uno per tecnologia (celle da 40 m, ±1 km, ambiente tipico, g1)
+### H. I tre livelli dell'alone del Box, uno per tecnologia (celle da 40 m, ±1 km, ambiente tipico, g1 14 dBm ERP/1%)
 
 Ogni livello è calcolato separatamente verso il proprio ricevitore di riferimento (Wi-Fi e BLE → smartphone, LoRa → Card). `#` = coperto, `.` = non coperto, `B` = Box. Nel centro abitato denso Wi-Fi e BLE arrivano a ~50-60 m in ogni direzione, perché domina il clutter attorno al Box stesso; con questi parametri BLE e Wi-Fi verso uno smartphone hanno la stessa portata, ma il Wi-Fi è ~36 volte più veloce e vince. La forma dell'alone che segue il territorio si vede su LoRa, sezione G.
 
@@ -804,40 +811,465 @@ Wi-Fi                                                BLE                        
 
 1. **Stromboli è un'isola anche per la radio.** L'SOS arriva al Portable del paese in 10 s, ma **non arriva mai al Box di Lipari** senza l'aliscafo, in ogni ambiente, sotto-banda e coda. Il paese e l'escursionista sono sul versante nord-est di Stromboli, **dietro il cono del vulcano** rispetto a Lipari: 35-41 dB di diffrazione, con l'ostacolo a meno di 2 km da loro. Anche su mare aperto, comunque, 43 km tra dispositivi a pochi metri sul livello del mare costerebbero diversi dB di curvatura terrestre (~8 dB nel modello).
 2. **Un relay in quota non basta se è sul lato sbagliato.** Il Fixed Relay sulla vetta di Panarea vede Lipari (21 km, SF12 in g1 / SF8 in g3) e Salina, ma **non il paese né l'escursionista di Stromboli**: il cono del vulcano è in mezzo (36-42 dB di diffrazione, ostacolo a ~21,7 km dal relay). Da solo non cambia nulla per l'SOS. È l'esempio concreto di copertura che non è un cerchio, ed è ciò che il tool deve mostrare (§4 di `docs/network-design-tool.md`).
-3. **L'aliscafo è il vero ponte, ma la coda attuale lo spreca, come negli Scenari 1 e 2.** Con la coda dei relay attuale l'SOS raccolto a Stromboli scade prima che l'aliscafo torni in copertura di Lipari (condizioni tipiche, entrambe le sotto-bande). Con una coda DTN arriva in 3,0 h (g1) / 2,6 h (g3).
-4. **Relay + aliscafo funzionano anche con la coda attuale.** Con il relay su Panarea, al ritorno l'aliscafo rientra in copertura già all'altezza di Panarea, entro i 30 minuti di vita della copia: l'SOS arriva in 2,4 h (g1) / 1,6 h (g3). Qui il relay non serve a coprire Stromboli ma ad accorciare l'attesa del mulo: un ruolo diverso da quello che ci si aspetterebbe guardando solo la mappa.
-5. **La posizione del Box conta quanto la sua potenza.** Nel centro abitato denso il Box paga ~15 dB di clutter a 868 MHz. Spostato sul molo, in g3 con la coda attuale riceve l'SOS dall'aliscafo in arrivo (1,6 h) invece di perderlo; in g1 con coda DTN il tempo scende da 3,0 h a 2,6 h. Nel centro denso Wi-Fi e BLE del Box arrivano a ~50-60 m (sezione H); sul molo, in g3 con coda DTN, anche la Wiki raggiunge l'escursionista (1,5 h) passando per l'aliscafo.
+3. **L'aliscafo è il vero ponte.** Con la coda corretta l'SOS raccolto a Stromboli arriva al Box in 3,0 h (g1) / 2,5 h (g3) in condizioni tipiche. Con la coda precedente alla correzione scadeva prima che l'aliscafo tornasse in copertura di Lipari, come negli Scenari 1 e 2.
+4. **Il relay di Panarea accorcia l'attesa del mulo.** Al ritorno l'aliscafo rientra in copertura già all'altezza di Panarea: l'SOS arriva in 2,4 h invece di 3,0 h (g1) e in 1,6 h invece di 2,5 h (g3). Qui il relay non serve a coprire Stromboli ma ad accorciare il percorso del mulo: un ruolo diverso da quello che ci si aspetterebbe guardando solo la mappa. Con la coda precedente era l'unico modo di non perdere l'SOS.
+5. **La posizione del Box conta quanto la sua potenza.** Nel centro abitato denso il Box paga ~15 dB di clutter a 868 MHz. Spostato sul molo, riceve l'SOS dall'aliscafo in arrivo prima: 2,6 h invece di 3,0 h (g1) e 1,6 h invece di 2,5 h (g3), in condizioni tipiche. Nel centro denso Wi-Fi e BLE del Box arrivano a ~50-60 m (sezione H); sul molo, in g3 con coda DTN, anche la Wiki raggiunge l'escursionista (1,5 h) passando per l'aliscafo.
 6. **I file grandi non arrivano: il mulo deve passare dove sono i dati.** L'escursionista non incontra mai l'aliscafo né il Portable, quindi foto e rapporto restano sul suo telefono; solo l'audio (150 KB) arriva, in g3 con coda DTN (2,6-4,1 h), a pezzi via LoRa. Un'indicazione di progetto, non verificata nel modello: mettere il Portable al molo dove attracca l'aliscafo permetterebbe ai telefoni a bordo di sincronizzarsi via Wi-Fi a ogni passaggio.
 7. **Il pannello del tool è già calcolabile** (sezione F e `npm run scenario-model -- --config tools/scenario-model/examples/eolie.json`): per ogni coppia tecnologia, modo radio, velocità istantanea e sostenibile, qualità. Ad esempio Card ↔ telefono BLE 2M PHY 1,0 Mbps (qualità 0,77), Box ↔ relay di Panarea LoRa SF8 1,8 kbps istantanei / 179 bps sostenuti in g3 (0,35).
 
-## 11. Il modello visto dal tool (risposta ai 10 punti del §12 di `docs/network-design-tool.md`)
+## 11. Scenario 4 — Deserto di Atacama (distanze lunghe, fuoristrada come data mule, banda 915-928 MHz)
 
-Stato al termine dello Scenario 3. Va aggiornato a ogni estensione del motore.
+**Perché questo scenario**:
+- **Distanze di decine di chilometri** su un deserto aperto ad alta quota, dove i nodi sono pochi e lontani. Le persone si spostano in fuoristrada (~60 km/h), non a piedi, quindi il data mule è molto più veloce che negli altri scenari.
+- **Prima regione radio fuori dall'Europa**: in Cile LoRa usa la banda 915-928 MHz. Il modello applica il piano "AU915" dei parametri regionali LoRaWAN: 30 dBm EIRP, **nessun duty-cycle**, ma un **dwell time di 400 ms** per singola trasmissione. È ricostruito da conoscenza generale e **non verificato sulla normativa cilena** in questo ambiente. Il dwell time accorcia i frame agli SF lenti e rende inutilizzabili SF11 e SF12.
+- **Selezionare le regole della regione** è un'informazione indispensabile per il tool: oltre a potenza e duty-cycle cambiano gli SF utilizzabili e quindi la portata. Il motore ora la supporta (`RegulatoryProfile.maxDwellS`, `centerFreqHz`; profilo `AU915`; `"regulatory": "au915"` nella configurazione salvata).
+
+**Terreno sintetico** (`syntheticLandscape` in `terrain.ts`, nuovo builder generico):
+- un salar piatto a ~2300 m che sale verso l'altopiano andino (~4200 m) a est;
+- la cresta della Cordillera de la Sal tra San Pedro e la Valle de la Luna;
+- i coni del Licancabur e del Láscar;
+- un rilievo panoramico **ipotetico** sopra il salar, dove nelle varianti con relay si colloca il Fixed Relay.
+
+Coordinate e quote sono **approssimative, non verificate su cartografia**.
+
+**Dispositivi**:
+- Box nel paese di San Pedro de Atacama;
+- Portable a Toconao (~36 km);
+- C1 nella Valle de la Luna (~9 km, dietro la cresta);
+- C2 alla Laguna Chaxa nel salar (~42 km);
+- C3 a Socaire (~80 km);
+- C4 sul fuoristrada di un tour;
+- C5 con un gruppo fermo alla Laguna Miscanti (~4140 m, ~100 km dal Box);
+- ciascuna Card con il proprio telefono.
+
+Il fuoristrada parte da San Pedro, passa da Toconao (0h45) e Socaire (1h35), arriva alla laguna alle 2h05, resta 15 minuti e torna a San Pedro alle 4h25. A **0h30** il gruppo alla laguna genera i file. L'SOS punta al Portable e al Box.
+
+| Variante | Cosa succede |
+|---|---|
+| `static` | fuoristrada fermo a San Pedro |
+| `vehicle` | fuoristrada in servizio (data mule) |
+| `andes-relay` | Fixed Relay sul rilievo panoramico, fuoristrada fermo |
+| `relay-vehicle` | Fixed Relay e fuoristrada in servizio |
+| `portable-vehicle` | come `vehicle`, ma il Portable viaggia sul fuoristrada invece di restare a Toconao |
+
+Le tabelle confrontano **AU915** (le regole della regione) con **EU868 g3** (le regole europee al 10%) a parità di tutto il resto.
+
+## 12. Scenario 4 — risultati
+
+Output di `npm run scenario-model -- --scenario atacama --horizon-h 6`. Le sezioni A e B sono identiche agli altri scenari (profili europei); la **B2** confronta la capacità per SF con i profili di questo scenario.
+
+### B2. Capacità LoRa per SF con i profili regolatori di questo scenario
+
+Con un dwell time massimo il frame si accorcia agli SF lenti; "—" = SF inutilizzabile (nemmeno un frame minimo sta nel dwell time).
+
+| SF | AU915 30 dBm EIRP, dwell 400 ms: frame · istantanea · sostenuta | EU868 g3 (confronto): frame · istantanea · sostenuta |
+|---|---:|---:|
+| SF7 | 222 B · 3.2 kbps · 3.2 kbps | 222 B · 3.2 kbps · 317 bps |
+| SF8 | 138 B · 1.6 kbps · 1.6 kbps | 222 B · 1.8 kbps · 179 bps |
+| SF9 | 66 B · 622 bps · 622 bps | 222 B · 997 bps · 100 bps |
+| SF10 | 24 B · 30 bps · 30 bps | 222 B · 549 bps · 55 bps |
+| SF11 | — | 222 B · 249 bps · 25 bps |
+| SF12 | — | 222 B · 137 bps · 14 bps |
+
+### C. Scenario 4 — Deserto di Atacama (distanze lunghe, fuoristrada come data mule, banda 915-928 MHz) — link LoRa stimati a t = 0h30 (variante `andes-relay`), SF minimo che chiude il link
+
+| Link | Distanza | favorevole AU915 30 dBm EIRP, dwell 400 ms | favorevole EU868 g3 (confronto) | tipico AU915 30 dBm EIRP, dwell 400 ms | tipico EU868 g3 (confronto) | severo AU915 30 dBm EIRP, dwell 400 ms | severo EU868 g3 (confronto) |
+|---|---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| BOX–C1 | 8.8 km | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| BOX–C2 | 42.0 km | ✗ | SF11 | ✗ | ✗ | ✗ | ✗ |
+| BOX–PORT | 36.5 km | SF9 | SF8 | ✗ | ✗ | ✗ | ✗ |
+| BOX–C3 | 81.5 km | ✗ | SF12 | ✗ | ✗ | ✗ | ✗ |
+| PORT–C2 | 21.2 km | SF8 | SF8 | ✗ | ✗ | ✗ | ✗ |
+| PORT–C3 | 46.1 km | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| C3–C5 | 19.8 km | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| PORT–C5 | 64.7 km | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| FR–BOX | 62.3 km | SF7 | SF7 | SF10 | SF10 | ✗ | ✗ |
+| FR–PORT | 26.6 km | SF7 | SF7 | SF9 | SF8 | ✗ | ✗ |
+| FR–C3 | 19.5 km | SF7 | SF7 | SF9 | SF9 | ✗ | ✗ |
+| FR–C5 | 38.4 km | ✗ | SF11 | ✗ | ✗ | ✗ | ✗ |
+
+### D. Tempi di consegna end-to-end (policy custody, SF max 12, orizzonte 6 h dalla partenza; file generati a 0h30)
+
+
+**ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio AU915 30 dBm EIRP, dwell 400 ms**
+
+| Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| static | favorevole | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.0 min |
+| static | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| static | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.4 min |
+| vehicle | favorevole | 2.1 h | 2.1 h | ✗ | ✗ | ✗ | ✗ | 3% | 11.3 min |
+| vehicle | tipico | 3.0 h | 3.7 h | ✗ | ✗ | ✗ | ✗ | 0% | 8.7 min |
+| vehicle | severo | 3.1 h | 3.9 h | ✗ | ✗ | ✗ | ✗ | 0% | 4.4 min |
+| andes-relay | favorevole | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.5 min |
+| andes-relay | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.0 min |
+| andes-relay | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.4 min |
+| relay-vehicle | favorevole | 1.4 h | 1.4 h | ✗ | ✗ | ✗ | ✗ | 8% | 7.4 min |
+| relay-vehicle | tipico | 2.1 h | 2.2 h | ✗ | ✗ | ✗ | ✗ | 0% | 13.9 min |
+| relay-vehicle | severo | 3.1 h | 3.9 h | ✗ | ✗ | ✗ | ✗ | 0% | 5.9 min |
+| portable-vehicle | favorevole | 1.3 h | 1.3 h | ✗ | ✗ | ✗ | ✗ | 7% | 4.8 min |
+| portable-vehicle | tipico | 1.4 h | 3.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 12.4 min |
+| portable-vehicle | severo | 1.5 h | 3.8 h | ✗ | ✗ | ✗ | ✗ | 0% | 5.0 min |
+
+**ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio EU868 g3 (confronto)**
+
+| Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| static | favorevole | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 7.6 min |
+| static | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| static | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.4 min |
+| vehicle | favorevole | 1.3 h | 1.3 h | ✗ | ✗ | ✗ | ✗ | 9% | 9.0 min |
+| vehicle | tipico | 2.8 h | 3.5 h | ✗ | ✗ | ✗ | ✗ | 0% | 8.0 min |
+| vehicle | severo | 3.1 h | 3.8 h | ✗ | ✗ | ✗ | ✗ | 0% | 6.1 min |
+| andes-relay | favorevole | 1.2 min | 1.0 min | ✗ (47%) | ✗ (85%) | ✗ | ✗ | 100% | 79.6 min |
+| andes-relay | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.0 min |
+| andes-relay | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.4 min |
+| relay-vehicle | favorevole | 1.2 min | 1.0 min | 3.6 h | ✗ (90%) | 4.0 h | 4.1 h | 100% | 90.9 min |
+| relay-vehicle | tipico | 1.4 h | 1.4 h | ✗ | ✗ | ✗ | ✗ | 3% | 4.6 min |
+| relay-vehicle | severo | 3.1 h | 3.8 h | ✗ | ✗ | ✗ | ✗ | 0% | 7.2 min |
+| portable-vehicle | favorevole | 1.2 h | 1.2 h | ✗ | ✗ | ✗ | ✗ | 14% | 8.7 min |
+| portable-vehicle | tipico | 1.4 h | 2.4 h | ✗ | ✗ | ✗ | ✗ | 0% | 7.1 min |
+| portable-vehicle | severo | 1.5 h | 3.8 h | ✗ | ✗ | ✗ | ✗ | 0% | 5.8 min |
+
+**DTN — il relay trattiene la copia fino alla consegna · profilo radio AU915 30 dBm EIRP, dwell 400 ms**
+
+| Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| static | favorevole | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 21.3 min |
+| static | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| static | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.4 min |
+| vehicle | favorevole | 2.1 h | 2.1 h | 3.0 h | 1.6 h | 3.9 h | 3.9 h | 3% | 96.6 min |
+| vehicle | tipico | 3.0 h | 3.7 h | 3.9 h | ✗ | 3.9 h | 3.9 h | 0% | 33.3 min |
+| vehicle | severo | 3.1 h | 3.9 h | 3.9 h | ✗ | 3.9 h | 4.0 h | 0% | 10.7 min |
+| andes-relay | favorevole | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 27.4 min |
+| andes-relay | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 165.3 min |
+| andes-relay | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.4 min |
+| relay-vehicle | favorevole | 1.4 h | 1.4 h | 2.6 h | 1.6 h | 3.9 h | 3.9 h | 8% | 102.7 min |
+| relay-vehicle | tipico | 2.1 h | 2.2 h | 3.9 h | ✗ | 3.9 h | 3.9 h | 0% | 165.3 min |
+| relay-vehicle | severo | 3.1 h | 3.9 h | 3.9 h | ✗ | 3.9 h | 4.0 h | 0% | 21.2 min |
+| portable-vehicle | favorevole | 1.3 h | 1.3 h | 2.4 h | 1.6 h | 3.9 h | 3.9 h | 7% | 81.0 min |
+| portable-vehicle | tipico | 1.4 h | 3.6 h | 3.9 h | ✗ | 3.9 h | 3.9 h | 0% | 45.7 min |
+| portable-vehicle | severo | 1.5 h | 3.8 h | 3.9 h | ✗ | 3.9 h | 4.0 h | 0% | 9.5 min |
+
+**DTN — il relay trattiene la copia fino alla consegna · profilo radio EU868 g3 (confronto)**
+
+| Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| static | favorevole | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 61.2 min |
+| static | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| static | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.4 min |
+| vehicle | favorevole | 1.3 h | 1.3 h | 3.3 h | 1.6 h | 3.9 h | 3.9 h | 9% | 82.2 min |
+| vehicle | tipico | 2.9 h | 3.6 h | 3.9 h | ✗ | 3.9 h | 3.9 h | 0% | 30.8 min |
+| vehicle | severo | 3.1 h | 3.8 h | 3.9 h | ✗ | 3.9 h | 4.0 h | 0% | 15.2 min |
+| andes-relay | favorevole | 1.2 min | 1.0 min | ✗ (47%) | ✗ (85%) | ✗ | ✗ | 100% | 79.6 min |
+| andes-relay | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 40.9 min |
+| andes-relay | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.4 min |
+| relay-vehicle | favorevole | 1.2 min | 1.0 min | 3.6 h | ✗ (90%) | 4.0 h | 4.1 h | 100% | 90.9 min |
+| relay-vehicle | tipico | 1.4 h | 1.5 h | 3.9 h | ✗ (60%) | 3.9 h | 3.9 h | 3% | 104.9 min |
+| relay-vehicle | severo | 3.1 h | 3.8 h | 3.9 h | ✗ | 3.9 h | 4.0 h | 0% | 18.7 min |
+| portable-vehicle | favorevole | 1.2 h | 1.2 h | 2.4 h | 1.6 h | 3.9 h | 3.9 h | 14% | 75.0 min |
+| portable-vehicle | tipico | 1.4 h | 2.4 h | 3.9 h | ✗ (25%) | 3.9 h | 3.9 h | 0% | 77.7 min |
+| portable-vehicle | severo | 1.5 h | 3.8 h | 3.9 h | ✗ | 3.9 h | 4.0 h | 0% | 13.6 min |
+
+### E. Stessa simulazione con instradamento a costo "airtime" invece che a numero di salti (coda relay ARALD attuale)
+
+
+**Metrica airtime · ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio AU915 30 dBm EIRP, dwell 400 ms**
+
+| Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| static | favorevole | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.0 min |
+| static | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| static | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.4 min |
+| vehicle | favorevole | 2.0 h | 2.1 h | ✗ | ✗ | ✗ | ✗ | 3% | 11.2 min |
+| vehicle | tipico | 3.0 h | 3.7 h | ✗ | ✗ | ✗ | ✗ | 0% | 8.7 min |
+| vehicle | severo | 3.1 h | 3.9 h | ✗ | ✗ | ✗ | ✗ | 0% | 4.4 min |
+| andes-relay | favorevole | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.5 min |
+| andes-relay | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.0 min |
+| andes-relay | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.4 min |
+| relay-vehicle | favorevole | 1.4 h | 1.4 h | ✗ | ✗ | ✗ | ✗ | 8% | 7.3 min |
+| relay-vehicle | tipico | 2.1 h | 2.2 h | ✗ | ✗ | ✗ | ✗ | 0% | 13.9 min |
+| relay-vehicle | severo | 3.1 h | 3.9 h | ✗ | ✗ | ✗ | ✗ | 0% | 5.9 min |
+| portable-vehicle | favorevole | 1.3 h | 1.3 h | ✗ | ✗ | ✗ | ✗ | 7% | 4.8 min |
+| portable-vehicle | tipico | 1.4 h | 3.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 12.4 min |
+| portable-vehicle | severo | 1.5 h | 3.8 h | ✗ | ✗ | ✗ | ✗ | 0% | 5.0 min |
+
+**Metrica airtime · ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio EU868 g3 (confronto)**
+
+| Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| static | favorevole | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 7.6 min |
+| static | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| static | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.4 min |
+| vehicle | favorevole | 1.3 h | 1.3 h | ✗ | ✗ | ✗ | ✗ | 9% | 9.0 min |
+| vehicle | tipico | 2.8 h | 3.5 h | ✗ | ✗ | ✗ | ✗ | 0% | 8.0 min |
+| vehicle | severo | 3.1 h | 3.8 h | ✗ | ✗ | ✗ | ✗ | 0% | 6.1 min |
+| andes-relay | favorevole | 1.2 min | 1.0 min | ✗ (47%) | ✗ (85%) | ✗ | ✗ | 100% | 79.6 min |
+| andes-relay | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.0 min |
+| andes-relay | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.4 min |
+| relay-vehicle | favorevole | 1.2 min | 1.0 min | 2.7 h | ✗ (86%) | 3.9 h | 3.9 h | 100% | 100.4 min |
+| relay-vehicle | tipico | 1.4 h | 1.4 h | ✗ | ✗ | ✗ | ✗ | 3% | 4.6 min |
+| relay-vehicle | severo | 3.1 h | 3.8 h | ✗ | ✗ | ✗ | ✗ | 0% | 7.2 min |
+| portable-vehicle | favorevole | 1.2 h | 1.2 h | ✗ | ✗ | ✗ | ✗ | 14% | 8.7 min |
+| portable-vehicle | tipico | 1.4 h | 2.4 h | ✗ | ✗ | ✗ | ✗ | 0% | 7.1 min |
+| portable-vehicle | severo | 1.5 h | 3.8 h | ✗ | ✗ | ✗ | ✗ | 0% | 5.8 min |
+
+Legenda D/E: F1 = SOS + coordinate (1 KB) (C5→PORT e BOX); F5 = GPS + audio 10 s (150 KB) (S5→BOX); F2 = Articolo Wiki (200 KB → ~70 KB compresso) (BOX→S5); F4 = Rapporto 5 pag. + 3 JPEG (5 MB) (S5→BOX); F3 = 8 JPEG (12 MB) (S5→BOX). "✗ (x%)" = non consegnato entro l'orizzonte, x% arrivato; "—" = destinazione non raggiunta. "C5→BOX connesso" = frazione del tempo con un percorso simultaneo (connettività istantanea): una consegna avvenuta con questo valore < 100% è passata (anche) per contatti opportunistici. "Airtime LoRa" = tempo di trasmissione LoRa consumato da tutti i file, tutte le copie. Varianti: static = fuoristrada fermo a San Pedro; vehicle = fuoristrada (C4) San Pedro → Toconao → Socaire → Laguna Miscanti e ritorno (data mule); andes-relay = ARALD Fixed Relay sul rilievo panoramico sopra il salar, fuoristrada fermo; relay-vehicle = Fixed Relay e fuoristrada in servizio; portable-vehicle = come 'vehicle', ma il Portable viaggia sul fuoristrada invece di restare a Toconao.
+
+### F. Pannello connessioni a t = 0h30 (variante `andes-relay`, ambiente tipico) — formato del futuro tool
+
+
+**Profilo radio AU915 30 dBm EIRP, dwell 400 ms**
+
+| Connessione | Tecnologia | Distanza | Velocità stimata | Sostenuta | Qualità | Linea di vista |
+|---|---|---:|---:|---:|---|:---:|
+| BOX → S4 | Wi-Fi (MCS2) | 43 m | 11.0 Mbps | 11.0 Mbps | Ottima (0.93) | sì |
+| C1 → S1 | BLE (2M PHY) | 4 m | 1.0 Mbps | 1.0 Mbps | Ottima (0.77) | sì |
+| C2 → S2 | BLE (2M PHY) | 4 m | 1.0 Mbps | 1.0 Mbps | Ottima (0.77) | sì |
+| C3 → S3 | BLE (2M PHY) | 4 m | 1.0 Mbps | 1.0 Mbps | Ottima (0.77) | sì |
+| C4 → S4 | BLE (2M PHY) | 4 m | 1.0 Mbps | 1.0 Mbps | Ottima (0.77) | sì |
+| C5 → S5 | BLE (2M PHY) | 4 m | 1.0 Mbps | 1.0 Mbps | Ottima (0.77) | sì |
+| BOX → C4 | BLE (Coded S2) | 40 m | 120 kbps | 120 kbps | Buona (0.63) | sì |
+| C2 → FR | LoRa (SF8) | 28.5 km | 1.6 kbps | 1.6 kbps | Debole (0.34) | sì |
+| PORT → FR | LoRa (SF9) | 26.6 km | 622 bps | 622 bps | Debole (0.28) | sì |
+| C3 → FR | LoRa (SF9) | 19.5 km | 622 bps | 622 bps | Debole (0.28) | sì |
+| BOX → FR | LoRa (SF10) | 62.3 km | 30 bps | 30 bps | Debole (0.07) | sì |
+
+**Profilo radio EU868 g3 (confronto)**
+
+| Connessione | Tecnologia | Distanza | Velocità stimata | Sostenuta | Qualità | Linea di vista |
+|---|---|---:|---:|---:|---|:---:|
+| BOX → S4 | Wi-Fi (MCS2) | 43 m | 11.0 Mbps | 11.0 Mbps | Ottima (0.93) | sì |
+| C1 → S1 | BLE (2M PHY) | 4 m | 1.0 Mbps | 1.0 Mbps | Ottima (0.77) | sì |
+| C2 → S2 | BLE (2M PHY) | 4 m | 1.0 Mbps | 1.0 Mbps | Ottima (0.77) | sì |
+| C3 → S3 | BLE (2M PHY) | 4 m | 1.0 Mbps | 1.0 Mbps | Ottima (0.77) | sì |
+| C4 → S4 | BLE (2M PHY) | 4 m | 1.0 Mbps | 1.0 Mbps | Ottima (0.77) | sì |
+| C5 → S5 | BLE (2M PHY) | 4 m | 1.0 Mbps | 1.0 Mbps | Ottima (0.77) | sì |
+| BOX → C4 | BLE (Coded S2) | 40 m | 120 kbps | 120 kbps | Buona (0.63) | sì |
+| PORT → FR | LoRa (SF8) | 26.6 km | 1.8 kbps | 179 bps | Debole (0.35) | sì |
+| C2 → FR | LoRa (SF8) | 28.5 km | 1.8 kbps | 179 bps | Debole (0.35) | sì |
+| C3 → FR | LoRa (SF9) | 19.5 km | 997 bps | 100 bps | Debole (0.31) | sì |
+| BOX → FR | LoRa (SF10) | 62.3 km | 549 bps | 55 bps | Debole (0.27) | sì |
+
+### G. Alone di copertura LoRa del Box (ricevitore di riferimento: Card), ambiente tipico, celle da 2 km
+
+Legenda: `#` terra coperta, `+` mare coperto, `.` terra non coperta, spazio = mare non coperto, `B` posizione del Box.
+
+
+**AU915 30 dBm EIRP, dwell 400 ms** — celle coperte: 121 su 1550
+
+```text
+...##########..####............
+...##########..#####...........
+...###B######..#####...........
+...##########..####............
+...##########..####............
+...#########...####............
+..##########....###............
+..#########.....##.............
+..#.#####........#.............
+..#............................
+..#............................
+..#............................
+..#............................
+.#.............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+```
+
+**EU868 g3 (confronto)** — celle coperte: 362 su 1550
+
+```text
+...#####################.##....
+...########################....
+...###B####################....
+...########################....
+...#######################.....
+..########################.....
+..########################.....
+..########################.....
+..########################.....
+..########################.....
+..###########..###########.....
+..##########...###########.....
+..#######......###########.....
+.##.............##########.....
+.##.............##########.....
+................##########.....
+................#########......
+.................#######.......
+.................######........
+..................####.........
+..................###..........
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+...............................
+```
+
+### H. I tre livelli dell'alone del Box, uno per tecnologia (celle da 40 m, ±1 km, ambiente tipico, AU915 30 dBm EIRP, dwell 400 ms)
+
+Ogni livello è calcolato separatamente verso il proprio ricevitore di riferimento (Wi-Fi e BLE → smartphone, LoRa → Card). `#` = coperto, `.` = non coperto, `B` = Box. Nel centro abitato denso Wi-Fi e BLE arrivano a ~50-60 m in ogni direzione, perché domina il clutter attorno al Box stesso; con questi parametri BLE e Wi-Fi verso uno smartphone hanno la stessa portata, ma il Wi-Fi è ~36 volte più veloce e vince. La forma dell'alone che segue il territorio si vede su LoRa, sezione G.
+
+```text
+Wi-Fi                                                BLE                                                  LoRa
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+.......................####.......................   .......................####.......................   ##################################################
+.......................#BB#.......................   .......................#BB#.......................   ########################BB########################
+.......................####.......................   .......................####.......................   ##################################################
+.......................####.......................   .......................####.......................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+..................................................   ..................................................   ##################################################
+```
+- Wi-Fi: 16 celle coperte su 2500
+- BLE: 16 celle coperte su 2500
+- LoRa: 2500 celle coperte su 2500
+
+## 13. Scenario 4 — cosa dice il modello
+
+1. **Il deserto è troppo grande per una rete fissa di pochi nodi.** Senza fuoristrada e senza relay (variante `static`) l'SOS dalla Laguna Miscanti non raggiunge né il Portable (~65 km) né il Box (~100 km), in nessun ambiente e con nessuna delle due regole. Con il Fixed Relay ci riesce solo in condizioni favorevoli e con le regole europee (punto 4). Anche a 9 km la Cordillera de la Sal nasconde la Valle de la Luna al Box: nessun link nemmeno in condizioni favorevoli.
+2. **Il fuoristrada è il ponte, ed è veloce.** Con la coda attuale l'SOS arriva in 3,0 h al Portable e 3,7 h al Box (AU915, tipico).
+   - Con il Fixed Relay il fuoristrada rientra in copertura prima: 2,1 h / 2,2 h.
+   - Con il Portable a bordo l'SOS raggiunge il Portable in 1,4 h, mentre il fuoristrada si avvicina alla laguna. Una presenza di infrastruttura mobile vicino all'evento.
+3. **Foto e rapporto arrivano solo se il mulo passa dai dati, e solo con una coda DTN.** Durante la sosta alla laguna i telefoni si scambiano i file via BLE. Al rientro il telefono sul fuoristrada li consegna al Box via Wi-Fi: rapporto e foto in ~3,9 h, audio in 3,9 h (2,4-3,0 h in condizioni favorevoli). Con la coda attuale scadono dopo 5 minuti di isolamento, come negli altri scenari.
+4. **Il dwell time pesa più del duty-cycle.**
+   - Senza duty-cycle LoRa sostiene in AU915 tutta la sua velocità istantanea (3,2 kbps a SF7, contro 317 bps in EU g3).
+   - Ma SF11 e SF12 sono vietati, e a SF10 il frame scende a 24 byte, di cui 22 di intestazione ARALD: restano ~30 bit/s utili, contro 549 bit/s in Europa allo stesso SF.
+   - L'alone LoRa del Box copre circa un terzo dell'area in AU915 rispetto a EU g3 (121 contro 362 celle da 2 km).
+   - Con il Fixed Relay, in condizioni favorevoli, la regola europea chiude il link relay–laguna a SF11 e l'SOS arriva al Box in ~1 minuto. Con le regole cilene quel link non esiste.
+5. **L'intestazione dei frame ARALD è il vero costo nelle regioni con dwell time.** I 22 byte di framing per frame e l'overhead ×1,45 del base64 nel JSON sono trascurabili a SF7, ma a SF9-SF10 si mangiano la maggior parte del frame. Esempio: nella variante con relay e coda DTN, in condizioni tipiche, 165 minuti di airtime LoRa non consegnano nulla, spesi a inondare la Wiki a SF10 verso un destinatario irraggiungibile. Ridurre il framing (header binario, niente base64 sul canale LoRa) avrebbe qui un effetto diretto sulla portata utile.
+6. **Il pannello del tool cambia con la regione.** Per Box ↔ relay a 62 km risulta SF10, 30 bit/s, qualità 0,07 in AU915 e SF10, 549 bit/s istantanei / 55 sostenuti, qualità 0,27 in EU g3 (sezione F). La stessa geometria con regole diverse dà linee di colore diverso: il tool deve rendere visibile la regione scelta.
+
+## 14. Il modello visto dal tool (risposta ai 10 punti del §12 di `docs/network-design-tool.md`)
+
+Stato al termine dello Scenario 4. Va aggiornato a ogni estensione del motore.
 
 1. **Parametri del modello**
    - *Per tipo di dispositivo*: `KIND_DEFAULTS` in `model.ts` (tecnologie, potenza LoRa, guadagno d'antenna, perdita da corpo, potenza BLE, EIRP Wi-Fi, altezza tipica dal suolo).
    - *Radio LoRa*: sensibilità SX1262 per SF (`SX1262_SENSITIVITY_125K`), parametri PHY (`DEFAULT_PHY`: 125 kHz, CR 4/5, preambolo 8), frame 222 B con 22 B di framing, overhead applicativo ×1,45, SF massimo.
-   - *Profili regolatori*: `EU868_G1` (14 dBm ERP, 1%), `EU868_G3` (27 dBm ERP, 10%).
+   - *Profili regolatori*: `EU868_G1` (14 dBm ERP, 1%), `EU868_G3` (27 dBm ERP, 10%), `AU915` (30 dBm EIRP, nessun duty-cycle, dwell 400 ms, 920 MHz). Un profilo ha ERP massimo, duty-cycle, frequenza centrale e dwell time opzionale.
    - *2,4 GHz*: `BLE_RATE_STEPS`, `WIFI_RATE_STEPS`, modello `fixed`/`budget`.
    - *Ambiente*: esponente di path loss, margine di fading, interferenza (`TERRAIN_ENVIRONMENTS`).
    - *Territorio*: `Terrain` (quota e uso del suolo), `CLUTTER_LOSS_DB` per classe e banda, `CLUTTER_DEPTH_M`, fattore k = 4/3 della curvatura terrestre.
    - *Solo simulazione temporale, non necessari al primo tool*: passo, coda dei relay, metrica di instradamento, priorità, canale condiviso.
-2. **Input**: una `NetworkConfig` (`network-config.ts`: dispositivi con tipo, latitudine, longitudine, altezza opzionale; ambiente; profilo regolatorio; riferimento al territorio) più un `Terrain`.
+2. **Input**: una `NetworkConfig` (`network-config.ts`: dispositivi con tipo, latitudine, longitudine, altezza opzionale; ambiente; profilo regolatorio della regione — `g1`, `g3`, `au915`; riferimento al territorio) più un `Terrain`.
 3. **Output**: per ogni coppia una `LinkAssessment` (`assess.ts`): distanza, linea di vista e diffrazione, valutazione di Wi-Fi, BLE e LoRa (applicabile, possibile, RSSI, margine, modo radio, velocità istantanea e sostenibile, qualità) e la migliore. Per ogni dispositivo e tecnologia una `CoverageGrid` (celle con possibile/velocità/qualità). La simulazione temporale aggiunge i tempi di consegna, oltre il primo tool.
 4. **Formule e regole**:
    - link budget \(RSSI = EIRP_{tx} + G_{rx} - L_{corpo} - L_{path}(d,n,f) - L_{diffrazione} - L_{clutter} - L_{interferenza}\), direzione più debole;
-   - \(L_{path}\) log-distance a 868 MHz / 2,44 GHz;
+   - \(L_{path}\) log-distance alla frequenza LoRa della regione (868 MHz in EU868, 920 MHz in AU915) e a 2,44 GHz per BLE/Wi-Fi; la stessa frequenza LoRa è usata per la diffrazione;
    - diffrazione knife-edge sull'ostacolo dominante del profilo, ITU-R P.526 con curvatura terrestre a k = 4/3;
    - clutter per classe di suolo, scalato con la distanza fino a 200 m;
-   - time-on-air LoRa dalla formula Semtech, SF in logica ADR;
+   - time-on-air LoRa dalla formula Semtech, SF in logica ADR tra quelli ammessi dalla regione (con dwell time il frame si accorcia; uno SF in cui non sta nemmeno un byte utile è escluso);
    - gradini BLE/Wi-Fi per RSSI;
    - qualità su scala logaritmica 10 bit/s → 30 Mbit/s.
 5. **Parametri specifici dei dispositivi**: quelli di `KIND_DEFAULTS` (punto 1), mai inseriti dall'utente nella prima versione.
-6. **Parametri che dipendono dal territorio**: quota (→ diffrazione e altezza effettiva delle antenne), uso del suolo (→ clutter), e la condizione ambientale scelta (esponente, margine, interferenza).
+6. **Parametri che dipendono dal territorio**: quota (→ diffrazione e altezza effettiva delle antenne), uso del suolo (→ clutter), la condizione ambientale scelta (esponente, margine, interferenza) e la **regione** (→ profilo regolatorio: potenza, duty-cycle, frequenza, dwell time).
 7. **Possibilità di connessione**: per ogni tecnologia, i due dispositivi devono averla (il Wi-Fi richiede un Box o Portable come access point). Inoltre l'RSSI meno il margine di fading deve superare la soglia: la sensibilità dello SF più lento ammesso per LoRa, il gradino più basso per BLE/Wi-Fi.
 8. **Tecnologia usata**: tra quelle possibili, quella con la velocità istantanea più alta (in pratica Wi-Fi > BLE > LoRa).
 9. **Velocità**:
-   - LoRa: byte utili per frame diviso time-on-air allo SF scelto (istantanea), moltiplicato per il duty-cycle (sostenibile);
+   - LoRa: byte utili per frame (ridotti dal dwell time dove c'è) diviso time-on-air allo SF scelto (istantanea), moltiplicato per il duty-cycle (sostenibile; uguale all'istantanea senza duty-cycle);
    - BLE/Wi-Fi: il gradino corrispondente all'RSSI.
 10. **Dal risultato alla mappa**:
     - le coordinate geografiche diventano locali con `toLocal()` (equirettangolare attorno all'origine `frame`, precisa entro ~100 km) e tornano geografiche con `toGeo()`;
@@ -846,25 +1278,30 @@ Stato al termine dello Scenario 3. Va aggiornato a ogni estensione del motore.
 
 **Cosa manca ancora per il tool**:
 - un caricatore di DEM e di uso del suolo reali che implementi `Terrain`;
+- profili regolatori verificati per le regioni di interesse (oggi EU868 g1/g3 e AU915, quest'ultimo non verificato sulla normativa cilena) e altri piani (US915, AS923, IN865, …);
 - la diffrazione su più ostacoli in serie (oggi si considera solo il dominante);
 - un calcolo dell'alone abbastanza veloce per l'interazione: oggi ~0,1 s per mille celle su scala d'arcipelago. Una mappa fine (es. celle da 30 m su 40 × 40 km, ~1,8 milioni di celle) richiederebbe minuti: servirà una griglia adattiva o un calcolo per raggi;
 - l'interfaccia stessa.
 
-## 12. Implicazioni proposte (non implementate — da valutare con l'utente)
+## 15. Implicazioni proposte (non implementate — da valutare con l'utente)
 
-- **TTL di custodia per il ruolo "courier"**: rendere configurabile (o molto più lungo, ore) il TTL di `PendingDeliveryQueue` per `Priority.EMERGENCY` sui nodi mobili (Card in Relay Mode, telefoni), oppure introdurre un vero bundle-store DTN separato dalla coda di retry. Oggi il ruolo "mobile relay" di `docs/beacon.md` non sopravvive a un attraversamento di ~2 h.
+- **TTL di custodia per il ruolo "courier"**: per l'SOS è **fatto** (`docs/security.md` voce #120: `Priority.EMERGENCY` non scade più in `PendingDeliveryQueue`). Resta aperto per gli altri contenuti. Report, foto e audio scadono dopo 5 minuti di isolamento, e in ogni scenario sono arrivati via mulo solo con una coda DTN. Serve un vero bundle-store DTN per i nodi mobili, separato dalla coda di retry e con limiti propri di memoria.
+
 - **Policy di trasporto per dimensione**: impedire che contenuti oltre una soglia (es. 50-100 KB) usino LoRa e instradarli solo su Wi-Fi/BLE/contatto fisico, per non sprecare il budget di duty-cycle che serve agli SOS e ai messaggi.
 - **Sotto-banda g3 (869,4-869,65 MHz, 27 dBm ERP/10%)** come candidata principale per i link infrastrutturali (Box/Portable/Fixed Relay), da decidere nella specifica radio (`docs/compliance.md`).
 - **Ridondanza della catena** (Scenario 1): in un rifugio, un Fixed Relay in quota (o il Portable posizionato al rifugio) elimina il punto singolo di guasto C4.
 - **Costo di instradamento consapevole dell'airtime** (entrambi gli scenari): `routing-table.ts` usa oggi il numero di salti, che preferisce link diretti lenti a percorsi multi-hop veloci. Un costo basato sullo SF/airtime del link (e idealmente sul budget di duty-cycle residuo del next hop, per non saturare un solo relay) riduce i tempi dei dati medi anche di un ordine di grandezza. La specifica prevede già un costo composito (`Cost = α·hops + β·latency + γ·loss + δ·energy + ε·congestion`), finora implementato solo nel termine `hops`.
 - **Fixed Relay sui colli** come elemento di progetto per i rifugi in valli adiacenti: ricuce la rete per l'SOS in decine di secondi in condizioni tipiche; per i dati medi conviene g3, perché il relay del colle porta il traffico di entrambe le valli.
 - **Seconda destinazione / failover**: un SOS indirizzato a più infrastrutture sopravvive al guasto del Box; per contenuti e report servirebbe un mirror (es. il Portable che replica le parti essenziali della Wiki e accetta i report quando il Box è irraggiungibile).
+- **Framing LoRa più compatto per le regioni con dwell time** (Scenario 4): con un dwell di 400 ms i 22 byte di intestazione ARALD per frame e il base64 nel JSON dei chunk lasciano pochi byte utili agli SF lenti (~1-2 byte a SF10). Un header binario compatto e il payload binario sul canale LoRa aumenterebbero direttamente portata utile e velocità.
 
-## 13. Limiti noti del modello
+
+## 16. Limiti noti del modello
 
 - Nessun modello del terreno (DEM): le creste sono perdite fisse per coppia di nodi (Scenario 1) o per zona (Scenario 2); il passo successivo naturale è un profilo terrain-aware (Longley-Rice/ITM o diffrazione knife-edge su DEM).
 - Lo Scenario 2 è una geometria sintetica, non un luogo reale.
 - Nessun failover di destinazione per i contenuti (variante `box-failure`): i file indirizzati al Box restano fermi per costruzione.
+- Scenario 4: terreno sintetico, coordinate e profilo AU915 per il Cile non verificati; nessun modello del salto di frequenza (hopping) né dell'occupazione dei canali nella banda 915-928 MHz, solo il vincolo di dwell time e l'efficienza del canale condiviso.
 - Scenario 3: terreno sintetico (isole a cono) e coordinate non verificate. La diffrazione considera un solo ostacolo dominante, quindi più creste in serie sono sottostimate. Con antenne molto basse la perdita del suolo può essere in parte contata due volte, nell'esponente di path loss e nella diffrazione sulla curvatura. Il clutter è una tabella per classe, non un modello di edifici. Gradini e velocità BLE/Wi-Fi sono valori tipici, non misurati su dispositivi ARALD.
 - Canale LoRa come unico dominio di collisione con efficienza fissa; nessuna collisione/hidden-terminal esplicita, nessun retry/ACK a livello di frame (implicito nell'efficienza 50%).
 - Fading statico (margine fisso), nessuna variabilità temporale del link oltre alla mobilità.
@@ -872,6 +1309,6 @@ Stato al termine dello Scenario 3. Va aggiornato a ogni estensione del motore.
 - Il modello "DTN" non ha limite di memoria nei relay; quello "ARALD attuale" approssima la combinazione `floodExcept()` + `PendingDeliveryQueue` + `SeenCache` (in particolare: un relay connesso inoltra senza scadenza tramite le code del transport).
 - Throughput BLE/Wi-Fi sono valori nominali prudenziali, non misurati.
 
-## 14. Come estendere
+## 17. Come estendere
 
-Un nuovo scenario è un file accanto a `tools/scenario-model/valle-maira.ts` che esporta un oggetto `Scenario` (`tools/scenario-model/scenario.ts`: nodi con traiettorie, ambienti, messaggi, varianti, eventuale perdita dipendente dal tempo) e si registra in `cli.ts`; `model.ts` resta invariato. Parametri da riga di comando: `--scenario valle-maira|alpino-frammentato|eolie`, `--max-sf`, `--horizon-h`, `--policy custody|epidemic`. Uno scenario su territorio reale fornisce un `Terrain` negli ambienti e `shortRangeModel: "budget"`. Una configurazione salvata nel formato del tool si valuta con `--config <file.json>` (aggiungi `--json` per l'output strutturato); esempio in `tools/scenario-model/examples/eolie.json`.
+Un nuovo scenario è un file accanto a `tools/scenario-model/valle-maira.ts` che esporta un oggetto `Scenario` (`tools/scenario-model/scenario.ts`: nodi con traiettorie, ambienti, messaggi, varianti, eventuale perdita dipendente dal tempo) e si registra in `cli.ts`; `model.ts` resta invariato. Parametri da riga di comando: `--scenario valle-maira|alpino-frammentato|eolie|atacama`, `--max-sf`, `--horizon-h`, `--policy custody|epidemic`. Uno scenario su territorio reale fornisce un `Terrain` negli ambienti e `shortRangeModel: "budget"`. Una configurazione salvata nel formato del tool si valuta con `--config <file.json>` (aggiungi `--json` per l'output strutturato); esempi in `tools/scenario-model/examples/` (Eolie, Atacama con `"regulatory": "au915"`). Uno scenario fuori dall'Europa indica i propri profili con `regulatoryProfiles`; il terreno sintetico generico (altopiano, coni, creste) si costruisce con `syntheticLandscape`.

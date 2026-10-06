@@ -132,6 +132,38 @@ function renderMapTiles() {
 }
 
 /**
+ * Shared renderer for a position-based pin layer (ARALD GEO CORE, step 1 — docs/external-inspiration.md:
+ * renderMapPins()/renderMapRelays()/renderMapBeacons() below used to repeat this same "clear layer →
+ * bail if no mapState/items → world-pixel position → build a pin div" sequence three times, differing
+ * only in which icon/class/title a given item gets. Consolidated here; each of the three kept its own
+ * function (and its own doc comment on what the data source is and when it's populated) since callers
+ * elsewhere in app.js/mapview.js still call them by name — only the body changed, not the public shape.
+ *
+ * `items` must be passed as `undefined` (not referenced bare) when the caller's own global hasn't been
+ * declared yet — see the `typeof knownDrops === "undefined" ? undefined : knownDrops` pattern at each
+ * call site below, preserving the original per-function `typeof` guard (mapview.js loads before app.js
+ * declares `knownDrops`/`knownRelays`/`knownBeacons`, so referencing one bare before app.js has run
+ * would throw a ReferenceError here, not just return early).
+ */
+function renderMapPinLayer(layerElementId, items, describe) {
+  const layer = document.getElementById(layerElementId);
+  layer.textContent = "";
+  if (!mapState || typeof items === "undefined") return;
+  for (const item of items) {
+    if (typeof item.lat !== "number" || typeof item.lon !== "number") continue;
+    const { x, y } = lonLatToWorldPx(item.lon, item.lat, mapState.zoom);
+    const { className, icon, title } = describe(item);
+    const pin = document.createElement("div");
+    pin.className = className;
+    pin.style.left = x + "px";
+    pin.style.top = y + "px";
+    pin.title = title;
+    pin.innerHTML = `<svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-${icon}"></use></svg>`;
+    layer.append(pin);
+  }
+}
+
+/**
  * Draws known drops (docs/next-steps.md — bacheca, concept credited to BitChat's BoardManager,
  * Unlicense/public domain) as pins on the map, at the same world-pixel coordinates renderMapTiles()
  * positions tiles at — `knownDrops` is a global populated by app.js's renderDrops() on every
@@ -140,22 +172,11 @@ function renderMapTiles() {
  * get the warn color (var(--warn), mirroring #drops's .tag.hazard); info drops are unstyled.
  */
 function renderMapPins() {
-  const layer = document.getElementById("map-pins-layer");
-  layer.textContent = "";
-  if (!mapState || typeof knownDrops === "undefined") return;
-  for (const d of knownDrops) {
-    if (typeof d.lat !== "number" || typeof d.lon !== "number") continue;
-    const { x, y } = lonLatToWorldPx(d.lon, d.lat, mapState.zoom);
-    const pin = document.createElement("div");
-    const kindClass = d.kind === "emergency" ? " is-urgent" : d.kind === "hazard" ? " is-hazard" : "";
-    const iconId = d.kind === "emergency" ? "alert-triangle" : d.kind === "hazard" ? "alert-circle" : "map-pin";
-    pin.className = "map-pin" + kindClass;
-    pin.style.left = x + "px";
-    pin.style.top = y + "px";
-    pin.title = d.label || d.text || "";
-    pin.innerHTML = `<svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-${iconId}"></use></svg>`;
-    layer.append(pin);
-  }
+  renderMapPinLayer("map-pins-layer", typeof knownDrops === "undefined" ? undefined : knownDrops, (d) => ({
+    className: "map-pin" + (d.kind === "emergency" ? " is-urgent" : d.kind === "hazard" ? " is-hazard" : ""),
+    icon: d.kind === "emergency" ? "alert-triangle" : d.kind === "hazard" ? "alert-circle" : "map-pin",
+    title: d.label || d.text || "",
+  }));
 }
 
 /**
@@ -166,20 +187,11 @@ function renderMapPins() {
  * even when it isn't reachable right now.
  */
 function renderMapRelays() {
-  const layer = document.getElementById("map-relays-layer");
-  layer.textContent = "";
-  if (!mapState || typeof knownRelays === "undefined") return;
-  for (const r of knownRelays) {
-    if (typeof r.lat !== "number" || typeof r.lon !== "number") continue;
-    const { x, y } = lonLatToWorldPx(r.lon, r.lat, mapState.zoom);
-    const pin = document.createElement("div");
-    pin.className = "map-pin map-pin-relay" + (r.online ? "" : " is-offline");
-    pin.style.left = x + "px";
-    pin.style.top = y + "px";
-    pin.title = r.operator || r.relayId;
-    pin.innerHTML = `<svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-wifi"></use></svg>`;
-    layer.append(pin);
-  }
+  renderMapPinLayer("map-relays-layer", typeof knownRelays === "undefined" ? undefined : knownRelays, (r) => ({
+    className: "map-pin map-pin-relay" + (r.online ? "" : " is-offline"),
+    icon: "wifi",
+    title: r.operator || r.relayId,
+  }));
 }
 
 /**
@@ -192,20 +204,11 @@ function renderMapRelays() {
  * don't get a pin, same as an un-positioned drop.
  */
 function renderMapBeacons() {
-  const layer = document.getElementById("map-beacons-layer");
-  layer.textContent = "";
-  if (!mapState || typeof knownBeacons === "undefined") return;
-  for (const b of knownBeacons) {
-    if (typeof b.lat !== "number" || typeof b.lon !== "number") continue;
-    const { x, y } = lonLatToWorldPx(b.lon, b.lat, mapState.zoom);
-    const pin = document.createElement("div");
-    pin.className = "map-pin map-pin-beacon";
-    pin.style.left = x + "px";
-    pin.style.top = y + "px";
-    pin.title = b.message || "SOS";
-    pin.innerHTML = `<svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use href="#icon-alert-circle"></use></svg>`;
-    layer.append(pin);
-  }
+  renderMapPinLayer("map-beacons-layer", typeof knownBeacons === "undefined" ? undefined : knownBeacons, (b) => ({
+    className: "map-pin map-pin-beacon",
+    icon: "alert-circle",
+    title: b.message || "SOS",
+  }));
 }
 
 function setZoom(newZoom) {

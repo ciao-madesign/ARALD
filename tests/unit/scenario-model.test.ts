@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_PHY, DEFAULT_SHORT_RANGE, EU868_G1, EU868_G3, type ModelParams, type NodeSpec,
+  ARALD_QUEUE_TTL_S, DEFAULT_PHY, DEFAULT_SHORT_RANGE, EU868_G1, EU868_G3, LEGACY_QUEUE_TTL_S, type ModelParams, type NodeSpec,
   effectiveEirpDbm, loraLink, loraTimeOnAir, pathLossDb, positionAt, simulate,
 } from "../../tools/scenario-model/model.js";
 import { ENVIRONMENTS, benchmarkMessages, buildNodes } from "../../tools/scenario-model/valle-maira.js";
@@ -58,12 +58,19 @@ describe("scenario-model: simulazione Valle Maira", () => {
     for (const d of r.deliveries) expect(d.deliveredAt).not.toBeNull();
   });
 
-  it("data mule in condizioni severe: la coda relay attuale (TTL) perde l'SOS, una coda DTN lo consegna", () => {
+  it("data mule in condizioni severe: la coda precedente (SOS scaduto dopo 30 min) perdeva l'SOS, una coda DTN lo consegna", () => {
     const base = { nodes: buildNodes("ferry"), messages: benchmarkMessages(), params: params("severo"), horizonS: 10 * H, stepS: 10, policy: "custody" as const };
-    const withTtl = simulate({ ...base, relayCarryTtlS: (prio) => (prio === 0 ? 0.5 * H : 300) });
+    const legacy = simulate({ ...base, relayCarryTtlS: LEGACY_QUEUE_TTL_S });
     const dtn = simulate({ ...base });
-    expect(withTtl.deliveries.find((d) => d.messageId === "F1")!.deliveredAt).toBeNull();
+    expect(legacy.deliveries.find((d) => d.messageId === "F1")!.deliveredAt).toBeNull();
     expect(dtn.deliveries.find((d) => d.messageId === "F1")!.deliveredAt).not.toBeNull();
+  });
+
+  it("data mule in condizioni severe con la coda attuale: l'SOS arriva, rapporto e foto (TTL 5 min) no", () => {
+    const r = simulate({ nodes: buildNodes("ferry"), messages: benchmarkMessages(), params: params("severo"), horizonS: 10 * H, stepS: 10, policy: "custody", relayCarryTtlS: ARALD_QUEUE_TTL_S });
+    expect(r.deliveries.find((d) => d.messageId === "F1")!.deliveredAt).not.toBeNull();
+    expect(r.deliveries.find((d) => d.messageId === "F4")!.deliveredAt).toBeNull();
+    expect(r.deliveries.find((d) => d.messageId === "F3")!.deliveredAt).toBeNull();
   });
 
   it("un link SF12 trasporta davvero dati (il frame da ~8 s supera il budget di canale di un singolo passo)", () => {
@@ -183,11 +190,10 @@ describe("scenario-model: Scenario 2 (alpino frammentato)", () => {
     expect(f1.deliveredAtByDest.BOX!).toBeLessThan(60);
   });
 
-  it("il data mule che rivalica consegna l'SOS al Box solo con una coda DTN", () => {
-    const ttl = (prio: number) => (prio === 0 ? 0.5 * H : 300);
-    const withTtl = run("crossing", "tipico", { relayCarryTtlS: ttl }).deliveries.find((d) => d.messageId === "F1")!;
-    const dtn = run("crossing", "tipico").deliveries.find((d) => d.messageId === "F1")!;
-    expect(withTtl.deliveredAtByDest.BOX).toBeNull();
-    expect(dtn.deliveredAtByDest.BOX).not.toBeNull();
+  it("il data mule che rivalica: la coda precedente perdeva l'SOS al Box, quella attuale e la DTN lo consegnano", () => {
+    const f1 = (extra = {}) => run("crossing", "tipico", extra).deliveries.find((d) => d.messageId === "F1")!;
+    expect(f1({ relayCarryTtlS: LEGACY_QUEUE_TTL_S }).deliveredAtByDest.BOX).toBeNull();
+    expect(f1({ relayCarryTtlS: ARALD_QUEUE_TTL_S }).deliveredAtByDest.BOX).not.toBeNull();
+    expect(f1().deliveredAtByDest.BOX).not.toBeNull();
   });
 });

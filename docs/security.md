@@ -1825,7 +1825,7 @@ Un relay instrada `PRIVATE_MESSAGE`/`GROUP_MESSAGE` senza poter leggerne il payl
     - `nodePosition()` fa seguire il terreno alla quota dei nodi in movimento;
     - due ottimizzazioni senza effetto sui risultati: profilo del terreno memoizzato e saltato quando il link non chiuderebbe nemmeno senza territorio.
 
-    Gli output degli Scenari 1 e 2 sono rimasti identici byte per byte (verificato). `docs/scenario-simulation.md` §11 risponde ai 10 punti del §12 di `docs/network-design-tool.md`, la cui tabella dei pezzi mancanti è aggiornata.
+    Gli output degli Scenari 1 e 2 sono rimasti identici byte per byte (verificato). `docs/scenario-simulation.md` §11 (oggi §14) risponde ai 10 punti del §12 di `docs/network-design-tool.md`, la cui tabella dei pezzi mancanti è aggiornata.
 
     **Risultati principali** (`docs/scenario-simulation.md` §10):
     - Stromboli è un'isola anche per la radio: paese ed escursionista sono dietro il cono rispetto a Lipari;
@@ -1848,3 +1848,41 @@ Un relay instrada `PRIVATE_MESSAGE`/`GROUP_MESSAGE` senza poter leggerne il payl
 
     Nessuna modifica a `node/src/`, nessuna nuova dipendenza.
 
+124. **ARALD GEO CORE, passo 1 — consolidamento dei tre renderer pin di `mobile/www/mapview.js`**, 5 ottobre 2026 — primo passo dell'idea "ARALD GEO CORE" (`docs/external-inspiration.md`, priorità alta su richiesta esplicita dell'utente), scope deliberatamente minimo scelto dall'utente tra tre opzioni proposte (minimo/medio/completo): solo la duplicazione realmente misurabile oggi, non il consolidamento cross-piattaforma più ampio descritto nella proposta originale (quella parte resta "da valutare", non promossa — vedi sotto).
+
+    **Cosa c'era**: `renderMapPins()`/`renderMapRelays()`/`renderMapBeacons()` ripetevano la stessa sequenza — pulisci layer, verifica `mapState`/sorgente dati, calcola la posizione world-pixel (`lonLatToWorldPx()`), costruisci un `<div>` pin (classe/posizione/title/SVG), append — differendo solo nell'icona/classe/titolo per drop/relay/beacon.
+
+    **Fix**: estratta `renderMapPinLayer(layerElementId, items, describe)`, condivisa dalle tre funzioni originali (firma e comportamento esterno invariati — gli altri chiamanti in `app.js` non cambiano). Ogni funzione passa un `describe()` che riproduce esattamente la propria logica precedente (classi concatenate, scelta icona, fallback del title con `||`). Preservato il guard `typeof knownDrops/knownRelays/knownBeacons === "undefined"` a ogni call site (non spostato dentro la funzione condivisa) — `mapview.js` è caricato prima di `app.js` nell'ordine degli script classici di `index.html`, quindi referenziare una di quelle variabili globali `let` prima che `app.js` le dichiari lancerebbe un `ReferenceError`, non un semplice "non definita".
+
+    **Verifica**: nessuna suite di unit test diretta esiste per questo file (script classico non-modulo a stato globale condiviso con `app.js`, stessa scelta architetturale già documentata per `ble-client.js`) — verificato invece con un confronto diretto in un browser headless reale (Playwright/Chromium): stesso input sintetico (drop emergency/hazard/info con e senza posizione, relay online/offline, beacon con/senza messaggio) passato alla versione originale (salvata a parte) e a quella refactored, output HTML dei tre layer risultato **byte-per-byte identico**, nessun errore. Code-review (livello medio): nessun problema trovato.
+
+    **Cosa NON è stato fatto in questo passo** (scope esplicitamente ridotto dall'utente, non dimenticato): `haversineDistanceMeters()` (`app.js`) non è stata estratta in un modulo condiviso — oggi ha un solo punto d'uso, nessuna vera duplicazione da eliminare ancora; nessuna funzione di bearing è stata aggiunta — nessuna UI la userebbe oggi (nessuna modalità CERCA costruita), aggiungerla ora sarebbe stata una funzionalità speculativa senza chiamante reale. Il consolidamento cross-piattaforma più ampio della proposta originale (un modulo ES condiviso `geo-core.js`, convertire `app.js` a `type="module"` per poterlo importare) resta `docs/external-inspiration.md`, "Da valutare" — non promosso a `docs/next-steps.md`.
+
+125. **Simulazione teorica — risultati rigenerati con la coda corretta e Scenario 4 (deserto di Atacama, regione radio 915-928 MHz)**, 5 ottobre 2026 — su ok esplicito dell'utente ("rigenera i risultati e poi procedi col prossimo scenario").
+
+    **Rigenerazione**: la coda dei relay del modello segue ora `PendingDeliveryQueue` dopo la voce #120 (`ARALD_QUEUE_TTL_S`: `Priority.EMERGENCY` senza scadenza, il resto 5 minuti). Il comportamento precedente resta come `LEGACY_QUEUE_TTL_S`, per confronto e per i test storici. Tabelle e conclusioni dei tre scenari riscritte in `docs/scenario-simulation.md`: con la coda corretta il data mule porta l'SOS in tutti i casi in cui prima lo perdeva, ma rapporto e foto continuano a perdersi dopo 5 minuti di isolamento e arrivano via mulo solo con una coda DTN. La proposta "TTL di custodia" è segnata come fatta per l'SOS e resta aperta per gli altri contenuti (bundle-store DTN per i nodi mobili).
+
+    **Scenario 4** (`tools/scenario-model/atacama.ts`): distanze di decine di km su deserto ad alta quota, un fuoristrada come data mule, la prima regione radio fuori dall'Europa. Terreno sintetico con il nuovo builder generico `syntheticLandscape` (`terrain.ts`: quota di base, coni, creste lineari, insediamenti). Coordinate, quote e profilo regolatorio per il Cile **non verificati** in questo ambiente.
+
+    **Estensioni del motore** (output degli Scenari 1-2 identici byte per byte, verificato; lo Scenario 3 cambia solo il titolo della sezione H):
+    - `RegulatoryProfile` guadagna `centerFreqHz` e `maxDwellS`, con il nuovo profilo `AU915` (30 dBm EIRP, nessun duty-cycle, dwell 400 ms, 920 MHz);
+    - `loraFrameBytesFor()` accorcia il frame per rispettare il dwell time (ricerca binaria; 0 = SF inutilizzabile), usato da velocità, simulazione, costo di instradamento e scelta dello SF;
+    - la frequenza LoRa (path loss e diffrazione) viene dal profilo;
+    - la configurazione salvata accetta `"regulatory": "au915"` (esempio `examples/atacama.json`);
+    - la CLI usa i profili dello scenario (`regulatoryProfiles`), aggiunge la sezione B2 (capacità per SF con i profili della regione) e adatta le celle della mappa all'area.
+
+    **Risultati principali** (`docs/scenario-simulation.md` §13):
+    - senza fuoristrada né relay il deserto è troppo grande per pochi nodi;
+    - la Cordillera de la Sal nasconde la Valle de la Luna al Box già a 9 km;
+    - il fuoristrada porta l'SOS in 3,0 / 3,7 h (Portable / Box, AU915 tipico), 2,1 / 2,2 h con il relay;
+    - foto e rapporto arrivano in ~3,9 h solo se il mulo passa dai dati e solo con coda DTN;
+    - **il dwell time pesa più del duty-cycle**: SF11/SF12 vietati, frame da 24 byte a SF10 (~30 bit/s utili), alone LoRa del Box ridotto a circa un terzo rispetto a EU g3;
+    - l'intestazione ARALD da 22 byte per frame e il base64 sono il vero costo nelle regioni con dwell time. Proposta registrata: framing LoRa binario compatto, non implementata.
+
+    **Trovato durante il lavoro**: un'affermazione del doc scritta prima di verificarla ("165 minuti di airtime spesi a inondare la Wiki") è stata controllata misurando l'airtime per messaggio: confermata, tutto su F2.
+
+    **Trovato dalla revisione** (nessun bug nel codice, due problemi nel doc, corretti):
+    1. il §13 punto 1 affermava che senza fuoristrada l'SOS non arriva "in nessun ambiente e con nessuna regola", falso per la variante con relay in condizioni favorevoli con le regole EU;
+    2. il §14 punto 4 indicava ancora una frequenza LoRa fissa a 868 MHz.
+
+    Aggiunta anche la guardia sul caso limite, non raggiungibile con i parametri attuali, di un frame non più grande dell'intestazione (nessuna divisione per zero), con test. Nessuna modifica a `node/src/`, nessuna nuova dipendenza.
