@@ -43,8 +43,33 @@ export function toGeo(frame: LocalFrame, p: { x: number; y: number }): GeoPoint 
 /** Classi d'uso del suolo rilevanti per la propagazione (estendibili). */
 export type LandCover = "sea" | "urban-dense" | "urban" | "forest" | "open";
 
+/** Condizioni di propagazione che dipendono dal territorio (non sono globali: un "tipico" aperto non è un "tipico" urbano). */
+export interface PropagationPreset {
+  pathLossExponent: number;
+  fadeMarginDb: number;
+  interferenceDb: number;
+}
+export type PropagationName = "favorevole" | "tipico" | "severo";
+
+/**
+ * Territorio interrogabile. Convenzione: tutte le quote `z` dei `Point3` passati al territorio
+ * sono ASSOLUTE (m s.l.m., quota dell'antenna), coerenti con `elevationAt`: l'altezza dal suolo
+ * è sempre `z − elevationAt(x, y)`.
+ */
 export interface Terrain {
   name: string;
+  /**
+   * Parametri di propagazione propri di questo territorio (esponente, margine di fading,
+   * interferenza), per le tre condizioni. Se presenti, `paramsForConfig()` li usa al posto
+   * di quelli generici per terreni aperti: un dataset urbano porta i propri.
+   */
+  propagation?: Record<PropagationName, PropagationPreset>;
+  /**
+   * Se true, il clutter a un estremo diminuisce con l'altezza dell'antenna dal suolo
+   * (`CLUTTER_HEIGHT_M`): un'antenna sul tetto vede molto meno clutter di una a terra
+   * nello stesso punto. Default false: i terreni degli Scenari 1-4 non lo usano.
+   */
+  clutterHeightRelief?: boolean;
   /** Quota del suolo (m s.l.m.) in coordinate locali; 0 sul mare. */
   elevationAt(x: number, y: number): number;
   landCoverAt(x: number, y: number): LandCover;
@@ -63,6 +88,19 @@ export const CLUTTER_LOSS_DB: Record<LandCover, { subGhz: number; ghz24: number 
   urban: { subGhz: 8, ghz24: 12 },
   "urban-dense": { subGhz: 15, ghz24: 20 },
 };
+
+/** Altezza tipica del clutter per classe (m): sopra questa quota l'antenna "esce" dal grosso dell'ostruzione. Ipotesi di modello. */
+export const CLUTTER_HEIGHT_M: Record<LandCover, number> = { sea: 0, open: 0.5, forest: 15, urban: 10, "urban-dense": 20 };
+
+/** Frazione di clutter residua quando l'antenna supera l'altezza del clutter (diffrazione sopra i tetti verso la strada). */
+export const CLUTTER_RESIDUAL = 0.2;
+
+/** Fattore 0-1 di clutter in funzione dell'altezza dell'antenna dal suolo, per un terreno con `clutterHeightRelief`. */
+export function clutterReliefFactor(cover: LandCover, aglM: number): number {
+  const h = CLUTTER_HEIGHT_M[cover];
+  if (h <= 0) return 1;
+  return Math.max(CLUTTER_RESIDUAL, Math.min(1, 1 - aglM / h));
+}
 
 export function clutterLossDb(cover: LandCover, freqHz: number): number {
   return freqHz < 1e9 ? CLUTTER_LOSS_DB[cover].subGhz : CLUTTER_LOSS_DB[cover].ghz24;
@@ -134,8 +172,12 @@ export const CLUTTER_DEPTH_M = 200;
 /** Perdita totale dovuta al territorio per un link: diffrazione + clutter ai due estremi. */
 export function terrainLinkLossDb(terrain: Terrain, a: Point3, b: Point3, freqHz: number): number {
   const scale = Math.min(1, Math.hypot(b.x - a.x, b.y - a.y) / CLUTTER_DEPTH_M);
-  return terrainProfileLoss(terrain, a, b, freqHz).lossDb
-    + scale * (clutterLossDb(terrain.landCoverAt(a.x, a.y), freqHz) + clutterLossDb(terrain.landCoverAt(b.x, b.y), freqHz));
+  const end = (p: Point3): number => {
+    const cover = terrain.landCoverAt(p.x, p.y);
+    const relief = terrain.clutterHeightRelief ? clutterReliefFactor(cover, p.z - terrain.elevationAt(p.x, p.y)) : 1;
+    return clutterLossDb(cover, freqHz) * relief;
+  };
+  return terrainProfileLoss(terrain, a, b, freqHz).lossDb + scale * (end(a) + end(b));
 }
 
 /** Terreno piatto a quota 0, tutto "open": il caso neutro quando non si conosce il territorio. */
@@ -220,6 +262,10 @@ export interface SyntheticLandscape {
   ridges?: SyntheticRidge[];
   settlements?: SyntheticSettlement[];
   defaultLandCover?: LandCover;
+  /** Attiva `Terrain.clutterHeightRelief` (clutter ridotto per antenne alte sul suolo). */
+  clutterHeightRelief?: boolean;
+  /** Parametri di propagazione propri del territorio (vedi `Terrain.propagation`). */
+  propagation?: Record<PropagationName, PropagationPreset>;
 }
 
 /**
@@ -232,6 +278,8 @@ export function syntheticLandscape(name: string, frame: LocalFrame, l: Synthetic
   const settlements = (l.settlements ?? []).map((s) => ({ ...s, c: toLocal(frame, s.center) }));
   return {
     name,
+    clutterHeightRelief: l.clutterHeightRelief,
+    propagation: l.propagation,
     elevationAt(x, y) {
       let extra = 0;
       for (const c of cones) extra = Math.max(extra, coneElevation(Math.hypot(x - c.c.x, y - c.c.y), c.radiusM, c.summitM, c.shape));

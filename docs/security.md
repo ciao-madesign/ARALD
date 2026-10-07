@@ -1825,7 +1825,7 @@ Un relay instrada `PRIVATE_MESSAGE`/`GROUP_MESSAGE` senza poter leggerne il payl
     - `nodePosition()` fa seguire il terreno alla quota dei nodi in movimento;
     - due ottimizzazioni senza effetto sui risultati: profilo del terreno memoizzato e saltato quando il link non chiuderebbe nemmeno senza territorio.
 
-    Gli output degli Scenari 1 e 2 sono rimasti identici byte per byte (verificato). `docs/scenario-simulation.md` §11 (oggi §14) risponde ai 10 punti del §12 di `docs/network-design-tool.md`, la cui tabella dei pezzi mancanti è aggiornata.
+    Gli output degli Scenari 1 e 2 sono rimasti identici byte per byte (verificato). `docs/scenario-simulation.md` §11 (oggi §17) risponde ai 10 punti del §12 di `docs/network-design-tool.md`, la cui tabella dei pezzi mancanti è aggiornata.
 
     **Risultati principali** (`docs/scenario-simulation.md` §10):
     - Stromboli è un'isola anche per la radio: paese ed escursionista sono dietro il cono rispetto a Lipari;
@@ -1883,7 +1883,7 @@ Un relay instrada `PRIVATE_MESSAGE`/`GROUP_MESSAGE` senza poter leggerne il payl
 
     **Trovato dalla revisione** (nessun bug nel codice, due problemi nel doc, corretti):
     1. il §13 punto 1 affermava che senza fuoristrada l'SOS non arriva "in nessun ambiente e con nessuna regola", falso per la variante con relay in condizioni favorevoli con le regole EU;
-    2. il §14 punto 4 indicava ancora una frequenza LoRa fissa a 868 MHz.
+    2. il §14 punto 4 (oggi §17) indicava ancora una frequenza LoRa fissa a 868 MHz.
 
     Aggiunta anche la guardia sul caso limite, non raggiungibile con i parametri attuali, di un frame non più grande dell'intestazione (nessuna divisione per zero), con test. Nessuna modifica a `node/src/`, nessuna nuova dipendenza.
 
@@ -1919,3 +1919,34 @@ Un relay instrada `PRIVATE_MESSAGE`/`GROUP_MESSAGE` senza poter leggerne il payl
     **Limite noto, non affrontato qui** (segnalato dal quarto giro di review, non una regressione di questa voce): `RemoteCatalog` (`catalog.ts`) — che tiene solo metadata, non i byte, a un bound molto più ampio (4096) — non ha la stessa consapevolezza di priorità; resta eviction puramente trust-based. Non toccato in questo giro (fuori scope, nessuna evidenza che sia un problema pratico quanto `ContentStore` lo era).
 
 128. **Sito: rimosso ogni riferimento a Project N.O.M.A.D./NomadNet, incluso il disclaimer di non affiliazione**, 6 ottobre 2026 — segnalazione dell'utente: nominare esplicitamente quei due progetti nel footer, anche solo per dichiarare *non* affiliazione, dava comunque l'impressione di un collegamento che non esiste. Rimossa la frase "Not affiliated with Project N.O.M.A.D. or NomadNet — see the repository for the full attribution review." dal footer di tutte e 4 le pagine (`site/index.html`/`overview.html`/`how-it-works.html`/`contribute.html`), sostituita con il solo "Open source, MIT licensed." — il link al repository GitHub, già presente subito sotto nello stesso footer, resta l'unico pointer per chi vuole approfondire. Verificato con `grep -rni nomad site/` dopo la modifica: zero occorrenze residue in tutto il sito. Nessun'altra dicitura trovata altrove nel sito (già verificato e corretto in passata sessione, `docs/due-diligence-naming-2026-09-04.md`). Non tocca `docs/` (la narrativa storica che usa ancora "Nomad-Net" dov'era il nome del progetto al momento della scrittura resta intenzionalmente invariata, `CLAUDE.md`) né `docs/reuse-vs-new.md` (la vera analisi di attribuzione, interna al repository, non una superficie pubblica) — fuori scope per questa richiesta, specificamente il sito pubblico. Verificato visivamente con Playwright/Chromium contro il sito servito localmente. Nessun codice toccato, nessun test applicabile.
+
+129. **Simulazione teorica — Scenario 5, Kampala (città densa su colline), clutter dipendente dall'altezza dell'antenna e condizioni di propagazione per territorio**, 7 ottobre 2026 — su ok esplicito dell'utente ("procedi con Kampala"), seguito della voce #125. Terzo ambiente di validazione (missioni umanitarie in contesti urbani): distanze di 2-8 km ma ostruzione continua, centro densissimo, colline, blackout, corriere in boda-boda nel traffico. Nuovo `tools/scenario-model/kampala.ts` (terreno **sintetico**; coordinate, quote e profilo EU868 per l'Uganda **non verificati**), esempio `examples/kampala.json`, risultati in `docs/scenario-simulation.md` §14-16.
+
+    **Estensioni del motore** (Scenari 1-3 identici byte per byte, verificato; Scenario 4 cambia solo la didascalia della mappa, che non cita più il mare dove non c'è):
+    - `Terrain.clutterHeightRelief`, opzionale e spento nei terreni esistenti: il clutter a un estremo scala con l'altezza dell'antenna dal suolo (`CLUTTER_HEIGHT_M`, residuo 20% sopra i tetti). Un Box sul tetto copre ~4 volte l'area LoRa di uno a terra (8,4 contro 2,0 km², tipico, 10%);
+    - `Terrain.propagation`: le condizioni di propagazione (esponente, margine di fading, interferenza) le porta il territorio, non sono globali. `assessNetwork()` le usa da sola;
+    - `Scenario.coverageCellM`: celle della mappa di copertura per scenario (250 m a Kampala).
+
+    **Calibrazione**: un primo tentativo con esponente di path loss 3,2 più il clutter agli estremi contava due volte la città (quasi nessun link chiudeva, nemmeno a 2 km). Confrontato con Okumura-Hata (città grande, 868 MHz, antenna base a 12 m, 0,5-6 km) l'esponente 3,0 resta entro 5 dB (scarto da 0 a −4 dB, test dedicato). **Vale solo per l'abitato normale**: per le zone dense il modello è 8-12 dB più pessimista di Hata, ipotesi non verificata e dichiarata come tale nel doc e nel codice.
+
+    **Risultati principali**:
+    - in condizioni tipiche nessun link a terra chiude oltre poche decine di metri, il Box sul tetto vede solo il relay su traliccio (2,3 km);
+    - il boda porta l'SOS alla clinica in 2,0 h e alla sede in 2,5-2,6 h, in 1,5-1,6 h con il relay;
+    - **un relay fisso non allarga solo la copertura, tiene in vita le copie del corriere** con la coda attuale: in condizioni favorevoli rapporto e foto arrivano con il relay e non senza (nessun dispositivo risulta isolato, la scadenza di 5 minuti non parte);
+    - il blackout del Box lascia arrivare l'SOS alla clinica (Portable a batteria) ma non alla sede: punto singolo di guasto, argomento per l'UPS e per una seconda destinazione.
+
+    **Trovato durante il lavoro**: la configurazione salvata con `"environment": "tipico"` mostrava 14 link LoRa fino a 7,4 km contro 1 dello scenario, perché usava i parametri generici per terreni aperti. Ha mostrato che la condizione di propagazione dipende dal territorio.
+
+    **Trovato dalla revisione** (10 problemi, tutti corretti):
+    1. la tabella degli ambienti era un parametro separato dal territorio con default generico, quindi un chiamante che la dimenticava (es. la futura UI) otteneva senza errori il risultato sbagliato. Ora la porta `Terrain.propagation` e una tabella esplicita serve solo per forzarne un'altra, con test di regressione;
+    2. il commento di calibrazione diceva "entro ~3 dB" contro i 5 del test e i −4 reali;
+    3. la calibrazione valeva solo per la classe "abitato" e non era detto: ora è esplicito in codice e doc;
+    4. due stime di portata Wi-Fi/BLE ("45 m" a Kampala, "50-60 m" alle Eolie) erano artefatti della risoluzione della griglia, in parte celle del simbolo del Box. Misurate lungo un raggio: 35 m a Kampala, 60 m alle Eolie in condizioni tipiche, 80-85 m favorevoli, 15-35 m severe. La didascalia della mappa non contiene più frasi generiche sulla portata;
+    5. il contratto implicito "le quote z sono assolute" è ora documentato su `Terrain` e verificato da un test;
+    6. la legenda "mare" si basava su un campionamento separato e fallibile: ora usa le celle effettivamente calcolate;
+    7. un margine del riquadro scritto come numero magico (`60 * cella * 0,1`): ora 6 celle, esplicito;
+    8. refusi ("da aggiungere da aggiungere"), un rapporto 1% sbagliato (3,4 e non "lo stesso"), un riferimento di sezione obsoleto nella voce #125, un rientro di commento in `scenario.ts`;
+    9. mancava questa voce di `docs/security.md`.
+
+    Nessuna modifica a `node/src/`, nessuna nuova dipendenza.
+

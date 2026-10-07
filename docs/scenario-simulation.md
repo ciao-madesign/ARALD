@@ -1,6 +1,6 @@
 # Simulazione teorica di efficienza della rete ARALD — modello parametrico
 
-**Stato**: Scenario 1 (alta Valle Maira), Scenario 2 (alpino frammentato, due valli separate da una cresta) e Scenario 3 (Isole Eolie, primo costruito nel formato del futuro tool) e Scenario 4 (deserto di Atacama, prima regione radio fuori dall'Europa) completati. Scenari successivi (Kampala, …) da aggiungere come nuovi file di scenario sullo stesso motore.
+**Stato**: Scenario 1 (alta Valle Maira), Scenario 2 (alpino frammentato, due valli separate da una cresta) e Scenario 3 (Isole Eolie, primo costruito nel formato del futuro tool) e Scenario 4 (deserto di Atacama, prima regione radio fuori dall'Europa) e Scenario 5 (Kampala, città densa su colline) completati. Altri scenari: da aggiungere come nuovi file di scenario sullo stesso motore.
 
 **Aggiornamento sul comportamento della coda (5 ottobre 2026)**: dopo che questi tre scenari sono stati calcolati, `PendingDeliveryQueue` è stata corretta (`docs/security.md` voce #120). I pacchetti `Priority.EMERGENCY` non scadono più; gli altri mantengono il TTL di 5 minuti. Le tabelle "ARALD attuale" sono state **rigenerate** con il comportamento corretto (`ARALD_QUEUE_TTL_S` in `model.ts`); quello precedente resta disponibile come `LEGACY_QUEUE_TTL_S`, per confronto e per i test storici. Il problema che la prima versione aveva messo in luce, l'SOS perso dal data mule, è proprio quello che la correzione risolve. I punti "cosa dice il modello" sotto descrivono entrambi i comportamenti dove la differenza conta.
 
@@ -748,7 +748,7 @@ Legenda: `#` terra coperta, `+` mare coperto, `.` terra non coperta, spazio = ma
 
 ### H. I tre livelli dell'alone del Box, uno per tecnologia (celle da 40 m, ±1 km, ambiente tipico, g1 14 dBm ERP/1%)
 
-Ogni livello è calcolato separatamente verso il proprio ricevitore di riferimento (Wi-Fi e BLE → smartphone, LoRa → Card). `#` = coperto, `.` = non coperto, `B` = Box. Nel centro abitato denso Wi-Fi e BLE arrivano a ~50-60 m in ogni direzione, perché domina il clutter attorno al Box stesso; con questi parametri BLE e Wi-Fi verso uno smartphone hanno la stessa portata, ma il Wi-Fi è ~36 volte più veloce e vince. La forma dell'alone che segue il territorio si vede su LoRa, sezione G.
+Ogni livello è calcolato separatamente verso il proprio ricevitore di riferimento (Wi-Fi e BLE → smartphone, LoRa → Card). `#` = coperto, `.` = non coperto, `B` = Box. Con celle da 40 m, una copertura di poche celle attorno al Box indica una portata di qualche decina di metri o meno: la risoluzione non permette di dire di più. La forma dell'alone che segue il territorio si vede su LoRa, sezione G.
 
 ```text
 Wi-Fi                                                BLE                                                  LoRa
@@ -803,9 +803,9 @@ Wi-Fi                                                BLE                        
 ..................................................   ..................................................   ##################################################
 ..................................................   ..................................................   ##################################################
 ```
-- Wi-Fi: 12 celle coperte su 2500
-- BLE: 12 celle coperte su 2500
-- LoRa: 2500 celle coperte su 2500
+- Wi-Fi: 12 celle coperte su 2500 (19200 m²)
+- BLE: 12 celle coperte su 2500 (19200 m²)
+- LoRa: 2500 celle coperte su 2500 (4000000 m²)
 
 ## 10. Scenario 3 — cosa dice il modello
 
@@ -813,7 +813,7 @@ Wi-Fi                                                BLE                        
 2. **Un relay in quota non basta se è sul lato sbagliato.** Il Fixed Relay sulla vetta di Panarea vede Lipari (21 km, SF12 in g1 / SF8 in g3) e Salina, ma **non il paese né l'escursionista di Stromboli**: il cono del vulcano è in mezzo (36-42 dB di diffrazione, ostacolo a ~21,7 km dal relay). Da solo non cambia nulla per l'SOS. È l'esempio concreto di copertura che non è un cerchio, ed è ciò che il tool deve mostrare (§4 di `docs/network-design-tool.md`).
 3. **L'aliscafo è il vero ponte.** Con la coda corretta l'SOS raccolto a Stromboli arriva al Box in 3,0 h (g1) / 2,5 h (g3) in condizioni tipiche. Con la coda precedente alla correzione scadeva prima che l'aliscafo tornasse in copertura di Lipari, come negli Scenari 1 e 2.
 4. **Il relay di Panarea accorcia l'attesa del mulo.** Al ritorno l'aliscafo rientra in copertura già all'altezza di Panarea: l'SOS arriva in 2,4 h invece di 3,0 h (g1) e in 1,6 h invece di 2,5 h (g3). Qui il relay non serve a coprire Stromboli ma ad accorciare il percorso del mulo: un ruolo diverso da quello che ci si aspetterebbe guardando solo la mappa. Con la coda precedente era l'unico modo di non perdere l'SOS.
-5. **La posizione del Box conta quanto la sua potenza.** Nel centro abitato denso il Box paga ~15 dB di clutter a 868 MHz. Spostato sul molo, riceve l'SOS dall'aliscafo in arrivo prima: 2,6 h invece di 3,0 h (g1) e 1,6 h invece di 2,5 h (g3), in condizioni tipiche. Nel centro denso Wi-Fi e BLE del Box arrivano a ~50-60 m (sezione H); sul molo, in g3 con coda DTN, anche la Wiki raggiunge l'escursionista (1,5 h) passando per l'aliscafo.
+5. **La posizione del Box conta quanto la sua potenza.** Nel centro abitato denso il Box paga ~15 dB di clutter a 868 MHz. Spostato sul molo, riceve l'SOS dall'aliscafo in arrivo prima: 2,6 h invece di 3,0 h (g1) e 1,6 h invece di 2,5 h (g3), in condizioni tipiche. Nel centro denso Wi-Fi e BLE del Box raggiungono un telefono in strada fino a 60 m in condizioni tipiche (85 m favorevoli, 35 m severe; misurato lungo un raggio, non letto dalla griglia della sezione H); sul molo, in g3 con coda DTN, anche la Wiki raggiunge l'escursionista (1,5 h) passando per l'aliscafo.
 6. **I file grandi non arrivano: il mulo deve passare dove sono i dati.** L'escursionista non incontra mai l'aliscafo né il Portable, quindi foto e rapporto restano sul suo telefono; solo l'audio (150 KB) arriva, in g3 con coda DTN (2,6-4,1 h), a pezzi via LoRa. Un'indicazione di progetto, non verificata nel modello: mettere il Portable al molo dove attracca l'aliscafo permetterebbe ai telefoni a bordo di sincronizzarsi via Wi-Fi a ogni passaggio.
 7. **Il pannello del tool è già calcolabile** (sezione F e `npm run scenario-model -- --config tools/scenario-model/examples/eolie.json`): per ogni coppia tecnologia, modo radio, velocità istantanea e sostenibile, qualità. Ad esempio Card ↔ telefono BLE 2M PHY 1,0 Mbps (qualità 0,77), Box ↔ relay di Panarea LoRa SF8 1,8 kbps istantanei / 179 bps sostenuti in g3 (0,35).
 
@@ -1053,7 +1053,7 @@ Legenda D/E: F1 = SOS + coordinate (1 KB) (C5→PORT e BOX); F5 = GPS + audio 10
 
 ### G. Alone di copertura LoRa del Box (ricevitore di riferimento: Card), ambiente tipico, celle da 2 km
 
-Legenda: `#` terra coperta, `+` mare coperto, `.` terra non coperta, spazio = mare non coperto, `B` posizione del Box.
+Legenda: `#` terra coperta, `.` terra non coperta, `B` posizione del Box.
 
 
 **AU915 30 dBm EIRP, dwell 400 ms** — celle coperte: 121 su 1550
@@ -1168,7 +1168,7 @@ Legenda: `#` terra coperta, `+` mare coperto, `.` terra non coperta, spazio = ma
 
 ### H. I tre livelli dell'alone del Box, uno per tecnologia (celle da 40 m, ±1 km, ambiente tipico, AU915 30 dBm EIRP, dwell 400 ms)
 
-Ogni livello è calcolato separatamente verso il proprio ricevitore di riferimento (Wi-Fi e BLE → smartphone, LoRa → Card). `#` = coperto, `.` = non coperto, `B` = Box. Nel centro abitato denso Wi-Fi e BLE arrivano a ~50-60 m in ogni direzione, perché domina il clutter attorno al Box stesso; con questi parametri BLE e Wi-Fi verso uno smartphone hanno la stessa portata, ma il Wi-Fi è ~36 volte più veloce e vince. La forma dell'alone che segue il territorio si vede su LoRa, sezione G.
+Ogni livello è calcolato separatamente verso il proprio ricevitore di riferimento (Wi-Fi e BLE → smartphone, LoRa → Card). `#` = coperto, `.` = non coperto, `B` = Box. Con celle da 40 m, una copertura di poche celle attorno al Box indica una portata di qualche decina di metri o meno: la risoluzione non permette di dire di più. La forma dell'alone che segue il territorio si vede su LoRa, sezione G.
 
 ```text
 Wi-Fi                                                BLE                                                  LoRa
@@ -1223,9 +1223,9 @@ Wi-Fi                                                BLE                        
 ..................................................   ..................................................   ##################################################
 ..................................................   ..................................................   ##################################################
 ```
-- Wi-Fi: 16 celle coperte su 2500
-- BLE: 16 celle coperte su 2500
-- LoRa: 2500 celle coperte su 2500
+- Wi-Fi: 16 celle coperte su 2500 (25600 m²)
+- BLE: 16 celle coperte su 2500 (25600 m²)
+- LoRa: 2500 celle coperte su 2500 (4000000 m²)
 
 ## 13. Scenario 4 — cosa dice il modello
 
@@ -1242,30 +1242,428 @@ Wi-Fi                                                BLE                        
 5. **L'intestazione dei frame ARALD è il vero costo nelle regioni con dwell time.** I 22 byte di framing per frame e l'overhead ×1,45 del base64 nel JSON sono trascurabili a SF7, ma a SF9-SF10 si mangiano la maggior parte del frame. Esempio: nella variante con relay e coda DTN, in condizioni tipiche, 165 minuti di airtime LoRa non consegnano nulla, spesi a inondare la Wiki a SF10 verso un destinatario irraggiungibile. Ridurre il framing (header binario, niente base64 sul canale LoRa) avrebbe qui un effetto diretto sulla portata utile.
 6. **Il pannello del tool cambia con la regione.** Per Box ↔ relay a 62 km risulta SF10, 30 bit/s, qualità 0,07 in AU915 e SF10, 549 bit/s istantanei / 55 sostenuti, qualità 0,27 in EU g3 (sezione F). La stessa geometria con regole diverse dà linee di colore diverso: il tool deve rendere visibile la regione scelta.
 
-## 14. Il modello visto dal tool (risposta ai 10 punti del §12 di `docs/network-design-tool.md`)
+## 14. Scenario 5 — Kampala (città densa su colline, blackout, corriere in boda-boda)
 
-Stato al termine dello Scenario 4. Va aggiornato a ogni estensione del motore.
+**Perché questo scenario**: è il contrario degli scenari alpini e del deserto, ed è il terzo ambiente di validazione (missioni umanitarie in contesti urbani).
+- **Distanze brevi (2-8 km) ma ostruzione continua**: edifici, un centro densissimo, colline di 50-100 m.
+- **Spostamenti lenti**: il corriere è un motociclo "boda-boda" nel traffico (15-20 km/h).
+- **Blackout elettrici**: il Box può restare senza corrente.
+- **Posizione del Box decisiva**: in città decide l'altezza dell'antenna (tetto o strada).
+
+Nuovo nel motore (`terrain.ts`): il clutter a un estremo scala con l'**altezza dell'antenna dal suolo** (`Terrain.clutterHeightRelief`, `CLUTTER_HEIGHT_M`: 20 m nel centro denso, 10 m nell'abitato, 15 m nel bosco; frazione residua 20% sopra i tetti). È attivo solo nei terreni che lo dichiarano: gli Scenari 1-4 non lo usano e non cambiano.
+
+**Terreno sintetico e coordinate non verificate**: pianura che sale da 1135 m (lago Vittoria, a sud) a ~1195 m, sette colline di 50-100 m (Namirembe, Makerere, Kololo, Naguru, Nakasero, Kibuli, Muyenga), tre zone di abitato denso (centro d'affari, Kawempe, Katwe/Kisenyi), una corona urbana di 9 km, periferia a "bosco". Il lago non è modellato come classe di suolo. Quote, posizioni e il profilo regolatorio per l'Uganda (qui EU868 g1/g3) sono **ipotesi non verificate**.
+
+**Calibrazione dell'ambiente urbano**: un primo tentativo con esponente di path loss 3,2 sommato al clutter agli estremi contava due volte l'effetto della città (in quel tentativo praticamente nessun link chiudeva, nemmeno a 2 km). L'esponente è stato calibrato sul modello **Okumura-Hata** per città grandi a 868 MHz, con antenna del Box a 12 m e terminale a 1,5 m (Hata è valido per antenne base da 30 a 200 m: qui è estrapolato). **La calibrazione vale per la classe "abitato"**: con esponente 3,0 il modello resta entro 5 dB da Hata da 0,5 a 6 km, scarto da 0 a −4 dB, cioè al più 4 dB più ottimista (test dedicato). **Non vale per le zone "abitato denso"** (centro d'affari, Kawempe, Katwe): lì il clutter è 15 dB contro 8 e il modello risulta 8-12 dB più pessimista di Hata, un'ipotesi non verificata. Le conclusioni su un dispositivo dentro quelle zone (il Portable a Kawempe, le Card nel centro) sono quindi prudenti. Ambienti: 2,6 / 3,0 / 3,4 con margine di fading 8 / 10 / 12 dB e interferenza 2 / 4 / 6 dB, portati dal territorio (`Terrain.propagation`).
+
+**Dispositivi** (altezze di installazione tipiche del contesto):
+- Box sul tetto di un edificio di 3 piani a Kololo (12 m);
+- Portable al primo piano della clinica di Kawempe (6 m, ~6 km, quartiere denso);
+- C1 nel centro d'affari, C2 a Makerere, C3 a Namirembe, C5 a Bweyogerere (periferia est, ~7 km), tutte a terra (1,2 m);
+- C4 sul corriere in boda-boda;
+- ciascuna Card con il proprio telefono.
+
+Il Fixed Relay sta su un traliccio di 25 m sulla collina di Naguru, in alcune varianti. A **0h30** l'operatore a Bweyogerere genera i file; l'SOS punta alla clinica e alla sede. Il boda parte dal centro alle 0h45, passa da Naguru (1h00) e Bweyogerere (1h27-1h42, sosta), torna da Naguru (2h09), poi alla clinica di Kawempe (2h30-2h40) e arriva alla sede alle 3h06.
+
+| Variante | Cosa succede |
+|---|---|
+| `static` | boda fermo, nessun relay |
+| `boda` | il corriere compie il giro (data mule nel traffico) |
+| `naguru-relay` | Fixed Relay sul traliccio, boda fermo |
+| `relay-boda` | Fixed Relay e corriere in servizio |
+| `box-ground` | come `naguru-relay`, ma il Box è a terra (1,5 m) invece che sul tetto |
+| `relay-blackout` | come `relay-boda`, ma il Box resta senza corrente a 0h15 (nessun UPS) |
+
+## 15. Scenario 5 — risultati
+
+Output di `npm run scenario-model -- --scenario kampala --horizon-h 6`. Le sezioni A e B sono identiche agli altri scenari. Le mappe di copertura hanno celle da 250 m (nuovo `Scenario.coverageCellM`).
+
+### C. Scenario 5 — Kampala (città densa su colline, blackout, corriere in boda-boda) — link LoRa stimati a t = 0h30 (variante `naguru-relay`), SF minimo che chiude il link
+
+| Link | Distanza | favorevole g1 14 dBm ERP/1% | favorevole g3 27 dBm ERP/10% | tipico g1 14 dBm ERP/1% | tipico g3 27 dBm ERP/10% | severo g1 14 dBm ERP/1% | severo g3 27 dBm ERP/10% |
+|---|---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| BOX–C1 | 1.8 km | SF11 | SF8 | ✗ | ✗ | ✗ | ✗ |
+| BOX–C2 | 3.0 km | SF10 | SF7 | ✗ | ✗ | ✗ | ✗ |
+| BOX–C3 | 4.7 km | ✗ | SF9 | ✗ | ✗ | ✗ | ✗ |
+| BOX–PORT | 6.1 km | ✗ | SF9 | ✗ | ✗ | ✗ | ✗ |
+| BOX–C5 | 6.8 km | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| C1–C2 | 2.5 km | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| PORT–C2 | 4.1 km | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| FR–BOX | 2.3 km | SF7 | SF7 | SF10 | SF7 | ✗ | ✗ |
+| FR–PORT | 7.4 km | ✗ | SF10 | ✗ | ✗ | ✗ | ✗ |
+| FR–C1 | 4.0 km | ✗ | SF11 | ✗ | ✗ | ✗ | ✗ |
+| FR–C5 | 4.5 km | SF12 | SF8 | ✗ | ✗ | ✗ | ✗ |
+
+### D. Tempi di consegna end-to-end (policy custody, SF max 12, orizzonte 6 h dalla partenza; file generati a 0h30)
+
+
+**ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g1 14 dBm ERP/1%**
+
+| Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| static | favorevole | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.7 min |
+| static | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| static | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| boda | favorevole | 2.0 h | 1.7 h | ✗ | ✗ | ✗ | ✗ | 0% | 2.9 min |
+| boda | tipico | 2.0 h | 2.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 2.2 min |
+| boda | severo | 2.0 h | 2.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 1.9 min |
+| naguru-relay | favorevole | — | 48 min | ✗ (2%) | ✗ (5%) | ✗ | ✗ | 100% | 11.6 min |
+| naguru-relay | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.6 min |
+| naguru-relay | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| relay-boda | favorevole | 2.0 h | 48 min | ✗ (38%) | ✗ (2%) | ✗ | ✗ | 100% | 12.7 min |
+| relay-boda | tipico | 2.0 h | 1.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 2.6 min |
+| relay-boda | severo | 2.0 h | 2.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 2.2 min |
+| box-ground | favorevole | — | 49 min | ✗ (2%) | ✗ (5%) | ✗ | ✗ | 100% | 11.6 min |
+| box-ground | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| box-ground | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| relay-blackout | favorevole | 2.0 h | — | ✗ | ✗ | ✗ | ✗ | 4% | 2.1 min |
+| relay-blackout | tipico | 2.0 h | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.5 min |
+| relay-blackout | severo | 2.0 h | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.2 min |
+
+**ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g3 27 dBm ERP/10%**
+
+| Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| static | favorevole | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 7.7 min |
+| static | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| static | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| boda | favorevole | 1.7 h | 1.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 9.3 min |
+| boda | tipico | 2.0 h | 2.5 h | ✗ | ✗ | ✗ | ✗ | 0% | 5.3 min |
+| boda | severo | 2.0 h | 2.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 2.6 min |
+| naguru-relay | favorevole | 40 s | 20 s | 55 min | 1.4 h | ✗ (7%) | ✗ | 100% | 72.0 min |
+| naguru-relay | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.0 min |
+| naguru-relay | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| relay-boda | favorevole | 40 s | 20 s | 55 min | 1.6 h | 2.6 h | 2.7 h | 100% | 69.3 min |
+| relay-boda | tipico | 2.0 h | 1.5 h | ✗ | ✗ | ✗ | ✗ | 0% | 8.4 min |
+| relay-boda | severo | 2.0 h | 2.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 3.4 min |
+| box-ground | favorevole | 1.0 min | 20 s | 55 min | 1.4 h | ✗ (7%) | ✗ | 100% | 72.1 min |
+| box-ground | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| box-ground | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| relay-blackout | favorevole | 20 s | — | ✗ | ✗ | ✗ | ✗ | 4% | 0.3 min |
+| relay-blackout | tipico | 2.0 h | — | ✗ | ✗ | ✗ | ✗ | 0% | 2.3 min |
+| relay-blackout | severo | 2.0 h | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.3 min |
+
+**DTN — il relay trattiene la copia fino alla consegna · profilo radio g1 14 dBm ERP/1%**
+
+| Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| static | favorevole | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 4.3 min |
+| static | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| static | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| boda | favorevole | 2.0 h | 1.7 h | 2.6 h | ✗ (2%) | 2.6 h | 2.6 h | 0% | 6.3 min |
+| boda | tipico | 2.0 h | 2.6 h | 2.6 h | ✗ (2%) | 2.6 h | ✗ (7%) | 0% | 3.3 min |
+| boda | severo | 2.0 h | 2.6 h | ✗ (27%) | ✗ | ✗ | ✗ | 0% | 5.8 min |
+| naguru-relay | favorevole | — | 48 min | ✗ (2%) | ✗ (5%) | ✗ | ✗ | 100% | 11.6 min |
+| naguru-relay | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.9 min |
+| naguru-relay | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| relay-boda | favorevole | 2.0 h | 48 min | 2.6 h | ✗ (4%) | 2.6 h | 2.6 h | 100% | 11.3 min |
+| relay-boda | tipico | 2.0 h | 1.8 h | 2.6 h | ✗ (5%) | 2.6 h | ✗ (7%) | 0% | 8.2 min |
+| relay-boda | severo | 2.0 h | 2.6 h | ✗ (27%) | ✗ | ✗ | ✗ | 0% | 6.0 min |
+| box-ground | favorevole | — | 49 min | ✗ (2%) | ✗ (5%) | ✗ | ✗ | 100% | 11.6 min |
+| box-ground | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| box-ground | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| relay-blackout | favorevole | 2.0 h | — | ✗ | ✗ | ✗ | ✗ | 4% | 2.1 min |
+| relay-blackout | tipico | 2.0 h | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.5 min |
+| relay-blackout | severo | 2.0 h | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.2 min |
+
+**DTN — il relay trattiene la copia fino alla consegna · profilo radio g3 27 dBm ERP/10%**
+
+| Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| static | favorevole | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 31.7 min |
+| static | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| static | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| boda | favorevole | 1.7 h | 1.6 h | 2.4 h | ✗ (14%) | 2.6 h | 2.6 h | 0% | 55.0 min |
+| boda | tipico | 2.0 h | 2.5 h | 2.6 h | ✗ (63%) | 2.6 h | ✗ (8%) | 0% | 25.2 min |
+| boda | severo | 2.0 h | 2.6 h | 3.2 h | ✗ (6%) | ✗ (6%) | ✗ | 0% | 39.2 min |
+| naguru-relay | favorevole | 40 s | 20 s | 55 min | 1.4 h | ✗ (7%) | ✗ | 100% | 72.0 min |
+| naguru-relay | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.0 min |
+| naguru-relay | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| relay-boda | favorevole | 40 s | 20 s | 55 min | 1.6 h | 2.6 h | 2.7 h | 100% | 69.3 min |
+| relay-boda | tipico | 2.0 h | 1.5 h | 1.9 h | 57 min | 2.6 h | ✗ (8%) | 0% | 42.2 min |
+| relay-boda | severo | 2.0 h | 2.6 h | 3.3 h | ✗ (6%) | ✗ (6%) | ✗ | 0% | 42.8 min |
+| box-ground | favorevole | 1.0 min | 20 s | 55 min | 1.4 h | ✗ (7%) | ✗ | 100% | 72.1 min |
+| box-ground | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| box-ground | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| relay-blackout | favorevole | 20 s | — | ✗ | ✗ | ✗ | ✗ | 4% | 0.3 min |
+| relay-blackout | tipico | 2.0 h | — | ✗ | ✗ | ✗ | ✗ | 0% | 2.3 min |
+| relay-blackout | severo | 2.0 h | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.3 min |
+
+### E. Stessa simulazione con instradamento a costo "airtime" invece che a numero di salti (coda relay ARALD attuale)
+
+
+**Metrica airtime · ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g1 14 dBm ERP/1%**
+
+| Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| static | favorevole | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.7 min |
+| static | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| static | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| boda | favorevole | 2.0 h | 1.7 h | ✗ | ✗ | ✗ | ✗ | 0% | 2.9 min |
+| boda | tipico | 2.0 h | 2.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 2.2 min |
+| boda | severo | 2.0 h | 2.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 1.9 min |
+| naguru-relay | favorevole | — | 48 min | ✗ (2%) | ✗ (5%) | ✗ | ✗ | 100% | 11.6 min |
+| naguru-relay | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.6 min |
+| naguru-relay | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| relay-boda | favorevole | 2.0 h | 48 min | ✗ (2%) | ✗ (5%) | ✗ | ✗ | 100% | 12.5 min |
+| relay-boda | tipico | 2.0 h | 1.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 2.6 min |
+| relay-boda | severo | 2.0 h | 2.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 2.2 min |
+| box-ground | favorevole | — | 49 min | ✗ (2%) | ✗ (5%) | ✗ | ✗ | 100% | 11.6 min |
+| box-ground | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| box-ground | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| relay-blackout | favorevole | 2.0 h | — | ✗ | ✗ | ✗ | ✗ | 4% | 2.1 min |
+| relay-blackout | tipico | 2.0 h | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.5 min |
+| relay-blackout | severo | 2.0 h | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.2 min |
+
+**Metrica airtime · ARALD attuale — coda relay: SOS senza scadenza / resto 5 min · profilo radio g3 27 dBm ERP/10%**
+
+| Variante | Ambiente | F1→PORT | F1→BOX | F5 | F2 | F4 | F3 | C5→BOX connesso (istantaneo) | Airtime LoRa |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| static | favorevole | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 7.7 min |
+| static | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| static | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| boda | favorevole | 1.7 h | 1.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 9.3 min |
+| boda | tipico | 2.0 h | 2.5 h | ✗ | ✗ | ✗ | ✗ | 0% | 5.3 min |
+| boda | severo | 2.0 h | 2.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 2.6 min |
+| naguru-relay | favorevole | 40 s | 20 s | 55 min | 1.4 h | ✗ (7%) | ✗ | 100% | 72.0 min |
+| naguru-relay | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 3.0 min |
+| naguru-relay | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| relay-boda | favorevole | 40 s | 20 s | 55 min | 1.4 h | ✗ (7%) | ✗ | 100% | 72.0 min |
+| relay-boda | tipico | 2.0 h | 1.5 h | ✗ | ✗ | ✗ | ✗ | 0% | 8.4 min |
+| relay-boda | severo | 2.0 h | 2.6 h | ✗ | ✗ | ✗ | ✗ | 0% | 3.4 min |
+| box-ground | favorevole | 1.0 min | 20 s | 55 min | 1.4 h | ✗ (7%) | ✗ | 100% | 72.1 min |
+| box-ground | tipico | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| box-ground | severo | — | — | ✗ | ✗ | ✗ | ✗ | 0% | 0.0 min |
+| relay-blackout | favorevole | 20 s | — | ✗ | ✗ | ✗ | ✗ | 4% | 0.3 min |
+| relay-blackout | tipico | 2.0 h | — | ✗ | ✗ | ✗ | ✗ | 0% | 2.3 min |
+| relay-blackout | severo | 2.0 h | — | ✗ | ✗ | ✗ | ✗ | 0% | 1.3 min |
+
+Legenda D/E: F1 = SOS + coordinate (1 KB) (C5→PORT e BOX); F5 = GPS + audio 10 s (150 KB) (S5→BOX); F2 = Articolo Wiki (200 KB → ~70 KB compresso) (BOX→S5); F4 = Rapporto 5 pag. + 3 JPEG (5 MB) (S5→BOX); F3 = 8 JPEG (12 MB) (S5→BOX). "✗ (x%)" = non consegnato entro l'orizzonte, x% arrivato; "—" = destinazione non raggiunta. "C5→BOX connesso" = frazione del tempo con un percorso simultaneo (connettività istantanea): una consegna avvenuta con questo valore < 100% è passata (anche) per contatti opportunistici. "Airtime LoRa" = tempo di trasmissione LoRa consumato da tutti i file, tutte le copie. Varianti: static = motocicli fermi, nessun relay: il Box sul tetto, il resto a terra; boda = il corriere C4 in boda-boda: centro → Bweyogerere → Kawempe → Kololo (data mule nel traffico); naguru-relay = ARALD Fixed Relay su un traliccio di 25 m a Naguru, corriere fermo; relay-boda = Fixed Relay a Naguru e corriere in servizio; box-ground = come 'naguru-relay', ma il Box è a terra (1,5 m) invece che sul tetto; relay-blackout = come 'relay-boda', ma il Box resta senza corrente a 0h15 (blackout, nessun UPS).
+
+### F. Pannello connessioni a t = 0h30 (variante `naguru-relay`, ambiente tipico) — formato del futuro tool
+
+
+**Profilo radio g1 14 dBm ERP/1%**
+
+| Connessione | Tecnologia | Distanza | Velocità stimata | Sostenuta | Qualità | Linea di vista |
+|---|---|---:|---:|---:|---|:---:|
+| C1 → S1 | BLE (2M PHY) | 4 m | 1.0 Mbps | 1.0 Mbps | Ottima (0.77) | sì |
+| C2 → S2 | BLE (2M PHY) | 4 m | 1.0 Mbps | 1.0 Mbps | Ottima (0.77) | sì |
+| C3 → S3 | BLE (2M PHY) | 4 m | 1.0 Mbps | 1.0 Mbps | Ottima (0.77) | sì |
+| C4 → S4 | BLE (2M PHY) | 4 m | 1.0 Mbps | 1.0 Mbps | Ottima (0.77) | sì |
+| C5 → S5 | BLE (2M PHY) | 4 m | 1.0 Mbps | 1.0 Mbps | Ottima (0.77) | sì |
+| C1 → C4 | LoRa (SF7) | 40 m | 3.2 kbps | 32 bps | Discreta (0.39) | sì |
+| BOX → FR | LoRa (SF10) | 2.3 km | 549 bps | 5 bps | Debole (0.27) | sì |
+
+**Profilo radio g3 27 dBm ERP/10%**
+
+| Connessione | Tecnologia | Distanza | Velocità stimata | Sostenuta | Qualità | Linea di vista |
+|---|---|---:|---:|---:|---|:---:|
+| C1 → S1 | BLE (2M PHY) | 4 m | 1.0 Mbps | 1.0 Mbps | Ottima (0.77) | sì |
+| C2 → S2 | BLE (2M PHY) | 4 m | 1.0 Mbps | 1.0 Mbps | Ottima (0.77) | sì |
+| C3 → S3 | BLE (2M PHY) | 4 m | 1.0 Mbps | 1.0 Mbps | Ottima (0.77) | sì |
+| C4 → S4 | BLE (2M PHY) | 4 m | 1.0 Mbps | 1.0 Mbps | Ottima (0.77) | sì |
+| C5 → S5 | BLE (2M PHY) | 4 m | 1.0 Mbps | 1.0 Mbps | Ottima (0.77) | sì |
+| BOX → FR | LoRa (SF7) | 2.3 km | 3.2 kbps | 317 bps | Discreta (0.39) | sì |
+| C1 → C4 | LoRa (SF7) | 40 m | 3.2 kbps | 317 bps | Discreta (0.39) | sì |
+
+### G. Alone di copertura LoRa del Box (ricevitore di riferimento: Card), ambiente tipico, celle da 250 m
+
+Legenda: `#` terra coperta, `.` terra non coperta, `B` posizione del Box.
+
+
+**g1 14 dBm ERP/1%** — celle coperte: 33 su 2214
+
+```text
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+..................###.................................
+.................######...............................
+...................#####..............................
+...................##B##..............................
+...................######.............................
+.....................####.............................
+......................###.............................
+......................#...............................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+```
+
+**g3 27 dBm ERP/10%** — celle coperte: 134 su 2214
+
+```text
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+................###...................................
+...............####...................................
+..............######..................................
+..............######..................................
+.............########.................................
+.............##########...............................
+.............##########...............................
+............##..#########.............................
+............#...#####B###.............................
+.................#########............................
+.................###########..........................
+..................############........................
+...................###########........................
+......................#######.........................
+......................######..........................
+.....................######...........................
+.....................####.............................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+......................................................
+```
+
+### H. I tre livelli dell'alone del Box, uno per tecnologia (celle da 40 m, ±1 km, ambiente tipico, g1 14 dBm ERP/1%)
+
+Ogni livello è calcolato separatamente verso il proprio ricevitore di riferimento (Wi-Fi e BLE → smartphone, LoRa → Card). `#` = coperto, `.` = non coperto, `B` = Box. Con celle da 40 m, una copertura di poche celle attorno al Box indica una portata di qualche decina di metri o meno: la risoluzione non permette di dire di più. La forma dell'alone che segue il territorio si vede su LoRa, sezione G.
+
+```text
+Wi-Fi                                                 BLE                                                   LoRa
+...................................................   ...................................................   ...................................................
+...................................................   ...................................................   ...................................................
+...................................................   ...................................................   ...................................................
+...................................................   ...................................................   ...................................................
+...................................................   ...................................................   ...##..............................................
+...................................................   ...................................................   ..#####............................................
+...................................................   ...................................................   ..#######..........................................
+...................................................   ...................................................   .############......................................
+...................................................   ...................................................   ##################.................................
+...................................................   ...................................................   ######################.............................
+...................................................   ...................................................   #########################..........................
+...................................................   ...................................................   ############################.......................
+...................................................   ...................................................   ##############################.....................
+...................................................   ...................................................   ###############################....................
+...................................................   ...................................................   ################################...................
+...................................................   ...................................................   ##################################.................
+...................................................   ...................................................   ###################################................
+...................................................   ...................................................   ###################################................
+...................................................   ...................................................   ####################################...............
+...................................................   ...................................................   #####################################..............
+...................................................   ...................................................   ..####################################.............
+...................................................   ...................................................   .....#################################.............
+...................................................   ...................................................   .......################################............
+...................................................   ...................................................   ........###############################............
+........................BB.........................   ........................BB.........................   ........################BB#############............
+........................BB.........................   ........................BB.........................   ........################BB##############...........
+...................................................   ...................................................   ........################################...........
+...................................................   ...................................................   ........################################...........
+...................................................   ...................................................   ........#################################..........
+...................................................   ...................................................   ........#################################..........
+...................................................   ...................................................   .........################################..........
+...................................................   ...................................................   .........################################..........
+...................................................   ...................................................   .........#################################.........
+...................................................   ...................................................   ..........################################.........
+...................................................   ...................................................   ...........###############################.........
+...................................................   ...................................................   ...........###############################.........
+...................................................   ...................................................   ............##############################.........
+...................................................   ...................................................   .............##############################........
+...................................................   ...................................................   ..............#############################........
+...................................................   ...................................................   ................###########################........
+...................................................   ...................................................   .................##########################........
+...................................................   ...................................................   ....................########################.......
+...................................................   ...................................................   .........................###################.......
+...................................................   ...................................................   .........................###################.......
+...................................................   ...................................................   .........................####################......
+...................................................   ...................................................   ..........................##################.......
+...................................................   ...................................................   ..........................#################........
+...................................................   ...................................................   ..........................###################......
+...................................................   ...................................................   ..........................#################........
+...................................................   ...................................................   ..........................################.........
+```
+- Wi-Fi: 4 celle coperte su 2550 (6400 m²)
+- BLE: 4 celle coperte su 2550 (6400 m²)
+- LoRa: 1216 celle coperte su 2550 (1945600 m²)
+
+## 16. Scenario 5 — cosa dice il modello
+
+1. **In città la portata LoRa è breve e dipende dall'altezza.**
+   - In condizioni tipiche nessun collegamento diretto tra dispositivi a terra, a 2-3 km o più, chiude: né Card–Card né Box–Card, in entrambe le sotto-bande.
+   - Il Box sul tetto (12 m) vede il relay su traliccio (25 m) a 2,3 km (SF10 all'1%, SF7 al 10%) ma nessuna Card.
+   - L'alone LoRa del Box è un'area irregolare modellata da colline e clutter, non un cerchio (sezione G).
+2. **La posizione del Box vale più della potenza.** Sul tetto copre 8,4 km² (al 10%, tipico), a terra 2,0 km²: un fattore 4. In condizioni favorevoli 114 contro 29,5 km². All'1% il rapporto è simile: 2,1 contro 0,6 km² in tipico (3,4 volte). Il clutter dominante è quello attorno all'antenna: un Box a terra lo paga per intero, uno sul tetto ne vede solo la frazione residua.
+3. **Senza corriere la rete è inutilizzabile in condizioni tipiche.** Anche con il relay, l'SOS da Bweyogerere non arriva né alla clinica né alla sede: il relay a 25 m copre bene il Box (2,3 km) ma non la periferia a 4,5 km né Kawempe a 7,4 km. Solo in condizioni favorevoli e con le regole al 10% l'SOS arriva alla sede in 20 s.
+4. **Il boda è il ponte e funziona nonostante il traffico.** Con la coda attuale l'SOS arriva alla clinica in 2,0 h e alla sede in 2,5-2,6 h (tipico). Con il relay la sede lo riceve in 1,5 h (tipico, al 10%) o 1,6 h (all'1%): il boda entra in copertura del traliccio poco prima di Naguru, nel ritorno da Bweyogerere.
+5. **Il relay tiene in vita le copie del corriere.** In condizioni favorevoli e al 10%, con la coda attuale (5 minuti per i dati non urgenti) rapporto e foto (F4/F3) arrivano alla sede in 2,6-2,7 h *con* il relay e non arrivano affatto senza. In quelle condizioni il traliccio raggiunge anche Bweyogerere (4,5 km, SF8): nessun dispositivo risulta mai isolato, e la scadenza dei 5 minuti parte solo quando un relay non ha più alcun percorso. Un relay fisso non allarga solo la copertura, estende la durata utile del ruolo di corriere. Anche in questa variante, nelle condizioni tipiche e severe, foto e rapporto si perdono con la coda attuale.
+6. **Il Box è un punto singolo di guasto.** Con il blackout a 0h15 l'SOS raggiunge ancora la clinica (il Portable a batteria), mai la sede, e ogni file destinato al Box è perso. Argomenti concreti per l'UPS (`docs/power-management.md`) e per una seconda destinazione per i contenuti, in linea con la funzione Failure Simulation del tool. In questo scenario il blackout non toglie il Portable: avere due infrastrutture in zone distinte con alimentazioni distinte è ciò che salva l'SOS.
+7. **BLE e Wi-Fi sono locali ovunque.** Telefono e propria Card: BLE 2M PHY a 1,0 Mbps. Il Box sul tetto raggiunge un telefono in strada fino a 35 m in condizioni tipiche (80 m favorevoli, 15 m severe), con Wi-Fi e BLE alla stessa portata: il clutter attorno al telefono domina. Il Box non è un access point per un quartiere. (La mappa della sezione H, a celle da 40 m, ne mostra solo il centro: la portata è stata misurata lungo un raggio, non letta dalla griglia.)
+8. **Un'osservazione per il tool: la condizione "tipico" non può essere globale.** La stessa configurazione salvata, valutata con la tabella ambientale generica (esponente 2,2), mostra 14 link LoRa fino a 7,4 km (SF7, SF9 e SF11). Con la tabella urbana calibrata ne resta uno solo, Box–relay a 2,3 km, oltre ai due BLE telefono–Card. Ogni dataset di territorio porta con sé la propria tabella (`Terrain.propagation`, usata da `assessNetwork()` senza che il chiamante debba ricordarsene: questo punto è stato corretto dopo la revisione, che aveva trovato la tabella come parametro separato e dimenticabile). L'alternativa, ricavare l'esponente dall'uso del suolo lungo il percorso, è un lavoro futuro.
+
+## 17. Il modello visto dal tool (risposta ai 10 punti del §12 di `docs/network-design-tool.md`)
+
+Stato al termine dello Scenario 5. Va aggiornato a ogni estensione del motore.
 
 1. **Parametri del modello**
    - *Per tipo di dispositivo*: `KIND_DEFAULTS` in `model.ts` (tecnologie, potenza LoRa, guadagno d'antenna, perdita da corpo, potenza BLE, EIRP Wi-Fi, altezza tipica dal suolo).
    - *Radio LoRa*: sensibilità SX1262 per SF (`SX1262_SENSITIVITY_125K`), parametri PHY (`DEFAULT_PHY`: 125 kHz, CR 4/5, preambolo 8), frame 222 B con 22 B di framing, overhead applicativo ×1,45, SF massimo.
    - *Profili regolatori*: `EU868_G1` (14 dBm ERP, 1%), `EU868_G3` (27 dBm ERP, 10%), `AU915` (30 dBm EIRP, nessun duty-cycle, dwell 400 ms, 920 MHz). Un profilo ha ERP massimo, duty-cycle, frequenza centrale e dwell time opzionale.
    - *2,4 GHz*: `BLE_RATE_STEPS`, `WIFI_RATE_STEPS`, modello `fixed`/`budget`.
-   - *Ambiente*: esponente di path loss, margine di fading, interferenza (`TERRAIN_ENVIRONMENTS`).
-   - *Territorio*: `Terrain` (quota e uso del suolo), `CLUTTER_LOSS_DB` per classe e banda, `CLUTTER_DEPTH_M`, fattore k = 4/3 della curvatura terrestre.
+   - *Ambiente*: esponente di path loss, margine di fading, interferenza. Una tabella (favorevole/tipico/severo) **per dataset di territorio**: `TERRAIN_ENVIRONMENTS` per terreni aperti (2,0/2,2/2,5), `Terrain.propagation` per un territorio che ne porta una propria, come Kampala (2,6/3,0/3,4, calibrati su Okumura-Hata per l'abitato; `EnvironmentTable` per forzarne una diversa).
+   - *Territorio*: `Terrain` (quota e uso del suolo), `CLUTTER_LOSS_DB` per classe e banda, `CLUTTER_DEPTH_M`, fattore k = 4/3 della curvatura terrestre; opzionalmente `clutterHeightRelief` con `CLUTTER_HEIGHT_M` e `CLUTTER_RESIDUAL` (clutter ridotto per antenne in alto).
+   - *Installazione del dispositivo*: altezza dal suolo (tipica per tipo, sovrascrivibile: tetto, palo, terra).
    - *Solo simulazione temporale, non necessari al primo tool*: passo, coda dei relay, metrica di instradamento, priorità, canale condiviso.
-2. **Input**: una `NetworkConfig` (`network-config.ts`: dispositivi con tipo, latitudine, longitudine, altezza opzionale; ambiente; profilo regolatorio della regione — `g1`, `g3`, `au915`; riferimento al territorio) più un `Terrain`.
+2. **Input**: una `NetworkConfig` (`network-config.ts`: dispositivi con tipo, latitudine, longitudine, altezza opzionale; ambiente; profilo regolatorio della regione — `g1`, `g3`, `au915`; riferimento al territorio) più un `Terrain` (che porta le proprie condizioni di propagazione).
 3. **Output**: per ogni coppia una `LinkAssessment` (`assess.ts`): distanza, linea di vista e diffrazione, valutazione di Wi-Fi, BLE e LoRa (applicabile, possibile, RSSI, margine, modo radio, velocità istantanea e sostenibile, qualità) e la migliore. Per ogni dispositivo e tecnologia una `CoverageGrid` (celle con possibile/velocità/qualità). La simulazione temporale aggiunge i tempi di consegna, oltre il primo tool.
 4. **Formule e regole**:
    - link budget \(RSSI = EIRP_{tx} + G_{rx} - L_{corpo} - L_{path}(d,n,f) - L_{diffrazione} - L_{clutter} - L_{interferenza}\), direzione più debole;
    - \(L_{path}\) log-distance alla frequenza LoRa della regione (868 MHz in EU868, 920 MHz in AU915) e a 2,44 GHz per BLE/Wi-Fi; la stessa frequenza LoRa è usata per la diffrazione;
    - diffrazione knife-edge sull'ostacolo dominante del profilo, ITU-R P.526 con curvatura terrestre a k = 4/3;
-   - clutter per classe di suolo, scalato con la distanza fino a 200 m;
+   - clutter per classe di suolo, scalato con la distanza fino a 200 m e, dove il terreno lo prevede, con l'altezza dell'antenna sul clutter (un'antenna sul tetto vede ~20% del clutter di una a terra);
    - time-on-air LoRa dalla formula Semtech, SF in logica ADR tra quelli ammessi dalla regione (con dwell time il frame si accorcia; uno SF in cui non sta nemmeno un byte utile è escluso);
    - gradini BLE/Wi-Fi per RSSI;
    - qualità su scala logaritmica 10 bit/s → 30 Mbit/s.
 5. **Parametri specifici dei dispositivi**: quelli di `KIND_DEFAULTS` (punto 1), mai inseriti dall'utente nella prima versione.
-6. **Parametri che dipendono dal territorio**: quota (→ diffrazione e altezza effettiva delle antenne), uso del suolo (→ clutter), la condizione ambientale scelta (esponente, margine, interferenza) e la **regione** (→ profilo regolatorio: potenza, duty-cycle, frequenza, dwell time).
+6. **Parametri che dipendono dal territorio**: quota (→ diffrazione e altezza effettiva delle antenne), uso del suolo (→ clutter), l'altezza dell'antenna sul suolo, la condizione ambientale scelta (esponente, margine, interferenza: la tabella dipende dal territorio) e la **regione** (→ profilo regolatorio: potenza, duty-cycle, frequenza, dwell time).
 7. **Possibilità di connessione**: per ogni tecnologia, i due dispositivi devono averla (il Wi-Fi richiede un Box o Portable come access point). Inoltre l'RSSI meno il margine di fading deve superare la soglia: la sensibilità dello SF più lento ammesso per LoRa, il gradino più basso per BLE/Wi-Fi.
 8. **Tecnologia usata**: tra quelle possibili, quella con la velocità istantanea più alta (in pratica Wi-Fi > BLE > LoRa).
 9. **Velocità**:
@@ -1278,12 +1676,13 @@ Stato al termine dello Scenario 4. Va aggiornato a ogni estensione del motore.
 
 **Cosa manca ancora per il tool**:
 - un caricatore di DEM e di uso del suolo reali che implementi `Terrain`;
+- un modo di ricavare l'esponente di path loss dall'uso del suolo lungo il percorso, invece di una tabella per territorio, e la calibrazione su misure reali (oggi Okumura-Hata come unico riferimento);
 - profili regolatori verificati per le regioni di interesse (oggi EU868 g1/g3 e AU915, quest'ultimo non verificato sulla normativa cilena) e altri piani (US915, AS923, IN865, …);
 - la diffrazione su più ostacoli in serie (oggi si considera solo il dominante);
 - un calcolo dell'alone abbastanza veloce per l'interazione: oggi ~0,1 s per mille celle su scala d'arcipelago. Una mappa fine (es. celle da 30 m su 40 × 40 km, ~1,8 milioni di celle) richiederebbe minuti: servirà una griglia adattiva o un calcolo per raggi;
 - l'interfaccia stessa.
 
-## 15. Implicazioni proposte (non implementate — da valutare con l'utente)
+## 18. Implicazioni proposte (non implementate — da valutare con l'utente)
 
 - **TTL di custodia per il ruolo "courier"**: per l'SOS è **fatto** (`docs/security.md` voce #120: `Priority.EMERGENCY` non scade più in `PendingDeliveryQueue`). Resta aperto per gli altri contenuti. Report, foto e audio scadono dopo 5 minuti di isolamento, e in ogni scenario sono arrivati via mulo solo con una coda DTN. Serve un vero bundle-store DTN per i nodi mobili, separato dalla coda di retry e con limiti propri di memoria.
 
@@ -1294,13 +1693,16 @@ Stato al termine dello Scenario 4. Va aggiornato a ogni estensione del motore.
 - **Fixed Relay sui colli** come elemento di progetto per i rifugi in valli adiacenti: ricuce la rete per l'SOS in decine di secondi in condizioni tipiche; per i dati medi conviene g3, perché il relay del colle porta il traffico di entrambe le valli.
 - **Seconda destinazione / failover**: un SOS indirizzato a più infrastrutture sopravvive al guasto del Box; per contenuti e report servirebbe un mirror (es. il Portable che replica le parti essenziali della Wiki e accetta i report quando il Box è irraggiungibile).
 - **Framing LoRa più compatto per le regioni con dwell time** (Scenario 4): con un dwell di 400 ms i 22 byte di intestazione ARALD per frame e il base64 nel JSON dei chunk lasciano pochi byte utili agli SF lenti (~1-2 byte a SF10). Un header binario compatto e il payload binario sul canale LoRa aumenterebbero direttamente portata utile e velocità.
+- **Fixed Relay e corriere insieme** (Scenario 5): un relay su traliccio non serve solo a coprire, tiene in copertura il corriere e quindi in vita le sue copie con la coda attuale. In progetto, il Fixed Relay si colloca lungo la rotta del corriere più che al centro dell'area.
+- **Alimentazione e ridondanza del Box** (Scenario 5): in contesti con blackout un Box senza UPS è un punto singolo di guasto per ogni contenuto a lui destinato. Serve una seconda destinazione con alimentazione indipendente (il Portable a batteria, che ha salvato l'SOS) e, per i contenuti, un mirror.
 
 
-## 16. Limiti noti del modello
+## 19. Limiti noti del modello
 
 - Nessun modello del terreno (DEM): le creste sono perdite fisse per coppia di nodi (Scenario 1) o per zona (Scenario 2); il passo successivo naturale è un profilo terrain-aware (Longley-Rice/ITM o diffrazione knife-edge su DEM).
 - Lo Scenario 2 è una geometria sintetica, non un luogo reale.
 - Nessun failover di destinazione per i contenuti (variante `box-failure`): i file indirizzati al Box restano fermi per costruzione.
+- Scenario 5: terreno sintetico, coordinate e profilo EU868 per l'Uganda non verificati; calibrazione su Okumura-Hata solo per la classe "abitato", non per l'"abitato denso" (8-12 dB più pessimista di Hata); l'antenna del Box a 12 m è fuori dalla validità di Hata (30-200 m); il lago non è una classe di suolo; solo cinque telefoni, mentre in una città densa i telefoni sono migliaia e potrebbero formare essi stessi una mesh BLE (relay Bluetooth dello smartphone): qui non modellato; il clutter a 868 MHz è una tabella per classe di suolo, non misure in strada; nessuna variazione nel tempo del traffico (solo velocità media del boda).
 - Scenario 4: terreno sintetico, coordinate e profilo AU915 per il Cile non verificati; nessun modello del salto di frequenza (hopping) né dell'occupazione dei canali nella banda 915-928 MHz, solo il vincolo di dwell time e l'efficienza del canale condiviso.
 - Scenario 3: terreno sintetico (isole a cono) e coordinate non verificate. La diffrazione considera un solo ostacolo dominante, quindi più creste in serie sono sottostimate. Con antenne molto basse la perdita del suolo può essere in parte contata due volte, nell'esponente di path loss e nella diffrazione sulla curvatura. Il clutter è una tabella per classe, non un modello di edifici. Gradini e velocità BLE/Wi-Fi sono valori tipici, non misurati su dispositivi ARALD.
 - Canale LoRa come unico dominio di collisione con efficienza fissa; nessuna collisione/hidden-terminal esplicita, nessun retry/ACK a livello di frame (implicito nell'efficienza 50%).
@@ -1309,6 +1711,6 @@ Stato al termine dello Scenario 4. Va aggiornato a ogni estensione del motore.
 - Il modello "DTN" non ha limite di memoria nei relay; quello "ARALD attuale" approssima la combinazione `floodExcept()` + `PendingDeliveryQueue` + `SeenCache` (in particolare: un relay connesso inoltra senza scadenza tramite le code del transport).
 - Throughput BLE/Wi-Fi sono valori nominali prudenziali, non misurati.
 
-## 17. Come estendere
+## 20. Come estendere
 
-Un nuovo scenario è un file accanto a `tools/scenario-model/valle-maira.ts` che esporta un oggetto `Scenario` (`tools/scenario-model/scenario.ts`: nodi con traiettorie, ambienti, messaggi, varianti, eventuale perdita dipendente dal tempo) e si registra in `cli.ts`; `model.ts` resta invariato. Parametri da riga di comando: `--scenario valle-maira|alpino-frammentato|eolie|atacama`, `--max-sf`, `--horizon-h`, `--policy custody|epidemic`. Uno scenario su territorio reale fornisce un `Terrain` negli ambienti e `shortRangeModel: "budget"`. Una configurazione salvata nel formato del tool si valuta con `--config <file.json>` (aggiungi `--json` per l'output strutturato); esempi in `tools/scenario-model/examples/` (Eolie, Atacama con `"regulatory": "au915"`). Uno scenario fuori dall'Europa indica i propri profili con `regulatoryProfiles`; il terreno sintetico generico (altopiano, coni, creste) si costruisce con `syntheticLandscape`.
+Un nuovo scenario è un file accanto a `tools/scenario-model/valle-maira.ts` che esporta un oggetto `Scenario` (`tools/scenario-model/scenario.ts`: nodi con traiettorie, ambienti, messaggi, varianti, eventuale perdita dipendente dal tempo) e si registra in `cli.ts`; `model.ts` resta invariato. Parametri da riga di comando: `--scenario valle-maira|alpino-frammentato|eolie|atacama|kampala`, `--max-sf`, `--horizon-h`, `--policy custody|epidemic`. Uno scenario su territorio reale fornisce un `Terrain` negli ambienti e `shortRangeModel: "budget"`. Una configurazione salvata nel formato del tool si valuta con `--config <file.json>` (aggiungi `--json` per l'output strutturato); esempi in `tools/scenario-model/examples/` (Eolie, Atacama con `"regulatory": "au915"`, Kampala con l'altezza di installazione dei dispositivi). Uno scenario fuori dall'Europa indica i propri profili con `regulatoryProfiles`; il terreno sintetico generico (altopiano, coni, creste) si costruisce con `syntheticLandscape`.

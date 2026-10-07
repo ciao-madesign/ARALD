@@ -3,13 +3,14 @@ import { describe, expect, it } from "vitest";
 import { assessLink, coverageGrid, qualityFromRate, qualityLabel } from "../../tools/scenario-model/assess.js";
 import * as S3 from "../../tools/scenario-model/eolie.js";
 import * as S4 from "../../tools/scenario-model/atacama.js";
+import * as S5 from "../../tools/scenario-model/kampala.js";
 import {
   ARALD_QUEUE_TTL_S, AU915, BUDGET_SHORT_RANGE, DEFAULT_PHY, LEGACY_QUEUE_TTL_S, loraDutyLimitedAppBps, loraFrameBytesFor, loraRawAppBps, loraTimeOnAir, EU868_G1, EU868_G3, type Environment, type ModelParams, type NodeSpec,
-  evaluateBle, evaluateLora, nodePosition, positionAt, simulate,
+  evaluateBle, evaluateLora, nodePosition, pathLossDb, positionAt, simulate,
 } from "../../tools/scenario-model/model.js";
-import { TERRAIN_ENVIRONMENTS, assessNetwork, parseNetworkConfig, placeDevices } from "../../tools/scenario-model/network-config.js";
+import { TERRAIN_ENVIRONMENTS, assessNetwork, parseNetworkConfig, paramsForConfig, placeDevices } from "../../tools/scenario-model/network-config.js";
 import {
-  CLUTTER_DEPTH_M, FLAT_TERRAIN, type Terrain, knifeEdgeLossDb, syntheticIslands, terrainLinkLossDb, terrainProfileLoss, toGeo, toLocal,
+  CLUTTER_DEPTH_M, CLUTTER_RESIDUAL, FLAT_TERRAIN, clutterReliefFactor, type Terrain, knifeEdgeLossDb, syntheticIslands, terrainLinkLossDb, terrainProfileLoss, toGeo, toLocal,
 } from "../../tools/scenario-model/terrain.js";
 
 const H = 3600;
@@ -335,5 +336,127 @@ describe("terreno sintetico generico e Scenario 4 (Atacama)", () => {
     expect(eu.deliveredAtByDest.BOX).not.toBeNull();
     expect(eu.deliveredAtByDest.BOX!).toBeLessThan(10 * 60);
     expect(au.deliveredAtByDest.BOX).toBeNull();
+  });
+});
+
+describe("clutter e altezza dell'antenna (rooftop vs terra)", () => {
+  const city: Terrain = { name: "città", clutterHeightRelief: true, elevationAt: () => 0, landCoverAt: () => "urban-dense" };
+  const cityNoRelief: Terrain = { ...city, clutterHeightRelief: false };
+  const far = { x: 3000, y: 0, z: 1.2 };
+
+  it("senza l'opzione il clutter non dipende dall'altezza (Scenari 1-4 invariati)", () => {
+    // solo la parte di clutter: la diffrazione sul profilo dipende comunque dall'altezza
+    const clutterOnly = (z: number) => {
+      const a = { x: 0, y: 0, z };
+      return terrainLinkLossDb(cityNoRelief, a, far, 868e6) - terrainProfileLoss(cityNoRelief, a, far, 868e6).lossDb;
+    };
+    expect(clutterOnly(25)).toBeCloseTo(clutterOnly(1.5), 9);
+  });
+
+  it("con l'opzione un'antenna sul tetto vede meno clutter di una a terra, con un minimo residuo", () => {
+    const clutterOnly = (z: number) => {
+      const a = { x: 0, y: 0, z };
+      return terrainLinkLossDb(city, a, far, 868e6) - terrainProfileLoss(city, a, far, 868e6).lossDb;
+    };
+    const ground = clutterOnly(1.5);
+    const roof = clutterOnly(12);
+    const mast = clutterOnly(60);
+    expect(roof).toBeLessThan(ground);
+    expect(mast).toBeLessThan(roof);
+    expect(clutterReliefFactor("urban-dense", 60)).toBe(CLUTTER_RESIDUAL);
+    expect(clutterReliefFactor("sea", 0)).toBe(1);
+    expect(clutterReliefFactor("urban-dense", 0)).toBe(1);
+  });
+
+  it("calibrazione urbana: con esponente 3,0 il modello resta entro 5 dB da Okumura-Hata (città grande, 868 MHz, base a 12 m, 0,5-6 km)", () => {
+    const hata = (dKm: number, hb: number, hm = 1.5, f = 868): number => {
+      const a = 3.2 * Math.pow(Math.log10(11.75 * hm), 2) - 4.97;
+      return 69.55 + 26.16 * Math.log10(f) - 13.82 * Math.log10(hb) - a + (44.9 - 6.55 * Math.log10(hb)) * Math.log10(dKm);
+    };
+    const urban: Terrain = { name: "urbano", clutterHeightRelief: true, elevationAt: () => 0, landCoverAt: () => "urban" };
+    for (const d of [0.5, 1, 2, 4, 6]) {
+      const model = pathLossDb(d * 1000, S5.KAMPALA_TERRAIN.propagation!.tipico.pathLossExponent) + terrainLinkLossDb(urban, { x: 0, y: 0, z: 12 }, { x: d * 1000, y: 0, z: 1.5 }, 868e6);
+      expect(Math.abs(model - hata(d, 12))).toBeLessThan(5);
+    }
+  });
+});
+
+describe("configurazione salvata: le condizioni di propagazione le porta il territorio", () => {
+  const cfg = parseNetworkConfig(JSON.parse(readFileSync("tools/scenario-model/examples/kampala.json", "utf8")));
+  const loraCount = (links: ReturnType<typeof assessNetwork>) => links.filter((l) => l.best!.technology === "lora").length;
+  const boxRelay = (links: ReturnType<typeof assessNetwork>) => links.find((l) => (l.a === "BOX" && l.b === "FR") || (l.a === "FR" && l.b === "BOX"));
+
+  it("assessNetwork usa da solo la tabella urbana del territorio: un chiamante non può dimenticarla (regressione)", () => {
+    const urban = assessNetwork(cfg, S5.KAMPALA_TERRAIN);
+    expect(loraCount(urban)).toBe(1); // solo Box–relay, a 2,3 km
+    expect(boxRelay(urban)!.best!.mode).toBe("SF7");
+  });
+
+  it("forzando la tabella generica per terreni aperti la stessa rete mostra molti più link LoRa: \"tipico\" non è globale", () => {
+    const generic = assessNetwork(cfg, S5.KAMPALA_TERRAIN, TERRAIN_ENVIRONMENTS);
+    expect(loraCount(generic)).toBeGreaterThan(loraCount(assessNetwork(cfg, S5.KAMPALA_TERRAIN)) + 5);
+  });
+
+  it("senza propagazione del territorio si usa la tabella generica; una tabella esplicita vince su quella del territorio", () => {
+    expect(S4.ATACAMA_TERRAIN.propagation).toBeUndefined();
+    const flat = paramsForConfig(cfg, FLAT_TERRAIN);
+    expect(flat.env.pathLossExponent).toBe(TERRAIN_ENVIRONMENTS.tipico.pathLossExponent);
+    expect(paramsForConfig(cfg, S5.KAMPALA_TERRAIN).env.pathLossExponent).toBe(3.0);
+    expect(paramsForConfig(cfg, S5.KAMPALA_TERRAIN, TERRAIN_ENVIRONMENTS).env.pathLossExponent).toBe(2.2);
+  });
+
+  it("le quote sono assolute: lo stesso clutter a quota 1000 m e a quota 0 se l'antenna ha la stessa altezza dal suolo", () => {
+    const mk = (base: number): Terrain => ({ name: "t", clutterHeightRelief: true, elevationAt: () => base, landCoverAt: () => "urban-dense" });
+    const clutterOnly = (t: Terrain, base: number) => {
+      const a = { x: 0, y: 0, z: base + 12 };
+      const b = { x: 3000, y: 0, z: base + 1.2 };
+      return terrainLinkLossDb(t, a, b, 868e6) - terrainProfileLoss(t, a, b, 868e6).lossDb;
+    };
+    expect(clutterOnly(mk(1000), 1000)).toBeCloseTo(clutterOnly(mk(0), 0), 9);
+  });
+});
+
+describe("Scenario 5 (Kampala)", () => {
+  const H = 3600;
+  const run = (variant: S5.Variant, extra: Partial<Parameters<typeof simulate>[0]> = {}, env: keyof typeof S5.ENVIRONMENTS = "tipico") =>
+    simulate({
+      nodes: S5.buildNodes(variant), messages: S5.benchmarkMessages(),
+      params: { ...params(S5.KAMPALA_TERRAIN, EU868_G3), env: S5.ENVIRONMENTS[env] }, horizonS: 6 * H, stepS: 10, policy: "custody", relayCarryTtlS: ARALD_QUEUE_TTL_S, ...extra,
+    }).deliveries.find((d) => d.messageId === "F1")!;
+
+  it("senza relay né corriere, in condizioni tipiche, l'SOS dalla periferia non arriva a nessuna infrastruttura", () => {
+    const f1 = run("static");
+    expect(f1.deliveredAtByDest.PORT).toBeNull();
+    expect(f1.deliveredAtByDest.BOX).toBeNull();
+  });
+
+  it("il corriere in boda-boda porta l'SOS alla clinica e alla sede", () => {
+    const f1 = run("boda");
+    expect(f1.deliveredAtByDest.PORT).not.toBeNull();
+    expect(f1.deliveredAtByDest.BOX).not.toBeNull();
+  });
+
+  it("il Fixed Relay sul traliccio accorcia l'attesa del corriere verso il Box", () => {
+    expect(run("relay-boda").deliveredAtByDest.BOX!).toBeLessThan(run("boda").deliveredAtByDest.BOX!);
+  });
+
+  it("blackout del Box: l'SOS arriva comunque alla clinica (Portable a batteria) ma mai alla sede", () => {
+    const f1 = run("relay-blackout");
+    expect(f1.deliveredAtByDest.PORT).not.toBeNull();
+    expect(f1.deliveredAtByDest.BOX).toBeNull();
+  });
+
+  it("Box sul tetto contro Box a terra: la copertura LoRa è almeno doppia (condizioni favorevoli, g3)", () => {
+    const cells = (variant: S5.Variant) => {
+      const box = S5.buildNodes(variant).find((n) => n.id === "BOX")!;
+      const pos = nodePosition(box, 1800, S5.KAMPALA_TERRAIN);
+      const g = coverageGrid(box, pos, "lora", { ...params(S5.KAMPALA_TERRAIN, EU868_G3), env: S5.ENVIRONMENTS.favorevole }, { minX: pos.x - 8000, maxX: pos.x + 8000, minY: pos.y - 8000, maxY: pos.y + 8000 }, 500);
+      return g.cells.filter((c) => c.possible).length;
+    };
+    expect(cells("naguru-relay")).toBeGreaterThan(2 * cells("box-ground"));
+  });
+
+  it("la CLI sceglie la dimensione delle celle dallo scenario (250 m a Kampala)", () => {
+    expect(S5.kampala.coverageCellM).toBe(250);
   });
 });

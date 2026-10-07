@@ -19,13 +19,14 @@ import { valleMaira } from "./valle-maira.js";
 import { alpinoFrammentato } from "./alpino-frammentato.js";
 import { EOLIE_TERRAIN, eolie } from "./eolie.js";
 import { ATACAMA_TERRAIN, atacama } from "./atacama.js";
+import { KAMPALA_TERRAIN, kampala } from "./kampala.js";
 import { type LinkAssessment, assessLink, coverageGrid, qualityLabel } from "./assess.js";
 import { assessNetwork, parseNetworkConfig } from "./network-config.js";
 import { FLAT_TERRAIN, type Terrain } from "./terrain.js";
 
-const SCENARIOS: Record<string, Scenario> = { [valleMaira.id]: valleMaira, [alpinoFrammentato.id]: alpinoFrammentato, [eolie.id]: eolie, [atacama.id]: atacama };
+const SCENARIOS: Record<string, Scenario> = { [valleMaira.id]: valleMaira, [alpinoFrammentato.id]: alpinoFrammentato, [eolie.id]: eolie, [atacama.id]: atacama, [kampala.id]: kampala };
 /** Dataset di territorio noti al motore, referenziati per nome da una configurazione salvata. */
-const TERRAINS: Record<string, Terrain> = { "eolie-sintetico": EOLIE_TERRAIN, "atacama-sintetico": ATACAMA_TERRAIN };
+const TERRAINS: Record<string, Terrain> = { "eolie-sintetico": EOLIE_TERRAIN, "atacama-sintetico": ATACAMA_TERRAIN, "kampala-sintetico": KAMPALA_TERRAIN };
 
 function arg(name: string, fallback: string): string {
   const i = process.argv.indexOf(`--${name}`);
@@ -222,16 +223,18 @@ if (terrain) {
   const ysAll = snapNodes.flatMap((n) => n.path.map((w) => w.y));
   // Celle da 1 km, più grandi solo se l'area supera ~60 km (mappa leggibile).
   const span = Math.max(Math.max(...xsAll) - Math.min(...xsAll), Math.max(...ysAll) - Math.min(...ysAll)) + 8000;
-  const gCell = Math.max(1000, Math.ceil(span / 60 / 500) * 500);
-  out.push(`\n### G. Alone di copertura LoRa del Box (ricevitore di riferimento: Card), ambiente tipico, celle da ${gCell / 1000} km\n`);
-  out.push("Legenda: `#` terra coperta, `+` mare coperto, `.` terra non coperta, spazio = mare non coperto, `B` posizione del Box.\n");
+  const gCell = scenario.coverageCellM ?? Math.max(1000, Math.ceil(span / 60 / 500) * 500);
+  out.push(`\n### G. Alone di copertura LoRa del Box (ricevitore di riferimento: Card), ambiente tipico, celle da ${gCell >= 1000 ? `${gCell / 1000} km` : `${gCell} m`}\n`);
   const box = snapNodes.find((n) => n.kind === "box")!;
   const boxPos = nodePosition(box, scenario.eventT, terrain);
   const xs = snapNodes.flatMap((n) => n.path.map((w) => w.x));
   const ys = snapNodes.flatMap((n) => n.path.map((w) => w.y));
-  const bbox = { minX: Math.min(...xs) - 4000, maxX: Math.max(...xs) + 4000, minY: Math.min(...ys) - 4000, maxY: Math.max(...ys) + 4000 };
-  for (const [regName, reg] of regs) {
-    const g = coverageGrid(box, boxPos, "lora", params("tipico", reg), bbox, gCell);
+  const margin = (scenario.coverageCellM ?? 0) * 6 || 4000; // 6 celle di margine attorno ai nodi (4 km se la dimensione è automatica)
+  const bbox = { minX: Math.min(...xs) - margin, maxX: Math.max(...xs) + margin, minY: Math.min(...ys) - margin, maxY: Math.max(...ys) + margin };
+  const gridsG = regs.map(([regName, reg]) => ({ regName, g: coverageGrid(box, boxPos, "lora", params("tipico", reg), bbox, gCell) }));
+  const hasSea = gridsG[0].g.cells.some((cell) => terrain.landCoverAt(cell.x, cell.y) === "sea");
+  out.push(`Legenda: \`#\` terra coperta, ${hasSea ? "`+` mare coperto, " : ""}\`.\` terra non coperta, ${hasSea ? "spazio = mare non coperto, " : ""}\`B\` posizione del Box.\n`);
+  for (const { regName, g } of gridsG) {
     const covered = g.cells.filter((c) => c.possible).length;
     out.push(`\n**${regName}** — celle coperte: ${covered} su ${g.cells.length}\n`);
     out.push("```text");
@@ -249,7 +252,7 @@ if (terrain) {
   }
 
   out.push(`\n### H. I tre livelli dell'alone del Box, uno per tecnologia (celle da 40 m, ±1 km, ambiente tipico, ${regs[0][0]})\n`);
-  out.push("Ogni livello è calcolato separatamente verso il proprio ricevitore di riferimento (Wi-Fi e BLE → smartphone, LoRa → Card). `#` = coperto, `.` = non coperto, `B` = Box. Nel centro abitato denso Wi-Fi e BLE arrivano a ~50-60 m in ogni direzione, perché domina il clutter attorno al Box stesso; con questi parametri BLE e Wi-Fi verso uno smartphone hanno la stessa portata, ma il Wi-Fi è ~36 volte più veloce e vince. La forma dell'alone che segue il territorio si vede su LoRa, sezione G.\n");
+  out.push("Ogni livello è calcolato separatamente verso il proprio ricevitore di riferimento (Wi-Fi e BLE → smartphone, LoRa → Card). `#` = coperto, `.` = non coperto, `B` = Box. Con celle da 40 m, una copertura di poche celle attorno al Box indica una portata di qualche decina di metri o meno: la risoluzione non permette di dire di più. La forma dell'alone che segue il territorio si vede su LoRa, sezione G.\n");
   const zoom = { minX: boxPos.x - 1000, maxX: boxPos.x + 1000, minY: boxPos.y - 1000, maxY: boxPos.y + 1000 };
   const pz = params("tipico", regs[0][1]);
   const layers = (["wifi", "ble", "lora"] as const).map((tech) => coverageGrid(box, boxPos, tech, pz, zoom, 40));
@@ -267,7 +270,10 @@ if (terrain) {
     }).join("   "));
   }
   out.push("```");
-  out.push(...layers.map((g, i) => `- ${names[i]}: ${g.cells.filter((x) => x.possible).length} celle coperte su ${g.cells.length}`));
+  out.push(...layers.map((g, i) => {
+    const n = g.cells.filter((x) => x.possible).length;
+    return `- ${names[i]}: ${n} celle coperte su ${g.cells.length} (${Math.round(n * 40 * 40)} m²)`;
+  }));
 }
 
 console.log(out.join("\n"));

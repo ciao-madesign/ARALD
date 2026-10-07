@@ -26,6 +26,8 @@ export interface Scenario {
    * Uno scenario fuori dall'Europa indica quelli della propria regione.
    */
   regulatoryProfiles?: [string, RegulatoryProfile][];
+  /** Dimensione (m) delle celle della mappa di copertura LoRa (sezione G). Default: ≥ 1 km, adattata all'area. */
+  coverageCellM?: number;
   /** Modello BLE/Wi-Fi: "fixed" (default, Scenari 1-2) o "budget" (link budget a 2,4 GHz). */
   shortRangeModel?: "fixed" | "budget";
 }

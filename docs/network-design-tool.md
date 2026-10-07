@@ -247,7 +247,7 @@ con **priorità regolabili dall'utente** (resilienza, copertura, costo, accessib
 
 | Funzione | Cosa c'è già | Cosa manca |
 |---|---|---|
-| Nodo OFFLINE | `NodeSpec.offFrom` (un nodo spento da un istante); varianti di guasto negli scenari (`card-failure`, `box-failure`) | Uno stato "failed" interrogabile senza simulazione temporale, sulla `NetworkConfig` del tool |
+| Nodo OFFLINE | `NodeSpec.offFrom` (un nodo spento da un istante); varianti di guasto negli scenari (`card-failure`, `box-failure`, `relay-blackout`: il Box senza corrente a Kampala mostra il single point of failure) | Uno stato "failed" interrogabile senza simulazione temporale, sulla `NetworkConfig` del tool |
 | Ricalcolo di connessioni e copertura dopo un guasto | `assessNetwork()` e `coverageGrid()` sono deterministiche e senza stato: basta ricalcolarle senza i nodi spenti | Copertura "di rete" (unione degli aloni dei nodi attivi) e percentuale di area coperta |
 | Nodi isolati, dipendenze critiche | Grafo dei link già calcolato | Componenti connesse, nodi di articolazione (single point of failure), percorsi alternativi |
 | Diretto vs opportunistico | La simulazione temporale distingue connettività istantanea e consegna opportunistica (mule, aliscafo) | Per il tool statico: un modo di descrivere i percorsi opportunistici senza simulazione completa (es. "corridoi" percorribili tra componenti) |
@@ -258,7 +258,7 @@ con **priorità regolabili dall'utente** (resilienza, copertura, costo, accessib
 
 Annotazioni tecniche, non decisioni: servono a non allontanare il motore dall'obiettivo mentre si lavora sui prossimi scenari.
 
-Aggiornato al termine dello Scenario 4 (`docs/scenario-simulation.md` §14 risponde punto per punto al §12).
+Aggiornato al termine dello Scenario 5 (`docs/scenario-simulation.md` §17 risponde punto per punto al §12).
 
 | Requisito del tool | Cosa c'è nel motore | Cosa manca |
 |---|---|---|
@@ -268,6 +268,8 @@ Aggiornato al termine dello Scenario 4 (`docs/scenario-simulation.md` §14 rispo
 | Connessione e tecnologia tra due dispositivi (§5) | `assessLink()`: le tre tecnologie valutate, la migliore scelta per velocità | — |
 | Qualità/velocità numerica della linea (§6) | `rateBps`, `sustainedBps` (LoRa con duty-cycle), `quality` 0-1 su scala logaritmica, `qualityLabel()`; BLE/Wi-Fi a link budget, velocità dipendente da distanza e territorio | Validazione delle soglie dei colori sul campo |
 | Pannello connessioni (§7) | `assessNetwork()` e `--config <file>` (tabella o `--json`) | — |
+| Altezza di installazione (tetto, palo, terra) | `heightAglM` per dispositivo; clutter ridotto per antenne alte sul suolo (`Terrain.clutterHeightRelief`); in Scenario 5 un Box sul tetto copre 4 volte l'area di uno a terra | Altezza degli edifici da dati reali (oggi l'utente la indica) |
+| Condizioni di propagazione per territorio | `Terrain.propagation`: ogni dataset porta le proprie condizioni (tabella generica per terreni aperti, tabella urbana calibrata su Okumura-Hata per l'abitato, Scenario 5); l'abitato denso non è calibrato | Esponente ricavato dall'uso del suolo lungo il percorso; calibrazione su misure |
 | Regole radio della regione (potenza, duty-cycle, dwell time, frequenza) | `RegulatoryProfile` con ERP, duty-cycle, frequenza centrale e dwell time; profili `EU868_G1`, `EU868_G3`, `AU915`; `"regulatory"` nella configurazione salvata (Scenario 4) | Profili verificati sulla normativa delle regioni di interesse e altri piani (US915, AS923, IN865, …) |
 | Mappa e dispositivi posizionati dall'utente (§3) | `toLocal()`/`toGeo()` tra latitudine/longitudine e metri | L'interfaccia web (fuori dal motore) |
 | Interrogazione "A in X, B in Y, su questo territorio → connessione e prestazioni" (§10) | `assessLink()` deterministica e senza stato, separata da simulazione e CLI | — |

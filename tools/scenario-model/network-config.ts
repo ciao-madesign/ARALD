@@ -55,6 +55,14 @@ export const TERRAIN_ENVIRONMENTS: Record<EnvironmentName, Omit<Environment, "te
   severo: { name: "severo", pathLossExponent: 2.5, fadeMarginDb: 12, obstructionDb: {}, obstructionScale: 1, interferenceDb: 5 },
 };
 
+/**
+ * Tabella delle condizioni di propagazione (favorevole/tipico/severo). La condizione non è
+ * globale: lo stesso "tipico" vale esponente 2,2 in un deserto aperto e 3,0 in una città
+ * (calibrato su Okumura-Hata). Di norma la porta il territorio (`Terrain.propagation`); questa
+ * tabella serve per forzarne una diversa (confronti, esperimenti).
+ */
+export type EnvironmentTable = Record<EnvironmentName, Omit<Environment, "terrain">>;
+
 export const REGULATORY: Record<RegulatoryName, typeof EU868_G1> = { g1: EU868_G1, g3: EU868_G3, au915: AU915 };
 
 const KINDS = Object.keys(KIND_DEFAULTS) as NodeKind[];
@@ -121,9 +129,15 @@ export function placeDevices(cfg: NetworkConfig, terrain: Terrain): NodeSpec[] {
   }));
 }
 
-export function paramsForConfig(cfg: NetworkConfig, terrain: Terrain): ModelParams {
+/**
+ * Parametri del modello per una configurazione. Le condizioni di propagazione vengono, in
+ * ordine: dalla tabella `environments` passata esplicitamente; da `terrain.propagation` se il
+ * territorio le porta (un dataset urbano porta le proprie); altrimenti da `TERRAIN_ENVIRONMENTS`.
+ */
+export function paramsForConfig(cfg: NetworkConfig, terrain: Terrain, environments?: EnvironmentTable): ModelParams {
+  const preset = environments ? undefined : terrain.propagation?.[cfg.environment];
   return {
-    env: { ...TERRAIN_ENVIRONMENTS[cfg.environment], terrain },
+    env: { ...(environments ?? TERRAIN_ENVIRONMENTS)[cfg.environment], ...preset, terrain },
     reg: REGULATORY[cfg.regulatory], phy: DEFAULT_PHY, shortRange: BUDGET_SHORT_RANGE,
     loraFrameBytes: 222, loraFrameOverheadBytes: 22, protocolOverhead: 1.45, channelEfficiency: 0.5, maxSf: 12,
   };
@@ -133,8 +147,8 @@ export function paramsForConfig(cfg: NetworkConfig, terrain: Terrain): ModelPara
  * Valuta ogni coppia di dispositivi della configurazione (§5): restituisce solo le
  * coppie con almeno una tecnologia possibile, ordinate per qualità decrescente.
  */
-export function assessNetwork(cfg: NetworkConfig, terrain: Terrain): LinkAssessment[] {
-  const p = paramsForConfig(cfg, terrain);
+export function assessNetwork(cfg: NetworkConfig, terrain: Terrain, environments?: EnvironmentTable): LinkAssessment[] {
+  const p = paramsForConfig(cfg, terrain, environments);
   const nodes = placeDevices(cfg, terrain);
   const out: LinkAssessment[] = [];
   for (let i = 0; i < nodes.length; i++) {

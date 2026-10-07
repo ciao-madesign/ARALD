@@ -11,6 +11,7 @@ Modello **teorico e parametrico** di efficienza della rete ARALD: grafo dinamico
 - `network-config.ts` — configurazione salvabile (`NetworkConfig`), validazione, `assessNetwork()`; esempi in `examples/`.
 - `eolie.ts` — Scenario 3, Isole Eolie (rete tra isole, aliscafo come data mule, Fixed Relay su Panarea).
 - `atacama.ts` — Scenario 4, deserto di Atacama (distanze lunghe, fuoristrada come data mule, banda 915-928 MHz con dwell time).
+- `kampala.ts` — Scenario 5, Kampala (città densa su colline, blackout, corriere in boda-boda, Box sul tetto o a terra).
 - `cli.ts` — stampa i risultati in Markdown.
 
 ```bash
@@ -18,6 +19,7 @@ npm run scenario-model                                  # Scenario 1
 npm run scenario-model -- --scenario alpino-frammentato # Scenario 2
 npm run scenario-model -- --scenario eolie --horizon-h 6 # Scenario 3
 npm run scenario-model -- --scenario atacama --horizon-h 6 # Scenario 4
+npm run scenario-model -- --scenario kampala --horizon-h 6 # Scenario 5
 npm run scenario-model -- --config tools/scenario-model/examples/eolie.json [--json]
 npm run scenario-model -- --max-sf 10 --horizon-h 24
 ```

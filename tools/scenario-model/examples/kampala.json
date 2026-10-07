@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "name": "Kampala — Box sul tetto a Kololo, Portable alla clinica di Kawempe, Fixed Relay sul traliccio di Naguru",
+  "frame": { "lat0": 0.32, "lon0": 32.58 },
+  "environment": "tipico",
+  "regulatory": "g3",
+  "terrain": "kampala-sintetico",
+  "devices": [
+    { "id": "BOX", "kind": "box", "lat": 0.327, "lon": 32.593, "heightAglM": 12, "label": "Kololo, tetto di 3 piani" },
+    { "id": "PORT", "kind": "portable", "lat": 0.37, "lon": 32.558, "heightAglM": 6, "label": "Clinica di Kawempe, primo piano" },
+    { "id": "FR", "kind": "relay", "lat": 0.333, "lon": 32.613, "heightAglM": 25, "label": "Naguru, traliccio di 25 m" },
+    { "id": "C1", "kind": "card", "lat": 0.3165, "lon": 32.581, "label": "Centro d'affari" },
+    { "id": "C2", "kind": "card", "lat": 0.334, "lon": 32.5665, "label": "Makerere" },
+    { "id": "C3", "kind": "card", "lat": 0.3045, "lon": 32.5575, "label": "Namirembe" },
+    { "id": "C5", "kind": "card", "lat": 0.35, "lon": 32.65, "label": "Bweyogerere" },
+    { "id": "S1", "kind": "phone", "lat": 0.31652, "lon": 32.58102 },
+    { "id": "S5", "kind": "phone", "lat": 0.35002, "lon": 32.65002 }
+  ]
+}
