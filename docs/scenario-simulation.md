@@ -1641,7 +1641,7 @@ Wi-Fi                                                 BLE                       
 
 ## 17. Il modello visto dal tool (risposta ai 10 punti del §12 di `docs/network-design-tool.md`)
 
-Stato al termine dello Scenario 5. Va aggiornato a ogni estensione del motore.
+Stato al termine dello Scenario 5. Va aggiornato a ogni estensione del motore. La funzione di resilienza (guasti, connettività diretta e opportunistica, Resilience Score) ha un documento proprio: [`network-resilience.md`](network-resilience.md).
 
 1. **Parametri del modello**
    - *Per tipo di dispositivo*: `KIND_DEFAULTS` in `model.ts` (tecnologie, potenza LoRa, guadagno d'antenna, perdita da corpo, potenza BLE, EIRP Wi-Fi, altezza tipica dal suolo).

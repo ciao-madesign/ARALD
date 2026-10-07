@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "name": "Eolie — rete con aliscafo come data mule (test di resilienza)",
+  "frame": { "lat0": 38.6, "lon0": 15.05 },
+  "environment": "tipico",
+  "regulatory": "g3",
+  "terrain": "eolie-sintetico",
+  "devices": [
+    { "id": "BOX", "kind": "box", "lat": 38.4665, "lon": 14.9545, "label": "Lipari centro" },
+    { "id": "PORT", "kind": "portable", "lat": 38.8, "lon": 15.237, "label": "Stromboli paese" },
+    { "id": "FR", "kind": "relay", "lat": 38.636, "lon": 15.066, "label": "Panarea, vetta" },
+    { "id": "C1", "kind": "card", "lat": 38.418, "lon": 14.962, "label": "Vulcano Porto" },
+    { "id": "C2", "kind": "card", "lat": 38.561, "lon": 14.879, "label": "Santa Marina Salina" },
+    { "id": "C3", "kind": "card", "lat": 38.632, "lon": 15.08, "label": "Panarea, San Pietro" },
+    { "id": "C5", "kind": "card", "lat": 38.797, "lon": 15.222, "label": "Escursionista a Stromboli" },
+    {
+      "id": "C4", "kind": "card", "lat": 38.4705, "lon": 14.9645, "heightAglM": 3, "label": "Aliscafo Lipari – Panarea – Stromboli e ritorno",
+      "route": [
+        { "tS": 0, "lat": 38.4705, "lon": 14.9645 },
+        { "tS": 900, "lat": 38.4705, "lon": 14.9645 },
+        { "tS": 2160, "lat": 38.53, "lon": 15.01 },
+        { "tS": 3600, "lat": 38.629, "lon": 15.085 },
+        { "tS": 3890, "lat": 38.629, "lon": 15.085 },
+        { "tS": 6300, "lat": 38.797, "lon": 15.243 },
+        { "tS": 7200, "lat": 38.797, "lon": 15.243 },
+        { "tS": 9600, "lat": 38.629, "lon": 15.085 },
+        { "tS": 9900, "lat": 38.629, "lon": 15.085 },
+        { "tS": 11160, "lat": 38.53, "lon": 15.01 },
+        { "tS": 12600, "lat": 38.4705, "lon": 14.9645 }
+      ]
+    }
+  ]
+}

@@ -1950,3 +1950,17 @@ Un relay instrada `PRIVATE_MESSAGE`/`GROUP_MESSAGE` senza poter leggerne il payl
 
     Nessuna modifica a `node/src/`, nessuna nuova dipendenza.
 
+
+130. **Simulazione teorica — Test Network Resilience (simulazione di guasto, Resilience Score)**, 7 ottobre 2026 — su ok esplicito dell'utente ("procedi con la funzione di resilienza"), seguito della voce #129 e dei requisiti in `docs/network-design-tool.md`. Nuovo `tools/scenario-model/resilience.ts`: nucleo sul grafo (nodi spenti, connessioni residue, frammenti, nodi isolati/tagliati fuori, percorsi allungati, celle di copertura perse, dipendenze critiche, percorsi opportunistici *time-respecting*) con adattatore radio `prepareResilience()` che riusa `assessLink`/`coverageGrid`; tre modalità di guasto (singolo, multiplo, d'area con nodi spenti e/o zone che attenuano i link); Resilience Score (6 componenti, pesi uguali, calcolato dal modello, non dalla UI); `resilience-report.ts` (testo), nuovo campo `route` per i dispositivi mobili in `network-config.ts`, flag `--resilience/--fail/--fail-area/--block-area/--window/--at/--variant all` in `cli.ts`, esempio `examples/eolie-resilienza.json`, risultati reali su tutti e 5 gli scenari in `docs/network-resilience.md`. Pesi e componenti sono una proposta di progetto, non tarati su dati reali.
+
+    Bug trovati lungo il lavoro: la finestra opportunistica partiva da t=0 contando contatti precedenti al guasto (ora `max(fromS, atS)`); una "copertura mantenuta" relativa premiava reti già morte (sostituita da una componente assoluta); la variante `storm` risultava identica a `fixed-relay` perché la perturbazione non era passata al modello (ora `extraLossDb` anche come funzione del tempo); le reti senza dati di mobilità erano penalizzate (finestra automatica/istantanea singola); la tabella delle dipendenze includeva dipendenti che sono solo smartphone.
+
+    Revisione (code-review), problemi reali corretti con test di regressione:
+    1. `--window`, `--at`, `--profile`, `--fail` non erano validati: valori non numerici davano analisi silenziosamente sbagliate (finestra vuota, punteggio con "NaN h") o stack trace; ora errore chiaro e uscita 1, anche per nodi sconosciuti;
+    2. nessun tetto agli istanti della finestra (`--window 0,100000,1` ≈ 3,6e8 istantanee): ora massimo 20000, e `fromS/toS/stepS` devono essere finiti; un percorso `route` è limitato a 10000 punti;
+    3. `rankSingleFailures` ricalcolava per ogni nodo la tabella delle dipendenze, mai usata: ora `evaluateFailure(..., { dependencies: false })`;
+    4. `--fail-area` con raggio ≤ 0 e `--block-area` con perdita ≤ 0 venivano accettati senza effetto; ora errore. Senza coordinate geografiche lo scenario avvisa che i valori sono x,y locali;
+    5. un link che toccava un vertice o correva lungo un lato di un'area poligonale non era visto come ostruito (disuguaglianze strette): ora i casi di tocco/allineamento sono gestiti;
+    6. titolo del rapporto duplicato ("test di resilienza" due volte) e `--variant all` che ignorava in silenzio `--fail`/`--at`: ora titolo pulito e avviso esplicito.
+
+    Limiti documentati (non corretti): il guasto d'area è valutato alla sola ora del guasto (un nodo mobile fuori area a quell'ora può poi attraversarla e il recupero opportunistico risulta sovrastimato); un `route` non è obbligato a partire dalla posizione fissa del dispositivo; niente capacità/durata dei contatti né carico. Nessuna modifica a `node/src/`, nessuna nuova dipendenza.

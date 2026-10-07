@@ -247,11 +247,10 @@ con **priorità regolabili dall'utente** (resilienza, copertura, costo, accessib
 
 | Funzione | Cosa c'è già | Cosa manca |
 |---|---|---|
-| Nodo OFFLINE | `NodeSpec.offFrom` (un nodo spento da un istante); varianti di guasto negli scenari (`card-failure`, `box-failure`, `relay-blackout`: il Box senza corrente a Kampala mostra il single point of failure) | Uno stato "failed" interrogabile senza simulazione temporale, sulla `NetworkConfig` del tool |
-| Ricalcolo di connessioni e copertura dopo un guasto | `assessNetwork()` e `coverageGrid()` sono deterministiche e senza stato: basta ricalcolarle senza i nodi spenti | Copertura "di rete" (unione degli aloni dei nodi attivi) e percentuale di area coperta |
-| Nodi isolati, dipendenze critiche | Grafo dei link già calcolato | Componenti connesse, nodi di articolazione (single point of failure), percorsi alternativi |
-| Diretto vs opportunistico | La simulazione temporale distingue connettività istantanea e consegna opportunistica (mule, aliscafo) | Per il tool statico: un modo di descrivere i percorsi opportunistici senza simulazione completa (es. "corridoi" percorribili tra componenti) |
-| Resilience Score | — | Definizione delle componenti e dei pesi dal modello, da documentare come tutte le altre formule |
+| Nodo OFFLINE, ricalcolo di connessioni, copertura, isolati, alternative, dipendenze critiche (§A) | **Fatto**: `tools/scenario-model/resilience.ts` (`evaluateFailure`, `criticalDependencies`, `rankSingleFailures`), ~1 ms per guasto dopo una preparazione di ~1 s; dettagli e risultati in `docs/network-resilience.md` | L'interfaccia (nodo spento sulla mappa, selezione di nodi e aree) |
+| Failure Modes: guasto singolo, multiplo, d'area e ostacoli (§A) | **Fatto** (cerchi e poligoni in lat/lon o metri; spegnimento dei nodi e perdita sui link attraversati) | Disegno delle aree sulla mappa |
+| Resilience Score (§A) | **Fatto**: media pesata di componenti definite dal modello, pesi regolabili (`ResilienceWeights`) | Taratura su dati reali; pesi scelti dall'utente nell'Optimizer |
+| Diretto vs opportunistico (§A) | **Fatto** per i nodi con percorsi dichiarati (`route`); un percorso opportunistico richiede contatti in ordine temporale | Mobilità spontanea (persone che si spostano senza saperlo); capacità e tempo dei contatti |
 | Optimizer | `assessLink()`/`coverageGrid()` sono le valutazioni elementari riusabili | Generazione di posizioni candidate dal territorio, funzione obiettivo multi-parametrica, ricerca, spiegazione dei suggerimenti |
 
 ## Cosa implica già oggi per il motore (`tools/scenario-model/`)

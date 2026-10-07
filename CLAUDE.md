@@ -40,6 +40,7 @@ Il piano d'insieme originario (milestone 0-20 + i follow-up post-audit) è compl
 | Specifica UX/UI per il nuovo giro di rifinimento (icone, stati, legenda, gerarchia, mappa-centrica, Operational/Configuration) — mobile, Mirror Portal, Web UI del nodo | [`docs/ux-ui-design-system.md`](docs/ux-ui-design-system.md) |
 | Simulazione teorica parametrica di efficienza della rete per scenario (link budget LoRa, duty-cycle EU868, mobilità, store-and-forward) — ipotesi, risultati, limiti | [`docs/scenario-simulation.md`](docs/scenario-simulation.md) |
 | Obiettivo finale della simulazione: tool interattivo di progettazione, verifica di resilienza e ottimizzazione di reti ARALD su mappa reale (vincolo di progetto per `tools/scenario-model/`) | [`docs/network-design-tool.md`](docs/network-design-tool.md) |
+| Test Network Resilience (guasto singolo/multiplo/d'area, connettività diretta vs opportunistica, Resilience Score) — definizioni, uso, risultati | [`docs/network-resilience.md`](docs/network-resilience.md) |
 
 **Leggi la voce/il documento pertinente prima di toccare il codice corrispondente** — spiegano non solo cosa è stato fatto ma perché, inclusi i bug trovati dalla revisione prima di considerare ogni voce conclusa.
 

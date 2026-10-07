@@ -12,6 +12,8 @@ Modello **teorico e parametrico** di efficienza della rete ARALD: grafo dinamico
 - `eolie.ts` — Scenario 3, Isole Eolie (rete tra isole, aliscafo come data mule, Fixed Relay su Panarea).
 - `atacama.ts` — Scenario 4, deserto di Atacama (distanze lunghe, fuoristrada come data mule, banda 915-928 MHz con dwell time).
 - `kampala.ts` — Scenario 5, Kampala (città densa su colline, blackout, corriere in boda-boda, Box sul tetto o a terra).
+- `resilience.ts` — Test Network Resilience: guasti (nodi, aree, ostacoli), connettività diretta e opportunistica, dipendenze critiche, Resilience Score; nucleo sul grafo + adattatore radio.
+- `resilience-report.ts` — testo Markdown dei risultati di resilienza.
 - `cli.ts` — stampa i risultati in Markdown.
 
 ```bash
@@ -21,7 +23,8 @@ npm run scenario-model -- --scenario eolie --horizon-h 6 # Scenario 3
 npm run scenario-model -- --scenario atacama --horizon-h 6 # Scenario 4
 npm run scenario-model -- --scenario kampala --horizon-h 6 # Scenario 5
 npm run scenario-model -- --config tools/scenario-model/examples/eolie.json [--json]
+npm run scenario-model -- --config tools/scenario-model/examples/eolie-resilienza.json --resilience [--fail PORT,C4]   # resilienza
 npm run scenario-model -- --max-sf 10 --horizon-h 24
 ```
 
-Risultati, ipotesi e limiti: `docs/scenario-simulation.md`. Test: `tests/unit/scenario-model.test.ts`, `tests/unit/scenario-model-tool.test.ts`. Obiettivo finale del motore: `docs/network-design-tool.md`.
+Risultati, ipotesi e limiti: `docs/scenario-simulation.md`. Resilienza: `docs/network-resilience.md`. Test: `tests/unit/scenario-model.test.ts`, `tests/unit/scenario-model-tool.test.ts`, `tests/unit/scenario-model-resilience.test.ts`. Obiettivo finale del motore: `docs/network-design-tool.md`.

@@ -8,6 +8,10 @@
  *   npm run scenario-model -- --max-sf 10 --horizon-h 24
  *   npm run scenario-model -- --config tools/scenario-model/examples/eolie.json [--json]
  *                                  # valuta una configurazione salvata (formato del futuro tool)
+ *   npm run scenario-model -- --config <file.json> --resilience [--fail ID,ID] [--fail-area lat,lon,m]
+ *        [--block-area lat,lon,m,dB] [--window oraDa,oraA[,passoS]] [--json]
+ *                                  # test di resilienza: punteggio e dipendenze critiche, oppure l'effetto di un guasto
+ *   npm run scenario-model -- --scenario eolie --variant hydrofoil --resilience [--fail ID]
  */
 import { readFileSync } from "node:fs";
 import {
@@ -21,7 +25,11 @@ import { EOLIE_TERRAIN, eolie } from "./eolie.js";
 import { ATACAMA_TERRAIN, atacama } from "./atacama.js";
 import { KAMPALA_TERRAIN, kampala } from "./kampala.js";
 import { type LinkAssessment, assessLink, coverageGrid, qualityLabel } from "./assess.js";
-import { assessNetwork, parseNetworkConfig } from "./network-config.js";
+import { assessNetwork, paramsForConfig, parseNetworkConfig, placeDevices } from "./network-config.js";
+import { type FailureArea, type FailureSpec, criticalDependencies, evaluateFailure, prepareResilience, resilienceScore } from "./resilience.js";
+import { formatDependencies, formatFailureReport, formatScore, formatSingleFailures } from "./resilience-report.js";
+import type { LocalFrame } from "./terrain.js";
+import type { NodeSpec } from "./model.js";
 import { FLAT_TERRAIN, type Terrain } from "./terrain.js";
 
 const SCENARIOS: Record<string, Scenario> = { [valleMaira.id]: valleMaira, [alpinoFrammentato.id]: alpinoFrammentato, [eolie.id]: eolie, [atacama.id]: atacama, [kampala.id]: kampala };
@@ -31,6 +39,78 @@ const TERRAINS: Record<string, Terrain> = { "eolie-sintetico": EOLIE_TERRAIN, "a
 function arg(name: string, fallback: string): string {
   const i = process.argv.indexOf(`--${name}`);
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
+}
+
+function cliError(msg: string): never {
+  console.error(msg);
+  process.exit(1);
+}
+
+function profileIndex(n: number, fallback: number): number {
+  const raw = arg("profile", "");
+  if (!raw) return fallback % n;
+  const i = Number(raw);
+  if (!Number.isInteger(i) || i < 0 || i >= n) cliError(`--profile non valido: atteso un intero tra 0 e ${n - 1} (ricevuto "${raw}")`);
+  return i;
+}
+
+function argAll(name: string): string[] {
+  const out: string[] = [];
+  process.argv.forEach((v, i) => { if (v === `--${name}` && process.argv[i + 1]) out.push(process.argv[i + 1]); });
+  return out;
+}
+
+/** "a,b,m[,dB]" → area circolare. Con `frame` a,b sono lat,lon; senza, x,y locali in metri. */
+function parseArea(spec: string, frame: LocalFrame | undefined, failNodes: boolean, withLoss: boolean): FailureArea {
+  const v = spec.split(",").map(Number);
+  if (v.length < (withLoss ? 4 : 3) || v.some((x) => !Number.isFinite(x))) throw new Error(`Area non valida: "${spec}" (attesi ${withLoss ? "a,b,raggioM,perditaDb" : "a,b,raggioM"})`);
+  if (!(v[2] > 0)) throw new Error(`Area non valida: "${spec}" (il raggio deve essere positivo)`);
+  if (withLoss && !(v[3] > 0)) throw new Error(`Area non valida: "${spec}" (la perdita in dB deve essere positiva)`);
+  if (!frame) console.error(`Nota: senza coordinate geografiche "${spec}" è letta come x,y locali in metri`);
+  return {
+    shape: { kind: "circle", center: frame ? { lat: v[0], lon: v[1] } : { x: v[0], y: v[1] }, radiusM: v[2] },
+    failNodes,
+    blockLossDb: withLoss ? v[3] : 0,
+  };
+}
+
+/** Test di resilienza per un insieme di nodi e un modello: punteggio, oppure effetto di un guasto. */
+function runResilience(title: string, nodes: NodeSpec[], p: ModelParams, frame: LocalFrame | undefined, atS: number, defaultWindow: { fromS: number; toS: number; stepS: number } | undefined, extraLossDb?: (tS: number) => number): void {
+  const w = arg("window", "").split(",").filter(Boolean).map(Number);
+  if (arg("window", "") && (w.length < 2 || w.length > 3 || w.some((x) => !Number.isFinite(x)) || w[1] < w[0] || (w[2] !== undefined && !(w[2] > 0)))) cliError(`--window non valida: attesi oraDa,oraA[,passoS] con oraA ≥ oraDa (ricevuto "${arg("window", "")}")`);
+  const window = w.length >= 2 ? { fromS: w[0] * 3600, toS: w[1] * 3600, stepS: w[2] ?? 60 } : defaultWindow;
+  const atArg = arg("at", "");
+  if (atArg && !Number.isFinite(Number(atArg))) cliError(`--at non valido: attesa un'ora in ore (ricevuto "${atArg}")`);
+  const ctx = (() => {
+    try { return prepareResilience({ params: p, nodes, atS: atArg ? Number(atArg) * 3600 : atS, window, frame, skipCoverage: !p.env.terrain, extraLossDb }); } catch (e) { return cliError((e as Error).message); }
+  })();
+  const failNodes = arg("fail", "").split(",").filter(Boolean);
+  const unknown = failNodes.filter((id) => !nodes.some((n) => n.id === id));
+  if (unknown.length > 0) cliError(`Nodo sconosciuto in --fail: ${unknown.join(", ")}. Nodi disponibili: ${nodes.map((n) => n.id).join(", ")}`);
+  let areas: FailureArea[];
+  try {
+    areas = [...argAll("fail-area").map((s) => parseArea(s, frame, true, false)), ...argAll("block-area").map((s) => parseArea(s, frame, false, true))];
+  } catch (e) { return cliError((e as Error).message); }
+  const spec: FailureSpec = { nodes: failNodes, areas };
+  const failing = failNodes.length > 0 || areas.length > 0;
+  const tl = ctx.spec.timeline;
+  const windowText = tl && tl.steps.length > 1 ? `finestra opportunistica ${(Math.max(tl.fromS, ctx.spec.atS ?? tl.fromS) / 3600).toFixed(2)}–${(tl.steps[tl.steps.length - 1].t / 3600).toFixed(2)} h` : "nessun nodo mobile: solo connettività diretta";
+  if (failing) {
+    const report = evaluateFailure(ctx, spec);
+    if (process.argv.includes("--json")) console.log(JSON.stringify({ title, spec, report }, null, 2));
+    else console.log([`### ${title.replace(/\s*\(test di resilienza\)$/, "")} — test di resilienza (${windowText})\n`, ...formatFailureReport(report, report.failed.length === 0 ? "Nessun nodo spento, percorsi ostruiti" : report.failed.length > 1 ? "Guasti multipli" : "Guasto singolo")].join("\n"));
+    return;
+  }
+  const score = resilienceScore(ctx);
+  if (process.argv.includes("--json")) {
+    console.log(JSON.stringify({ title, score }, null, 2));
+    return;
+  }
+  console.log([
+    `### ${title} — Network Resilience (${windowText})\n`, ...formatScore(score), "",
+    "**Guasti singoli, dal più dannoso**", "", ...formatSingleFailures(score.singleFailures), "",
+    "**Dipendenze critiche della rete integra**", "", ...formatDependencies(criticalDependencies(ctx)),
+  ].join("\n"));
 }
 
 function fmtRate(bps: number): string {
@@ -56,6 +136,13 @@ if (configPath) {
   if (!terrain) {
     console.error(`Territorio sconosciuto: ${cfg.terrain}. Disponibili: ${Object.keys(TERRAINS).join(", ")}`);
     process.exit(1);
+  }
+  if (process.argv.includes("--resilience")) {
+    const nodes = placeDevices(cfg, terrain);
+    const times = cfg.devices.flatMap((d) => d.route?.map((q) => q.tS) ?? []);
+    const win = times.length > 0 ? { fromS: Math.min(...times), toS: Math.max(...times), stepS: 60 } : undefined;
+    runResilience(cfg.name, nodes, paramsForConfig(cfg, terrain), cfg.frame, win?.fromS ?? 0, win);
+    process.exit(0);
   }
   const links = assessNetwork(cfg, terrain);
   if (process.argv.includes("--json")) console.log(JSON.stringify({ config: cfg.name, links }, null, 2));
@@ -93,6 +180,44 @@ export function fmtDuration(s: number | null): string {
   if (s < 3600) return `${(s / 60).toFixed(s < 600 ? 1 : 0)} min`;
   if (s < 48 * 3600) return `${(s / 3600).toFixed(1)} h`;
   return `${(s / 86400).toFixed(1)} giorni`;
+}
+
+if (process.argv.includes("--resilience") && arg("variant", "") === "all") {
+  // Confronto del Resilience Score tra tutte le varianti dello scenario.
+  const profiles = scenario.regulatoryProfiles ?? [["g1", EU868_G1], ["g3", EU868_G3]];
+  const [profileName, reg] = profiles[profileIndex(profiles.length, scenario.regulatoryProfiles ? 0 : 1)];
+  const env = arg("env", "tipico");
+  const ignored = ["fail", "fail-area", "block-area", "at"].filter((f) => process.argv.includes(`--${f}`));
+  if (ignored.length > 0) console.error(`Nota: con --variant all ${ignored.map((f) => `--${f}`).join(", ")} sono ignorati (confronto tra varianti della rete integra)`);
+  const rows = Object.keys(scenario.variants).map((variant) => {
+    const ctx = prepareResilience({ params: params(env, reg), nodes: scenario.buildNodes(variant), atS: scenario.eventT, window: { fromS: 0, toS: horizonH * 3600, stepS: 60 }, skipCoverage: !params(env, reg).env.terrain, extraLossDb: scenario.extraLossDb?.(variant) });
+    return { variant, ...resilienceScore(ctx) };
+  });
+  if (process.argv.includes("--json")) console.log(JSON.stringify(rows.map(({ variant, score, components, criticalNodes, recoverableGaps, worstSingleFailure }) => ({ variant, score, components, criticalNodes, recoverableGaps, worstSingleFailure })), null, 2));
+  else {
+    const out2 = [`### ${scenario.title} — Resilience Score per variante (ambiente ${env}, ${profileName}, finestra 0–${horizonH} h)\n`, "| Variante | Score | Copertura | Diretta | Raggiungibile | Ridondanza | Copertura sotto guasto | Recupero opp. | Nodi critici | Gap recuperabili | Peggior guasto |", "|---|---:|---:|---:|---:|---:|---:|---:|---|---|---|"];
+    const v = (r: (typeof rows)[number], k: string) => { const x = r.components.find((c) => c.key === k)!.value; return x === null ? "—" : `${Math.round(100 * x)}%`; };
+    for (const r of rows) out2.push(`| ${r.variant} | **${r.score.toFixed(0)}** | ${v(r, "coverage")} | ${v(r, "directConnectivity")} | ${v(r, "reachability")} | ${v(r, "redundancy")} | ${v(r, "coverageUnderFailure")} | ${v(r, "opportunisticRecovery")} | ${r.criticalNodes.join(", ") || "—"} | ${r.recoverableGaps.join(", ") || "—"} | ${r.worstSingleFailure ? `${r.worstSingleFailure.id} (${r.worstSingleFailure.cutOff})` : "—"} |`);
+    console.log(out2.join("\n"));
+  }
+  process.exit(0);
+}
+
+if (process.argv.includes("--resilience")) {
+  const variant = arg("variant", scenario.linkSnapshotVariant);
+  if (!Object.hasOwn(scenario.variants, variant)) {
+    console.error(`Variante sconosciuta: ${variant}. Disponibili: ${Object.keys(scenario.variants).join(", ")}`);
+    process.exit(1);
+  }
+  const profiles = scenario.regulatoryProfiles ?? [["g1", EU868_G1], ["g3", EU868_G3]];
+  const [profileName, reg] = profiles[profileIndex(profiles.length, scenario.regulatoryProfiles ? 0 : 1)];
+  const env = arg("env", "tipico");
+  if (!Object.hasOwn(scenario.environments, env)) {
+    console.error(`Ambiente sconosciuto: ${env}. Disponibili: ${Object.keys(scenario.environments).join(", ")}`);
+    process.exit(1);
+  }
+  runResilience(`${scenario.title} — variante ${variant}, ambiente ${env}, ${profileName}`, scenario.buildNodes(variant), params(env, reg), undefined, scenario.eventT, { fromS: 0, toS: horizonH * 3600, stepS: 60 }, scenario.extraLossDb?.(variant));
+  process.exit(0);
 }
 
 const out: string[] = [];

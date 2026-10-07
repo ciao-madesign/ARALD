@@ -23,6 +23,12 @@ export interface DeviceConfig {
   /** Altezza dell'antenna dal suolo (m); se assente, quella tipica del tipo di dispositivo. */
   heightAglM?: number;
   label?: string;
+  /**
+   * Percorso nel tempo di un dispositivo mobile (una persona, un veicolo, un'imbarcazione):
+   * punti con istante (s) crescente. Senza percorso il dispositivo sta fermo in (lat, lon).
+   * Serve all'analisi opportunistica della resilienza (`resilience.ts`).
+   */
+  route?: { tS: number; lat: number; lon: number }[];
 }
 
 export type EnvironmentName = "favorevole" | "tipico" | "severo";
@@ -76,6 +82,20 @@ function finite(v: unknown, what: string, min = -Infinity, max = Infinity): numb
   return v;
 }
 
+function parseRoute(raw: unknown, i: number): NonNullable<DeviceConfig["route"]> {
+  if (!Array.isArray(raw) || raw.length < 2) fail(`devices[${i}].route deve avere almeno 2 punti`);
+  if (raw.length > 10000) fail(`devices[${i}].route ha più di 10000 punti`);
+  let last = -Infinity;
+  return raw.map((p, k) => {
+    if (typeof p !== "object" || p === null) fail(`devices[${i}].route[${k}] non è un oggetto`);
+    const q = p as Record<string, unknown>;
+    const tS = finite(q.tS, `devices[${i}].route[${k}].tS`, 0, 1e7);
+    if (tS <= last) fail(`devices[${i}].route: gli istanti devono essere strettamente crescenti`);
+    last = tS;
+    return { tS, lat: finite(q.lat, `devices[${i}].route[${k}].lat`, -85, 85), lon: finite(q.lon, `devices[${i}].route[${k}].lon`, -180, 180) };
+  });
+}
+
 /** Valida un oggetto (es. JSON.parse di un file salvato) e lo restituisce tipizzato. */
 export function parseNetworkConfig(raw: unknown): NetworkConfig {
   if (typeof raw !== "object" || raw === null) fail("non è un oggetto");
@@ -106,6 +126,7 @@ export function parseNetworkConfig(raw: unknown): NetworkConfig {
       lon: finite(dd.lon, `devices[${i}].lon`, -180, 180),
       heightAglM: dd.heightAglM === undefined ? undefined : finite(dd.heightAglM, `devices[${i}].heightAglM`, 0, 500),
       label: typeof dd.label === "string" ? dd.label : undefined,
+      route: dd.route === undefined ? undefined : parseRoute(dd.route, i),
     };
   });
   if (o.terrain !== undefined && typeof o.terrain !== "string") fail("terrain deve essere una stringa");
@@ -124,9 +145,13 @@ export function devicePosition(cfg: NetworkConfig, d: DeviceConfig, terrain: Ter
 
 /** Dispositivi fermi (traiettoria di un solo punto) pronti per il motore. */
 export function placeDevices(cfg: NetworkConfig, terrain: Terrain): NodeSpec[] {
-  return cfg.devices.map((d) => ({
-    id: d.id, kind: d.kind, heightAglM: d.heightAglM ?? KIND_DEFAULTS[d.kind].heightAglM, path: [{ ...devicePosition(cfg, d, terrain), t: 0 }],
-  }));
+  return cfg.devices.map((d) => {
+    const agl = d.heightAglM ?? KIND_DEFAULTS[d.kind].heightAglM;
+    const path = d.route
+      ? d.route.map((r) => { const { x, y } = toLocal(cfg.frame, r); return { x, y, z: terrain.elevationAt(x, y) + agl, t: r.tS }; })
+      : [{ ...devicePosition(cfg, d, terrain), t: 0 }];
+    return { id: d.id, kind: d.kind, heightAglM: agl, path };
+  });
 }
 
 /**
