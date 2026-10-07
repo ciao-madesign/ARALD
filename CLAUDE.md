@@ -81,6 +81,7 @@ arald/
 ├─ tests/           unit/, integration/, network/ (vitest)
 ├─ tools/simulator/ simulatore di rete a scala (usato anche da `npm run simulate`)
 ├─ tools/scenario-model/ modello teorico parametrico per scenario (fisica radio + mobilità + code, nessun NomadNode reale) — `npm run scenario-model`, vedi docs/scenario-simulation.md
+├─ tools/network-design/ pagina interattiva del Network Design Tool (interfaccia sul motore di tools/scenario-model/, un solo file HTML, `npm run design-tool:build`) — vedi docs/network-design-tool.md
 ├─ gateway/local-services/  gateway servizi locali (ex gateway/nomad/, rinominata 30 settembre 2026): KiwixGateway, AiGateway, NewsGateway, TranslateGateway, InternetGateway, FlatnotesGateway — mockato, non nel workspace npm
 ├─ service-stack/   docker-compose.yml che avvia i backend reali di gateway/local-services/ (kiwix-serve, Ollama, Flatnotes) con le loro immagini Docker ufficiali — sostituisce la dipendenza dal sorgente Project NOMAD per questi servizi (30 settembre 2026); nessun codice, solo config — vedi service-stack/README.md e docs/next-steps.md, "Indipendenza da Project NOMAD"
 ├─ nomad-hub/       ARALD Hub Management API: amministra Docker sull'host che esegue i servizi (Project NOMAD storicamente, service-stack/ da quando applicabile) — mai la mesh; non nel workspace npm, come gateway/local-services/

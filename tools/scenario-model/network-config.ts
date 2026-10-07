@@ -14,6 +14,8 @@ import {
 import { type LocalFrame, type Terrain, toLocal } from "./terrain.js";
 
 export const NETWORK_CONFIG_VERSION = 1;
+/** Tetto ai dispositivi di una configurazione (il calcolo dei collegamenti è quadratico). */
+export const MAX_DEVICES = 100;
 
 export interface DeviceConfig {
   id: string;
@@ -111,6 +113,7 @@ export function parseNetworkConfig(raw: unknown): NetworkConfig {
   if (!(typeof o.environment === "string" && Object.hasOwn(TERRAIN_ENVIRONMENTS, o.environment))) fail("environment deve essere favorevole, tipico o severo");
   if (!(typeof o.regulatory === "string" && Object.hasOwn(REGULATORY, o.regulatory))) fail("regulatory deve essere g1, g3 o au915");
   if (!Array.isArray(o.devices)) fail("devices deve essere un elenco");
+  if (o.devices.length > MAX_DEVICES) fail(`devices ha più di ${MAX_DEVICES} dispositivi`);
   const ids = new Set<string>();
   const devices = o.devices.map((d, i): DeviceConfig => {
     if (typeof d !== "object" || d === null) fail(`devices[${i}] non è un oggetto`);

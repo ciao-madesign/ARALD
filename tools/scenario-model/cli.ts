@@ -21,9 +21,10 @@ import {
 import type { Scenario } from "./scenario.js";
 import { valleMaira } from "./valle-maira.js";
 import { alpinoFrammentato } from "./alpino-frammentato.js";
-import { EOLIE_TERRAIN, eolie } from "./eolie.js";
-import { ATACAMA_TERRAIN, atacama } from "./atacama.js";
-import { KAMPALA_TERRAIN, kampala } from "./kampala.js";
+import { eolie } from "./eolie.js";
+import { atacama } from "./atacama.js";
+import { kampala } from "./kampala.js";
+import { TERRAINS } from "./terrains.js";
 import { type LinkAssessment, assessLink, coverageGrid, qualityLabel } from "./assess.js";
 import { assessNetwork, paramsForConfig, parseNetworkConfig, placeDevices } from "./network-config.js";
 import { type FailureArea, type FailureSpec, criticalDependencies, evaluateFailure, prepareResilience, resilienceScore } from "./resilience.js";
@@ -33,8 +34,6 @@ import type { NodeSpec } from "./model.js";
 import { FLAT_TERRAIN, type Terrain } from "./terrain.js";
 
 const SCENARIOS: Record<string, Scenario> = { [valleMaira.id]: valleMaira, [alpinoFrammentato.id]: alpinoFrammentato, [eolie.id]: eolie, [atacama.id]: atacama, [kampala.id]: kampala };
-/** Dataset di territorio noti al motore, referenziati per nome da una configurazione salvata. */
-const TERRAINS: Record<string, Terrain> = { "eolie-sintetico": EOLIE_TERRAIN, "atacama-sintetico": ATACAMA_TERRAIN, "kampala-sintetico": KAMPALA_TERRAIN };
 
 function arg(name: string, fallback: string): string {
   const i = process.argv.indexOf(`--${name}`);

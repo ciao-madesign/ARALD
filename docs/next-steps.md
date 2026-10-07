@@ -157,6 +157,16 @@ La Fase 8 (mockup pixel-precisi in Figma di tutti i flussi — griglie/spaziatur
 
 ---
 
+### Decisione aperta: dove pubblicare la pagina del Network Design Tool (7 ottobre 2026)
+
+La pagina del tool (`tools/network-design/`, vedi `docs/network-design-tool.md`) nasce come **pagina autonoma, interna al repository**: nessun server né account, il motore di `tools/scenario-model/` gira nel browser. Scelta dell'utente: *per ora interna*. **Da decidere in seguito cosa farne**, con queste opzioni emerse nel ragionamento:
+
+- **Sezione del sito pubblico** ("Prova il simulatore", `site/`) come demo con gli scenari di esempio — richiede un avviso ben visibile: terreni sintetici e parametri non verificati, quindi un esempio dimostrativo e non una previsione; decidere anche se esporre al pubblico un tool non ancora tarato su dati reali.
+- **Local Portal** (per chi gestisce un Box) — ha senso solo con dati reali della propria rete, non prima.
+- **Non** nel Mirror Portal (in produzione, dati operativi reali) né nell'app mobile (schermo troppo piccolo per progettare una rete su mappa).
+
+Finché non c'è una decisione esplicita la pagina resta interna: non va linkata da `site/`, dai portali o dall'app.
+
 ## Milestone/feature completate — pointer al dettaglio in `docs/security.md`
 
 Le Opzioni C-G furono scritte quando le rispettive milestone erano ancora aperte; oggi sono tutte ✅ complete e il loro stato reale vive in `docs/roadmap.md` — tenute qui solo come titolo + pointer:

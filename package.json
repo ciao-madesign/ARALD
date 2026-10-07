@@ -20,7 +20,8 @@
     "email-relay": "tsx email-relay/cli.ts",
     "webhook-relay": "tsx webhook-relay/cli.ts",
     "discovery-service": "tsx discovery-service/cli.ts",
-    "build:portable": "tsx packaging/build-sea.ts"
+    "build:portable": "tsx packaging/build-sea.ts",
+    "design-tool:build": "node tools/network-design/build.mjs"
   },
   "dependencies": {
     "dbus-next": "^0.10.2",

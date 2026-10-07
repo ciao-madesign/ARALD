@@ -1,0 +1,166 @@
+<title>ARALD Network Design Tool</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: mappa a sinistra che occupa tutto lo spazio, pannello a destra (sotto la mappa su schermi stretti). */
+:root {
+  --bg: #eff2f6; --surface: #ffffff; --surface-2: #e6ebf2; --fg: #18202e; --muted: #596579; --line: #d0d7e2;
+  --accent: #2b47c9; --accent-fg: #ffffff;
+  --good: #1c8f4d; --warn: #c98200; --bad: #cc3b3b;
+  --land-sea: #b9d0e4; --land-open: #e4e2d0; --land-forest: #bdd1ae; --land-urban: #d6d1c9; --land-urban-dense: #bab3a9;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1520; --surface: #171f2d; --surface-2: #1f293a; --fg: #e5eaf3; --muted: #95a2b8; --line: #2b3548;
+    --accent: #8fa4ff; --accent-fg: #0f1520; --good: #4cc27d; --warn: #e3a62f; --bad: #ee6b6b;
+    --land-sea: #18283a; --land-open: #2b2c25; --land-forest: #233221; --land-urban: #353330; --land-urban-dense: #4a4640;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1520; --surface: #171f2d; --surface-2: #1f293a; --fg: #e5eaf3; --muted: #95a2b8; --line: #2b3548;
+  --accent: #8fa4ff; --accent-fg: #0f1520; --good: #4cc27d; --warn: #e3a62f; --bad: #ee6b6b;
+  --land-sea: #18283a; --land-open: #2b2c25; --land-forest: #233221; --land-urban: #353330; --land-urban-dense: #4a4640;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font: 14px/1.45 var(--font-body); padding-inline: 16px; padding-block: 12px; display: flex; flex-direction: column; gap: 10px; }
+h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: 0.01em; }
+h3 { font-size: 12px; font-weight: 600; margin: 4px 0 0; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); }
+.mono { font-family: var(--font-mono); }
+.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.muted { color: var(--muted); }
+.small { font-size: 12.5px; }
+.hint { color: var(--muted); font-size: 12.5px; margin: 0; }
+.error { color: var(--bad); margin: 0; }
+
+.top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.top .grow { flex: 1 1 0; min-width: 0; }
+.demo { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 2px 8px; background: var(--surface); }
+.ctl { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
+select, input[type="text"], input[type="number"], textarea, .btn {
+  font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px; min-height: 30px;
+}
+select { max-width: 100%; }
+textarea { width: 100%; font-family: var(--font-mono); font-size: 12px; resize: vertical; }
+.btn { cursor: pointer; }
+.btn:hover { border-color: var(--accent); }
+.btn[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.btn.danger { color: var(--bad); }
+.btn.small-btn { padding: 2px 8px; min-height: 24px; font-size: 12px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.work { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 410px; gap: 10px; }
+@media (max-width: 900px) { .work { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto; } #map-wrap { flex: none; height: 62vh; min-height: 320px; } html, body { height: auto; } }
+.mapcol { min-width: 0; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
+.group { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.group > .lbl { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); margin-right: 2px; }
+#map-wrap { position: relative; flex: 1 1 auto; min-height: 320px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--land-sea); }
+#map { display: block; touch-action: none; }
+#status { font-size: 12.5px; color: var(--muted); min-height: 18px; }
+
+.panel { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+.tabs { display: flex; border-bottom: 1px solid var(--line); }
+.tabs button { flex: 1; font: inherit; font-weight: 500; padding: 9px 8px; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted); cursor: pointer; }
+.tabs button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); }
+#panel-body { padding: 12px; overflow: auto; min-height: 0; flex: 1 1 auto; }
+.stack { display: flex; flex-direction: column; gap: 12px; }
+.stack-s { display: flex; flex-direction: column; gap: 8px; }
+.row { display: flex; align-items: center; gap: 8px; }
+.row.wrap { flex-wrap: wrap; }
+.card { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
+.field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+.field input { width: 100%; }
+.scroll { overflow-x: auto; }
+.tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.tbl th { text-align: left; font-weight: 500; color: var(--muted); padding: 3px 6px 3px 0; white-space: nowrap; }
+.tbl td { padding: 4px 6px 4px 0; border-top: 1px solid var(--line); vertical-align: top; }
+.q { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; }
+.q::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--qc); }
+.qbar { height: 10px; border-radius: 3px; }
+.qbar-l { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--muted); }
+.swatch { display: inline-block; width: 38px; height: 0; }
+.score { text-align: left; }
+.score-n { font: 600 40px/1 var(--font-mono); }
+.score-n span { font-size: 16px; color: var(--muted); font-weight: 400; }
+.comp { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; }
+.bar { height: 5px; background: var(--surface-2); border-radius: 3px; overflow: hidden; margin-bottom: 4px; }
+.bar-f { height: 100%; background: var(--accent); }
+.kv { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; }
+.kv .num { white-space: normal; text-align: right; }
+.kv.bad .num { color: var(--bad); } .kv.warn .num { color: var(--warn); }
+
+#modal { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 5; }
+#modal .box { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px; width: min(720px, 100%); display: flex; flex-direction: column; gap: 10px; max-height: 90vh; }
+#modal textarea { height: 46vh; }
+@media (prefers-reduced-motion: no-preference) { .bar-f { transition: width 0.25s; } }
+</style>
+
+<header class="top">
+  <h1>ARALD Network Design Tool</h1>
+  <span class="demo" title="Terreni sintetici e parametri radio non verificati">Esempio dimostrativo · non è una previsione</span>
+  <span class="grow"></span>
+  <label class="ctl" for="scenario">Rete <select id="scenario"></select></label>
+  <label class="ctl" for="env">Ambiente
+    <select id="env"><option value="favorevole">favorevole</option><option value="tipico">tipico</option><option value="severo">severo</option></select>
+  </label>
+  <label class="ctl" for="reg">Normativa
+    <select id="reg"><option value="g1">EU868 g1 (1%)</option><option value="g3">EU868 g3 (10%)</option><option value="au915">AU915</option></select>
+  </label>
+  <button type="button" class="btn" id="cfg-open">Configurazione</button>
+</header>
+
+<div class="work">
+  <section class="mapcol">
+    <div class="toolbar">
+      <div class="group" role="group" aria-label="Strumento">
+        <span class="lbl">Strumento</span>
+        <button type="button" class="btn" data-tool="select" aria-pressed="true">Seleziona</button>
+        <button type="button" class="btn" data-tool="add" aria-pressed="false">Aggiungi</button>
+        <button type="button" class="btn" data-tool="area" aria-pressed="false">Area di guasto</button>
+      </div>
+      <div class="group" id="add-kind-wrap" hidden><label class="ctl" for="add-kind">Tipo <select id="add-kind"></select></label></div>
+      <div class="group" id="area-wrap" hidden><label class="ctl" for="area-radius">Raggio <input type="range" id="area-radius" min="1" max="30" step="1" value="3"><span id="area-radius-v" class="mono">3 km</span></label></div>
+      <div class="group" role="group" aria-label="Alone di copertura">
+        <span class="lbl">Alone</span>
+        <button type="button" class="btn" data-halo="lora" aria-pressed="true">LoRa</button>
+        <button type="button" class="btn" data-halo="ble" aria-pressed="false">BLE</button>
+        <button type="button" class="btn" data-halo="wifi" aria-pressed="false">Wi-Fi</button>
+        <button type="button" class="btn" data-halo="none" aria-pressed="false">Nessuno</button>
+      </div>
+      <button type="button" class="btn" id="fit">Inquadra</button>
+    </div>
+    <div id="map-wrap"><canvas id="map" aria-label="Mappa della rete"></canvas></div>
+    <div id="status" role="status"></div>
+  </section>
+  <aside class="panel">
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" data-tab="rete" aria-selected="true">Rete</button>
+      <button type="button" role="tab" data-tab="resilienza" aria-selected="false">Resilienza</button>
+    </div>
+    <div id="panel-body"></div>
+  </aside>
+</div>
+
+<div id="modal" hidden>
+  <div class="box" role="dialog" aria-label="Configurazione della rete">
+    <strong>Configurazione della rete (JSON)</strong>
+    <p class="hint">Copia il testo per salvarlo. Per riaprire una rete incollala qui, oppure scegli un file, e premi Applica.</p>
+    <textarea id="cfg-text" spellcheck="false" aria-label="Configurazione JSON"></textarea>
+    <div class="row wrap">
+      <button type="button" class="btn" id="cfg-copy">Copia</button>
+      <label class="btn" for="cfg-file">Apri file…</label>
+      <input type="file" id="cfg-file" accept=".json,application/json" hidden>
+      <button type="button" class="btn" id="cfg-apply" style="background:var(--accent);color:var(--accent-fg)">Applica</button>
+      <button type="button" class="btn" id="cfg-close">Chiudi</button>
+      <span id="cfg-msg" class="hint" role="status"></span>
+    </div>
+  </div>
+</div>
+<script>/*__BUNDLE__*/</script>

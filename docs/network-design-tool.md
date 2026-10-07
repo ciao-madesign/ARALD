@@ -279,3 +279,8 @@ Regole di lavoro che ne seguono per i prossimi scenari:
 - **ogni nuova regola fisica va nel motore come funzione parametrica riusabile** (come `obstructionFn`, `extraLossDb`, `routingMetric`), mai dentro un singolo file di scenario;
 - `model.ts` non deve mai dipendere da CLI, Markdown o qualunque forma di visualizzazione;
 - la risposta ai 10 punti del §12 va mantenuta aggiornata in `docs/scenario-simulation.md` man mano che il modello cresce, e consegnata completa a fine validazione.
+
+
+## Pagina del tool — prima versione (7 ottobre 2026)
+
+Esiste una prima pagina interattiva in `tools/network-design/` (vedi il suo README): mappa disegnata dal terreno sintetico, dispositivi trascinabili/aggiungibili/rimovibili, alone LoRa/BLE/Wi-Fi del dispositivo selezionato, collegamenti colorati per qualità con pannello e legenda, scheda Resilienza (punteggio, guasto di un nodo o di un'area, guasti singoli ordinati), configurazione copiabile come JSON, tema chiaro/scuro, uso da telefono. Interna: non linkata da sito, portali o app (decisione sul dove pubblicarla in `docs/next-steps.md`). Mancano ancora: mappa reale e rilievi, Network Optimizer, confronto fianco a fianco di due configurazioni, percorsi dei mobili animati nel tempo.
