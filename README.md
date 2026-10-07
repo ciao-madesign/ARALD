@@ -2,6 +2,10 @@
 
 **No connection. Still connected.**
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Automated tests](https://img.shields.io/badge/tests-1621%20passing-brightgreen)](docs/development.md)
+[![GitHub stars](https://img.shields.io/github/stars/ciao-madesign/ARALD?style=flat&label=stars)](https://github.com/ciao-madesign/ARALD/stargazers)
+
 ARALD lets phones, small radio devices, and local computers share content, messages, and services directly with each other — no cell towers, no Wi-Fi router, no satellite link. Requests hop from device to device until they reach an answer, and sync automatically the moment a connection becomes available.
 
 ```
@@ -21,6 +25,45 @@ Three environments have driven ARALD's design so far — equally important, not 
 - **🤝 NGOs and humanitarian operations**
 
 The same architecture applies without changes anywhere reliable connectivity can't be assumed: ships and islands, expeditions, rural communities, forests, deserts, crowded events, schools, and temporary or crisis infrastructure. See [`docs/overview.md`](docs/overview.md) for the full list and [`docs/deployment.md`](docs/deployment.md) for concrete deployment scenarios.
+
+## What you get
+
+Feature-by-feature, as implemented and tested today — see [Project status](#project-status) below for what's real software vs. what still needs physical hardware.
+
+**🧭 Mesh networking**
+- Content-centric requests (`content://...`, `service://...`) — ask for *what*, not *where*
+- Controlled-flood routing for discovery, distance-vector routing for unicast traffic
+- Store-and-forward queue with priority-aware eviction (SOS traffic outlives bulk traffic)
+- Opportunistic catalog sync the moment two previously-separated segments reconnect
+- Three transport types behind one interface: TCP/Wi-Fi (real, validated across two independent physical machines), LoRa (two real radio drivers — SX127x and SX1262 — plus a simulated one), Bluetooth LE (simulated at the `Transport` layer; a separate, real phone-side relay role exists in the mobile app)
+
+**🔐 Security & identity**
+- Every node has an Ed25519 identity; every claim that gets re-propagated is signed by its author
+- End-to-end encryption for private messages and group chats (X25519 + AES-256-GCM)
+- Trust levels with eviction that prefers dropping low-trust entries over legitimate ones
+- Per-peer and global rate limiting on every network-fed structure
+
+**💬 Messaging & coordination**
+- 1:1 chat and unencrypted public channels
+- Private and group chats with fixed membership (E2E, sender-signed)
+- A mesh-native noticeboard ("drops") for info/hazard/emergency posts
+- Opportunistic location sharing with a dedicated registry node
+
+**🚨 Emergency & safety**
+- An SOS emergency beacon any node can send and any relay can carry — even encrypted ones it can't read ("blind forwarding")
+- A Relay Registry with live online/offline status and self-reported battery telemetry
+- Admin-gated remote relay reboot, replay-protected
+- Deferred delivery of a file/message to an outside destination (WhatsApp, email, or a generic webhook) the moment a Box regains internet access
+
+**🌐 Local services, no internet required**
+- Local Wikipedia search (Kiwix), local AI (Ollama), translation, and a news digest — each gateway talking directly to its backend's real API, no third-party platform dependency
+- An optional, tightly scoped "internet, if you have it" fetch gateway (SSRF-guarded, rate-limited, curated request shapes only — not general browsing)
+- Offline topographic map tiles served from a local file
+
+**📱 Apps, portals & packaging**
+- A mobile dashboard (phone/services/content/chat/channels/groups/location/map/noticeboard) talking to any gateway over Wi-Fi
+- An Emergency Portal: a local LAN dashboard on the Box, with a read-only internet-hosted mirror for remote coordination
+- ARALD Portable: the mesh runtime as a single self-contained executable — no Docker, no install, Wi-Fi-only, nothing to buy
 
 ## Project status
 
