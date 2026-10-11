@@ -21,7 +21,8 @@
     "webhook-relay": "tsx webhook-relay/cli.ts",
     "discovery-service": "tsx discovery-service/cli.ts",
     "build:portable": "tsx packaging/build-sea.ts",
-    "design-tool:build": "node tools/network-design/build.mjs"
+    "design-tool:build": "node tools/network-design/build.mjs",
+    "map-data": "tsx tools/map-data/build-pack.mts"
   },
   "dependencies": {
     "dbus-next": "^0.10.2",
@@ -31,6 +32,7 @@
   "devDependencies": {
     "@types/pg": "^8.11.10",
     "esbuild": "^0.28.2",
+    "geotiff": "^3.0.5",
     "postject": "^1.0.0-alpha.6",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",

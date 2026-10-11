@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "name": "Alta Valle Maira su terreno reale — posizioni indicative",
+  "frame": {
+    "lat0": 44.45,
+    "lon0": 6.95
+  },
+  "environment": "tipico",
+  "regulatory": "g3",
+  "terrain": "pack:valle-maira",
+  "devices": [
+    {
+      "id": "BOX",
+      "kind": "box",
+      "lat": 44.4939,
+      "lon": 6.928,
+      "label": "Campo Base (Chiappera, ~1650 m)"
+    },
+    {
+      "id": "C1",
+      "kind": "card",
+      "lat": 44.4938,
+      "lon": 6.9283,
+      "label": "Card al Campo Base"
+    },
+    {
+      "id": "C2",
+      "kind": "card",
+      "lat": 44.4921,
+      "lon": 6.9192,
+      "label": "Piana di Stroppia"
+    },
+    {
+      "id": "PORT",
+      "kind": "portable",
+      "lat": 44.4876,
+      "lon": 6.9179,
+      "label": "Portable in alto sulla piana"
+    },
+    {
+      "id": "C3",
+      "kind": "card",
+      "lat": 44.4894,
+      "lon": 6.9167,
+      "label": "Sotto le cascate"
+    },
+    {
+      "id": "C4",
+      "kind": "card",
+      "lat": 44.4749,
+      "lon": 6.8991,
+      "label": "Rifugio (~2260 m)"
+    },
+    {
+      "id": "C5",
+      "kind": "card",
+      "lat": 44.4749,
+      "lon": 6.8852,
+      "label": "Verso il bivacco (~2800 m)"
+    }
+  ]
+}

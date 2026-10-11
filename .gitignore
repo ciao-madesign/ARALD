@@ -9,3 +9,5 @@ coverage/
 mirror-portal/.env.local
 *.tsbuildinfo
 packaging/build/
+
+tools/map-data/.cache/

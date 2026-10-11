@@ -40,6 +40,7 @@ Il piano d'insieme originario (milestone 0-20 + i follow-up post-audit) è compl
 | Specifica UX/UI per il nuovo giro di rifinimento (icone, stati, legenda, gerarchia, mappa-centrica, Operational/Configuration) — mobile, Mirror Portal, Web UI del nodo | [`docs/ux-ui-design-system.md`](docs/ux-ui-design-system.md) |
 | Simulazione teorica parametrica di efficienza della rete per scenario (link budget LoRa, duty-cycle EU868, mobilità, store-and-forward) — ipotesi, risultati, limiti | [`docs/scenario-simulation.md`](docs/scenario-simulation.md) |
 | Obiettivo finale della simulazione: tool interattivo di progettazione, verifica di resilienza e ottimizzazione di reti ARALD su mappa reale (vincolo di progetto per `tools/scenario-model/`) | [`docs/network-design-tool.md`](docs/network-design-tool.md) |
+| Terreno e mappe reali (pacchetti SRTM + WorldCover, `pack:<id>`, risultati reale/sintetico, fasi della pagina con mappa reale) | [`docs/real-maps.md`](docs/real-maps.md) |
 | Test Network Resilience (guasto singolo/multiplo/d'area, connettività diretta vs opportunistica, Resilience Score) — definizioni, uso, risultati | [`docs/network-resilience.md`](docs/network-resilience.md) |
 
 **Leggi la voce/il documento pertinente prima di toccare il codice corrispondente** — spiegano non solo cosa è stato fatto ma perché, inclusi i bug trovati dalla revisione prima di considerare ogni voce conclusa.
@@ -82,6 +83,7 @@ arald/
 ├─ tools/simulator/ simulatore di rete a scala (usato anche da `npm run simulate`)
 ├─ tools/scenario-model/ modello teorico parametrico per scenario (fisica radio + mobilità + code, nessun NomadNode reale) — `npm run scenario-model`, vedi docs/scenario-simulation.md
 ├─ tools/network-design/ pagina interattiva del Network Design Tool (interfaccia sul motore di tools/scenario-model/, un solo file HTML, `npm run design-tool:build`) — vedi docs/network-design-tool.md
+├─ tools/map-data/  preparazione dei pacchetti di terreno reale (quota SRTM + suolo ESA WorldCover) per il motore e la pagina del tool — `npm run map-data`, vedi docs/real-maps.md; i pacchetti pronti stanno in tools/network-design/data/
 ├─ gateway/local-services/  gateway servizi locali (ex gateway/nomad/, rinominata 30 settembre 2026): KiwixGateway, AiGateway, NewsGateway, TranslateGateway, InternetGateway, FlatnotesGateway — mockato, non nel workspace npm
 ├─ service-stack/   docker-compose.yml che avvia i backend reali di gateway/local-services/ (kiwix-serve, Ollama, Flatnotes) con le loro immagini Docker ufficiali — sostituisce la dipendenza dal sorgente Project NOMAD per questi servizi (30 settembre 2026); nessun codice, solo config — vedi service-stack/README.md e docs/next-steps.md, "Indipendenza da Project NOMAD"
 ├─ nomad-hub/       ARALD Hub Management API: amministra Docker sull'host che esegue i servizi (Project NOMAD storicamente, service-stack/ da quando applicabile) — mai la mesh; non nel workspace npm, come gateway/local-services/

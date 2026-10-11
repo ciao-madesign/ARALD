@@ -284,3 +284,7 @@ Regole di lavoro che ne seguono per i prossimi scenari:
 ## Pagina del tool — prima versione (7 ottobre 2026)
 
 Esiste una prima pagina interattiva in `tools/network-design/` (vedi il suo README): mappa disegnata dal terreno sintetico, dispositivi trascinabili/aggiungibili/rimovibili, alone LoRa/BLE/Wi-Fi del dispositivo selezionato, collegamenti colorati per qualità con pannello e legenda, scheda Resilienza (punteggio, guasto di un nodo o di un'area, guasti singoli ordinati), configurazione copiabile come JSON, tema chiaro/scuro, uso da telefono. Interna: non linkata da sito, portali o app (decisione sul dove pubblicarla in `docs/next-steps.md`). Mancano ancora: mappa reale e rilievi, Network Optimizer, confronto fianco a fianco di due configurazioni, percorsi dei mobili animati nel tempo.
+
+## Terreno reale (fase 1 di 4, 11 ottobre 2026)
+
+Il motore ora accetta terreno reale (`"terrain": "pack:<id>"`, pacchetti SRTM + WorldCover preparati con `npm run map-data`): vedi `docs/real-maps.md` per fonti, licenze, risultati (le Eolie reali valgono 45/100 contro 73 del terreno sintetico) e limiti. La pagina del tool non usa ancora i pacchetti: è la fase 2.

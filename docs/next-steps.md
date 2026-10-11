@@ -157,6 +157,10 @@ La Fase 8 (mockup pixel-precisi in Figma di tutti i flussi — griglie/spaziatur
 
 ---
 
+### Test del trasporto LoRa seriale: timeout sporadico nella suite completa (11 ottobre 2026)
+
+Nella suite completa (`npx vitest run`, 4 worker) i test `tests/integration/lora-serial-relay.test.ts` e `lora-serial-sx1262-relay.test.ts` vanno ogni tanto in timeout (osservato in circa 1 giro su 4: ora "connects, exchanges HELLO…", ora "a fragment count beyond the old single-byte header's 255 limit round-trips correctly", con il timeout da 60 s del test), mentre lanciati da soli passano sempre in ~3 s. Non legato al lavoro in corso (riscontrato anche prima delle ultime voci, nessun file di quei trasporti toccato). Da indagare: race nel pacing del dispositivo finto sotto contesa di CPU, o un blocco reale della coda di invio. Candidato, non pianificato.
+
 ### Decisione aperta: dove pubblicare la pagina del Network Design Tool (7 ottobre 2026)
 
 La pagina del tool (`tools/network-design/`, vedi `docs/network-design-tool.md`) nasce come **pagina autonoma, interna al repository**: nessun server né account, il motore di `tools/scenario-model/` gira nel browser. Scelta dell'utente: *per ora interna*. **Da decidere in seguito cosa farne**, con queste opzioni emerse nel ragionamento:

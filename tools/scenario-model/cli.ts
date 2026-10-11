@@ -24,6 +24,8 @@ import { alpinoFrammentato } from "./alpino-frammentato.js";
 import { eolie } from "./eolie.js";
 import { atacama } from "./atacama.js";
 import { kampala } from "./kampala.js";
+import { PACK_PREFIX, loadPackTerrain } from "../map-data/load.js";
+import { PackTerrain } from "./terrain-pack.js";
 import { TERRAINS } from "./terrains.js";
 import { type LinkAssessment, assessLink, coverageGrid, qualityLabel } from "./assess.js";
 import { assessNetwork, paramsForConfig, parseNetworkConfig, placeDevices } from "./network-config.js";
@@ -31,7 +33,7 @@ import { type FailureArea, type FailureSpec, criticalDependencies, evaluateFailu
 import { formatDependencies, formatFailureReport, formatScore, formatSingleFailures } from "./resilience-report.js";
 import type { LocalFrame } from "./terrain.js";
 import type { NodeSpec } from "./model.js";
-import { FLAT_TERRAIN, type Terrain } from "./terrain.js";
+import { FLAT_TERRAIN, type Terrain, toLocal } from "./terrain.js";
 
 const SCENARIOS: Record<string, Scenario> = { [valleMaira.id]: valleMaira, [alpinoFrammentato.id]: alpinoFrammentato, [eolie.id]: eolie, [atacama.id]: atacama, [kampala.id]: kampala };
 
@@ -131,9 +133,19 @@ function connectionPanel(links: LinkAssessment[]): string[] {
 const configPath = arg("config", "");
 if (configPath) {
   const cfg = parseNetworkConfig(JSON.parse(readFileSync(configPath, "utf8")));
-  const terrain = cfg.terrain === undefined ? FLAT_TERRAIN : Object.hasOwn(TERRAINS, cfg.terrain) ? TERRAINS[cfg.terrain] : undefined;
+  let terrain: Terrain | undefined;
+  if (cfg.terrain === undefined) terrain = FLAT_TERRAIN;
+  else if (cfg.terrain.startsWith(PACK_PREFIX)) {
+    try { terrain = loadPackTerrain(cfg.terrain, cfg.frame); } catch (e) { console.error((e as Error).message); process.exit(1); }
+  } else if (Object.hasOwn(TERRAINS, cfg.terrain)) terrain = TERRAINS[cfg.terrain];
+  if (terrain instanceof PackTerrain) {
+    // Fuori dal pacchetto la quota vale 0 e il suolo è mare: un dispositivo o un percorso fuori dal riquadro
+    // darebbe risultati inaffidabili senza alcun segnale.
+    const outside = cfg.devices.filter((d) => [d, ...(d.route ?? [])].some((q) => { const p = toLocal(cfg.frame, q); return !(terrain as PackTerrain).contains(p.x, p.y); }));
+    if (outside.length > 0) console.error(`Attenzione: fuori dal pacchetto di terreno (quota 0, mare): ${outside.map((d) => d.id).join(", ")}. I risultati che li riguardano non sono affidabili.`);
+  }
   if (!terrain) {
-    console.error(`Territorio sconosciuto: ${cfg.terrain}. Disponibili: ${Object.keys(TERRAINS).join(", ")}`);
+    console.error(`Territorio sconosciuto: ${cfg.terrain}. Disponibili: ${Object.keys(TERRAINS).join(", ")}, oppure pack:<id> (npm run map-data)`);
     process.exit(1);
   }
   if (process.argv.includes("--resilience")) {
