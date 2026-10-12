@@ -25,6 +25,7 @@ import { eolie } from "./eolie.js";
 import { atacama } from "./atacama.js";
 import { kampala } from "./kampala.js";
 import { PACK_PREFIX, loadPackTerrain } from "../map-data/load.js";
+import { WORLD_TERRAIN, configWarnings, loadWorldTerrain } from "../map-data/world.js";
 import { PackTerrain } from "./terrain-pack.js";
 import { TERRAINS } from "./terrains.js";
 import { type LinkAssessment, assessLink, coverageGrid, qualityLabel } from "./assess.js";
@@ -137,6 +138,17 @@ if (configPath) {
   if (cfg.terrain === undefined) terrain = FLAT_TERRAIN;
   else if (cfg.terrain.startsWith(PACK_PREFIX)) {
     try { terrain = loadPackTerrain(cfg.terrain, cfg.frame); } catch (e) { console.error((e as Error).message); process.exit(1); }
+  } else if (cfg.terrain === WORLD_TERRAIN) {
+    // terreno del mondo dalla cache di tessere: l'analisi non scarica nulla, le tessere si preparano con npm run map-tiles
+    const w = loadWorldTerrain(cfg);
+    if (w.missing.length > 0) {
+      console.error(`Mancano ${w.missing.length} tessere di terreno nella cache. Preparale (serve la rete) con:\n  npm run map-tiles -- --config ${configPath}`);
+      process.exit(1);
+    }
+    for (const msg of configWarnings(cfg)) console.error(`Attenzione: ${msg}`);
+    terrain = w.terrain;
+    const t = w.terrain;
+    process.on("exit", () => { if (t.missingTiles().length > 0) console.error(`Attenzione: ${t.missingTiles().length} tessere fuori dall'area preparata sono state lette come mare a quota 0: i risultati che le riguardano non sono affidabili.`); });
   } else if (Object.hasOwn(TERRAINS, cfg.terrain)) terrain = TERRAINS[cfg.terrain];
   if (terrain instanceof PackTerrain) {
     // Fuori dal pacchetto la quota vale 0 e il suolo è mare: un dispositivo o un percorso fuori dal riquadro
@@ -145,7 +157,7 @@ if (configPath) {
     if (outside.length > 0) console.error(`Attenzione: fuori dal pacchetto di terreno (quota 0, mare): ${outside.map((d) => d.id).join(", ")}. I risultati che li riguardano non sono affidabili.`);
   }
   if (!terrain) {
-    console.error(`Territorio sconosciuto: ${cfg.terrain}. Disponibili: ${Object.keys(TERRAINS).join(", ")}, oppure pack:<id> (npm run map-data)`);
+    console.error(`Territorio sconosciuto: ${cfg.terrain}. Disponibili: ${Object.keys(TERRAINS).join(", ")}, oppure pack:<id> (npm run map-data) o world (npm run map-tiles)`);
     process.exit(1);
   }
   if (process.argv.includes("--resilience")) {

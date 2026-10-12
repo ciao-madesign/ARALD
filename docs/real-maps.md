@@ -87,10 +87,25 @@ Mentre si disegna un percorso la scheda mostra solo l'editor: una modifica (copi
 
 Limiti: velocità costante (nessun rallentamento, attese solo dove le indichi), nessun cursore del tempo per vedere i mobili muoversi, le tappe non si trascinano (si tolgono con × e si rifanno), due tappe a meno di 0,5 m si fondono in una sosta quando si ricarica un percorso per modificarlo, i guasti simulati non sono nello storico.
 
-## Richiesta successiva: area molto ampia (da pianificare)
+## Area ampia: terreno del mondo a tessere (richiesta del 12 ottobre 2026)
 
-Oggi un pacchetto copre un riquadro fisso (50×40 km o 70×60 km) preparato in anticipo. La richiesta è un'area non limitata, anche con un servizio aperto. È un cambio di architettura (terreno a tessere caricate sul momento) con scelte da concordare prima di scrivere codice: vedi il piano nella risposta a questa richiesta.
+Un pacchetto copre un riquadro fisso preparato in anticipo. Per un'area non limitata il terreno è diviso in **tessere del mondo** caricate quando servono. Scelte concordate con l'utente: scarica il **server locale** (non il browser; serve Internet su quel computer), niente panoramica nell'Artifact (che resta con Valle Maira ed Eolie), celle da circa 100 m, riferimento locale ricentrato sulla rete con avviso oltre 300 km, cache su disco con tetto di 1,5 GB, mondo intero con avviso oltre i 60° di latitudine.
+
+**Fase 1 di 5 fatta (12 ottobre 2026): formato, terreno nel motore, generatore.**
+
+- **Griglia** (`tools/scenario-model/geo-tile.ts`): celle geografiche regolari di 0,25°/256 (≈ 108,6 m in latitudine; in longitudine 108,6 m all'equatore, 77 m a 45°, 54 m a 60°), tessere da 256×256 celle (0,25° di lato). Tessere valide entro 85° di latitudine. Una tessera pesa circa 20-70 KB compressa.
+- **`TileTerrain`** implementa `Terrain` leggendo da un deposito di tessere già caricate (lettura sincrona: il motore non cambia). Quota con interpolazione bilineare anche a cavallo di due tessere; una tessera mancante dà quota 0 e «mare» ed è registrata (`missingTiles()`), così chi analizza sa se i risultati valgono.
+- **Fonti aperte**: quote dalle tessere Terrarium di AWS (SRTM e altre fonti, zoom 10, ≈ 108 m a 45°; PNG decodificato con un decodificatore scritto da zero, solo `node:zlib`); uso del suolo da ESA WorldCover (CC BY 4.0) letto dal livello di sintesi più grossolano il cui pixel è almeno metà cella (~750×750 pixel per tessera, a intervalli di byte). Stesse classi e soglie dei pacchetti.
+- **Generatore** `npm run map-tiles -- --config file.json` (o `--bbox sud,ovest,nord,est`): costruisce solo le tessere che mancano, quattro alla volta, scrive in modo atomico e tiene la cache sotto il tetto eliminando le meno recenti. Cache in `ARALD_TILE_CACHE` o `~/.cache/arald-design-tool/tiles`.
+- **CLI**: `"terrain": "world"` in una configurazione legge dalla cache (non scarica nulla, funziona offline); senza le tessere necessarie dice quante mancano e il comando per prepararle.
+- **Tessere mai «piatte» per errore di rete**: una quota assente dove il suolo dice che c'è terra, o un suolo assente dove le quote dicono che c'è terra, è un errore e non si scrive nulla (lo stesso 403/404 lo danno anche un proxy o una rete che negano l'accesso).
+
+**Confronto con i pacchetti** (stessi dati d'ingresso, fonti diverse): Alta Valle Maira, 28 mila punti, errore medio assoluto sulla quota 8,9 m, bias −0,7 m, scarto quadratico 12 m, massimo 153 m (cresta), suolo uguale nel 93% dei punti e stessa distribuzione di classi; Resilience Score 66/100 identico, un collegamento in più (C4–C5, SF12, 1,2 km, qualità debole). Eolie reali: 45/100 identico. Tempi: 16 tessere (~27×20 km ciascuna, area 108×80 km) in 7 s, 25 tessere in 10 s; 41 tessere in cache pesano 1,5 MB (il mare si comprime molto).
+
+Limiti: le quote Terrarium a zoom 10 sono più lisce dell'SRTM a 30 m (creste strette abbassate), oltre i 60° nord le quote non vengono da SRTM, nessuna strada né nome di luogo, la proiezione locale sbaglia le distanze di qualche percento oltre 300 km (avviso), dipendenza da servizi aperti di terzi (AWS Open Data, ESA) che possono cambiare.
+
+Prossime fasi dell'area ampia (ciascuna con ok): 2) servizio di tessere nel server locale con cache e download con limiti; 3) pagina senza bordi con caricamento al volo, indicatore e «vai a coordinate»; 4) documenti e revisione finale. La vecchia fase 4 «aree pronte» è assorbita da un elenco di luoghi da cui partire.
 
 ## Prossime fasi (ciascuna con ok esplicito)
 
-4. **Aree pronte**: Italia (Valle Maira, Dolomiti, Valle d'Aosta/Monte Bianco, Appennino centrale, Eolie) e Alpi europee (Chamonix–Courmayeur–Martigny, Vallese/Zermatt, Engadina, Tirolo, Alpi Giulie), con confronto sintetico/reale documentato, e una panoramica a risoluzione ridotta per scegliere l'area. Verrà ripensata alla luce dell'area ampia.
+4. **Aree pronte** (assorbita dall'area ampia): Italia (Valle Maira, Dolomiti, Valle d'Aosta/Monte Bianco, Appennino centrale, Eolie) e Alpi europee (Chamonix–Courmayeur–Martigny, Vallese/Zermatt, Engadina, Tirolo, Alpi Giulie), con confronto sintetico/reale documentato, e una panoramica a risoluzione ridotta per scegliere l'area. Verrà ripensata alla luce dell'area ampia.
