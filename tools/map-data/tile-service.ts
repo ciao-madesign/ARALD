@@ -4,11 +4,11 @@
  * Limiti ai download: poche costruzioni insieme, una coda corta, un tetto di tessere nuove all'ora e il tetto di
  * dimensione della cache (eliminazione delle meno recenti). Ogni limite risponde con un errore chiaro, mai in silenzio.
  */
-import { existsSync, readFileSync, utimesSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, statSync, utimesSync } from "node:fs";
 import { type GeoTile, type TileIndex, validTile } from "../scenario-model/geo-tile.js";
 import { TerrariumSampler } from "./terrarium.js";
 import { type BuildDeps, buildTile, networkTerrariumFetcher } from "./tile-builder.js";
-import { DEFAULT_CACHE_CAP_BYTES, DirTileStore, defaultCacheDir, enforceCap, listCache, tilePath } from "./tile-cache.js";
+import { DEFAULT_CACHE_CAP_BYTES, DirTileStore, MAX_TILE_FILE_BYTES, defaultCacheDir, enforceCap, listCache, tilePath } from "./tile-cache.js";
 import { WorldCoverSource } from "./worldcover-source.js";
 
 export class TileServiceError extends Error {
@@ -26,7 +26,7 @@ export interface TileServiceOptions {
   concurrency?: number;
   /** Richieste di costruzione in attesa oltre quelle in corso (default 64): oltre, 429. */
   maxQueue?: number;
-  /** Tessere nuove ammesse nell'ultima ora (default 400, ~27 mila km² di rete): oltre, 429 con il tempo di attesa. */
+  /** Tessere nuove ammesse nell'ultima ora (default 400, circa 220-310 mila km² di terreno): oltre, 429 con il tempo di attesa. */
   maxNewPerHour?: number;
   /** Tempo massimo per costruire una tessera (default 180 s): oltre, 502 e il posto si libera. */
   buildTimeoutMs?: number;
@@ -75,7 +75,7 @@ export class TileService {
     this.now = opts.now ?? Date.now;
     this.buildTimeoutMs = opts.buildTimeoutMs ?? 180_000;
     this.depsOpt = opts.deps;
-    this.store = new DirTileStore(this.dir);
+    this.store = new DirTileStore(this.dir, 8); // il servizio manda i byte del file: le tessere decodificate in memoria servono solo alla verifica
   }
 
   private deps(): BuildDeps {
@@ -93,7 +93,7 @@ export class TileService {
     const key = `${tx}_${ty}`;
     if (this.verified.has(key) ? existsSync(tilePath(this.dir, t)) : this.store.isValid(t)) {
       try {
-        const data = this.read(t);
+        const data = this.read(t); // controlla anche la forma del file (dimensione e firma gzip): un file danneggiato dopo la prima verifica si ricostruisce
         if (this.verified.size > 20_000) this.verified.clear();
         this.verified.add(key);
         return { data, cached: true };
@@ -111,7 +111,16 @@ export class TileService {
 
   private read(t: TileIndex): Buffer {
     const path = tilePath(this.dir, t);
+    const size = statSync(path).size;
+    if (size < 3 || size > MAX_TILE_FILE_BYTES) {
+      rmSync(path, { force: true });
+      throw new Error(`File di tessera con dimensione impossibile (${size} byte): eliminato`);
+    }
     const data = readFileSync(path);
+    if (data[0] !== 0x1f || data[1] !== 0x8b) {
+      rmSync(path, { force: true });
+      throw new Error("File di tessera senza intestazione gzip: eliminato");
+    }
     try { const n = new Date(); utimesSync(path, n, n); } catch { /* solo per l'ordine di eliminazione */ }
     const now = this.now();
     this.recent.delete(path);
@@ -136,15 +145,22 @@ export class TileService {
     let built: GeoTile;
     try {
       await this.acquire();
+      // Allo scadere del tempo la richiesta fallisce, ma la costruzione sotto continua (le fonti non si annullano):
+      // il posto si libera solo quando ha davvero finito, o dopo il doppio del tempo, così non si accumulano lavori orfani.
+      let released = false;
+      const releaseOnce = (): void => { if (!released) { released = true; this.release(); } };
       try {
-        built = await this.withTimeout(buildTile(t, this.deps()));
+        const work = Promise.resolve().then(() => buildTile(t, this.deps())); // anche un errore immediato passa da qui
+        work.then(releaseOnce, releaseOnce);
+        const fallback = setTimeout(releaseOnce, this.buildTimeoutMs * 2);
+        fallback.unref?.();
+        try { built = await this.withTimeout(work); } finally { clearTimeout(fallback); }
         this.store.put(built);
       } catch (e) {
+        // niente releaseOnce(): se è scaduto il tempo il lavoro è ancora in corso e tiene il posto (si libera da solo)
         this.failedAt.push(this.now());
         if (e instanceof TileServiceError) throw e;
         throw new TileServiceError(502, `Costruzione della tessera non riuscita (fonti non raggiungibili o dati assenti): ${(e as Error).message}`);
-      } finally {
-        this.release();
       }
     } finally {
       this.inProgress--;

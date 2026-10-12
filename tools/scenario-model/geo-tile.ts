@@ -20,6 +20,8 @@ export const TILES_Y = 180 / TILE_DEG; // 720
 export const MAX_LAT = 85;
 /** Latitudine oltre la quale le quote delle fonti aperte non sono più SRTM (meno precise). */
 export const RELIABLE_LAT = 60;
+/** Tetto alle tessere di un riquadro elencate in una volta (le reti reali ne usano poche centinaia). */
+export const MAX_TILES_PER_BOX = 20_000;
 
 export interface TileIndex { tx: number; ty: number }
 
@@ -29,7 +31,7 @@ export function validTile(t: TileIndex): boolean {
   if (!Number.isInteger(t.tx) || !Number.isInteger(t.ty) || t.tx < 0 || t.tx >= TILES_X || t.ty < 0 || t.ty >= TILES_Y) return false;
   const north = 90 - t.ty * TILE_DEG;
   const south = north - TILE_DEG;
-  return north <= MAX_LAT + TILE_DEG && south >= -MAX_LAT - TILE_DEG;
+  return north <= MAX_LAT && south >= -MAX_LAT; // la tessera sta tutta entro ±85° (Terrarium arriva a 85,05°)
 }
 
 /** Tessera che contiene un punto geografico (latitudine limitata, longitudine riportata in [-180, 180)). */
@@ -60,6 +62,8 @@ export function tilesForGeoBox(box: { south: number; west: number; north: number
   // colonne contate senza avvolgere (un riquadro attorno a 180° ha longitudini oltre il limite), poi riportate in [0, TILES_X)
   const c0 = Math.floor((box.west + 180) / TILE_DEG);
   const c1 = Math.floor((box.east + 180) / TILE_DEG);
+  // il numero di tessere si controlla prima di elencarle: un riquadro grande come il mondo darebbe quasi un milione di righe
+  if ((c1 - c0 + 1) * (ty1 - ty0 + 1) > MAX_TILES_PER_BOX) throw new Error(`Riquadro geografico troppo esteso (più di ${MAX_TILES_PER_BOX} tessere)`);
   const out: TileIndex[] = [];
   const seen = new Set<number>();
   for (let c = c0; c <= c1; c++) {

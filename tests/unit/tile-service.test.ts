@@ -1,4 +1,5 @@
-import { existsSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
+import { gzipSync as gz } from "node:zlib";
 import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +10,10 @@ import type { BuildDeps } from "../../tools/map-data/tile-builder.js";
 import { TileService, TileServiceError } from "../../tools/map-data/tile-service.js";
 import { tilePath } from "../../tools/map-data/tile-cache.js";
 import { decodeTile } from "../../tools/scenario-model/geo-tile.js";
-import { createStaticServer, sameOriginTileRequest } from "../../tools/network-design/serve-lib.mjs";
+import { TILE_HEADER as SERVER_TILE_HEADER, createStaticServer, sameOriginTileRequest } from "../../tools/network-design/serve-lib.mjs";
+import { BrowserTileStore, TILE_HEADER as PAGE_TILE_HEADER } from "../../tools/network-design/world-tiles.js";
+import { DirTileStore } from "../../tools/map-data/tile-cache.js";
+import { MAX_TILES_PER_BOX, tilesForGeoBox, validTile } from "../../tools/scenario-model/geo-tile.js";
 
 function fakeDeps(opts: { fail?: boolean; delayMs?: number; counter?: { n: number } } = {}): BuildDeps {
   const terrarium = new TerrariumSampler(async () => null);
@@ -163,6 +167,76 @@ describe("servizio di tessere: regressioni della revisione", () => {
     expect(s.status().tiles).toBe(0); // risposta in cache entro 5 s
     t += 6000;
     expect(s.status().tiles).toBe(1);
+  });
+});
+
+describe("servizio di tessere: revisione finale", () => {
+  it("una costruzione scaduta tiene il posto finché il lavoro non finisce: la concorrenza non supera il limite", async () => {
+    let live = 0, peak = 0;
+    const d = seaDeps();
+    d.terrarium.prepare = async () => { live++; peak = Math.max(peak, live); await new Promise((r) => setTimeout(r, 120)); live--; };
+    const s = new TileService({ dir: dir(), deps: d, concurrency: 1, buildTimeoutMs: 40, maxQueue: 5 });
+    const first = await s.get(730, 183).catch((e) => e);
+    expect(first).toMatchObject({ status: 502 }); // scaduto dopo 40 ms mentre il lavoro sotto dura 120
+    await s.get(731, 183).catch(() => undefined); // parte solo dopo la fine del primo lavoro
+    expect(peak).toBe(1);
+  });
+
+  it("un errore immediato nella creazione delle fonti libera il posto", async () => {
+    let n = 0;
+    const s = new TileService({ dir: dir(), concurrency: 1, deps: () => { if (n++ === 0) throw new Error("fonti non configurate"); return seaDeps(); } });
+    await expect(s.get(730, 183)).rejects.toMatchObject({ status: 502 });
+    await expect(s.get(731, 183)).resolves.toBeDefined();
+  });
+
+  it("un file danneggiato dopo la prima verifica viene eliminato e ricostruito alla richiesta successiva", async () => {
+    const d = dir();
+    const s = new TileService({ dir: d, deps: seaDeps() });
+    await s.get(730, 183);
+    expect((await s.get(730, 183)).cached).toBe(true);
+    writeFileSync(tilePath(d, { tx: 730, ty: 183 }), "non e' gzip");
+    const r = await s.get(730, 183);
+    expect(r.cached).toBe(false);
+    expect(decodeTile(gunzipSync(r.data)).tx).toBe(730);
+    writeFileSync(tilePath(d, { tx: 730, ty: 183 }), Buffer.alloc(2_500_000, 1)); // dimensione impossibile
+    expect((await s.get(730, 183)).cached).toBe(false);
+  });
+
+  it("un file della cache che si espande a dismisura non viene decompresso", () => {
+    const d = dir();
+    const store = new DirTileStore(d);
+    const bomb = gz(Buffer.alloc(30_000_000));
+    expect(bomb.length).toBeLessThan(100_000);
+    mkdirSync(join(d, "183"), { recursive: true });
+    writeFileSync(tilePath(d, { tx: 730, ty: 183 }), bomb);
+    expect(store.get(730, 183)).toBeUndefined();
+    expect(store.isValid({ tx: 730, ty: 183 })).toBe(false);
+  });
+
+  it("l'area di una tessera sta tutta entro ±85°; un riquadro enorme viene rifiutato prima di essere elencato", () => {
+    expect(validTile({ tx: 0, ty: 19 })).toBe(false); // 85,0°-85,25° nord
+    expect(validTile({ tx: 0, ty: 20 })).toBe(true);
+    expect(validTile({ tx: 0, ty: 699 })).toBe(true);
+    expect(validTile({ tx: 0, ty: 700 })).toBe(false);
+    expect(() => tilesForGeoBox({ south: -80, west: -179, north: 80, east: 179 })).toThrow(/troppo esteso/);
+    expect(MAX_TILES_PER_BOX).toBe(20_000);
+  });
+
+  it("catena completa: BrowserTileStore → server HTTP → TileService → tessera ARTG vera, con un solo nome per l'intestazione", async () => {
+    expect(Object.keys(PAGE_TILE_HEADER).map((k) => k.toLowerCase())).toEqual([SERVER_TILE_HEADER]);
+    const server = createStaticServer(dir(), new TileService({ dir: dir(), deps: seaDeps() }));
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as { port: number }).port;
+    try {
+      const store = new BrowserTileStore(`http://127.0.0.1:${port}/tiles/`, (u, init) => fetch(u, init));
+      await store.ensure([{ tx: 730, ty: 183 }, { tx: 731, ty: 183 }]);
+      expect(store.get(730, 183)?.tx).toBe(730);
+      expect(store.get(731, 183)?.elevation.length).toBe(256 * 256);
+      // fuori dal mondo: il 404 del server arriva come errore leggibile
+      await expect(new BrowserTileStore(`http://127.0.0.1:${port}/tiles/`, (u, init) => fetch(u, init)).ensure([{ tx: 5, ty: 19 }])).resolves.toBeUndefined(); // già scartata dal controllo di validità del browser
+    } finally {
+      server.close();
+    }
   });
 });
 

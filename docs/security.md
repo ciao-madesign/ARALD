@@ -1780,7 +1780,7 @@ Un audit mirato dell'intero `node/src` (non solo del codice nuovo) — vedi anch
     5. `listCache` poteva fallire su un file sparito e non toglieva mai i `.part` di scritture interrotte: ora ignora i sparsi e cancella i `.part` più vecchi di un'ora;
     6. la cache dei file aperti di WorldCover poteva cancellare la voce di un altro tentativo; il campionatore confondeva «nessun dato» e «tessera non caricata»: ora la seconda è un errore esplicito.
 
-    Limiti: sotto i 60° di latitudine le quote sono SRTM, oltre meno precise; il dato di suolo copre fino a ~82°; le tessere si scaricano solo da un computer con rete (il browser non scarica nulla); le fasi 2-4 (servizio nel server locale, pagina senza bordi, documentazione) restano da fare.
+    Limiti: sotto i 60° di latitudine le quote sono SRTM, oltre meno precise; il dato di suolo copre fino a ~82°; le tessere si scaricano solo da un computer con rete (il browser non scarica nulla); le fasi successive (servizio nel server locale, pagina, documentazione) sono nelle voci #136-#138.
 
 136. **Area ampia — fase 2: servizio di tessere nel server locale**, 12 ottobre 2026 — su ok esplicito dell'utente ("procedi con la fase 2"), seguito della voce #135. `TileService` (`tools/map-data/tile-service.ts`) serve `/tiles/<tx>/<ty>` e `/tiles/status` dal server del tool, costruendo le tessere mancanti da Terrarium + WorldCover; dettagli, opzioni e limiti in `docs/real-maps.md`. Verificato con la rete reale.
 
@@ -1808,6 +1808,20 @@ Un audit mirato dell'intero `node/src` (non solo del codice nuovo) — vedi anch
     8. la scorciatoia `TileTerrain` (ultima tessera) ricordava una tessera mancante anche dopo il suo arrivo: ora ricorda solo quelle presenti (bug rilevante solo con depositi che si riempiono, cioè la pagina).
 
     Limiti: l'orchestrazione dei caricamenti dentro `app.ts` (token, indicatore) è verificata nel browser ma non da test automatici (la pagina non ne ha); l'Artifact pubblicato non ha il terreno del mondo (nessun server).
+
+138. **Area ampia — fase 4: documenti e revisione finale**, 12 ottobre 2026 — su ok esplicito dell'utente. Documentazione riallineata (`docs/real-maps.md`: stato completo, limiti coordinati tra CLI/server/pagina, codici di risposta, luoghi da cui partire al posto delle «aree pronte»; README di `tools/map-data/` e `tools/network-design/`) e revisione d'insieme dei tre commit delle voci #135-#137.
+
+    Problemi trovati dalla revisione, corretti con test di regressione:
+    1. un file di tessera in cache poteva essere enorme o una «zip bomb» (letto e decompresso senza tetto, a differenza del PNG e del browser): ora dimensione massima 2 MB, tetto di 1 MB alla decompressione, file senza firma gzip o di dimensione impossibile eliminato e ricostruito;
+    2. dopo la prima verifica una tessera si considerava valida per tutto il processo: un file danneggiato dopo (disco pieno, altro processo) veniva servito all'infinito; ora ogni lettura controlla dimensione e firma gzip e ricostruisce se serve;
+    3. allo scadere dei 180 s il posto di concorrenza si liberava ma il lavoro sotto (richieste alle fonti) continuava: con una fonte appesa si accumulavano lavori orfani oltre il limite di 4; ora il posto si libera solo a lavoro finito (o dopo 360 s) e un errore immediato nella creazione delle fonti libera comunque il posto;
+    4. `validTile` ammetteva le tessere della fascia 85,0°-85,25° (Terrarium arriva a 85,05°: quote ripetute del bordo spacciate per dati veri): ora solo tessere interamente entro ±85°;
+    5. un riquadro enorme (`--bbox` mondiale, vista molto allargata) veniva elencato per intero (quasi un milione di tessere) prima del controllo del tetto: ora il numero si controlla prima (20 mila);
+    6. il commento dava «~27 mila km²» per 400 tessere (sono 220-310 mila km²); le due cifre dei documenti ora coincidono;
+    7. i limiti di pagina (250/80), server (400 all'ora) e CLI (800) non erano spiegati insieme: ora sono documentati insieme, con il consiglio di preparare prima la cache per le reti grandi;
+    8. mancava un test lungo tutta la catena: ora `BrowserTileStore` → server HTTP → `TileService` con tessere vere, con un solo nome per l'intestazione `X-ARALD-Tool` (confrontato tra server e pagina), e un test del tetto di decompressione nel browser; la cache del servizio tiene in memoria al più 8 tessere decodificate invece di 300.
+
+    Limiti: le cifre «verificata con la rete reale» (tempi, confronto con i pacchetti) non sono riproducibili senza Internet; un 429 del server fa fallire il caricamento della rete intera pur essendo arrivate quasi tutte le tessere (la cache le conserva: riprovare dopo il tempo indicato basta); la pagina non ha test automatici dell'orchestrazione dei caricamenti.
 
 ## Nota sui test di scala: soglia TTL ricalibrata due volte
 

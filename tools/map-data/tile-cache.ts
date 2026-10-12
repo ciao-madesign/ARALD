@@ -8,6 +8,10 @@ import { join } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { type GeoTile, type TileIndex, type TileStore, decodeTile, encodeTile, tileKey, validTile } from "../scenario-model/geo-tile.js";
 
+/** Una tessera compressa pesa decine di KB; oltre questi limiti un file della cache non è una tessera (e non si decomprime). */
+export const MAX_TILE_FILE_BYTES = 2_000_000;
+export const MAX_TILE_RAW_BYTES = 1_000_000;
+
 /** Tetto predefinito alla cache su disco (byte): 1,5 GB. */
 export const DEFAULT_CACHE_CAP_BYTES = 1_500_000_000;
 
@@ -54,7 +58,8 @@ export class DirTileStore implements TileStore {
     const path = tilePath(this.dir, { tx, ty });
     let tile: GeoTile;
     try {
-      tile = decodeTile(gunzipSync(readFileSync(path)));
+      if (statSync(path).size > MAX_TILE_FILE_BYTES) throw new Error("file troppo grande per essere una tessera");
+      tile = decodeTile(gunzipSync(readFileSync(path), { maxOutputLength: MAX_TILE_RAW_BYTES }));
     } catch {
       this.remember(key);
       return undefined;

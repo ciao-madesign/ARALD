@@ -133,6 +133,12 @@ describe("tessere nel browser", () => {
     expect(calls.length).toBeLessThan(12);
   });
 
+  it("una risposta che si espande a dismisura viene interrotta (tetto alla decompressione)", async () => {
+    const bomb = gzipSync(Buffer.alloc(30_000_000));
+    const f: TileFetchFn = async () => ok(new Uint8Array(bomb));
+    await expect(new BrowserTileStore("tiles/", f).ensure([{ tx: 730, ty: 183 }])).rejects.toThrow(/troppo grande/);
+  });
+
   it("il servizio di tessere risponde o no", async () => {
     expect(await probeTileService("tiles/", async () => ok(new Uint8Array()))).toBe(true);
     expect(await probeTileService("tiles/", async () => bad(404))).toBe(false);

@@ -50,7 +50,7 @@ if (configPath) {
   let cfg;
   try { cfg = parseNetworkConfig(JSON.parse(readFileSync(configPath, "utf8"))); } catch (e) { fail(`Configurazione non valida: ${(e as Error).message}`); }
   for (const w of configWarnings(cfg, marginM)) console.log(`Attenzione: ${w}`);
-  tiles = requiredTiles(cfg, marginM);
+  try { tiles = requiredTiles(cfg, marginM); } catch (e) { fail(`Area troppo estesa: ${(e as Error).message}`); }
 } else {
   const v = bboxArg!.split(",").map(Number);
   if (v.length !== 4 || v.some((x) => !Number.isFinite(x))) fail("--bbox: sud,ovest,nord,est (quattro numeri)");

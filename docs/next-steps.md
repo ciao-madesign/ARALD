@@ -171,6 +171,10 @@ La pagina del tool (`tools/network-design/`, vedi `docs/network-design-tool.md`)
 
 Finché non c'è una decisione esplicita la pagina resta interna: non va linkata da `site/`, dai portali o dall'app.
 
+### Network Design Tool dopo il terreno del mondo (12 ottobre 2026)
+
+Con l'area ampia (`docs/real-maps.md`, voci #135-#138 di `docs/security.md`) restano candidati, tutti non pianificati: il **Network Optimizer** (proposta dell'utente, da fare sopra il terreno del mondo), un confronto sintetico/reale per altre zone oltre Valle Maira ed Eolie, strade e nomi di luogo (OpenStreetMap non è raggiungibile da questo ambiente), un modo di pubblicare il terreno del mondo senza server locale (oggi l'Artifact resta con i pacchetti), e un test automatico dell'orchestrazione dei caricamenti dentro `app.ts`. Inoltre un 429 del server fa fallire il caricamento di una rete grande pur essendo arrivate quasi tutte le tessere (la cache le conserva: basta riprovare): un caricamento che accetta un risultato parziale e mostra solo le tessere mancanti sarebbe più gentile.
+
 ## Milestone/feature completate — pointer al dettaglio in `docs/security.md`
 
 Le Opzioni C-G furono scritte quando le rispettive milestone erano ancora aperte; oggi sono tutte ✅ complete e il loro stato reale vive in `docs/roadmap.md` — tenute qui solo come titolo + pointer:
