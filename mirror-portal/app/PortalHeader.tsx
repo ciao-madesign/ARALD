@@ -55,6 +55,9 @@ export function PortalHeader({ userEmail, roleLabel, active, isAdmin }: PortalHe
           <a href="/elenco" className={active === "elenco" ? "tab active" : "tab"} aria-current={active === "elenco" ? "page" : undefined}>
             Elenco
           </a>
+          <a href="/strumento-rete" className="tab" title="Strumento di progettazione e verifica di resilienza della rete (esempi su terreno reale)">
+            Strumento rete
+          </a>
           {isAdmin && (
             <a href="/admin" className="tab" style={{ marginLeft: "auto" }}>
               Pannello Admin

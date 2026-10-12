@@ -1823,6 +1823,17 @@ Un audit mirato dell'intero `node/src` (non solo del codice nuovo) — vedi anch
 
     Limiti: le cifre «verificata con la rete reale» (tempi, confronto con i pacchetti) non sono riproducibili senza Internet; un 429 del server fa fallire il caricamento della rete intera pur essendo arrivate quasi tutte le tessere (la cache le conserva: riprovare dopo il tempo indicato basta); la pagina non ha test automatici dell'orchestrazione dei caricamenti.
 
+139. **Network Design Tool nel Mirror Portal, dietro il login**, 12 ottobre 2026 — su scelte e via libera dell'utente (Mirror Portal per primo, tutti gli operatori, «via libera» a toccare `mirror-portal/` in produzione). Tab «Strumento rete», route `/strumento-rete` e `/strumento-rete/data/[file]` con controllo di sessione, copia generata `mirror-portal/design-tool/` (`npm run design-tool:mirror-sync`), `lib/design-tool-page.ts` (adattamento della pagina, politica dei contenuti, lista chiusa dei file dati). Dettagli in `docs/emergency-portal.md` («Quattordicesimo pezzo»). Verificato: `next build` e `next start` locali, pagina e dati con una sessione firmata (operatore e admin) e senza (302/401), tentativi di percorso (`..%2f`, `%2e%2e`, `\`, maiuscole) → 404, Chromium con la sessione (Eolie reale 45/100, nessuna richiesta esterna, nessun errore in console con la politica a impronte), e il tracciamento dei file di Vercel (`design-tool/` nel `.nft.json` di entrambe le route).
+
+    Problemi trovati dalla revisione, corretti con test:
+    1. la politica dei contenuti usava `script-src 'unsafe-inline'` senza bisogno: ora le impronte `sha256` degli script in linea calcolate dalla pagina servita; la funzione rifiuta pagine con gestori `on…=`, script esterni o senza script;
+    2. `<base href>` rendeva assoluti anche i link `#…` e i riferimenti SVG `url(#…)`: sostituito dal meta esplicito `arald-data-base` letto dalla pagina;
+    3. la lettura della pagina non era protetta (un file non tracciato dava un 500 muto): ora un messaggio chiaro;
+    4. i pacchetti erano `no-store` (240 KB riscaricati a ogni apertura): ora `private, max-age=3600` (restano dietro sessione);
+    5. la copia committata poteva diventare obsoleta senza segnali: il test la confronta con una build fresca e il documento dice di rilanciare la sincronizzazione dopo ogni modifica al tool.
+
+    Limiti: la copia si allinea a mano (il test della radice lo controlla, ma Vercel non lo esegue); dopo il login si torna alla mappa e non al tool; su Vercel solo i pacchetti (nessun terreno del mondo); la politica dei contenuti ammette stili in linea (la pagina usa attributi `style=`); le funzioni di Vercel rispondono al più con 4,5 MB (i pacchetti pesano 24-240 KB).
+
 ## Nota sui test di scala: soglia TTL ricalibrata due volte
 
 `tests/network/simulate.test.ts`'s "a TTL shorter than the mesh's depth leaves the farthest nodes legitimately unreachable" non verifica una proprietà di sicurezza, ma è comunque rilevante qui: il suo margine numerico è dovuto essere aumentato due volte in questa sessione (prima per il routing a costo, poi per il retry verso il prossimo fornitore) perché entrambe le funzionalità rendono la propagazione del contenuto più efficiente, spostando il punto in cui un nodo lontano riesce comunque a trovare una copia in cache entro il budget TTL. Ora usa una distanza volutamente enorme rispetto al TTL (~5x) invece di un margine "appena sufficiente", proprio per non dover essere ricalibrato una terza volta a ogni miglioramento futuro dell'efficienza della mesh.

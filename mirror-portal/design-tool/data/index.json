@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "packs": [
+    {
+      "id": "eolie",
+      "name": "Isole Eolie",
+      "file": "eolie.pack.gz",
+      "bytes": 23688,
+      "bbox": {
+        "south": 38.3287,
+        "west": 14.6477,
+        "north": 38.8713,
+        "east": 15.4523
+      },
+      "frame": {
+        "lat0": 38.6,
+        "lon0": 15.05
+      },
+      "cellM": 100,
+      "cols": 700,
+      "rows": 600,
+      "attribution": "Quote: SRTM (NASA/USGS), tramite AWS Terrain Tiles. Uso del suolo: © ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium, CC BY 4.0."
+    },
+    {
+      "id": "valle-maira",
+      "name": "Alta Valle Maira",
+      "file": "valle-maira.pack.gz",
+      "bytes": 242830,
+      "bbox": {
+        "south": 44.2691,
+        "west": 6.6354,
+        "north": 44.6309,
+        "east": 7.2646
+      },
+      "frame": {
+        "lat0": 44.45,
+        "lon0": 6.95
+      },
+      "cellM": 100,
+      "cols": 500,
+      "rows": 400,
+      "attribution": "Quote: SRTM (NASA/USGS), tramite AWS Terrain Tiles. Uso del suolo: © ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium, CC BY 4.0."
+    }
+  ]
+}

@@ -82,7 +82,7 @@ arald/
 ├─ tests/           unit/, integration/, network/ (vitest)
 ├─ tools/simulator/ simulatore di rete a scala (usato anche da `npm run simulate`)
 ├─ tools/scenario-model/ modello teorico parametrico per scenario (fisica radio + mobilità + code, nessun NomadNode reale) — `npm run scenario-model`, vedi docs/scenario-simulation.md
-├─ tools/network-design/ pagina interattiva del Network Design Tool (interfaccia sul motore di tools/scenario-model/, un solo file HTML, `npm run design-tool:build`) — vedi docs/network-design-tool.md
+├─ tools/network-design/ pagina interattiva del Network Design Tool (interfaccia sul motore di tools/scenario-model/, un solo file HTML, `npm run design-tool:build`) — vedi docs/network-design-tool.md; ospitata anche dal Mirror Portal dietro login come copia generata `mirror-portal/design-tool/` (`npm run design-tool:mirror-sync`, da rilanciare e committare dopo ogni modifica al tool, al motore o ai pacchetti) — vedi docs/emergency-portal.md, «Quattordicesimo pezzo»
 ├─ tools/map-data/  preparazione dei pacchetti di terreno reale (quota SRTM + suolo ESA WorldCover) per il motore e la pagina del tool — `npm run map-data`, vedi docs/real-maps.md; i pacchetti pronti stanno in tools/network-design/data/
 ├─ gateway/local-services/  gateway servizi locali (ex gateway/nomad/, rinominata 30 settembre 2026): KiwixGateway, AiGateway, NewsGateway, TranslateGateway, InternetGateway, FlatnotesGateway — mockato, non nel workspace npm
 ├─ service-stack/   docker-compose.yml che avvia i backend reali di gateway/local-services/ (kiwix-serve, Ollama, Flatnotes) con le loro immagini Docker ufficiali — sostituisce la dipendenza dal sorgente Project NOMAD per questi servizi (30 settembre 2026); nessun codice, solo config — vedi service-stack/README.md e docs/next-steps.md, "Indipendenza da Project NOMAD"
@@ -183,6 +183,7 @@ npm run simulate -- --nodes 50 --topology random  # simulatore di rete a scala
 npm run hub -- --port 8420                     # avvia la ARALD Hub Management API (aggiungi --fake-docker senza Docker reale)
 npm run whatsapp-relay -- --config relay.json  # avvia il relay WhatsApp per "consegna esterna differita" (aggiungi --fake-whatsapp senza credenziali Meta reali)
 npm run email-relay -- --config relay.json     # avvia il relay email per "consegna esterna differita" (aggiungi --fake-smtp senza un vero server SMTP)
+npm run design-tool:mirror-sync                # aggiorna la copia del Network Design Tool ospitata dal Mirror Portal (mirror-portal/design-tool/): da lanciare e committare dopo ogni modifica a tools/network-design/, tools/scenario-model/ o ai pacchetti
 npm run design-tool:serve                     # costruisce e serve la pagina del Network Design Tool su http://127.0.0.1:8470/ (mappe reali e tessere del mondo incluse, vedi docs/real-maps.md)
 npm run map-data -- --id <id> --lat <lat> --lon <lon> --width-km 50 --height-km 40   # prepara un pacchetto di terreno reale (serve la rete)
 npm run map-tiles -- --config <file.json>    # prepara in cache le tessere di terreno del mondo per una rete ("terrain": "world"), serve la rete la prima volta

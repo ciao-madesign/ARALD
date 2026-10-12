@@ -1623,7 +1623,9 @@ readPalette();
 
 /** Cerca il catalogo delle mappe reali accanto alla pagina (cartella data/). Fallisce senza server (file://) o se manca. */
 async function initLibrary(): Promise<void> {
-  const lib = new PackLibrary("data/");
+  // pagina ospitata sotto un altro percorso (Mirror Portal): la cartella dei dati arriva da un meta esplicito
+  const dataBase = document.querySelector('meta[name="arald-data-base"]')?.getAttribute("content");
+  const lib = new PackLibrary(dataBase && /^\/[A-Za-z0-9/_-]*\/$/.test(dataBase) ? dataBase : "data/");
   try {
     await lib.catalog();
     library = lib;
@@ -1637,14 +1639,16 @@ async function initLibrary(): Promise<void> {
 
 /** Cerca il servizio di tessere del server locale (tiles/): assente aprendo la pagina da file: o con --no-tiles. */
 async function initWorld(): Promise<void> {
-  if (location.protocol !== "file:" && (await probeTileService())) {
+  // pagina ospitata senza servizio di tessere (Mirror Portal): nessuna richiesta di prova, il servizio non c'è
+  const hosted = document.querySelector('meta[name="arald-tiles"][content="off"]') !== null;
+  if (!hosted && location.protocol !== "file:" && (await probeTileService())) {
     worldStore = new BrowserTileStore();
     return;
   }
   worldStore = null;
   worldNote = location.protocol === "file:"
     ? "la pagina è aperta da file: apri la pagina con npm run design-tool:serve"
-    : "il server non serve le tessere (avvialo con npm run design-tool:serve, senza --no-tiles)";
+    : "il terreno del mondo si usa avviando il tool in locale (npm run design-tool:serve, senza --no-tiles): da qui non è disponibile";
 }
 
 async function start(): Promise<void> {

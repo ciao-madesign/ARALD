@@ -20,3 +20,5 @@ Aperta con un doppio clic (`file://`) la pagina funziona con i soli esempi sinte
 **Stato: esempio dimostrativo, interno.** Terreni sintetici (Eolie, Atacama, Kampala) e parametri radio non verificati: non è una previsione. La pagina non è linkata da `site/`, dai portali né dall'app; dove pubblicarla è una decisione aperta (`docs/next-steps.md`).
 
 **Limiti:** una sola area reale alla volta, nessuna strada né nomi di luogo; un dispositivo con percorso (es. l'aliscafo) è mostrato alla partenza; la resilienza usa i pesi di default e il guasto d'area è un cerchio; niente Network Optimizer (prossimo passo).
+
+Ospitata anche dal Mirror Portal (`/strumento-rete`, dietro login) come copia generata: dopo ogni modifica alla pagina, al motore o ai pacchetti lancia `npm run design-tool:mirror-sync` e committa `mirror-portal/design-tool/` (il test `tests/unit/mirror-portal-design-tool.test.ts` fallisce se la copia è obsoleta).
