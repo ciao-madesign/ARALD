@@ -161,15 +161,16 @@ La Fase 8 (mockup pixel-precisi in Figma di tutti i flussi — griglie/spaziatur
 
 Nella suite completa (`npx vitest run`, 4 worker) i test `tests/integration/lora-serial-relay.test.ts` e `lora-serial-sx1262-relay.test.ts` vanno ogni tanto in timeout (osservato in circa 1 giro su 4: ora "connects, exchanges HELLO…", ora "a fragment count beyond the old single-byte header's 255 limit round-trips correctly", con il timeout da 60 s del test), mentre lanciati da soli passano sempre in ~3 s. Non legato al lavoro in corso (riscontrato anche prima delle ultime voci, nessun file di quei trasporti toccato). Verificato il 12 ottobre 2026: **non è contesa di CPU** (con 6 processi che saturano la CPU i due test restano a ~3,1 s ciascuno, il pacing è a timer), e il timeout a 60 s del test SX1262 viene superato lo stesso quando capita: sembra un blocco intermittente (evento perso nel dispositivo finto o nella coda di invio), non lentezza. Alzare il timeout non lo risolve. Da indagare con un test in ciclo e log del pacing. Candidato, non pianificato.
 
-### Decisione aperta: dove pubblicare la pagina del Network Design Tool (7 ottobre 2026)
+### Decisione presa: il Network Design Tool va dietro login, nei portali (12 ottobre 2026) — implementazione non iniziata
 
-La pagina del tool (`tools/network-design/`, vedi `docs/network-design-tool.md`) nasce come **pagina autonoma, interna al repository**: nessun server né account, il motore di `tools/scenario-model/` gira nel browser. Scelta dell'utente: *per ora interna*. **Da decidere in seguito cosa farne**, con queste opzioni emerse nel ragionamento:
+La pagina del tool (`tools/network-design/`, vedi `docs/network-design-tool.md`) è nata come pagina autonoma interna al repository (7 ottobre 2026: *per ora interna*). **Il 12 ottobre 2026 l'utente ha deciso di pubblicarla dietro login, dentro i portali** (Mirror Portal e/o Local Portal), non come demo sul sito pubblico. Scartate esplicitamente: demo pubblica in `site/`, solo link privato, app scaricabile. Risposta sul terreno del mondo: **solo in locale**, nessun servizio di tessere ospitato.
 
-- **Sezione del sito pubblico** ("Prova il simulatore", `site/`) come demo con gli scenari di esempio — richiede un avviso ben visibile: terreni sintetici e parametri non verificati, quindi un esempio dimostrativo e non una previsione; decidere anche se esporre al pubblico un tool non ancora tarato su dati reali.
-- **Local Portal** (per chi gestisce un Box) — ha senso solo con dati reali della propria rete, non prima.
-- **Non** nel Mirror Portal (in produzione, dati operativi reali) né nell'app mobile (schermo troppo piccolo per progettare una rete su mappa).
-
-Finché non c'è una decisione esplicita la pagina resta interna: non va linkata da `site/`, dai portali o dall'app.
+Conseguenze (da tenere presenti quando si implementa):
+- **Mirror Portal** (`mirror-portal/`, Vercel, già con operatori e ruoli): ospiterebbe la pagina come file statico dietro la sessione esistente, con i soli pacchetti (Valle Maira, Eolie) e gli esempi sintetici, perché su Vercel non c'è il server di tessere. La pagina non deve ricevere né mostrare dati operativi reali dello specchio: resta uno strumento di progettazione separato dai dati.
+- **Local Portal** (`local-portal/`, servito dal Box in LAN): qui il server locale c'è, quindi il terreno del mondo funzionerebbe, ma solo se il Box ha Internet (scarica le tessere); senza Internet restano i pacchetti e le tessere già in cache.
+- Il vecchio ragionamento («ha senso solo con dati reali della propria rete») non è stato superato: l'utente ha scelto comunque i portali, quindi l'avviso «esempio dimostrativo, non una previsione» resta ben visibile finché il tool non sarà tarato su misure reali.
+- **Ancora da decidere prima di scrivere codice**: quale dei due portali per primo (consiglio: Mirror Portal, perché ha già autenticazione e ruoli); chi può vederla (tutti gli operatori o solo gli Admin); come si aggiorna la copia della pagina nel portale (build che copia `dist/`).
+- Finché non c'è l'ok sull'implementazione la pagina non va linkata da portali, `site/` o app. Il vincolo di non toccare `mirror-portal/` in produzione senza ok resta valido.
 
 ### Network Design Tool dopo il terreno del mondo (12 ottobre 2026)
 
