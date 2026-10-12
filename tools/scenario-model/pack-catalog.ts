@@ -7,11 +7,16 @@ import { MAX_PACK_CELLS, PACK_ID_PATTERN, type PackHeader } from "./terrain-pack
 
 export const CATALOG_VERSION = 1;
 export const MAX_CATALOG_PACKS = 500;
+/** Suffisso del file di un pacchetto codificato in base64 (testo). */
+export const BASE64_SUFFIX = ".b64.txt";
 
 export interface PackCatalogEntry {
   id: string;
   name: string;
-  /** Nome del file nella stessa cartella del catalogo: sempre `<id>.pack.gz`. */
+  /**
+   * Nome del file nella stessa cartella del catalogo: `<id>.pack.gz`, oppure `<id>.pack.gz.b64.txt` (lo stesso
+   * contenuto in base64, per chi può servire solo testo, come la pubblicazione come Artifact).
+   */
   file: string;
   bytes: number;
   /** Riquadro geografico coperto (gradi). */
@@ -45,7 +50,7 @@ export function parseCatalog(raw: unknown): PackCatalog {
     if (typeof e.id !== "string" || !PACK_ID_PATTERN.test(e.id)) throw new Error(`${where}: identificativo non valido`);
     if (seen.has(e.id)) throw new Error(`${where}: identificativo duplicato (${e.id})`);
     seen.add(e.id);
-    if (e.file !== `${e.id}.pack.gz`) throw new Error(`${where}: il file deve chiamarsi ${e.id}.pack.gz`);
+    if (e.file !== `${e.id}.pack.gz` && e.file !== `${e.id}.pack.gz${BASE64_SUFFIX}`) throw new Error(`${where}: il file deve chiamarsi ${e.id}.pack.gz (o ${e.id}.pack.gz${BASE64_SUFFIX})`);
     if (typeof e.name !== "string" || e.name === "" || e.name.length > 200) throw new Error(`${where}: nome non valido`);
     const bytes = num(e.bytes, 1, 2_000_000_000);
     const b = e.bbox;

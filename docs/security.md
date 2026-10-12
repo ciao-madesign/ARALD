@@ -2005,4 +2005,6 @@ Un relay instrada `PRIVATE_MESSAGE`/`GROUP_MESSAGE` senza poter leggerne il payl
     6. il server locale non controllava l'intestazione `Host` (DNS rebinding), seguiva i collegamenti simbolici fuori da `dist/` e non mandava alcuna politica di sicurezza dei contenuti: ora `Host` consentito solo 127.0.0.1/localhost con la porta, `realpath` dentro la cartella, Content-Security-Policy con `frame-ancestors 'none'`;
     7. il catalogo non controllava il tetto di celle, la coerenza dell'origine con il riquadro e accettava un'attribuzione assente o non testuale (le licenze la richiedono): ora sono errori.
 
+    8. la pubblicazione come Artifact non accetta file `.gz`: la build produce una variante solo testo (`dist/artifact-data/`, pacchetti in base64 e catalogo che li indica), il caricatore decodifica base64 con tetto alla lunghezza e controllo dei caratteri; verificata in Chromium con la pagina e i dati serviti come nella pubblicazione.
+
     Limiti: un'area reale alla volta (nessuna panoramica), serve un browser recente per `DecompressionStream`, un dispositivo trascinato fuori dall'area non viene impedito (solo segnalato), i risultati restano stime con parametri radio non verificati, nessuna strada né nome di luogo. Nessuna modifica al motore né a `node/src/`.

@@ -34,4 +34,19 @@ if (existsSync(dataSrc)) {
   mkdirSync(dataDest, { recursive: true });
   for (const f of readdirSync(dataSrc)) if (f === "index.json" || f.endsWith(".pack.gz")) cpSync(join(dataSrc, f), join(dataDest, f));
 }
+// Variante solo testo per la pubblicazione come Artifact (che non serve file .gz): stessi pacchetti in base64
+// e un catalogo che li indica; si pubblica come data/ accanto a artifact.html.
+const artifactData = join(here, "dist", "artifact-data");
+rmSync(artifactData, { recursive: true, force: true });
+if (existsSync(join(dataDest, "index.json"))) {
+  mkdirSync(artifactData, { recursive: true });
+  const index = JSON.parse(readFileSync(join(dataDest, "index.json"), "utf8"));
+  for (const p of index.packs) {
+    const text = readFileSync(join(dataDest, p.file)).toString("base64");
+    p.file = `${p.file}.b64.txt`;
+    p.bytes = Buffer.byteLength(text);
+    writeFileSync(join(artifactData, p.file), text);
+  }
+  writeFileSync(join(artifactData, "index.json"), `${JSON.stringify(index, null, 2)}\n`);
+}
 console.log(`tools/network-design/dist/index.html + artifact.html (${(html.length / 1024).toFixed(0)} KB)`);

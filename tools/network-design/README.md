@@ -5,7 +5,7 @@ Pagina del **ARALD Network Design Tool**: mappa, dispositivi spostabili, aloni d
 **Solo interfaccia.** Ogni numero viene dal motore di `tools/scenario-model/` (`assessNetwork`, `coverageGrid`, `prepareResilience`, `evaluateFailure`, `resilienceScore`), che gira nel browser: nessun server, nessun account, nessun dato in uscita.
 
 ```bash
-npm run design-tool:build     # → dist/index.html (pagina), dist/artifact.html (senza scheletro, per la pubblicazione), dist/data/ (mappe)
+npm run design-tool:build     # → dist/index.html (pagina), dist/artifact.html (senza scheletro, per la pubblicazione), dist/data/ (mappe), dist/artifact-data/ (le stesse mappe in base64, solo testo, per la pubblicazione)
 npm run design-tool:serve     # costruisce e serve su http://127.0.0.1:8470/ (--port per cambiarla): serve per le mappe reali
 ```
 

@@ -103,6 +103,18 @@ describe("caricamento dei pacchetti nella pagina", () => {
     expect(calls.filter((c) => c === "data/prova.pack.gz")).toHaveLength(1);
   });
 
+  it("un catalogo in base64 (solo testo) funziona come quello binario, e un testo non valido dà un errore chiaro", async () => {
+    const b64 = new TextEncoder().encode(raw.toString("base64"));
+    const entry = { ...goodEntry("prova", b64.length), file: "prova.pack.gz.b64.txt" };
+    const mk = (text: Uint8Array) => makeFetch({ "index.json": () => ({ ok: true, status: 200, bytes: new TextEncoder().encode(JSON.stringify(catalog(entry))) }), "prova.pack.gz.b64.txt": () => ({ ok: true, status: 200, bytes: text }) });
+    const p = await new PackLibrary("data/", mk(b64).fetchFn).load("prova");
+    expect(p.header.id).toBe("prova");
+    await expect(new PackLibrary("data/", mk(new TextEncoder().encode("###non base64###")).fetchFn).load("prova")).rejects.toThrow(/base64/);
+    await expect(new PackLibrary("data/", mk(new TextEncoder().encode("abc")).fetchFn).load("prova")).rejects.toThrow(/base64/);
+    expect(() => parseCatalog(catalog({ ...goodEntry("a"), file: "a.pack.gz.b64.txt" }))).not.toThrow();
+    expect(() => parseCatalog(catalog({ ...goodEntry("a"), file: "b.pack.gz.b64.txt" }))).toThrow(/deve chiamarsi/);
+  });
+
   it("un server che ha già decompresso il file (Content-Encoding) non rompe il caricamento", async () => {
     const plain = encodePack(pack("prova"));
     const { fetchFn } = makeFetch({ "prova.pack.gz": () => ({ ok: true, status: 200, bytes: plain }) });

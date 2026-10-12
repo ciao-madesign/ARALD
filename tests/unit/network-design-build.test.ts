@@ -29,6 +29,19 @@ describe("pagina del tool: build in un unico file", () => {
     expect(readFileSync("tools/network-design/dist/index.html", "utf8")).toContain('"data/"');
   }, 60_000);
 
+  it("la variante solo testo per la pubblicazione ha lo stesso contenuto dei pacchetti", () => {
+    execFileSync("node", ["tools/network-design/build.mjs"], { stdio: "pipe" });
+    const index = JSON.parse(readFileSync("tools/network-design/dist/artifact-data/index.json", "utf8"));
+    const normal = JSON.parse(readFileSync("tools/network-design/dist/data/index.json", "utf8"));
+    expect(index.packs.map((p: { id: string }) => p.id)).toEqual(normal.packs.map((p: { id: string }) => p.id));
+    for (const p of index.packs) {
+      expect(p.file).toBe(`${p.id}.pack.gz.b64.txt`);
+      const text = readFileSync(`tools/network-design/dist/artifact-data/${p.file}`, "utf8");
+      expect(text.length).toBe(p.bytes);
+      expect(Buffer.from(text, "base64").equals(readFileSync(`tools/network-design/dist/data/${p.id}.pack.gz`))).toBe(true);
+    }
+  }, 60_000);
+
   it("il bundle non può chiudere il suo tag <script> dall'interno", () => {
     const frag = readFileSync("tools/network-design/dist/artifact.html", "utf8");
     const open = frag.lastIndexOf("<script>");

@@ -2,7 +2,7 @@
  * Caricamento dei pacchetti di terreno nella pagina: catalogo, scarico, decompressione gzip
  * (`DecompressionStream` del browser) e validazione. La rete è iniettabile per i test.
  */
-import { type PackCatalog, type PackCatalogEntry, parseCatalog } from "../scenario-model/pack-catalog.js";
+import { BASE64_SUFFIX, type PackCatalog, type PackCatalogEntry, parseCatalog } from "../scenario-model/pack-catalog.js";
 import { MAX_PACK_CELLS, type TerrainPack, decodePack } from "../scenario-model/terrain-pack.js";
 
 /** Tetto ai byte decompressi: intestazione piccola + 3 byte per cella, con il tetto di celle dei pacchetti. */
@@ -35,6 +35,17 @@ export async function gunzip(bytes: Uint8Array, maxBytes: number = MAX_UNPACKED_
   const out = new Uint8Array(total);
   let off = 0;
   for (const c of chunks) { out.set(c, off); off += c.length; }
+  return out;
+}
+
+/** Decodifica un file di testo in base64 (con tetto alla lunghezza e controllo dei caratteri). */
+function decodeBase64(text: Uint8Array, name: string): Uint8Array {
+  if (text.length > Math.ceil((MAX_UNPACKED_BYTES * 4) / 3) + 4) throw new Error(`Area "${name}": file troppo grande`);
+  const str = new TextDecoder().decode(text).replace(/\s+/g, "");
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(str) || str.length % 4 !== 0) throw new Error(`Area "${name}": il file non è base64 valido`);
+  const bin = atob(str);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
 
@@ -77,7 +88,8 @@ export class PackLibrary {
     const entry = await this.entry(id);
     const r = await this.fetchFn(`${this.baseUrl}${entry.file}`);
     if (!r.ok) throw new Error(`Area "${entry.name}" non raggiungibile (${r.status})`);
-    const bytes = new Uint8Array(await r.arrayBuffer());
+    let bytes: Uint8Array = new Uint8Array(await r.arrayBuffer());
+    if (entry.file.endsWith(BASE64_SUFFIX)) bytes = decodeBase64(bytes, entry.name);
     if (bytes.length > MAX_UNPACKED_BYTES) throw new Error(`Area "${entry.name}": file troppo grande (${bytes.length} byte)`);
     // Normalmente è gzip; se il server (o un proxy) l'ha già decompresso, il contenuto è direttamente il pacchetto.
     const isGzip = bytes.length > 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
