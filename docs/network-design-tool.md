@@ -288,3 +288,7 @@ Esiste una prima pagina interattiva in `tools/network-design/` (vedi il suo READ
 ## Terreno reale (fase 1 di 4, 11 ottobre 2026)
 
 Il motore ora accetta terreno reale (`"terrain": "pack:<id>"`, pacchetti SRTM + WorldCover preparati con `npm run map-data`): vedi `docs/real-maps.md` per fonti, licenze, risultati (le Eolie reali valgono 45/100 contro 73 del terreno sintetico) e limiti. Dal 12 ottobre 2026 (fase 2) la pagina usa i pacchetti: mappa reale, quota sotto i dispositivi, avvisi, attribuzioni, `npm run design-tool:serve`.
+
+## Editing dei dispositivi (fase 3, 12 ottobre 2026)
+
+Tavolozza di tipi (clic o trascinamento sulla mappa), duplica, cambio di tipo, annulla/ripeti (100 passi) e percorso dei mobili con mezzo, velocità, partenza e soste: vedi `docs/real-maps.md`. Il percorso alimenta i contatti opportunistici della resilienza.

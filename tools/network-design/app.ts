@@ -17,9 +17,11 @@ import eolieReale from "../scenario-model/examples/eolie-resilienza-reale.json";
 import kampala from "../scenario-model/examples/kampala.json";
 import valleMairaReale from "../scenario-model/examples/valle-maira-reale.json";
 import {
-  COVER_LABEL, KIND_LABEL, type View, addDevice, devicesOutside, fitView, fmtDistance, fmtRate, groundAt, groundWarnings, haloCellM, moveDevice,
-  qualityColor, removeDevice, screenToWorld, viewBounds, worldToScreen, zoomAt,
+  COVER_LABEL, KIND_LABEL, type View, addDevice, devicesOutside, duplicateDevice, fitView, fmtDistance, fmtRate, groundAt, groundWarnings, haloCellM, moveDevice,
+  qualityColor, removeDevice, screenToWorld, setDeviceRoute, updateDevice, viewBounds, worldToScreen, zoomAt,
 } from "./logic.js";
+import { Editor, type MoveToken } from "./editor.js";
+import { type RouteDraft, SPEED_PRESETS, buildRoute, fmtClock, routeLengthM, routeToDraft, sameRoute, stopTimes } from "./route.js";
 import { PackLibrary } from "./packs.js";
 
 // ---------------------------------------------------------------- esempi
@@ -37,7 +39,7 @@ const PRESETS: { id: string; label: string; raw: unknown; real?: boolean }[] = [
 
 // ---------------------------------------------------------------- stato
 
-type Tool = "select" | "add" | "area";
+type Tool = "select" | "add" | "area" | "route";
 type Tab = "rete" | "resilienza";
 type Halo = Medium | "none";
 interface FailArea { x: number; y: number; r: number }
@@ -53,6 +55,11 @@ let halo: Halo = "lora";
 const failed = new Set<string>();
 let areas: FailArea[] = [];
 let areaRadiusM = 3000;
+const PALETTE_KINDS: NodeKind[] = ["box", "portable", "relay", "card", "phone"];
+const DRAG_MIME = "application/x-arald-kind";
+const editor = new Editor<NetworkConfig>(100);
+/** Percorso in corso di disegno per un dispositivo (le tappe si aggiungono con clic sulla mappa). */
+let routeDraft: { id: string; draft: RouteDraft; error: string } | null = null;
 
 // mappe reali: biblioteca dei pacchetti (assente se la pagina è aperta senza server, o il catalogo non si scarica)
 let library: PackLibrary | null = null;
@@ -169,6 +176,9 @@ function applyConfig(next: NetworkConfig, t: Terrain): void {
     if (prev) { cfg = prev.cfg; terrain = prev.terrain; recompute(); }
     throw e;
   }
+  editor.reset();
+  routeDraft = null;
+  if (tool === "route") tool = "select";
   terrainMaxM = 0;
   if (terrain instanceof PackTerrain) for (const v of terrain.pack.elevation) if (v > terrainMaxM) terrainMaxM = v;
   selected = next.devices.find((d) => d.kind === "box")?.id ?? next.devices[0]?.id ?? null;
@@ -215,6 +225,111 @@ function recompute(): void {
   report = null;
   resError = "";
   haloGrid = null;
+}
+
+/**
+ * Applica una modifica alla rete registrando lo stato precedente per annulla/ripeti. Una modifica che arriva
+ * mentre si disegna un percorso (copia, rimozione, ambiente…) lo interrompe: la bozza non descriverebbe più la rete.
+ */
+function commit(next: NetworkConfig): void {
+  if (next === cfg) return;
+  if (routeDraft) { routeDraft = null; if (tool === "route") tool = "select"; }
+  cfg = editor.commit(cfg, next);
+  recompute();
+  refreshAll();
+}
+
+/** Dopo un annulla/ripeti: la bozza di percorso non vale più, e i selettori seguono la rete ripristinata. */
+function afterHistory(): void {
+  routeDraft = null;
+  if (tool === "route") tool = "select";
+  $<HTMLSelectElement>("env").value = cfg.environment;
+  $<HTMLSelectElement>("reg").value = cfg.regulatory;
+  recompute();
+  refreshAll();
+}
+
+function undo(): void {
+  if (!cfg || !editor.canUndo) return;
+  cfg = editor.undo(cfg);
+  afterHistory();
+}
+
+function redo(): void {
+  if (!cfg || !editor.canRedo) return;
+  cfg = editor.redo(cfg);
+  afterHistory();
+}
+
+function placeDevice(kind: NodeKind, x: number, y: number): void {
+  const res = addDevice(cfg, kind, x, y);
+  selected = res.id;
+  commit(res.cfg);
+}
+
+function deleteSelected(): void {
+  if (!selected) return;
+  failed.delete(selected);
+  const id = selected;
+  selected = null;
+  commit(removeDevice(cfg, id));
+}
+
+function selectDevice(id: string | null): void {
+  if (routeDraft && routeDraft.id !== id) cancelRoute();
+  selected = id;
+  renderPanel();
+  scheduleHalo();
+  draw();
+}
+
+// ---- percorsi: disegno di un percorso per un dispositivo
+
+function startRoute(id: string): void {
+  const dev = cfg.devices.find((d) => d.id === id);
+  const at = posOf(id);
+  if (!dev || !at) return;
+  const draft: RouteDraft = dev.route ? routeToDraft(dev.route, cfg.frame) : { start: { x: at.x, y: at.y }, stops: [], speedKmh: SPEED_PRESETS[0].kmh, startDelayMin: 0 };
+  routeDraft = { id, draft, error: "" };
+  tool = "route";
+  renderToolbar();
+  renderPanel();
+  draw();
+}
+
+function cancelRoute(): void {
+  routeDraft = null;
+  if (tool === "route") tool = "select";
+  renderToolbar();
+  renderPanel();
+  draw();
+}
+
+function finishRoute(): void {
+  if (!routeDraft) return;
+  const { id, draft } = routeDraft;
+  let route: ReturnType<typeof buildRoute>;
+  try {
+    route = buildRoute(draft, cfg.frame);
+  } catch (e) {
+    routeDraft.error = (e as Error).message;
+    renderPanel();
+    return;
+  }
+  const dev = cfg.devices.find((d) => d.id === id);
+  routeDraft = null;
+  if (tool === "route") tool = "select";
+  if (!dev) { refreshAll(); return; } // il dispositivo non esiste più
+  if (sameRoute(dev.route, route)) { refreshAll(); return; } // "Fine" senza cambiare nulla: nessun passo nello storico
+  commit(setDeviceRoute(cfg, id, route));
+}
+
+function addRouteStop(x: number, y: number): void {
+  if (!routeDraft) return;
+  routeDraft.draft.stops.push({ x, y, pauseMin: 0 });
+  routeDraft.error = "";
+  renderPanel();
+  draw();
 }
 
 function posOf(id: string): { x: number; y: number } | null {
@@ -524,6 +639,31 @@ function draw(): void {
     g.setLineDash([]);
   }
 
+  // percorso in corso di disegno
+  if (routeDraft) {
+    const d = routeDraft.draft;
+    const pts = [d.start, ...d.stops].map((q) => worldToScreen(view, q.x, q.y));
+    g.beginPath();
+    pts.forEach((q, i) => (i === 0 ? g.moveTo(q.x, q.y) : g.lineTo(q.x, q.y)));
+    g.strokeStyle = palette.accent;
+    g.lineWidth = 3;
+    g.stroke();
+    g.font = "600 10px 'IBM Plex Mono', ui-monospace, monospace";
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    d.stops.forEach((stop, i) => {
+      const q = pts[i + 1];
+      g.beginPath();
+      g.arc(q.x, q.y, 8, 0, Math.PI * 2);
+      g.fillStyle = palette.accent;
+      g.fill();
+      if (stop.pauseMin > 0) { g.lineWidth = 2; g.strokeStyle = palette.surface; g.stroke(); }
+      g.fillStyle = palette.surface;
+      g.fillText(String(i + 1), q.x, q.y + 0.5);
+    });
+    g.textAlign = "start";
+  }
+
   // collegamenti
   for (const l of links) {
     const a = posOf(l.a);
@@ -645,6 +785,9 @@ function renderStatus(): void {
     else if (haloBusy) t = `Calcolo dell'alone ${TECH_LABEL[halo]} di ${selected}…`;
     else t = `Alone ${TECH_LABEL[halo]} di ${selected}`;
   } else if (halo !== "none" && !n) t += " · seleziona un dispositivo per vedere il suo alone";
+  if (tool === "add") t = `Aggiungi ${KIND_LABEL[addKind]}: fai clic sulla mappa (Esc per finire)`;
+  else if (tool === "route" && routeDraft) t = `Percorso di ${routeDraft.id}: fai clic sulla mappa per aggiungere tappe (Invio = fine, Esc = annulla)`;
+  else if (tool === "area") t = "Area di guasto: fai clic sulla mappa";
   $("status").textContent = t;
 }
 
@@ -662,19 +805,111 @@ function badge(q: number): HTMLElement {
   return b;
 }
 
+function deviceChips(): HTMLElement {
+  const wrap = h("div", { class: "stack-s" }, h("h3", {}, "Dispositivi"));
+  const chips = h("div", { class: "chips" });
+  for (const d of cfg.devices) {
+    const b = h("button", { type: "button", class: "chip", "aria-pressed": String(d.id === selected), title: d.label ?? KIND_LABEL[d.kind] }, d.id);
+    b.addEventListener("click", () => selectDevice(d.id));
+    chips.append(b);
+  }
+  if (cfg.devices.length === 0) chips.append(h("span", { class: "hint" }, "Nessuno: scegli un tipo da “Aggiungi” e fai clic sulla mappa, o trascinalo."));
+  wrap.append(chips);
+  return wrap;
+}
+
+function numberField(label: string, id: string, value: number, attrs: Record<string, string>, onChange: (v: number) => void): HTMLElement {
+  // il valore mostrato è arrotondato a due decimali, quello della bozza resta esatto finché non lo modifichi
+  const shown = String(Math.round(value * 100) / 100);
+  const input = h("input", { type: "number", id, value: shown, "aria-label": label, ...attrs });
+  input.addEventListener("change", () => { const v = Number(input.value); if (Number.isFinite(v)) onChange(v); else input.value = shown; });
+  return h("label", { class: "field" }, label, input);
+}
+
+function routeEditor(): HTMLElement {
+  const rd = routeDraft!;
+  const d = rd.draft;
+  const box = h("div", { class: "stack-s" });
+  box.append(h("p", { class: "hint" }, "Fai clic sulla mappa per aggiungere le tappe. Invio termina, Esc annulla."));
+  const preset = h("select", { id: "route-preset", "aria-label": "Mezzo di trasporto" });
+  for (const sp of SPEED_PRESETS) preset.append(h("option", { value: String(sp.kmh) }, `${sp.label} (${sp.kmh} km/h)`));
+  preset.append(h("option", { value: "custom" }, "Altra velocità"));
+  preset.value = SPEED_PRESETS.some((sp) => sp.kmh === d.speedKmh) ? String(d.speedKmh) : "custom";
+  preset.addEventListener("change", () => { if (preset.value !== "custom") { d.speedKmh = Number(preset.value); renderPanel(); draw(); } });
+  box.append(h("label", { class: "field" }, "Mezzo", preset));
+  box.append(numberField("Velocità (km/h)", "route-speed", d.speedKmh, { min: "0.1", max: "1000", step: "0.1" }, (v) => { d.speedKmh = v; renderPanel(); }));
+  box.append(numberField("Parte dopo (minuti)", "route-delay", d.startDelayMin, { min: "0", max: "100000", step: "1" }, (v) => { d.startDelayMin = v; renderPanel(); }));
+  if (d.stops.length > 0) {
+    const times = stopTimes(d);
+    const table = h("table", { class: "wp" });
+    table.append(h("thead", {}, h("tr", {}, ...["Tappa", "Arrivo", "Sosta (min)", ""].map((t) => h("th", {}, t)))));
+    const body = h("tbody");
+    d.stops.forEach((stop, i) => {
+      const pause = h("input", { type: "number", min: "0", max: "100000", step: "1", value: String(stop.pauseMin), "aria-label": `Sosta alla tappa ${i + 1} in minuti` });
+      pause.addEventListener("change", () => { const v = Number(pause.value); stop.pauseMin = Number.isFinite(v) && v >= 0 ? v : 0; renderPanel(); draw(); });
+      const rm = h("button", { type: "button", class: "btn small-btn", "aria-label": `Togli la tappa ${i + 1}` }, "×");
+      rm.addEventListener("click", () => { d.stops.splice(i, 1); renderPanel(); draw(); });
+      body.append(h("tr", {}, h("td", { class: "mono" }, String(i + 1)), h("td", { class: "mono" }, fmtClock(times[i].arriveS)), h("td", {}, pause), h("td", {}, rm)));
+    });
+    table.append(body);
+    box.append(h("div", { class: "scroll" }, table));
+    box.append(h("p", { class: "hint" }, `Lunghezza ${fmtDistance(routeLengthM(d))} · fine alle ${fmtClock(times[times.length - 1].departS)} dalla partenza (orari ipotetici, stima a velocità costante).`));
+  }
+  if (rd.error) box.append(h("p", { class: "error", role: "alert" }, rd.error));
+  const ok = h("button", { type: "button", class: "btn", id: "route-done" }, "Fine");
+  ok.disabled = d.stops.length === 0;
+  ok.addEventListener("click", finishRoute);
+  const cancel = h("button", { type: "button", class: "btn", id: "route-cancel" }, "Annulla");
+  cancel.addEventListener("click", cancelRoute);
+  box.append(h("div", { class: "row wrap" }, ok, cancel));
+  return box;
+}
+
+function routeSection(id: string): HTMLElement {
+  const dev = cfg.devices.find((d) => d.id === id)!;
+  const box = h("div", { class: "stack-s" }, h("h3", {}, "Percorso"));
+  if (routeDraft && routeDraft.id === id) { box.append(routeEditor()); return box; }
+  if (dev.route) {
+    const d = routeToDraft(dev.route, cfg.frame);
+    box.append(h("p", { class: "ground" }, `Mobile: ${d.stops.length} tappe, ${fmtDistance(routeLengthM(d))}, ${fmtClock(dev.route[dev.route.length - 1].tS)} ore in tutto.`));
+    const edit = h("button", { type: "button", class: "btn", id: "route-edit" }, "Modifica percorso");
+    edit.addEventListener("click", () => startRoute(id));
+    const rm = h("button", { type: "button", class: "btn", id: "route-remove" }, "Rendi fisso");
+    rm.addEventListener("click", () => commit(setDeviceRoute(cfg, id, undefined)));
+    box.append(h("div", { class: "row wrap" }, edit, rm));
+  } else {
+    box.append(h("p", { class: "hint" }, "Fisso. Disegna un percorso per farne un dispositivo mobile (barca, auto, escursionista): serve alla resilienza, per i collegamenti opportunistici."));
+    const draw1 = h("button", { type: "button", class: "btn", id: "route-draw" }, "Disegna percorso");
+    draw1.addEventListener("click", () => startRoute(id));
+    box.append(draw1);
+  }
+  return box;
+}
+
 function panelNetwork(): HTMLElement {
   const box = h("div", { class: "stack" });
+  box.append(deviceChips());
   const n = cfg.devices.find((d) => d.id === selected);
   if (n) {
     const kind = n.kind;
     const form = h("div", { class: "card stack-s" });
     form.append(h("div", { class: "row" }, h("strong", { class: "mono" }, n.id), h("span", { class: "muted" }, KIND_LABEL[kind])));
-    const label = h("input", { type: "text", id: "dev-label", value: n.label ?? "", "aria-label": "Nome del dispositivo", placeholder: "Nome (facoltativo)" });
-    label.addEventListener("change", () => { n.label = label.value || undefined; });
+    if (routeDraft && routeDraft.id === n.id) {
+      // mentre si disegna il percorso il resto della scheda è nascosto: una modifica lo interromperebbe
+      form.append(routeSection(n.id));
+      box.append(form);
+      return finishPanelNetwork(box);
+    }
+    const kindSel = h("select", { id: "dev-kind", "aria-label": "Tipo di dispositivo" });
+    for (const k of PALETTE_KINDS) kindSel.append(h("option", { value: k }, KIND_LABEL[k]));
+    kindSel.value = kind;
+    kindSel.addEventListener("change", () => commit(updateDevice(cfg, n.id, { kind: kindSel.value as NodeKind })));
+    form.append(h("label", { class: "field" }, "Tipo", kindSel));
+    const label = h("input", { type: "text", id: "dev-label", value: n.label ?? "", "aria-label": "Nome del dispositivo", placeholder: "Nome (facoltativo)", maxlength: "200" });
+    label.addEventListener("change", () => commit(updateDevice(cfg, n.id, { label: label.value.trim() || undefined })));
     const agl = h("input", { type: "number", id: "dev-agl", min: "0", max: "200", step: "0.5", value: String(n.heightAglM ?? KIND_DEFAULTS[kind].heightAglM), "aria-label": "Altezza antenna in metri" });
-    agl.addEventListener("change", () => { const v = Number(agl.value); if (Number.isFinite(v) && v >= 0 && v <= 200) { n.heightAglM = v; recompute(); refreshAll(); } });
+    agl.addEventListener("change", () => { const v = Number(agl.value); if (Number.isFinite(v) && v >= 0 && v <= 200) commit(updateDevice(cfg, n.id, { heightAglM: v })); else agl.value = String(n.heightAglM ?? KIND_DEFAULTS[kind].heightAglM); });
     form.append(h("label", { class: "field" }, "Nome", label), h("label", { class: "field" }, "Altezza antenna (m)", agl));
-    if (n.route) form.append(h("p", { class: "hint" }, "Dispositivo mobile: è mostrato alla partenza, il suo percorso è tratteggiato."));
     const at = posOf(n.id);
     if (at) {
       const gr = groundAt(terrain, at.x, at.y);
@@ -683,14 +918,25 @@ function panelNetwork(): HTMLElement {
       if (gr.inside) form.append(h("p", { class: "ground" }, real ? `Suolo: ${COVER_LABEL[gr.cover]}, quota ${Math.round(gr.elevationM)} m` : `Suolo: ${COVER_LABEL[gr.cover]}`, ant !== undefined && real ? ` · antenna a ${Math.round(ant)} m s.l.m.` : ""));
       for (const w of groundWarnings(gr, kind, n.route !== undefined)) form.append(h("p", { class: "warn-note", role: "note" }, w));
     }
-    const rm = h("button", { type: "button", class: "btn danger" }, "Rimuovi dispositivo");
-    rm.addEventListener("click", () => { cfg = removeDevice(cfg, n.id); failed.delete(n.id); selected = null; recompute(); refreshAll(); });
-    form.append(rm);
+    form.append(routeSection(n.id));
+    const dup = h("button", { type: "button", class: "btn", id: "dev-dup" }, "Duplica");
+    dup.addEventListener("click", () => {
+      const r = duplicateDevice(cfg, n.id, 40 * view.mPerPx, -40 * view.mPerPx);
+      if (r) { selected = r.id; commit(r.cfg); }
+    });
+    const rm = h("button", { type: "button", class: "btn danger", id: "dev-remove" }, "Rimuovi");
+    rm.addEventListener("click", deleteSelected);
+    form.append(h("div", { class: "row wrap" }, dup, rm));
     box.append(form);
   } else {
-    box.append(h("p", { class: "hint" }, cfg.devices.length === 0 ? "Rete vuota. Scegli “Aggiungi”, un tipo di dispositivo, e fai clic sulla mappa." : "Fai clic su un dispositivo per vederne i dettagli, trascinalo per spostarlo."));
+    box.append(h("p", { class: "hint" }, "Fai clic su un dispositivo per vederne i dettagli, trascinalo per spostarlo."));
   }
 
+  return finishPanelNetwork(box);
+}
+
+/** Parte comune della scheda «Rete»: avviso fuori area, tabella dei collegamenti, legenda. */
+function finishPanelNetwork(box: HTMLElement): HTMLElement {
   const outside = devicesOutside(terrain, cfg);
   if (outside.length > 0) box.append(h("p", { class: "warn-note", role: "note" }, `Fuori dall'area dei dati reali: ${outside.join(", ")}. I risultati che li riguardano non sono affidabili (quota 0, nessun suolo).`));
   const rows = links.filter((l) => !selected || l.a === selected || l.b === selected);
@@ -831,11 +1077,32 @@ function fmtWait(s: number): string {
 
 // ---------------------------------------------------------------- barra degli strumenti
 
+/** Piccola icona (SVG) della forma di un tipo di dispositivo, la stessa che si vede sulla mappa. */
+function glyph(kind: NodeKind): SVGSVGElement {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("aria-hidden", "true");
+  const el = (tag: string, attrs: Record<string, string>): SVGElement => {
+    const e = document.createElementNS(ns, tag);
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+    return e;
+  };
+  if (kind === "box") svg.append(el("rect", { x: "2.5", y: "2.5", width: "11", height: "11" }));
+  else if (kind === "portable") svg.append(el("rect", { x: "2.5", y: "2.5", width: "11", height: "11", rx: "4" }));
+  else if (kind === "relay") svg.append(el("polygon", { points: "8,2 14,13.5 2,13.5" }));
+  else if (kind === "phone") svg.append(el("polygon", { points: "8,2 14,8 8,14 2,8" }));
+  else svg.append(el("circle", { cx: "8", cy: "8", r: "5.5" }));
+  return svg;
+}
+
 function renderToolbar(): void {
   document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.tool === tool)));
   document.querySelectorAll<HTMLButtonElement>("[data-halo]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.halo === halo)));
-  $("add-kind-wrap").hidden = tool !== "add";
+  document.querySelectorAll<HTMLButtonElement>("#palette [data-kind]").forEach((b) => b.setAttribute("aria-pressed", String(tool === "add" && b.dataset.kind === addKind)));
   $("area-wrap").hidden = tool !== "area";
+  $<HTMLButtonElement>("undo").disabled = !editor.canUndo;
+  $<HTMLButtonElement>("redo").disabled = !editor.canRedo;
   canvas.style.cursor = tool === "select" ? "grab" : "crosshair";
 }
 
@@ -860,7 +1127,9 @@ function hit(sx: number, sy: number): string | null {
   return best;
 }
 
-type Drag = { kind: "pan"; lastX: number; lastY: number } | { kind: "dev"; id: string; moved: boolean; startX: number; startY: number; offX: number; offY: number };
+type Drag =
+  | { kind: "pan"; lastX: number; lastY: number; startX: number; startY: number; moved: boolean; clickAdds: boolean }
+  | { kind: "dev"; id: string; moved: boolean; startX: number; startY: number; offX: number; offY: number; token: MoveToken<NetworkConfig> };
 let drag: Drag | null = null;
 
 canvas.addEventListener("pointerdown", (ev) => {
@@ -872,11 +1141,12 @@ canvas.addEventListener("pointerdown", (ev) => {
   const id = hit(sx, sy);
   if (tool === "add") {
     const w = screenToWorld(view, sx, sy);
-    const res = addDevice(cfg, addKind, w.x, w.y);
-    cfg = res.cfg;
-    selected = res.id;
-    recompute();
-    refreshAll();
+    placeDevice(addKind, w.x, w.y);
+    return;
+  }
+  if (tool === "route") {
+    // un clic aggiunge una tappa, un trascinamento sposta la mappa
+    drag = { kind: "pan", lastX: sx, lastY: sy, startX: sx, startY: sy, moved: false, clickAdds: true };
     return;
   }
   if (tool === "area") {
@@ -886,15 +1156,12 @@ canvas.addEventListener("pointerdown", (ev) => {
     return;
   }
   if (id) {
-    selected = id;
     const at = posOf(id)!;
     const pw = screenToWorld(view, sx, sy);
-    drag = { kind: "dev", id, moved: false, startX: sx, startY: sy, offX: at.x - pw.x, offY: at.y - pw.y };
-    renderPanel();
-    scheduleHalo();
-    draw();
+    drag = { kind: "dev", id, moved: false, startX: sx, startY: sy, offX: at.x - pw.x, offY: at.y - pw.y, token: editor.beginMove(cfg) };
+    selectDevice(id);
   } else {
-    drag = { kind: "pan", lastX: sx, lastY: sy };
+    drag = { kind: "pan", lastX: sx, lastY: sy, startX: sx, startY: sy, moved: false, clickAdds: false };
     canvas.style.cursor = "grabbing";
   }
 });
@@ -905,11 +1172,14 @@ canvas.addEventListener("pointermove", (ev) => {
   const sx = ev.clientX - r.left;
   const sy = ev.clientY - r.top;
   if (drag.kind === "pan") {
+    if (!drag.moved && Math.hypot(sx - drag.startX, sy - drag.startY) < 4) return;
+    drag.moved = true;
     view = { ...view, cx: view.cx - (sx - drag.lastX) * view.mPerPx, cy: view.cy + (sy - drag.lastY) * view.mPerPx };
     drag.lastX = sx;
     drag.lastY = sy;
     draw();
   } else if (tab === "rete") {
+    if (!editor.isCurrent(drag.token)) { drag = null; return; } // la rete è cambiata per un'altra via: il trascinamento non vale più
     if (!drag.moved && Math.hypot(sx - drag.startX, sy - drag.startY) < 4) return;
     drag.moved = true;
     const w = screenToWorld(view, sx, sy);
@@ -925,17 +1195,26 @@ function endDrag(ev: PointerEvent): void {
   canvas.style.cursor = tool === "select" ? "grab" : "crosshair";
   if (!d) return;
   if (d.kind === "dev") {
-    if (d.moved && tab === "rete") { recompute(); refreshAll(); }
+    if (d.moved && tab === "rete") {
+      // un trascinamento è un solo passo; se nel frattempo è cambiato altro non si registra nulla (e la rete è già quella nuova)
+      editor.endMove(d.token, cfg);
+      recompute();
+      refreshAll();
+    }
     else if (!d.moved && tab === "resilienza") {
       if (failed.has(d.id)) failed.delete(d.id); else failed.add(d.id);
       failureChanged();
     }
+  } else if (d.clickAdds && !d.moved) {
+    const r = canvas.getBoundingClientRect();
+    const w = screenToWorld(view, ev.clientX - r.left, ev.clientY - r.top);
+    addRouteStop(w.x, w.y);
   } else { scheduleHalo(); }
-  void ev;
 }
 canvas.addEventListener("pointerup", endDrag);
 canvas.addEventListener("pointercancel", endDrag);
-canvas.addEventListener("lostpointercapture", () => { drag = null; });
+// il puntatore può andare perso senza pointerup (finestra che perde il fuoco): si conclude il trascinamento come un rilascio
+canvas.addEventListener("lostpointercapture", (ev) => { if (drag) endDrag(ev); });
 
 canvas.addEventListener("wheel", (ev) => {
   ev.preventDefault();
@@ -950,19 +1229,29 @@ canvas.addEventListener("wheel", (ev) => {
 let zoomTimer = 0;
 
 window.addEventListener("keydown", (ev) => {
-  const tag = (ev.target as HTMLElement).tagName;
-  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-  if ((ev.key === "Delete" || ev.key === "Backspace") && selected && tab === "rete") {
-    cfg = removeDevice(cfg, selected);
-    selected = null;
-    recompute();
-    refreshAll();
+  const el = ev.target as HTMLElement;
+  const tag = el.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable) return;
+  if (!cfg || !$("modal").hidden) return; // con la finestra della configurazione aperta le scorciatoie non toccano la rete
+  const mod = ev.ctrlKey || ev.metaKey;
+  if (mod && ev.key.toLowerCase() === "z") { ev.preventDefault(); if (ev.shiftKey) redo(); else undo(); return; }
+  if (mod && ev.key.toLowerCase() === "y") { ev.preventDefault(); redo(); return; }
+  if (ev.key === "Escape") {
+    if (routeDraft) cancelRoute();
+    else if (tool !== "select") { tool = "select"; renderToolbar(); renderStatus(); }
+    return;
   }
+  // Invio, Canc e Backspace su un pulsante o un collegamento servono al pulsante: qui solo con la mappa o la pagina in primo piano
+  if (tag === "BUTTON" || tag === "A" || tag === "SUMMARY") return;
+  if (ev.key === "Enter" && routeDraft) { ev.preventDefault(); finishRoute(); return; }
+  if ((ev.key === "Delete" || ev.key === "Backspace") && selected && tab === "rete") deleteSelected();
 });
 
 // ---------------------------------------------------------------- controlli
 
 function setTab(t: Tab): void {
+  if (routeDraft) cancelRoute();
+  if (t !== "rete" && tool === "add") tool = "select";
   tab = t;
   if (t === "resilienza") ensureResilience();
   renderPanel();
@@ -1000,14 +1289,37 @@ function setupControls(): void {
       setNotice(`Non riesco a caricare "${p.label}": ${e.message}`);
     });
   });
-  $<HTMLSelectElement>("env").addEventListener("change", (e) => { if (!cfg) return; cfg = { ...cfg, environment: (e.target as HTMLSelectElement).value as NetworkConfig["environment"] }; recompute(); refreshAll(); });
-  $<HTMLSelectElement>("reg").addEventListener("change", (e) => { if (!cfg) return; cfg = { ...cfg, regulatory: (e.target as HTMLSelectElement).value as NetworkConfig["regulatory"] }; recompute(); refreshAll(); });
-  document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((b) => b.addEventListener("click", () => { tool = b.dataset.tool as Tool; renderToolbar(); }));
+  $<HTMLSelectElement>("env").addEventListener("change", (e) => { if (!cfg) return; commit({ ...cfg, environment: (e.target as HTMLSelectElement).value as NetworkConfig["environment"] }); });
+  $<HTMLSelectElement>("reg").addEventListener("change", (e) => { if (!cfg) return; commit({ ...cfg, regulatory: (e.target as HTMLSelectElement).value as NetworkConfig["regulatory"] }); });
+  document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((b) => b.addEventListener("click", () => { if (routeDraft) cancelRoute(); tool = b.dataset.tool as Tool; renderToolbar(); renderStatus(); }));
   document.querySelectorAll<HTMLButtonElement>("[data-halo]").forEach((b) => b.addEventListener("click", () => { halo = b.dataset.halo as Halo; haloGrid = null; renderToolbar(); scheduleHalo(); renderStatus(); draw(); }));
   document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((b) => b.addEventListener("click", () => setTab(b.dataset.tab as Tab)));
-  const kind = $<HTMLSelectElement>("add-kind");
-  for (const k of ["card", "relay", "box", "portable", "phone"] as NodeKind[]) kind.append(h("option", { value: k }, KIND_LABEL[k]));
-  kind.addEventListener("change", () => { addKind = kind.value as NodeKind; });
+  // tavolozza: clic poi clic sulla mappa (anche da telefono), oppure trascinamento sulla mappa
+  const pal = $("palette");
+  for (const k of PALETTE_KINDS) {
+    const b = h("button", { type: "button", class: "btn pal", draggable: "true", "data-kind": k, "aria-pressed": "false", title: `${KIND_LABEL[k]}: fai clic qui e poi sulla mappa, oppure trascinalo sulla mappa` }, glyph(k), KIND_LABEL[k]);
+    b.addEventListener("click", () => {
+      if (!cfg) return;
+      if (tool === "add" && addKind === k) tool = "select"; else { addKind = k; tool = "add"; }
+      if (routeDraft) cancelRoute();
+      renderToolbar();
+      renderStatus();
+    });
+    b.addEventListener("dragstart", (ev) => { ev.dataTransfer?.setData(DRAG_MIME, k); ev.dataTransfer?.setData("text/plain", k); if (ev.dataTransfer) ev.dataTransfer.effectAllowed = "copy"; });
+    pal.append(b);
+  }
+  canvas.addEventListener("dragover", (ev) => { if (cfg && ev.dataTransfer?.types.includes(DRAG_MIME)) { ev.preventDefault(); ev.dataTransfer.dropEffect = "copy"; } });
+  canvas.addEventListener("drop", (ev) => {
+    const k = ev.dataTransfer?.getData(DRAG_MIME);
+    if (!cfg || !k || !PALETTE_KINDS.includes(k as NodeKind)) return;
+    ev.preventDefault();
+    const r = canvas.getBoundingClientRect();
+    const w = screenToWorld(view, ev.clientX - r.left, ev.clientY - r.top);
+    if (routeDraft) cancelRoute();
+    placeDevice(k as NodeKind, w.x, w.y);
+  });
+  $("undo").addEventListener("click", undo);
+  $("redo").addEventListener("click", redo);
   const rad = $<HTMLInputElement>("area-radius");
   rad.addEventListener("input", () => { const v = Number(rad.value); if (v > 0) areaRadiusM = v * 1000; $("area-radius-v").textContent = `${rad.value} km`; });
   $("fit").addEventListener("click", () => { if (!cfg) return; view = fitView(nodes.flatMap((n) => n.path.map((w) => ({ x: w.x, y: w.y }))), view.w, view.h, 0.18, 6000); bg = null; scheduleHalo(); draw(); });

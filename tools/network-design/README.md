@@ -1,6 +1,6 @@
 # tools/network-design/
 
-Pagina del **ARALD Network Design Tool**: mappa, dispositivi spostabili, aloni di copertura, collegamenti colorati per qualità, pannello connessioni, legenda, test di resilienza (spegni un nodo o un'area, punteggio) e configurazione salvabile come JSON. Obiettivo e requisiti: `docs/network-design-tool.md`.
+Pagina del **ARALD Network Design Tool**: mappa, dispositivi (tavolozza, spostamento, copia, annulla/ripeti, percorsi dei mobili), aloni di copertura, collegamenti colorati per qualità, pannello connessioni, legenda, test di resilienza (spegni un nodo o un'area, punteggio) e configurazione salvabile come JSON. Obiettivo e requisiti: `docs/network-design-tool.md`.
 
 **Solo interfaccia.** Ogni numero viene dal motore di `tools/scenario-model/` (`assessNetwork`, `coverageGrid`, `prepareResilience`, `evaluateFailure`, `resilienceScore`), che gira nel browser: nessun server, nessun account, nessun dato in uscita.
 
@@ -12,6 +12,7 @@ npm run design-tool:serve     # costruisce e serve su http://127.0.0.1:8470/ (--
 Aperta con un doppio clic (`file://`) la pagina funziona con i soli esempi sintetici: il browser non scarica i file dati delle mappe reali (`docs/real-maps.md`).
 
 - `packs.ts` — catalogo e caricamento dei pacchetti di terreno (scarico, gzip, validazione). `serve.mjs`/`serve-lib.mjs` — server statico locale. `data/` — pacchetti pronti e `index.json` (`npm run map-data:index`).
+- `history.ts` — storico annulla/ripeti. `route.ts` — dalla bozza di percorso (tappe, soste, velocità) al `route` della configurazione e ritorno.
 - `logic.ts` — logica pura (vista sulla mappa, colori, modifica della configurazione): testata in `tests/unit/network-design-logic.test.ts`.
 - `app.ts` — interfaccia (canvas + pannello). `index.template.html` — struttura e stile (tema chiaro/scuro). `build.mjs` — impacchetta tutto con esbuild.
 - Controllo dei tipi: `npx tsc -p tools/network-design/tsconfig.json`.

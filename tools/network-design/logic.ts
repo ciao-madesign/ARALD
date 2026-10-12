@@ -114,6 +114,47 @@ export function addDevice(cfg: NetworkConfig, kind: NodeKind, x: number, y: numb
   return { cfg: { ...cfg, devices: [...cfg.devices, { id, kind, lat: g.lat, lon: g.lon }] }, id };
 }
 
+/** Modifica alcuni campi di un dispositivo senza toccare l'originale (le configurazioni sono immutabili, lo storico le conserva). */
+export function updateDevice(cfg: NetworkConfig, id: string, patch: Partial<Pick<DeviceConfig, "label" | "heightAglM" | "kind">>): NetworkConfig {
+  return replaceDevice(cfg, id, (d) => {
+    const next: DeviceConfig = { ...d, ...patch };
+    // un campo vuoto si toglie (non si salva `undefined` come valore esplicito)
+    if (next.label === undefined || next.label === "") delete next.label;
+    if (next.heightAglM === undefined) delete next.heightAglM;
+    return next;
+  });
+}
+
+/** Imposta (o toglie, con `undefined`) il percorso di un dispositivo; la posizione fissa segue la partenza. */
+export function setDeviceRoute(cfg: NetworkConfig, id: string, route: DeviceConfig["route"] | undefined): NetworkConfig {
+  return replaceDevice(cfg, id, (d) => {
+    const next: DeviceConfig = { ...d };
+    if (route === undefined) { delete next.route; return next; }
+    next.route = route;
+    next.lat = route[0].lat;
+    next.lon = route[0].lon;
+    return next;
+  });
+}
+
+/** Copia di un dispositivo (nuovo identificativo, spostata di dx, dy metri; il percorso si sposta con lei). */
+export function duplicateDevice(cfg: NetworkConfig, id: string, dx: number, dy: number): { cfg: NetworkConfig; id: string } | null {
+  const src = cfg.devices.find((d) => d.id === id);
+  if (!src) return null;
+  const nid = nextDeviceId(cfg.devices, src.kind);
+  // coordinate sempre dentro i limiti accettati da parseNetworkConfig (±85° di latitudine, ±180° di longitudine)
+  const shift = (p: { lat: number; lon: number }): { lat: number; lon: number } => {
+    const q = toLocal(cfg.frame, p);
+    const g = toGeo(cfg.frame, { x: q.x + dx, y: q.y + dy });
+    return { lat: Math.max(-85, Math.min(85, g.lat)), lon: Math.max(-180, Math.min(180, g.lon)) };
+  };
+  const copy: DeviceConfig = { ...src, id: nid, ...shift(src) };
+  // "X (copia)", mai "X (copia) (copia)", e il nome resta nel limite di 200 caratteri
+  if (src.label) copy.label = `${src.label.replace(/( \(copia\))+$/, "").slice(0, 180)} (copia)`;
+  if (src.route) copy.route = src.route.map((r) => ({ tS: r.tS, ...shift(r) }));
+  return { cfg: { ...cfg, devices: [...cfg.devices, copy] }, id: nid };
+}
+
 export function removeDevice(cfg: NetworkConfig, id: string): NetworkConfig {
   return { ...cfg, devices: cfg.devices.filter((d) => d.id !== id) };
 }

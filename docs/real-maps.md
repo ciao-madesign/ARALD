@@ -1,6 +1,6 @@
 # Mappe e terreno reale
 
-Stato: **fasi 1 e 2 di 4 completate** (11-12 ottobre 2026). Obiettivo: far girare il motore di `tools/scenario-model/` su terreno vero (quote e uso del suolo) invece che sintetico, poi mostrarlo nella pagina del tool (`tools/network-design/`), poi completare l'editing dei dispositivi, poi preparare le aree Italia e Alpi europee.
+Stato: **fasi 1, 2 e 3 di 4 completate** (11-12 ottobre 2026); l'area ampia senza limiti è la richiesta successiva (vedi in fondo). Obiettivo: far girare il motore di `tools/scenario-model/` su terreno vero (quote e uso del suolo) invece che sintetico, poi mostrarlo nella pagina del tool (`tools/network-design/`), poi completare l'editing dei dispositivi, poi preparare le aree Italia e Alpi europee.
 
 ## Cosa è stato fatto (fase 1: dati e motore)
 
@@ -74,7 +74,23 @@ La pagina (`tools/network-design/`) legge i pacchetti e disegna il terreno vero:
 
 Limiti della fase 2: un'area alla volta (nessuna panoramica su più aree, arriva con la fase 4); serve un browser recente (`DecompressionStream`); un dispositivo trascinato fuori dall'area dà risultati inaffidabili ma non viene impedito (l'avviso lo dice); il rilievo ombreggiato è calcolato dalle celle da 100 m e non mostra dettagli più fini.
 
+## Fase 3: editing dei dispositivi (12 ottobre 2026)
+
+Sulla pagina si possono aggiungere, spostare, copiare, cambiare e togliere dispositivi, con annulla/ripeti, e disegnare il percorso di un mobile:
+
+- **Tavolozza** (barra «Aggiungi»): Box, Portable, Fixed Relay, Card, Smartphone. Si fa clic sul tipo e poi sulla mappa (funziona anche da telefono, e si può aggiungerne più d'uno; Esc finisce), oppure si trascina il tipo sulla mappa. Elenco dei dispositivi nel pannello per sceglierne uno anche quando sono sovrapposti.
+- **Dispositivo selezionato**: tipo (cambiabile), nome, altezza dell'antenna, **Duplica** (copia vicina, con il percorso se c'è), **Rimuovi**.
+- **Annulla / Ripeti** (pulsanti, Ctrl+Z, Ctrl+Maiusc+Z o Ctrl+Y): fino a 100 passi. Coprono aggiunte, spostamenti (un trascinamento è un solo passo), rimozioni, copie, tipo/nome/altezza, ambiente e normativa, percorsi. Non coprono i guasti simulati, né la scelta di un altro scenario (che azzera lo storico). Le modifiche non alterano mai l'oggetto precedente: lo storico conserva copie.
+- **Percorso di un mobile** («Disegna percorso»): clic sulla mappa per le tappe, mezzo (a piedi 4, bicicletta 15, auto 40, barca 25, aliscafo 60, elicottero 150 km/h, oppure velocità libera), «parte dopo» N minuti, sosta in minuti a ogni tappa, orari di arrivo calcolati a velocità costante e lunghezza totale. Invio termina, Esc annulla. Si può rimodificare («Modifica percorso») o togliere («Rendi fisso»). La posizione fissa del dispositivo segue la partenza. Il percorso entra nell'analisi di resilienza (contatti opportunistici); sulla mappa il dispositivo resta alla partenza e il percorso è tratteggiato.
+
+Mentre si disegna un percorso la scheda mostra solo l'editor: una modifica (copia, rimozione, ambiente…) lo interromperebbe; cambiare scheda, premere Esc, scegliere un altro strumento lo annullano; «Fine» senza cambiare nulla non aggiunge un passo allo storico. Durante un trascinamento le linee dei collegamenti seguono il dispositivo, la qualità si aggiorna al rilascio. Un trascinamento interrotto da altro (annulla, nuovo scenario) non registra nulla.
+
+Limiti: velocità costante (nessun rallentamento, attese solo dove le indichi), nessun cursore del tempo per vedere i mobili muoversi, le tappe non si trascinano (si tolgono con × e si rifanno), due tappe a meno di 0,5 m si fondono in una sosta quando si ricarica un percorso per modificarlo, i guasti simulati non sono nello storico.
+
+## Richiesta successiva: area molto ampia (da pianificare)
+
+Oggi un pacchetto copre un riquadro fisso (50×40 km o 70×60 km) preparato in anticipo. La richiesta è un'area non limitata, anche con un servizio aperto. È un cambio di architettura (terreno a tessere caricate sul momento) con scelte da concordare prima di scrivere codice: vedi il piano nella risposta a questa richiesta.
+
 ## Prossime fasi (ciascuna con ok esplicito)
 
-3. **Dispositivi**: tavolozza da trascinare, annulla/ripeti, duplica, disegno del percorso di un dispositivo mobile con velocità.
-4. **Aree pronte**: Italia (Valle Maira, Dolomiti, Valle d'Aosta/Monte Bianco, Appennino centrale, Eolie) e Alpi europee (Chamonix–Courmayeur–Martigny, Vallese/Zermatt, Engadina, Tirolo, Alpi Giulie), con confronto sintetico/reale documentato, e una panoramica a risoluzione ridotta per scegliere l'area.
+4. **Aree pronte**: Italia (Valle Maira, Dolomiti, Valle d'Aosta/Monte Bianco, Appennino centrale, Eolie) e Alpi europee (Chamonix–Courmayeur–Martigny, Vallese/Zermatt, Engadina, Tirolo, Alpi Giulie), con confronto sintetico/reale documentato, e una panoramica a risoluzione ridotta per scegliere l'area. Verrà ripensata alla luce dell'area ampia.
