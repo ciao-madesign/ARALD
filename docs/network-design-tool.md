@@ -287,7 +287,7 @@ Esiste una prima pagina interattiva in `tools/network-design/` (vedi il suo READ
 
 ## Terreno reale (fase 1 di 4, 11 ottobre 2026)
 
-Il motore ora accetta terreno reale (`"terrain": "pack:<id>"`, pacchetti SRTM + WorldCover preparati con `npm run map-data`): vedi `docs/real-maps.md` per fonti, licenze, risultati (le Eolie reali valgono 45/100 contro 73 del terreno sintetico) e limiti. Dal 12 ottobre 2026 (fase 2) la pagina usa i pacchetti: mappa reale, quota sotto i dispositivi, avvisi, attribuzioni, `npm run design-tool:serve`.
+Il motore ora accetta terreno reale (`"terrain": "pack:<id>"`, pacchetti SRTM + WorldCover preparati con `npm run map-data`): vedi `docs/real-maps.md` per fonti, licenze, risultati (le Eolie reali valgono 45/100 contro 73 del terreno sintetico) e limiti. Dal 12 ottobre 2026 (fase 2) la pagina usa i pacchetti: mappa reale, quota sotto i dispositivi, avvisi, attribuzioni, `npm run design-tool:serve`. Dalla fase 3 dell'area ampia la pagina legge anche il terreno del mondo a tessere (`"terrain": "world"`, scaricate al bisogno dal server locale): nessun bordo, «Vai a coordinate», «Nuova rete qui», «Ricentra qui» — vedi `docs/real-maps.md`.
 
 ## Editing dei dispositivi (fase 3, 12 ottobre 2026)
 

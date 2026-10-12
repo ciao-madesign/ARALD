@@ -11,7 +11,7 @@ npm run design-tool:serve     # costruisce e serve su http://127.0.0.1:8470/ (--
 
 Aperta con un doppio clic (`file://`) la pagina funziona con i soli esempi sintetici: il browser non scarica i file dati delle mappe reali (`docs/real-maps.md`).
 
-- `packs.ts` — catalogo e caricamento dei pacchetti di terreno (scarico, gzip, validazione). `serve.mjs`/`serve-lib.mjs` — server statico locale. `data/` — pacchetti pronti e `index.json` (`npm run map-data:index`).
+- `world-tiles.ts` — tessere del mondo nel browser (scarico a richiesta dal server locale, limiti e memoria). `packs.ts` — catalogo e caricamento dei pacchetti di terreno (scarico, gzip, validazione). `serve.mjs`/`serve-lib.mjs` — server statico locale. `data/` — pacchetti pronti e `index.json` (`npm run map-data:index`).
 - `history.ts` — storico annulla/ripeti. `route.ts` — dalla bozza di percorso (tappe, soste, velocità) al `route` della configurazione e ritorno.
 - `logic.ts` — logica pura (vista sulla mappa, colori, modifica della configurazione): testata in `tests/unit/network-design-logic.test.ts`.
 - `app.ts` — interfaccia (canvas + pannello). `index.template.html` — struttura e stile (tema chiaro/scuro). `build.mjs` — impacchetta tutto con esbuild.

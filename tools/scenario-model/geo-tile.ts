@@ -190,7 +190,10 @@ export class TileTerrain implements Terrain {
     const wtx = ((tx % TILES_X) + TILES_X) % TILES_X;
     let tile: GeoTile | undefined;
     if (wtx === this.lastTx && ty === this.lastTy) tile = this.lastTile; // un profilo resta quasi sempre nella stessa tessera
-    else { tile = this.store.get(wtx, ty); this.lastTx = wtx; this.lastTy = ty; this.lastTile = tile; }
+    else {
+      tile = this.store.get(wtx, ty);
+      if (tile) { this.lastTx = wtx; this.lastTy = ty; this.lastTile = tile; } // una tessera mancante non si ricorda: potrebbe arrivare dopo
+    }
     if (!tile) { this.noteMissing(wtx, ty); return undefined; }
     return { tile, i: (gy - ty * TILE_CELLS) * TILE_CELLS + (gx - tx * TILE_CELLS) };
   }

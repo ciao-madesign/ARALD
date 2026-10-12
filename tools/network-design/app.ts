@@ -7,7 +7,9 @@ import { type CoverageGrid, type LinkAssessment, coverageGrid, qualityLabel } fr
 import { KIND_DEFAULTS, type Medium, type ModelParams, type NodeKind, type NodeSpec } from "../scenario-model/model.js";
 import { type NetworkConfig, assessNetwork, paramsForConfig, parseNetworkConfig, placeDevices } from "../scenario-model/network-config.js";
 import { type FailureReport, type ResilienceContext, type ResilienceScore, evaluateFailure, prepareResilience, resilienceScore } from "../scenario-model/resilience.js";
+import { TileTerrain, tilesForLocalBounds, type TileIndex } from "../scenario-model/geo-tile.js";
 import { PACK_ID_PATTERN, PackTerrain, packOffset } from "../scenario-model/terrain-pack.js";
+import { FRAME_WARN_KM, WORLD_TERRAIN, configWarnings, geoDistanceKm, parseCoordinates } from "../scenario-model/world-area.js";
 import { FLAT_TERRAIN, type LandCover, type Terrain, toGeo, toLocal } from "../scenario-model/terrain.js";
 import { TERRAINS } from "../scenario-model/terrains.js";
 import atacama from "../scenario-model/examples/atacama.json";
@@ -17,19 +19,27 @@ import eolieReale from "../scenario-model/examples/eolie-resilienza-reale.json";
 import kampala from "../scenario-model/examples/kampala.json";
 import valleMairaReale from "../scenario-model/examples/valle-maira-reale.json";
 import {
-  COVER_LABEL, KIND_LABEL, type View, addDevice, devicesOutside, duplicateDevice, fitView, fmtDistance, fmtRate, groundAt, groundWarnings, haloCellM, moveDevice,
-  qualityColor, removeDevice, screenToWorld, setDeviceRoute, updateDevice, viewBounds, worldToScreen, zoomAt,
+  COVER_LABEL, KIND_LABEL, type View, addDevice, boundedTerrain, canRecenterAt, devicesOutside, duplicateDevice, fitView, fmtDistance, fmtRate, groundAt, groundWarnings, haloCellM, moveDevice,
+  farthestPointKm, networkTiles, qualityColor, recenterConfig, removeDevice, screenToWorld, setDeviceRoute, updateDevice, viewBounds, worldToScreen, zoomAt,
 } from "./logic.js";
 import { Editor, type MoveToken } from "./editor.js";
 import { type RouteDraft, SPEED_PRESETS, buildRoute, fmtClock, routeLengthM, routeToDraft, sameRoute, stopTimes } from "./route.js";
 import { PackLibrary } from "./packs.js";
+import { BrowserTileStore, probeTileService } from "./world-tiles.js";
 
 // ---------------------------------------------------------------- esempi
 
 const BLANK: unknown = { version: 1, name: "Nuova rete (terreno piatto)", frame: { lat0: 44.4, lon0: 7.0 }, environment: "tipico", regulatory: "g3", devices: [] };
-const PRESETS: { id: string; label: string; raw: unknown; real?: boolean }[] = [
+/** Rete vuota sul terreno del mondo (tessere scaricate al bisogno dal server locale), in un punto di partenza qualunque. */
+function worldBlank(lat: number, lon: number, name = "Nuova rete nel mondo"): unknown {
+  return { version: 1, name, frame: { lat0: lat, lon0: lon }, environment: "tipico", regulatory: "g3", terrain: WORLD_TERRAIN, devices: [] };
+}
+const PRESETS: { id: string; label: string; raw: unknown; real?: boolean; world?: boolean }[] = [
   { id: "eolie-reale", label: "Eolie con aliscafo — terreno reale", raw: eolieReale, real: true },
   { id: "valle-maira-reale", label: "Alta Valle Maira — terreno reale", raw: valleMairaReale, real: true },
+  { id: "valle-maira-mondo", label: "Alta Valle Maira — terreno del mondo", raw: { ...valleMairaReale, name: "Alta Valle Maira — terreno del mondo", terrain: WORLD_TERRAIN }, world: true },
+  { id: "eolie-mondo", label: "Eolie con aliscafo — terreno del mondo", raw: { ...eolieReale, name: "Eolie con aliscafo — terreno del mondo", terrain: WORLD_TERRAIN }, world: true },
+  { id: "mondo-vuoto", label: "Nuova rete nel mondo — terreno reale", raw: worldBlank(44.45, 6.95), world: true },
   { id: "eolie-resilienza", label: "Eolie con aliscafo — terreno sintetico", raw: eolieResilienza },
   { id: "eolie", label: "Isole Eolie — terreno sintetico", raw: eolie },
   { id: "atacama", label: "Deserto di Atacama — sintetico", raw: atacama },
@@ -66,6 +76,18 @@ let library: PackLibrary | null = null;
 let libraryNote = "";
 let terrainMaxM = 0; // quota massima del terreno reale, per la scala di colore
 let loadToken = 0;
+let loading = false; // un caricamento di configurazione è in corso: i messaggi di caricamento hanno la precedenza
+// terreno del mondo: tessere dal server locale (assente se la pagina è aperta senza server o il servizio è spento)
+let worldStore: BrowserTileStore | null = null;
+let worldNote = "";
+const MAX_NETWORK_TILES = 250; // tessere per l'area di una rete (margine compreso)
+const MAX_VIEW_TILES = 80; // tessere caricate per la sola vista: oltre, si chiede di avvicinare
+let viewTileToken = 0;
+let viewTileTimer = 0;
+let configTileToken = 0;
+let configBusy = false;
+let tilesArrivedInDrag = false; // arrivate tessere mentre si trascinava un dispositivo: i calcoli vanno rifatti al rilascio
+let tileState: { text: string; error: boolean; busy: boolean } | null = null;
 let baseNotice = ""; // avviso permanente (mappe reali non disponibili); i messaggi di caricamento lo sostituiscono per un po'
 let currentPreset = "";
 
@@ -137,6 +159,13 @@ async function resolveTerrain(c: NetworkConfig): Promise<Terrain> {
     const pack = await library.load(id);
     return new PackTerrain(pack, packOffset(pack, c.frame));
   }
+  if (c.terrain === WORLD_TERRAIN) {
+    if (!worldStore) throw new Error(`Il terreno del mondo non è disponibile: ${worldNote || "il servizio di tessere non risponde"}`);
+    const tiles = networkTiles(c, MAX_NETWORK_TILES);
+    if (!tiles) throw new Error(`La rete è troppo estesa per caricare il terreno (più di ${MAX_NETWORK_TILES} tessere, o troppo vicina ai poli): restringi l'area`);
+    await worldStore.ensure(tiles, { onProgress: (d, t) => setNotice(`Carico il terreno: ${d}/${t} tessere…`) });
+    return new TileTerrain(c.frame, worldStore);
+  }
   if (Object.hasOwn(TERRAINS, c.terrain)) return TERRAINS[c.terrain];
   throw new Error(`Territorio sconosciuto: ${c.terrain}`);
 }
@@ -149,25 +178,28 @@ async function resolveTerrain(c: NetworkConfig): Promise<Terrain> {
 async function loadConfig(raw: unknown): Promise<"applied" | "superseded"> {
   const next = parseNetworkConfig(raw);
   const token = ++loadToken;
-  const needsDownload = next.terrain?.startsWith("pack:") === true;
+  const needsDownload = next.terrain?.startsWith("pack:") === true || next.terrain === WORLD_TERRAIN;
+  loading = needsDownload;
   setNotice(needsDownload ? "Carico la mappa…" : baseNotice);
   let t: Terrain;
   try {
     t = await resolveTerrain(next);
   } catch (e) {
     if (token !== loadToken) return "superseded";
+    loading = false;
     setNotice(baseNotice);
     throw e;
   }
   if (token !== loadToken) return "superseded"; // nel frattempo ne è stata scelta un'altra
-  setNotice(baseNotice);
-  applyConfig(next, t);
+  loading = false;
+  applyConfig(next, t); // applyConfig aggiorna anche l'avviso (permanente + avvisi sull'area)
   return "applied";
 }
 
 /** Applica una configurazione con il suo terreno. Atomico: se il calcolo fallisce si torna alla rete precedente. */
 function applyConfig(next: NetworkConfig, t: Terrain): void {
   const prev = cfg ? { cfg, terrain } : null;
+  invalidateTileLoads(); // i caricamenti di tessere della rete precedente non valgono più
   try {
     cfg = next;
     terrain = t;
@@ -180,7 +212,13 @@ function applyConfig(next: NetworkConfig, t: Terrain): void {
   routeDraft = null;
   if (tool === "route") tool = "select";
   terrainMaxM = 0;
-  if (terrain instanceof PackTerrain) for (const v of terrain.pack.elevation) if (v > terrainMaxM) terrainMaxM = v;
+  if (terrain instanceof PackTerrain) {
+    for (const v of terrain.pack.elevation) if (v > terrainMaxM) terrainMaxM = v;
+  } else if (terrain instanceof TileTerrain && worldStore) {
+    const tiles = networkTiles(next, MAX_NETWORK_TILES) ?? [];
+    worldStore.pin(tiles);
+    terrainMaxM = worldStore.maxElevation(tiles);
+  }
   selected = next.devices.find((d) => d.kind === "box")?.id ?? next.devices[0]?.id ?? null;
   failed.clear();
   areas = [];
@@ -191,6 +229,7 @@ function applyConfig(next: NetworkConfig, t: Terrain): void {
   bg = null;
   renderAttribution();
   refreshAll();
+  scheduleViewTiles(0);
 }
 
 /** Messaggio di stato sotto l'intestazione (caricamenti, mappe reali non disponibili). */
@@ -204,6 +243,10 @@ function renderAttribution(): void {
   const el = $("attribution");
   if (terrain instanceof PackTerrain) {
     el.textContent = `Terreno reale: ${terrain.name}. ${terrain.pack.header.attribution}`;
+    el.title = el.textContent;
+  } else if (terrain instanceof TileTerrain) {
+    const src = worldStore?.sources() ?? [];
+    el.textContent = `Terreno reale del mondo.${src.length ? ` ${src.join(" · ")}` : ""}`;
     el.title = el.textContent;
   } else {
     el.textContent = "Terreno sintetico di esempio, non rilevato.";
@@ -225,6 +268,7 @@ function recompute(): void {
   report = null;
   resError = "";
   haloGrid = null;
+  scheduleConfigTiles();
 }
 
 /**
@@ -433,7 +477,7 @@ function scheduleHalo(): void {
       haloGrid = null;
     } else {
       const grid = coverageGrid(n, pos, halo, params, bbox, cellM);
-      const real = terrain instanceof PackTerrain ? terrain : null;
+      const real = boundedTerrain(terrain);
       // celle raggiunte, senza quelle fuori dall'area dei dati (là non c'è terreno: l'alone non avrebbe senso)
       const cells = grid.cells.filter((c) => c.possible && (!real || real.contains(c.x, c.y)));
       haloGrid = { key, grid, bbox, mPerPx: view.mPerPx, cells };
@@ -441,6 +485,195 @@ function scheduleHalo(): void {
     haloBusy = false;
     if (token === haloToken) { draw(); renderStatus(); }
   }, 30);
+}
+
+// ---------------------------------------------------------------- terreno del mondo (tessere a richiesta)
+
+/** Avviso sotto l'intestazione: quello permanente più, per il terreno del mondo, gli avvisi sull'area della rete. */
+function currentNotice(): string {
+  const extra = terrain instanceof TileTerrain && cfg ? configWarnings(cfg) : [];
+  return [baseNotice, ...extra].filter((x) => x !== "").join(" ");
+}
+
+/** Indicatore di caricamento sulla mappa (null = nascosto). */
+function showTileState(state: { text: string; error?: boolean; busy?: boolean } | null): void {
+  tileState = state ? { text: state.text, error: state.error === true, busy: state.busy === true } : null;
+  const el = $("tile-state");
+  el.hidden = tileState === null;
+  el.textContent = tileState?.text ?? "";
+  el.classList.toggle("busy", tileState?.busy === true);
+  el.classList.toggle("err", tileState?.error === true);
+}
+
+/**
+ * Dopo una modifica della rete (un dispositivo trascinato o aggiunto lontano): se le tessere dell'area non sono ancora
+ * tutte caricate, le carica e rifà i calcoli. I calcoli già fatti sono stati sul terreno disponibile allora.
+ */
+function scheduleConfigTiles(): void {
+  if (!worldStore || !(terrain instanceof TileTerrain) || !cfg) return;
+  const tiles = networkTiles(cfg, MAX_NETWORK_TILES);
+  if (!tiles) { showTileState({ text: `Rete troppo estesa per il terreno (più di ${MAX_NETWORK_TILES} tessere): i risultati fuori dalle tessere caricate non sono affidabili.`, error: true }); return; }
+  worldStore.pin(tiles);
+  const missing = worldStore.missing(tiles);
+  if (missing.length === 0) return;
+  const err = worldStore.recentError(missing);
+  if (err) { showTileState({ text: err.message, error: true }); return; }
+  const token = ++configTileToken;
+  configBusy = true;
+  showTileState({ text: `Carico il terreno… 0/${missing.length}`, busy: true });
+  worldStore.ensure(missing, { onProgress: (d, t) => { if (token === configTileToken) showTileState({ text: `Carico il terreno… ${d}/${t}`, busy: true }); } }).then(() => {
+    if (token !== configTileToken) return;
+    configBusy = false;
+    showTileState(null);
+    if (drag?.kind === "dev") { tilesArrivedInDrag = true; return; } // il rilascio rifà i calcoli (anche se non ha mosso nulla)
+    terrainMaxM = Math.max(terrainMaxM, worldStore!.maxElevation(tiles));
+    renderAttribution();
+    recompute();
+    bg = null;
+    refreshAll();
+  }, (e: Error) => { if (token === configTileToken) { configBusy = false; showTileState({ text: e.message, error: true }); } });
+}
+
+/** Annulla i caricamenti di tessere in corso (rete o vista): chi li aspetta ignora il risultato. */
+function invalidateTileLoads(): void {
+  configTileToken++;
+  viewTileToken++;
+  configBusy = false;
+  tilesArrivedInDrag = false;
+  showTileState(null);
+}
+
+/** Tessere che coprono la vista (con un margine); null se la vista è troppo ampia per caricarle. */
+function viewTiles(): TileIndex[] | null {
+  const b = viewBounds(view);
+  const px = 0.15 * (b.maxX - b.minX);
+  const py = 0.15 * (b.maxY - b.minY);
+  try {
+    const tiles = tilesForLocalBounds(cfg.frame, { minX: b.minX - px, maxX: b.maxX + px, minY: b.minY - py, maxY: b.maxY + py }, 0);
+    return tiles.length > MAX_VIEW_TILES ? null : tiles;
+  } catch {
+    return null;
+  }
+}
+
+/** Dopo uno spostamento o uno zoom (con una breve pausa): carica le tessere che la vista mostra e non sono ancora arrivate. */
+function scheduleViewTiles(delayMs = 200): void {
+  clearTimeout(viewTileTimer);
+  viewTileTimer = window.setTimeout(loadViewTiles, delayMs);
+}
+
+function loadViewTiles(): void {
+  updateRecenter();
+  const token = ++viewTileToken; // ogni chiamata sostituisce la precedente: il suo risultato non vale più
+  if (!worldStore || !(terrain instanceof TileTerrain) || !cfg) { if (!configLoading()) showTileState(null); return; }
+  const wanted = viewTiles();
+  worldStore.setVisible(wanted ?? []);
+  if (!wanted) { showTileState({ text: "Avvicina la mappa per caricare il terreno: a questa scala sarebbero troppe tessere." }); return; }
+  const missing = worldStore.missing(wanted);
+  if (missing.length === 0) { if (!configLoading()) showTileState(null); return; }
+  const err = worldStore.recentError(missing);
+  if (err) { showTileState({ text: err.message, error: true }); return; }
+  showTileState({ text: `Carico il terreno… 0/${missing.length}`, busy: true });
+  let lastDraw = 0;
+  worldStore.ensure(missing, {
+    isStale: () => token !== viewTileToken,
+    onProgress: (d, t) => {
+      if (token !== viewTileToken) return;
+      showTileState({ text: `Carico il terreno… ${d}/${t}`, busy: true });
+      const now = performance.now();
+      if (now - lastDraw > 300) { lastDraw = now; bg = null; draw(); }
+    },
+  }).then(() => {
+    if (token === viewTileToken && !configLoading()) showTileState(null);
+  }, (e: Error) => {
+    if (token === viewTileToken) showTileState({ text: e.message, error: true });
+  }).finally(() => { renderAttribution(); bg = null; draw(); });
+}
+
+/** Il caricamento delle tessere della rete è in corso (l'indicatore non va spento da quello della vista). */
+function configLoading(): boolean {
+  return configBusy;
+}
+
+/**
+ * Oltre 300 km dall'origine la proiezione locale sbaglia le distanze di qualche percento. Se la vista è lontana
+ * dall'origine: «Ricentra qui» se spostare l'origine lì non allontana i dispositivi esistenti, altrimenti un avviso
+ * che suggerisce di cominciare una nuova rete in quel punto.
+ */
+function updateRecenter(): void {
+  const btn = document.getElementById("recenter");
+  const note = document.getElementById("far-note");
+  if (!btn || !note) return;
+  btn.hidden = true;
+  note.hidden = true;
+  if (!(terrain instanceof TileTerrain) || !cfg) return;
+  const origin = { lat: cfg.frame.lat0, lon: cfg.frame.lon0 };
+  const c = toGeo(cfg.frame, { x: view.cx, y: view.cy });
+  const far = { view: geoDistanceKm(origin, c), devices: farthestPointKm(cfg, origin) };
+  if (far.view > FRAME_WARN_KM && canRecenterAt(cfg, c.lat, c.lon, FRAME_WARN_KM)) {
+    btn.hidden = false;
+    btn.title = `Il riferimento dista ${Math.round(far.view)} km dalla vista: oltre ${FRAME_WARN_KM} km le distanze sbagliano di qualche percento. Sposta il riferimento al centro della vista (la cronologia annulla/ripeti si azzera).`;
+  } else if (far.view > FRAME_WARN_KM) {
+    note.hidden = false;
+    note.textContent = `La vista è a ${Math.round(far.view)} km dalla rete: qui le distanze non sono affidabili (oltre ${FRAME_WARN_KM} km). Per progettare in questo punto comincia una nuova rete con «Nuova rete qui».`;
+  } else if (far.devices > FRAME_WARN_KM) {
+    note.hidden = false;
+    note.textContent = `Un dispositivo (o una tappa di un percorso) dista ${Math.round(far.devices)} km dall'origine del riferimento: le distanze che lo riguardano non sono affidabili. Avvicinalo o comincia una nuova rete.`;
+  }
+}
+
+/** Sposta l'origine del riferimento locale (i dispositivi restano dov'erano: sono in coordinate geografiche) e ricalcola. */
+function recenterFrame(lat: number, lon: number): void {
+  if (!cfg || !(terrain instanceof TileTerrain) || !worldStore) return;
+  invalidateTileLoads();
+  const moved = recenterConfig(cfg, view, areas, lat, lon);
+  cfg = moved.cfg;
+  view = moved.view;
+  areas = moved.areas; // le aree di guasto sono in metri locali: seguono la nuova origine
+  terrain = new TileTerrain(cfg.frame, worldStore);
+  editor.reset(); // lo storico descrive la rete con il vecchio riferimento
+  routeDraft = null;
+  if (tool === "route") tool = "select";
+  bg = null;
+  recompute();
+  refreshAll();
+  scheduleViewTiles(0);
+}
+
+function gotoCoordinates(): void {
+  const msg = $("goto-msg");
+  const c = parseCoordinates($<HTMLInputElement>("goto").value);
+  if (!c) { msg.textContent = "Scrivi latitudine e longitudine, per esempio 46.5, 8.0 (latitudine tra -85 e 85)."; return; }
+  if (!cfg || !(terrain instanceof TileTerrain)) { msg.textContent = "Questa rete non usa il terreno del mondo: usa «Nuova rete qui» per cominciarne una in quel punto."; return; }
+  msg.textContent = "";
+  const far = geoDistanceKm({ lat: cfg.frame.lat0, lon: cfg.frame.lon0 }, c) > FRAME_WARN_KM;
+  view = { ...view, mPerPx: Math.min(view.mPerPx, 150) };
+  if (far && canRecenterAt(cfg, c.lat, c.lon, FRAME_WARN_KM)) {
+    // lontano dall'origine e nessun dispositivo resta troppo lontano dal nuovo centro: il riferimento si sposta lì
+    view = { ...view, cx: toLocal(cfg.frame, c).x, cy: toLocal(cfg.frame, c).y };
+    recenterFrame(c.lat, c.lon);
+  } else {
+    const p = toLocal(cfg.frame, c);
+    view = { ...view, cx: p.x, cy: p.y };
+    bg = null;
+    draw();
+    scheduleHalo();
+    scheduleViewTiles(0);
+  }
+  updateRecenter();
+}
+
+function newNetworkHere(): void {
+  const msg = $("goto-msg");
+  const c = parseCoordinates($<HTMLInputElement>("goto").value);
+  if (!c) { msg.textContent = "Scrivi latitudine e longitudine, per esempio 46.5, 8.0 (latitudine tra -85 e 85)."; return; }
+  if (!worldStore) { msg.textContent = `Il terreno del mondo non è disponibile: ${worldNote}`; return; }
+  if (cfg && editor.canUndo && !window.confirm("Questo sostituisce la rete attuale (con le tue modifiche) con una rete vuota in quel punto. Continuare?")) return;
+  msg.textContent = "";
+  const raw = worldBlank(c.lat, c.lon);
+  loadConfig(raw).then((r) => {
+    if (r === "applied") { currentPreset = "mondo-vuoto"; $<HTMLSelectElement>("scenario").value = currentPreset; }
+  }, (e: Error) => { msg.textContent = `Non riesco a caricare il terreno: ${e.message}`; });
 }
 
 // ---------------------------------------------------------------- disegno
@@ -468,7 +701,7 @@ function mix(a: readonly number[], b: readonly number[], t: number): [number, nu
  * per quota + rilievo ombreggiato; fuori dall'area dei dati una tinta neutra a scacchi, mai il mare.
  */
 function renderBackground(fine: boolean): void {
-  const real = terrain instanceof PackTerrain ? terrain : null;
+  const real = boundedTerrain(terrain);
   const block = fine ? (real ? 3 : 6) : 10;
   const ox = view.w * BG_PAD;
   const oy = view.h * BG_PAD;
@@ -914,7 +1147,7 @@ function panelNetwork(): HTMLElement {
     if (at) {
       const gr = groundAt(terrain, at.x, at.y);
       const ant = nodes.find((q) => q.id === n.id)?.path[0].z;
-      const real = terrain instanceof PackTerrain;
+      const real = boundedTerrain(terrain) !== null;
       if (gr.inside) form.append(h("p", { class: "ground" }, real ? `Suolo: ${COVER_LABEL[gr.cover]}, quota ${Math.round(gr.elevationM)} m` : `Suolo: ${COVER_LABEL[gr.cover]}`, ant !== undefined && real ? ` · antenna a ${Math.round(ant)} m s.l.m.` : ""));
       for (const w of groundWarnings(gr, kind, n.route !== undefined)) form.append(h("p", { class: "warn-note", role: "note" }, w));
     }
@@ -1107,6 +1340,8 @@ function renderToolbar(): void {
 }
 
 function refreshAll(): void {
+  if (!loading) setNotice(currentNotice());
+  updateRecenter();
   renderToolbar();
   if (tab === "resilienza") ensureResilience();
   renderPanel();
@@ -1178,6 +1413,7 @@ canvas.addEventListener("pointermove", (ev) => {
     drag.lastX = sx;
     drag.lastY = sy;
     draw();
+    scheduleViewTiles();
   } else if (tab === "rete") {
     if (!editor.isCurrent(drag.token)) { drag = null; return; } // la rete è cambiata per un'altra via: il trascinamento non vale più
     if (!drag.moved && Math.hypot(sx - drag.startX, sy - drag.startY) < 4) return;
@@ -1205,6 +1441,10 @@ function endDrag(ev: PointerEvent): void {
       if (failed.has(d.id)) failed.delete(d.id); else failed.add(d.id);
       failureChanged();
     }
+    if (tilesArrivedInDrag) {
+      tilesArrivedInDrag = false;
+      if (!(d.moved && tab === "rete")) { recompute(); bg = null; refreshAll(); } // il rilascio non ha ricalcolato nulla
+    }
   } else if (d.clickAdds && !d.moved) {
     const r = canvas.getBoundingClientRect();
     const w = screenToWorld(view, ev.clientX - r.left, ev.clientY - r.top);
@@ -1223,6 +1463,7 @@ canvas.addEventListener("wheel", (ev) => {
   const dy = ev.deltaMode === 1 ? ev.deltaY * 16 : ev.deltaY;
   view = zoomAt(view, ev.clientX - r.left, ev.clientY - r.top, Math.exp(Math.max(-300, Math.min(300, dy)) * 0.0016));
   draw();
+  scheduleViewTiles();
   clearTimeout(zoomTimer);
   zoomTimer = window.setTimeout(scheduleHalo, 250);
 }, { passive: false });
@@ -1272,13 +1513,14 @@ function resize(): void {
   bg = null;
   draw();
   scheduleHalo();
+  scheduleViewTiles();
 }
 
 function setupControls(): void {
   const scenario = $<HTMLSelectElement>("scenario");
   for (const p of PRESETS) {
     const o = h("option", { value: p.id }, p.label);
-    if (p.real && !library) o.disabled = true;
+    if ((p.real && !library) || (p.world && !worldStore)) o.disabled = true;
     scenario.append(o);
   }
   scenario.addEventListener("change", () => {
@@ -1289,6 +1531,14 @@ function setupControls(): void {
       setNotice(`Non riesco a caricare "${p.label}": ${e.message}`);
     });
   });
+  const gotoBox = $<HTMLInputElement>("goto");
+  gotoBox.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); gotoCoordinates(); } });
+  $("goto-go").addEventListener("click", gotoCoordinates);
+  $("goto-new").addEventListener("click", newNetworkHere);
+  $("recenter").addEventListener("click", () => { const c = toGeo(cfg.frame, { x: view.cx, y: view.cy }); recenterFrame(c.lat, c.lon); });
+  if (!worldStore) {
+    for (const id of ["goto", "goto-go", "goto-new"]) { const el = $<HTMLInputElement>(id); el.disabled = true; el.title = `Terreno del mondo non disponibile: ${worldNote}`; }
+  }
   $<HTMLSelectElement>("env").addEventListener("change", (e) => { if (!cfg) return; commit({ ...cfg, environment: (e.target as HTMLSelectElement).value as NetworkConfig["environment"] }); });
   $<HTMLSelectElement>("reg").addEventListener("change", (e) => { if (!cfg) return; commit({ ...cfg, regulatory: (e.target as HTMLSelectElement).value as NetworkConfig["regulatory"] }); });
   document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((b) => b.addEventListener("click", () => { if (routeDraft) cancelRoute(); tool = b.dataset.tool as Tool; renderToolbar(); renderStatus(); }));
@@ -1322,7 +1572,7 @@ function setupControls(): void {
   $("redo").addEventListener("click", redo);
   const rad = $<HTMLInputElement>("area-radius");
   rad.addEventListener("input", () => { const v = Number(rad.value); if (v > 0) areaRadiusM = v * 1000; $("area-radius-v").textContent = `${rad.value} km`; });
-  $("fit").addEventListener("click", () => { if (!cfg) return; view = fitView(nodes.flatMap((n) => n.path.map((w) => ({ x: w.x, y: w.y }))), view.w, view.h, 0.18, 6000); bg = null; scheduleHalo(); draw(); });
+  $("fit").addEventListener("click", () => { if (!cfg) return; view = fitView(nodes.flatMap((n) => n.path.map((w) => ({ x: w.x, y: w.y }))), view.w, view.h, 0.18, 6000); bg = null; scheduleHalo(); draw(); scheduleViewTiles(0); });
 
   // configurazione salvabile: testo, non file scaricato (nell'anteprima il download è bloccato)
   const modal = $("modal");
@@ -1355,8 +1605,8 @@ function setupControls(): void {
     const w = screenToWorld(view, ev.clientX - r.left, ev.clientY - r.top);
     const geo = toGeo(cfg.frame, w);
     const gr = groundAt(terrain, w.x, w.y);
-    const real = terrain instanceof PackTerrain;
-    info.textContent = `${geo.lat.toFixed(4)}°, ${geo.lon.toFixed(4)}°` + (real ? (gr.inside ? ` · ${Math.round(gr.elevationM)} m · ${COVER_LABEL[gr.cover]}` : " · fuori dai dati") : "");
+    const real = boundedTerrain(terrain) !== null;
+    info.textContent = `${geo.lat.toFixed(4)}°, ${geo.lon.toFixed(4)}°` + (real ? (gr.inside ? ` · ${Math.round(gr.elevationM)} m · ${COVER_LABEL[gr.cover]}` : terrain instanceof TileTerrain ? " · terreno non ancora caricato" : " · fuori dai dati") : "");
   });
   canvas.addEventListener("pointerleave", () => { info.textContent = ""; });
 
@@ -1385,13 +1635,27 @@ async function initLibrary(): Promise<void> {
   }
 }
 
+/** Cerca il servizio di tessere del server locale (tiles/): assente aprendo la pagina da file: o con --no-tiles. */
+async function initWorld(): Promise<void> {
+  if (location.protocol !== "file:" && (await probeTileService())) {
+    worldStore = new BrowserTileStore();
+    return;
+  }
+  worldStore = null;
+  worldNote = location.protocol === "file:"
+    ? "la pagina è aperta da file: apri la pagina con npm run design-tool:serve"
+    : "il server non serve le tessere (avvialo con npm run design-tool:serve, senza --no-tiles)";
+}
+
 async function start(): Promise<void> {
   await initLibrary();
+  await initWorld();
   if (!library) baseNotice = `Mappe reali non disponibili: ${libraryNote}. Restano gli esempi con terreno sintetico.`;
+  else if (!worldStore) baseNotice = `Terreno del mondo non disponibile: ${worldNote}.`;
   setNotice(baseNotice);
   setupControls();
   resize();
-  const first = library ? PRESETS[0] : PRESETS.find((p) => !p.real)!;
+  const first = library ? PRESETS[0] : PRESETS.find((p) => !p.real && !p.world)!;
   try {
     await loadConfig(first.raw);
     currentPreset = first.id;

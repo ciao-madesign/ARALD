@@ -4,9 +4,12 @@
  * `tools/scenario-model/`: qui non c'è nessun calcolo radio.
  */
 import type { NodeKind } from "../scenario-model/model.js";
+import { TileTerrain } from "../scenario-model/geo-tile.js";
 import { PackTerrain } from "../scenario-model/terrain-pack.js";
 import { type DeviceConfig, type NetworkConfig } from "../scenario-model/network-config.js";
 import { type LandCover, type LocalFrame, type Terrain, toGeo, toLocal } from "../scenario-model/terrain.js";
+import { type TileIndex } from "../scenario-model/geo-tile.js";
+import { geoDistanceKm, requiredTiles } from "../scenario-model/world-area.js";
 
 // ---------------------------------------------------------------- vista
 
@@ -187,9 +190,14 @@ export interface GroundInfo {
 
 export const COVER_LABEL: Record<LandCover, string> = { sea: "acqua", open: "aperto", forest: "bosco", urban: "abitato", "urban-dense": "abitato denso" };
 
+/** Terreno reale con un'area di dati nota (pacchetto o tessere del mondo); null per un terreno senza limiti (sintetico, piatto). */
+export function boundedTerrain(terrain: Terrain): (Terrain & { contains(x: number, y: number): boolean }) | null {
+  return terrain instanceof PackTerrain || terrain instanceof TileTerrain ? terrain : null;
+}
+
 /** Cosa c'è sotto un punto (x, y locali): per un terreno senza limiti noti (sintetico) `inside` è sempre vero. */
 export function groundAt(terrain: Terrain, x: number, y: number): GroundInfo {
-  const inside = terrain instanceof PackTerrain ? terrain.contains(x, y) : true;
+  const inside = boundedTerrain(terrain)?.contains(x, y) ?? true;
   return { elevationM: terrain.elevationAt(x, y), cover: terrain.landCoverAt(x, y), inside };
 }
 
@@ -203,6 +211,45 @@ export function groundWarnings(g: GroundInfo, kind: NodeKind, mobile: boolean): 
 
 /** Identificativi dei dispositivi la cui posizione (o un punto del percorso) cade fuori dall'area dei dati reali; vuoto per un terreno senza limiti noti. */
 export function devicesOutside(terrain: Terrain, cfg: NetworkConfig): string[] {
-  if (!(terrain instanceof PackTerrain)) return [];
-  return cfg.devices.filter((d) => [d, ...(d.route ?? [])].some((q) => { const p = toLocal(cfg.frame, q); return !terrain.contains(p.x, p.y); })).map((d) => d.id);
+  const bounded = boundedTerrain(terrain);
+  if (!bounded) return [];
+  return cfg.devices.filter((d) => [d, ...(d.route ?? [])].some((q) => { const p = toLocal(cfg.frame, q); return !bounded.contains(p.x, p.y); })).map((d) => d.id);
+}
+
+// ---------------------------------------------------------------- riferimento locale e area del mondo
+
+/** Tutti i punti geografici di una rete: i dispositivi e le tappe dei loro percorsi. */
+export function configPoints(cfg: NetworkConfig): { lat: number; lon: number }[] {
+  return cfg.devices.flatMap((d) => [d, ...(d.route ?? [])]);
+}
+
+/** Distanza (km) del punto della rete più lontano da un luogo. */
+export function farthestPointKm(cfg: NetworkConfig, at: { lat: number; lon: number }): number {
+  return configPoints(cfg).reduce((m, p) => Math.max(m, geoDistanceKm(at, p)), 0);
+}
+
+/** Si può mettere l'origine del riferimento in un luogo senza che un dispositivo o una tappa dei percorsi resti oltre il limite? */
+export function canRecenterAt(cfg: NetworkConfig, lat: number, lon: number, limitKm: number): boolean {
+  return farthestPointKm(cfg, { lat, lon }) <= limitKm;
+}
+
+/**
+ * Sposta l'origine del riferimento locale in un luogo. I dispositivi e i percorsi sono in coordinate geografiche e restano
+ * dove sono; la vista e le aree di guasto (in metri locali) si convertono passando dalle coordinate geografiche.
+ */
+export function recenterConfig<A extends { x: number; y: number }>(cfg: NetworkConfig, view: View, areas: A[], lat: number, lon: number): { cfg: NetworkConfig; view: View; areas: A[] } {
+  const frame = { lat0: lat, lon0: lon };
+  const toNew = (p: { x: number; y: number }): { x: number; y: number } => toLocal(frame, toGeo(cfg.frame, p));
+  const c = toNew({ x: view.cx, y: view.cy });
+  return { cfg: { ...cfg, frame }, view: { ...view, cx: c.x, cy: c.y }, areas: areas.map((a) => ({ ...a, ...toNew(a) })) };
+}
+
+/** Tessere dell'area di una rete, o null se l'area è troppo larga per la griglia (vicino ai poli) o ha troppe tessere. */
+export function networkTiles(cfg: NetworkConfig, maxTiles: number): TileIndex[] | null {
+  try {
+    const tiles = requiredTiles(cfg);
+    return tiles.length > maxTiles ? null : tiles;
+  } catch {
+    return null;
+  }
 }

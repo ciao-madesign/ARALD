@@ -80,6 +80,12 @@ textarea { width: 100%; font-family: var(--font-mono); font-size: 12px; resize: 
 #status, #cursor-info { font-size: 12.5px; color: var(--muted); min-height: 18px; }
 #cursor-info { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 #attribution { position: absolute; right: 0; bottom: 0; max-width: 72%; padding: 2px 8px; font-size: 10.5px; line-height: 1.35; color: var(--muted); background: color-mix(in srgb, var(--surface) 86%, transparent); border-top-left-radius: 5px; pointer-events: auto; }
+#tile-state { position: absolute; left: 8px; bottom: 8px; max-width: 70%; padding: 4px 10px 4px 10px; font-size: 12px; color: var(--fg); background: color-mix(in srgb, var(--surface) 90%, transparent); border: 1px solid var(--line); border-radius: 5px; }
+#tile-state.err { border-color: var(--bad); color: var(--bad); }
+#tile-state.busy::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 7px; border: 2px solid var(--muted); border-top-color: var(--accent); border-radius: 50%; vertical-align: -1px; }
+@media (prefers-reduced-motion: no-preference) { #tile-state.busy::before { animation: spin 0.9s linear infinite; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+#goto-msg:empty { display: none; }
 #notice { font-size: 12.5px; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--warn); border-radius: 5px; padding: 6px 10px; }
 .ground { margin: 0; font-size: 12.5px; }
 .warn-note { margin: 0; font-size: 12.5px; color: var(--warn); }
@@ -161,8 +167,17 @@ textarea { width: 100%; font-family: var(--font-mono); font-size: 12px; resize: 
         <button type="button" class="btn" data-halo="none" aria-pressed="false">Nessuno</button>
       </div>
       <button type="button" class="btn" id="fit">Inquadra</button>
+      <div class="group" role="group" aria-label="Posizione sulla mappa">
+        <span class="lbl">Vai a</span>
+        <input type="text" id="goto" placeholder="lat, lon  (es. 46.5, 8.0)" aria-label="Coordinate: latitudine e longitudine" size="22" maxlength="60" autocomplete="off" spellcheck="false">
+        <button type="button" class="btn" id="goto-go" title="Sposta la mappa a queste coordinate">Vai</button>
+        <button type="button" class="btn" id="goto-new" title="Comincia una rete vuota con terreno reale in questo punto">Nuova rete qui</button>
+        <button type="button" class="btn" id="recenter" hidden>Ricentra qui</button>
+      </div>
     </div>
-    <div id="map-wrap"><canvas id="map" aria-label="Mappa della rete"></canvas><div id="attribution"></div></div>
+    <div id="goto-msg" class="hint" role="status"></div>
+    <p id="far-note" class="warn-note" role="note" hidden></p>
+    <div id="map-wrap"><canvas id="map" aria-label="Mappa della rete"></canvas><div id="tile-state" role="status" hidden></div><div id="attribution"></div></div>
     <div id="status-row"><div id="status" role="status"></div><div id="cursor-info" aria-hidden="true"></div></div>
   </section>
   <aside class="panel">
