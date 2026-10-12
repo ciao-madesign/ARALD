@@ -91,7 +91,7 @@ Limiti: velocità costante (nessun rallentamento, attese solo dove le indichi), 
 
 Un pacchetto copre un riquadro fisso preparato in anticipo. Per un'area non limitata il terreno è diviso in **tessere del mondo** caricate quando servono. Scelte concordate con l'utente: scarica il **server locale** (non il browser; serve Internet su quel computer), niente panoramica nell'Artifact (che resta con Valle Maira ed Eolie), celle da circa 100 m, riferimento locale ricentrato sulla rete con avviso oltre 300 km, cache su disco con tetto di 1,5 GB, mondo intero con avviso oltre i 60° di latitudine.
 
-**Fase 1 di 5 fatta (12 ottobre 2026): formato, terreno nel motore, generatore.**
+**Fasi 1 e 2 fatte (12 ottobre 2026): formato, terreno nel motore, generatore; servizio di tessere nel server locale.**
 
 - **Griglia** (`tools/scenario-model/geo-tile.ts`): celle geografiche regolari di 0,25°/256 (≈ 108,6 m in latitudine; in longitudine 108,6 m all'equatore, 77 m a 45°, 54 m a 60°), tessere da 256×256 celle (0,25° di lato). Tessere valide entro 85° di latitudine. Una tessera pesa circa 20-70 KB compressa.
 - **`TileTerrain`** implementa `Terrain` leggendo da un deposito di tessere già caricate (lettura sincrona: il motore non cambia). Quota con interpolazione bilineare anche a cavallo di due tessere; una tessera mancante dà quota 0 e «mare» ed è registrata (`missingTiles()`), così chi analizza sa se i risultati valgono.
@@ -105,6 +105,14 @@ Un pacchetto copre un riquadro fisso preparato in anticipo. Per un'area non limi
 Limiti: le quote Terrarium a zoom 10 sono più lisce dell'SRTM a 30 m (creste strette abbassate), oltre i 60° nord le quote non vengono da SRTM, nessuna strada né nome di luogo, la proiezione locale sbaglia le distanze di qualche percento oltre 300 km (avviso), dipendenza da servizi aperti di terzi (AWS Open Data, ESA) che possono cambiare.
 
 Prossime fasi dell'area ampia (ciascuna con ok): 2) servizio di tessere nel server locale con cache e download con limiti; 3) pagina senza bordi con caricamento al volo, indicatore e «vai a coordinate»; 4) documenti e revisione finale. La vecchia fase 4 «aree pronte» è assorbita da un elenco di luoghi da cui partire.
+
+**Fase 2: servizio di tessere nel server locale** (`tools/map-data/tile-service.ts`, collegato in `serve-lib.mjs`/`serve.mjs`). `GET /tiles/<tx>/<ty>` dà la tessera compressa (gzip del formato ARTG) dalla cache o, se manca, la costruisce al momento da Terrarium + WorldCover; `GET /tiles/status` dà lo stato della cache. Il browser non contatta mai le fonti: scarica solo dal server locale. Opzioni di `npm run design-tool:serve`: `--no-tiles` (spento), `--tile-cache <cartella>`, `--cap-gb` (default 1,5), `--max-new-per-hour` (default 400); la cartella predefinita è `~/.cache/arald-design-tool/tiles`.
+- **Limiti ai download**: al più 4 costruzioni insieme, coda di 64, 400 tessere nuove all'ora (oltre: errore 429 con `Retry-After` e il suggerimento di usare `npm run map-tiles`), 100 tentativi falliti all'ora (una fonte che non risponde non si martella), 180 s al massimo per tessera, cache sotto 1,5 GB con eliminazione delle meno recenti (mai quelle servite negli ultimi 10 minuti). Richieste uguali contemporanee condividono una sola costruzione.
+- **Errori chiari**: 404 tessera fuori dal mondo (oltre ±85°), 429 limiti, 502 fonti non raggiungibili o senza dati; mai una tessera di «mare» salvata per un errore.
+- **Difesa**: le richieste di tessere devono portare l'intestazione `X-ARALD-Tool: 1` (e, se presenti, `Origin` uguale all'`Host` e `Sec-Fetch-Site: same-origin`); un altro sito non può aggiungerla senza una richiesta di verifica CORS, a cui il server non risponde mai. Si somma al controllo `Host` contro il DNS rebinding.
+- `npm run design-tool:serve` ora gira con `tsx` (il servizio è TypeScript); con `node serve.mjs --no-tiles` il server statico funziona anche senza.
+- Verificata con la rete reale: tre tessere (due in Valle Maira e una in oceano) in 4,1 s la prima e 0,4-0,6 s le successive, poi servite dalla cache.
+
 
 ## Prossime fasi (ciascuna con ok esplicito)
 

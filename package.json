@@ -24,7 +24,7 @@
     "design-tool:build": "node tools/network-design/build.mjs",
     "map-data": "tsx tools/map-data/build-pack.mts",
     "map-data:index": "tsx tools/map-data/make-index.mts",
-    "design-tool:serve": "node tools/network-design/build.mjs && node tools/network-design/serve.mjs",
+    "design-tool:serve": "node tools/network-design/build.mjs && tsx tools/network-design/serve.mjs",
     "map-tiles": "tsx tools/map-data/build-tiles.mts"
   },
   "dependencies": {

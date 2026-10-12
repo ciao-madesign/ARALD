@@ -183,7 +183,7 @@ npm run simulate -- --nodes 50 --topology random  # simulatore di rete a scala
 npm run hub -- --port 8420                     # avvia la ARALD Hub Management API (aggiungi --fake-docker senza Docker reale)
 npm run whatsapp-relay -- --config relay.json  # avvia il relay WhatsApp per "consegna esterna differita" (aggiungi --fake-whatsapp senza credenziali Meta reali)
 npm run email-relay -- --config relay.json     # avvia il relay email per "consegna esterna differita" (aggiungi --fake-smtp senza un vero server SMTP)
-npm run design-tool:serve                     # costruisce e serve la pagina del Network Design Tool su http://127.0.0.1:8470/ (mappe reali incluse, vedi docs/real-maps.md)
+npm run design-tool:serve                     # costruisce e serve la pagina del Network Design Tool su http://127.0.0.1:8470/ (mappe reali e tessere del mondo incluse, vedi docs/real-maps.md)
 npm run map-data -- --id <id> --lat <lat> --lon <lon> --width-km 50 --height-km 40   # prepara un pacchetto di terreno reale (serve la rete)
 npm run map-tiles -- --config <file.json>    # prepara in cache le tessere di terreno del mondo per una rete ("terrain": "world"), serve la rete la prima volta
 npm run discovery-service -- --port 8450       # avvia il servizio di discovery per "Internet come trasporto opzionale" (aggiungi --admin-password per abilitare /admin/verify)

@@ -74,6 +74,7 @@ export class DirTileStore implements TileStore {
     writeFileSync(tmp, gzipSync(encodeTile(tile), { level: 6 }));
     renameSync(tmp, path);
     this.mem.set(`${tile.tx}_${tile.ty}`, tile);
+    while (this.mem.size > this.maxInMemory) this.mem.delete(this.mem.keys().next().value as string);
     this.misses.delete(`${tile.tx}_${tile.ty}`);
   }
 

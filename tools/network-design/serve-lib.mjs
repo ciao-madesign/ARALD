@@ -40,7 +40,66 @@ export function allowedHost(host, port) {
   return host === `127.0.0.1:${port}` || host === `localhost:${port}` || host === `[::1]:${port}`;
 }
 
-export function createStaticServer(root) {
+/**
+ * Intestazione che la pagina aggiunge alle richieste di tessere: un altro sito non può aggiungerla senza passare da una
+ * richiesta di verifica (preflight) CORS, e questo server non risponde mai a OPTIONS né manda intestazioni
+ * `Access-Control-Allow-*`. NON aggiungere CORS o un gestore OPTIONS generico qui senza rivedere questa difesa.
+ */
+export const TILE_HEADER = "x-arald-tool";
+
+/** Vero se la richiesta di tessere arriva dalla pagina stessa: intestazione presente e, se c'è, Origin uguale all'Host. */
+export function sameOriginTileRequest(headers) {
+  if (headers[TILE_HEADER] !== "1") return false;
+  const site = headers["sec-fetch-site"];
+  if (site !== undefined && site !== "same-origin") return false;
+  const origin = headers.origin;
+  return origin === undefined || origin === `http://${headers.host}`;
+}
+
+const TILE_ROUTE = /^\/tiles\/(\d{1,5})\/(\d{1,5})$/;
+
+function sendText(res, status, text, extra = {}) {
+  res.writeHead(status, { "Content-Type": "text/plain; charset=utf-8", "X-Content-Type-Options": "nosniff", ...extra }).end(text);
+}
+
+/**
+ * Risponde a `/tiles/<tx>/<ty>` (tessera compressa) e `/tiles/status` (JSON) con il servizio di tessere. Restituisce
+ * true se l'indirizzo era di questo tipo (la risposta è stata data o è in corso).
+ */
+async function handleTiles(tiles, req, res) {
+  const path = (req.url ?? "").split("?")[0];
+  if (path !== "/tiles/status" && !TILE_ROUTE.test(path)) return false;
+  if (!sameOriginTileRequest(req.headers)) {
+    sendText(res, 403, "Richiesta di tessere non consentita");
+    return true;
+  }
+  if (!tiles) {
+    sendText(res, 404, "Servizio di tessere non attivo");
+    return true;
+  }
+  try {
+    if (path === "/tiles/status") {
+      const body = JSON.stringify(tiles.status());
+      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" }).end(req.method === "HEAD" ? undefined : body);
+      return true;
+    }
+    const m = TILE_ROUTE.exec(path);
+    const { data, cached } = await tiles.get(Number(m[1]), Number(m[2]));
+    res.writeHead(200, {
+      "Content-Type": "application/gzip", "Content-Length": data.length, "Cache-Control": "private, max-age=3600",
+      "X-Tile-Cache": cached ? "hit" : "built", "X-Content-Type-Options": "nosniff",
+    });
+    res.end(req.method === "HEAD" ? undefined : data);
+  } catch (e) {
+    // solo gli errori del servizio di tessere scelgono il codice e il testo; qualunque altro errore è un 500 senza dettagli
+    const own = e?.isTileServiceError === true && Number.isInteger(e.status) && e.status >= 400 && e.status <= 599;
+    sendText(res, own ? e.status : 500, own && e.status !== 500 ? String(e.message) : "Errore interno", own && e.retryAfterS ? { "Retry-After": String(e.retryAfterS) } : {});
+  }
+  return true;
+}
+
+/** `tiles` (opzionale): servizio con `get(tx, ty)` e `status()`, vedi tools/map-data/tile-service.ts. */
+export function createStaticServer(root, tiles = undefined) {
   const server = createServer(async (req, res) => {
     if (!allowedHost(req.headers.host, server.address()?.port)) {
       res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" }).end("Host non consentito");
@@ -50,6 +109,7 @@ export function createStaticServer(root) {
       res.writeHead(405, { Allow: "GET, HEAD" }).end();
       return;
     }
+    if (await handleTiles(tiles, req, res)) return;
     const file = resolveRequestPath(root, req.url ?? "/");
     if (!file) {
       res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" }).end("Indirizzo non valido");

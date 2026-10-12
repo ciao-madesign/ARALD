@@ -1782,6 +1782,19 @@ Un audit mirato dell'intero `node/src` (non solo del codice nuovo) — vedi anch
 
     Limiti: sotto i 60° di latitudine le quote sono SRTM, oltre meno precise; il dato di suolo copre fino a ~82°; le tessere si scaricano solo da un computer con rete (il browser non scarica nulla); le fasi 2-4 (servizio nel server locale, pagina senza bordi, documentazione) restano da fare.
 
+136. **Area ampia — fase 2: servizio di tessere nel server locale**, 12 ottobre 2026 — su ok esplicito dell'utente ("procedi con la fase 2"), seguito della voce #135. `TileService` (`tools/map-data/tile-service.ts`) serve `/tiles/<tx>/<ty>` e `/tiles/status` dal server del tool, costruendo le tessere mancanti da Terrarium + WorldCover; dettagli, opzioni e limiti in `docs/real-maps.md`. Verificato con la rete reale.
+
+    Problemi trovati dalla revisione, corretti con test di regressione:
+    1. un sito terzo poteva far scaricare tessere con una semplice richiesta GET: ora serve l'intestazione `X-ARALD-Tool` (impossibile da un altro sito senza CORS, che il server non concede mai: nota nel codice e test su OPTIONS, `Origin: null` e assenza di `Access-Control-*`), più il controllo di `Origin`/`Sec-Fetch-Site`;
+    2. la tessera appena costruita poteva essere eliminata dal tetto della cache prima di essere letta (errore ENOENT): ora si legge subito e le tessere servite negli ultimi 10 minuti sono protette (mappa con scadenza, non un insieme azzerato a 500);
+    3. il tetto della cache poteva restare superato dopo l'ultima costruzione di una raffica: ora la verifica ritardata parte da sola;
+    4. il tetto orario veniva consumato anche dai fallimenti (rete assente = blocco di un'ora senza aver scaricato nulla): ora conta le costruzioni riuscite e quelle in corso; i fallimenti hanno un tetto proprio (100/ora) per non martellare una fonte che non risponde;
+    5. nessun tempo massimo per tessera: una fonte appesa teneva i 4 posti per minuti; ora 180 s e il posto si libera; un errore di lettura locale non è più scambiato per «fonti non raggiungibili»;
+    6. ogni richiesta dalla cache rifaceva due decodifiche complete e tre letture del disco, e lo stato scansionava tutta la cache a ogni chiamata: ora la verifica completa si fa una volta per tessera e processo, lo stato si aggiorna al più ogni 5 s;
+    7. `DirTileStore.put` non limitava la memoria (le tessere decodificate crescevano senza tetto); la coda con `maxQueue: 0` rifiutava anche la prima richiesta; il server mostrava il messaggio di qualunque errore con un campo `status`: ora solo gli errori del servizio (gli altri sono un 500 senza dettagli); un'opzione senza valore (`--tile-cache --no-tiles`) ora è un errore e il servizio si carica solo se serve.
+
+    Limiti: la pagina non usa ancora il servizio (fase 3); il servizio è pensato per un solo utente su 127.0.0.1; le tessere si possono costruire solo dove la rete raggiunge AWS; il tetto orario è per processo (un riavvio lo azzera).
+
 ## Nota sui test di scala: soglia TTL ricalibrata due volte
 
 `tests/network/simulate.test.ts`'s "a TTL shorter than the mesh's depth leaves the farthest nodes legitimately unreachable" non verifica una proprietà di sicurezza, ma è comunque rilevante qui: il suo margine numerico è dovuto essere aumentato due volte in questa sessione (prima per il routing a costo, poi per il retry verso il prossimo fornitore) perché entrambe le funzionalità rendono la propagazione del contenuto più efficiente, spostando il punto in cui un nodo lontano riesce comunque a trovare una copia in cache entro il budget TTL. Ora usa una distanza volutamente enorme rispetto al TTL (~5x) invece di un margine "appena sufficiente", proprio per non dover essere ricalibrato una terza volta a ogni miglioramento futuro dell'efficienza della mesh.

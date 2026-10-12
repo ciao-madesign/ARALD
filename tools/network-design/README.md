@@ -6,7 +6,7 @@ Pagina del **ARALD Network Design Tool**: mappa, dispositivi (tavolozza, spostam
 
 ```bash
 npm run design-tool:build     # → dist/index.html (pagina), dist/artifact.html (senza scheletro, per la pubblicazione), dist/data/ (mappe), dist/artifact-data/ (le stesse mappe in base64, solo testo, per la pubblicazione)
-npm run design-tool:serve     # costruisce e serve su http://127.0.0.1:8470/ (--port per cambiarla): serve per le mappe reali
+npm run design-tool:serve     # costruisce e serve su http://127.0.0.1:8470/ (--port per cambiarla): serve per le mappe reali; serve anche le tessere del mondo (--no-tiles per spegnerle)
 ```
 
 Aperta con un doppio clic (`file://`) la pagina funziona con i soli esempi sintetici: il browser non scarica i file dati delle mappe reali (`docs/real-maps.md`).
