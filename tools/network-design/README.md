@@ -5,13 +5,17 @@ Pagina del **ARALD Network Design Tool**: mappa, dispositivi spostabili, aloni d
 **Solo interfaccia.** Ogni numero viene dal motore di `tools/scenario-model/` (`assessNetwork`, `coverageGrid`, `prepareResilience`, `evaluateFailure`, `resilienceScore`), che gira nel browser: nessun server, nessun account, nessun dato in uscita.
 
 ```bash
-npm run design-tool:build     # → tools/network-design/dist/index.html (file unico, si apre con un doppio clic)
+npm run design-tool:build     # → dist/index.html (pagina), dist/artifact.html (senza scheletro, per la pubblicazione), dist/data/ (mappe)
+npm run design-tool:serve     # costruisce e serve su http://127.0.0.1:8470/ (--port per cambiarla): serve per le mappe reali
 ```
 
+Aperta con un doppio clic (`file://`) la pagina funziona con i soli esempi sintetici: il browser non scarica i file dati delle mappe reali (`docs/real-maps.md`).
+
+- `packs.ts` — catalogo e caricamento dei pacchetti di terreno (scarico, gzip, validazione). `serve.mjs`/`serve-lib.mjs` — server statico locale. `data/` — pacchetti pronti e `index.json` (`npm run map-data:index`).
 - `logic.ts` — logica pura (vista sulla mappa, colori, modifica della configurazione): testata in `tests/unit/network-design-logic.test.ts`.
 - `app.ts` — interfaccia (canvas + pannello). `index.template.html` — struttura e stile (tema chiaro/scuro). `build.mjs` — impacchetta tutto con esbuild.
 - Controllo dei tipi: `npx tsc -p tools/network-design/tsconfig.json`.
 
 **Stato: esempio dimostrativo, interno.** Terreni sintetici (Eolie, Atacama, Kampala) e parametri radio non verificati: non è una previsione. La pagina non è linkata da `site/`, dai portali né dall'app; dove pubblicarla è una decisione aperta (`docs/next-steps.md`).
 
-**Limiti della prima versione:** nessuna mappa reale (sfondo disegnato dal terreno sintetico), nessun import di rilievi; un dispositivo con percorso (es. l'aliscafo) è mostrato alla partenza; la resilienza usa i pesi di default e il guasto d'area è un cerchio; niente Network Optimizer (prossimo passo).
+**Limiti:** una sola area reale alla volta, nessuna strada né nomi di luogo; un dispositivo con percorso (es. l'aliscafo) è mostrato alla partenza; la resilienza usa i pesi di default e il guasto d'area è un cerchio; niente Network Optimizer (prossimo passo).

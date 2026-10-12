@@ -1,6 +1,6 @@
 # Mappe e terreno reale
 
-Stato: **fase 1 di 4 completata** (11 ottobre 2026). Obiettivo: far girare il motore di `tools/scenario-model/` su terreno vero (quote e uso del suolo) invece che sintetico, poi mostrarlo nella pagina del tool (`tools/network-design/`), poi completare l'editing dei dispositivi, poi preparare le aree Italia e Alpi europee.
+Stato: **fasi 1 e 2 di 4 completate** (11-12 ottobre 2026). Obiettivo: far girare il motore di `tools/scenario-model/` su terreno vero (quote e uso del suolo) invece che sintetico, poi mostrarlo nella pagina del tool (`tools/network-design/`), poi completare l'editing dei dispositivi, poi preparare le aree Italia e Alpi europee.
 
 ## Cosa è stato fatto (fase 1: dati e motore)
 
@@ -61,8 +61,20 @@ Sette dispositivi tra Chiappera e il vallone di Stroppia. Resilience Score **66*
 - **I parametri radio restano ipotesi** (esponente, margine, perdite di clutter): il terreno diventa vero, il risultato resta una stima. Non verificato contro misure.
 - Le soglie di classificazione del suolo e i valori di clutter per classe sono scelte di progetto.
 
+## Fase 2: la mappa reale nella pagina (12 ottobre 2026)
+
+La pagina (`tools/network-design/`) legge i pacchetti e disegna il terreno vero:
+
+- **Catalogo** (`data/index.json`, generato da `npm run map-data:index` e dallo script `map-data`): elenco delle aree con riquadro geografico, dimensione e attribuzione. La pagina lo scarica all'avvio e scarica un'area solo quando la si sceglie (una volta, poi resta in memoria). Catalogo e pacchetti sono input non fidato: vengono validati (identificativo, nome del file, dimensioni, riquadro), il pacchetto scaricato deve corrispondere alla voce di catalogo (stesso identificativo e stessa griglia), anche se un server l'avesse già decompresso, e la decompressione si ferma oltre un tetto di byte. Un'attribuzione mancante nel catalogo è un errore (le licenze la richiedono).
+- **Sfondo**: suolo (acqua, aperto, bosco, abitato) con tinta per quota (più chiaro in alto) e rilievo ombreggiato con la luce da nord-ovest. Fuori dall'area dei dati c'è una tinta neutra a scacchi, mai il colore del mare, e il bordo dell'area è tratteggiato; gli aloni di copertura non si disegnano fuori dai dati.
+- **Quota sotto ogni dispositivo**: nel pannello, suolo e quota, quota dell'antenna sul livello del mare e avvisi (in acqua per un dispositivo fisso; fuori dall'area dei dati). Un avviso riepilogativo elenca i dispositivi, o i punti di un percorso, fuori dall'area. Passando il cursore sulla mappa si leggono coordinate, quota e suolo.
+- **Attribuzioni** sempre visibili in basso a destra (le licenze lo richiedono): per i terreni sintetici la mappa dice che il terreno è di esempio.
+- **Esempi**: Alta Valle Maira e Eolie con aliscafo su terreno reale, accanto agli esempi sintetici.
+- **Come si apre**: da una pagina aperta con `file://` il browser non scarica i file dati; `npm run design-tool:serve [-- --port 8470]` costruisce la pagina e la serve su `http://127.0.0.1:8470/` (solo 127.0.0.1; `serve-lib.mjs` rifiuta i percorsi fuori da `dist/`, i collegamenti simbolici che ne escono e le richieste con un `Host` diverso da quello locale contro il DNS rebinding, e manda una Content-Security-Policy). Aperta da `file://` la pagina funziona lo stesso ma con i soli esempi sintetici e un avviso. Pubblicata come Artifact, i file `data/` si pubblicano accanto alla pagina.
+
+Limiti della fase 2: un'area alla volta (nessuna panoramica su più aree, arriva con la fase 4); serve un browser recente (`DecompressionStream`); un dispositivo trascinato fuori dall'area dà risultati inaffidabili ma non viene impedito (l'avviso lo dice); il rilievo ombreggiato è calcolato dalle celle da 100 m e non mostra dettagli più fini.
+
 ## Prossime fasi (ciascuna con ok esplicito)
 
-2. **Pagina**: mappa reale con zoom dall'intera area (panoramica a 1 km) alla valle (100 m), caricamento delle aree sul momento, quota sotto ogni dispositivo e avviso se è in acqua o fuori dal pacchetto, attribuzioni visibili. Da `file://` un browser non carica i file dati: servirà un piccolo server locale (`npm run design-tool:serve`).
 3. **Dispositivi**: tavolozza da trascinare, annulla/ripeti, duplica, disegno del percorso di un dispositivo mobile con velocità.
-4. **Aree pronte**: Italia (Valle Maira, Dolomiti, Valle d'Aosta/Monte Bianco, Appennino centrale, Eolie) e Alpi europee (Chamonix–Courmayeur–Martigny, Vallese/Zermatt, Engadina, Tirolo, Alpi Giulie), con confronto sintetico/reale documentato.
+4. **Aree pronte**: Italia (Valle Maira, Dolomiti, Valle d'Aosta/Monte Bianco, Appennino centrale, Eolie) e Alpi europee (Chamonix–Courmayeur–Martigny, Vallese/Zermatt, Engadina, Tirolo, Alpi Giulie), con confronto sintetico/reale documentato, e una panoramica a risoluzione ridotta per scegliere l'area.

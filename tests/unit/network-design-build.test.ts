@@ -21,6 +21,14 @@ describe("pagina del tool: build in un unico file", () => {
     expect(html).toMatch(/\[hidden\]\s*\{\s*display:\s*none\s*!important/);
   }, 60_000);
 
+  it("le mappe reali (catalogo e pacchetti) vengono copiate accanto alla pagina", () => {
+    execFileSync("node", ["tools/network-design/build.mjs"], { stdio: "pipe" });
+    const index = JSON.parse(readFileSync("tools/network-design/dist/data/index.json", "utf8"));
+    expect(index.packs.length).toBeGreaterThanOrEqual(2);
+    for (const p of index.packs) expect(readFileSync(`tools/network-design/dist/data/${p.file}`).length).toBe(p.bytes);
+    expect(readFileSync("tools/network-design/dist/index.html", "utf8")).toContain('"data/"');
+  }, 60_000);
+
   it("il bundle non può chiudere il suo tag <script> dall'interno", () => {
     const frag = readFileSync("tools/network-design/dist/artifact.html", "utf8");
     const open = frag.lastIndexOf("<script>");

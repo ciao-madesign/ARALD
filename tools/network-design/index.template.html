@@ -8,7 +8,7 @@
   --bg: #eff2f6; --surface: #ffffff; --surface-2: #e6ebf2; --fg: #18202e; --muted: #596579; --line: #d0d7e2;
   --accent: #2b47c9; --accent-fg: #ffffff;
   --good: #1c8f4d; --warn: #c98200; --bad: #cc3b3b;
-  --land-sea: #b9d0e4; --land-open: #e4e2d0; --land-forest: #bdd1ae; --land-urban: #d6d1c9; --land-urban-dense: #bab3a9;
+  --land-sea: #b9d0e4; --land-open: #e4e2d0; --land-forest: #bdd1ae; --land-urban: #d6d1c9; --land-urban-dense: #bab3a9; --land-high: #eef0f4; --nodata: #cdd3dc;
   --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
 }
@@ -16,14 +16,14 @@
   :root:not([data-theme="light"]) {
     --bg: #0f1520; --surface: #171f2d; --surface-2: #1f293a; --fg: #e5eaf3; --muted: #95a2b8; --line: #2b3548;
     --accent: #8fa4ff; --accent-fg: #0f1520; --good: #4cc27d; --warn: #e3a62f; --bad: #ee6b6b;
-    --land-sea: #18283a; --land-open: #2b2c25; --land-forest: #233221; --land-urban: #353330; --land-urban-dense: #4a4640;
+    --land-sea: #18283a; --land-open: #2b2c25; --land-forest: #233221; --land-urban: #353330; --land-urban-dense: #4a4640; --land-high: #7b8499; --nodata: #202838;
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: #0f1520; --surface: #171f2d; --surface-2: #1f293a; --fg: #e5eaf3; --muted: #95a2b8; --line: #2b3548;
   --accent: #8fa4ff; --accent-fg: #0f1520; --good: #4cc27d; --warn: #e3a62f; --bad: #ee6b6b;
-  --land-sea: #18283a; --land-open: #2b2c25; --land-forest: #233221; --land-urban: #353330; --land-urban-dense: #4a4640;
+  --land-sea: #18283a; --land-open: #2b2c25; --land-forest: #233221; --land-urban: #353330; --land-urban-dense: #4a4640; --land-high: #7b8499; --nodata: #202838;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -63,7 +63,13 @@ textarea { width: 100%; font-family: var(--font-mono); font-size: 12px; resize: 
 .group > .lbl { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); margin-right: 2px; }
 #map-wrap { position: relative; flex: 1 1 auto; min-height: 320px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--land-sea); }
 #map { display: block; touch-action: none; }
-#status { font-size: 12.5px; color: var(--muted); min-height: 18px; }
+#status-row { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+#status, #cursor-info { font-size: 12.5px; color: var(--muted); min-height: 18px; }
+#cursor-info { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+#attribution { position: absolute; right: 0; bottom: 0; max-width: 72%; padding: 2px 8px; font-size: 10.5px; line-height: 1.35; color: var(--muted); background: color-mix(in srgb, var(--surface) 86%, transparent); border-top-left-radius: 5px; pointer-events: auto; }
+#notice { font-size: 12.5px; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--warn); border-radius: 5px; padding: 6px 10px; }
+.ground { margin: 0; font-size: 12.5px; }
+.warn-note { margin: 0; font-size: 12.5px; color: var(--warn); }
 
 .panel { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
 .tabs { display: flex; border-bottom: 1px solid var(--line); }
@@ -116,6 +122,8 @@ textarea { width: 100%; font-family: var(--font-mono); font-size: 12px; resize: 
   <button type="button" class="btn" id="cfg-open">Configurazione</button>
 </header>
 
+<div id="notice" role="status" hidden></div>
+
 <div class="work">
   <section class="mapcol">
     <div class="toolbar">
@@ -136,8 +144,8 @@ textarea { width: 100%; font-family: var(--font-mono); font-size: 12px; resize: 
       </div>
       <button type="button" class="btn" id="fit">Inquadra</button>
     </div>
-    <div id="map-wrap"><canvas id="map" aria-label="Mappa della rete"></canvas></div>
-    <div id="status" role="status"></div>
+    <div id="map-wrap"><canvas id="map" aria-label="Mappa della rete"></canvas><div id="attribution"></div></div>
+    <div id="status-row"><div id="status" role="status"></div><div id="cursor-info" aria-hidden="true"></div></div>
   </section>
   <aside class="panel">
     <div class="tabs" role="tablist">

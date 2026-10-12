@@ -22,7 +22,9 @@
     "discovery-service": "tsx discovery-service/cli.ts",
     "build:portable": "tsx packaging/build-sea.ts",
     "design-tool:build": "node tools/network-design/build.mjs",
-    "map-data": "tsx tools/map-data/build-pack.mts"
+    "map-data": "tsx tools/map-data/build-pack.mts",
+    "map-data:index": "tsx tools/map-data/make-index.mts",
+    "design-tool:serve": "node tools/network-design/build.mjs && node tools/network-design/serve.mjs"
   },
   "dependencies": {
     "dbus-next": "^0.10.2",

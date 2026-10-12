@@ -16,6 +16,7 @@ import { gunzipSync, gzipSync } from "node:zlib";
 import { fromFile } from "geotiff";
 import { MAX_PACK_CELLS, PACK_ID_PATTERN, PACK_VERSION, type PackHeader, encodePack } from "../scenario-model/terrain-pack.js";
 import { toGeo } from "../scenario-model/terrain.js";
+import { writeCatalog } from "./catalog.js";
 import { CoverAccumulator, buildElevationGrid, gridGeoBox, gridSpecFor } from "./resample.js";
 import { ATTRIBUTION, type HgtTile, parseHgt, skadiName, skadiTilesFor, skadiUrl, worldCoverName, worldCoverTilesFor, worldCoverUrl } from "./sources.js";
 
@@ -128,6 +129,7 @@ const bytes = gzipSync(encodePack({ header, elevation, cover }), { level: 9 });
 mkdirSync(out, { recursive: true });
 const dest = join(out, `${id}.pack.gz`);
 writeFileSync(dest, bytes);
+writeCatalog(out);
 
 let lo = Infinity;
 let hi = -Infinity;

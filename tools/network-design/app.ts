@@ -7,25 +7,31 @@ import { type CoverageGrid, type LinkAssessment, coverageGrid, qualityLabel } fr
 import { KIND_DEFAULTS, type Medium, type ModelParams, type NodeKind, type NodeSpec } from "../scenario-model/model.js";
 import { type NetworkConfig, assessNetwork, paramsForConfig, parseNetworkConfig, placeDevices } from "../scenario-model/network-config.js";
 import { type FailureReport, type ResilienceContext, type ResilienceScore, evaluateFailure, prepareResilience, resilienceScore } from "../scenario-model/resilience.js";
-import { FLAT_TERRAIN, type LandCover, type Terrain, toLocal } from "../scenario-model/terrain.js";
+import { PACK_ID_PATTERN, PackTerrain, packOffset } from "../scenario-model/terrain-pack.js";
+import { FLAT_TERRAIN, type LandCover, type Terrain, toGeo, toLocal } from "../scenario-model/terrain.js";
 import { TERRAINS } from "../scenario-model/terrains.js";
 import atacama from "../scenario-model/examples/atacama.json";
 import eolie from "../scenario-model/examples/eolie.json";
 import eolieResilienza from "../scenario-model/examples/eolie-resilienza.json";
+import eolieReale from "../scenario-model/examples/eolie-resilienza-reale.json";
 import kampala from "../scenario-model/examples/kampala.json";
+import valleMairaReale from "../scenario-model/examples/valle-maira-reale.json";
 import {
-  KIND_LABEL, type View, addDevice, fitView, fmtDistance, fmtRate, haloCellM, moveDevice, qualityColor, removeDevice,
-  screenToWorld, viewBounds, worldToScreen, zoomAt,
+  COVER_LABEL, KIND_LABEL, type View, addDevice, devicesOutside, fitView, fmtDistance, fmtRate, groundAt, groundWarnings, haloCellM, moveDevice,
+  qualityColor, removeDevice, screenToWorld, viewBounds, worldToScreen, zoomAt,
 } from "./logic.js";
+import { PackLibrary } from "./packs.js";
 
 // ---------------------------------------------------------------- esempi
 
 const BLANK: unknown = { version: 1, name: "Nuova rete (terreno piatto)", frame: { lat0: 44.4, lon0: 7.0 }, environment: "tipico", regulatory: "g3", devices: [] };
-const PRESETS: { id: string; label: string; raw: unknown }[] = [
-  { id: "eolie-resilienza", label: "Eolie con aliscafo (esempio di resilienza)", raw: eolieResilienza },
-  { id: "eolie", label: "Isole Eolie", raw: eolie },
-  { id: "atacama", label: "Deserto di Atacama", raw: atacama },
-  { id: "kampala", label: "Kampala", raw: kampala },
+const PRESETS: { id: string; label: string; raw: unknown; real?: boolean }[] = [
+  { id: "eolie-reale", label: "Eolie con aliscafo — terreno reale", raw: eolieReale, real: true },
+  { id: "valle-maira-reale", label: "Alta Valle Maira — terreno reale", raw: valleMairaReale, real: true },
+  { id: "eolie-resilienza", label: "Eolie con aliscafo — terreno sintetico", raw: eolieResilienza },
+  { id: "eolie", label: "Isole Eolie — terreno sintetico", raw: eolie },
+  { id: "atacama", label: "Deserto di Atacama — sintetico", raw: atacama },
+  { id: "kampala", label: "Kampala — sintetico", raw: kampala },
   { id: "blank", label: "Rete vuota su terreno piatto", raw: BLANK },
 ];
 
@@ -48,6 +54,14 @@ const failed = new Set<string>();
 let areas: FailArea[] = [];
 let areaRadiusM = 3000;
 
+// mappe reali: biblioteca dei pacchetti (assente se la pagina è aperta senza server, o il catalogo non si scarica)
+let library: PackLibrary | null = null;
+let libraryNote = "";
+let terrainMaxM = 0; // quota massima del terreno reale, per la scala di colore
+let loadToken = 0;
+let baseNotice = ""; // avviso permanente (mappe reali non disponibili); i messaggi di caricamento lo sostituiscono per un po'
+let currentPreset = "";
+
 // calcoli in cache, invalidati quando cambia la rete
 let nodes: NodeSpec[] = [];
 let params: ModelParams;
@@ -57,7 +71,7 @@ let resScore: ResilienceScore | null = null;
 let resBusy = false;
 let resError = "";
 let report: FailureReport | null = null;
-let haloGrid: { key: string; grid: CoverageGrid; bbox: { minX: number; minY: number; maxX: number; maxY: number }; mPerPx: number } | null = null;
+let haloGrid: { key: string; grid: CoverageGrid; bbox: { minX: number; minY: number; maxX: number; maxY: number }; mPerPx: number; cells: { x: number; y: number; quality: number }[] } | null = null;
 let haloToken = 0;
 let haloBusy = false;
 
@@ -81,20 +95,71 @@ const TECH_LABEL: Record<Medium, string> = { lora: "LoRa", ble: "BLE", wifi: "Wi
 interface Palette { [k: string]: string }
 let palette: Palette = {};
 let themeKey = "";
+const paletteRgb: Record<string, [number, number, number]> = {};
+
+/** Colore CSS ("#rgb", "#rrggbb" o "rgb(r, g, b)") in componenti 0-255; grigio se non si riconosce. */
+function parseRgb(css: string): [number, number, number] {
+  const t = css.trim();
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(t);
+  if (hex) {
+    const h6 = hex[1].length === 3 ? hex[1].split("").map((c) => c + c).join("") : hex[1];
+    const n = parseInt(h6, 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  const m = /^rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/i.exec(t);
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : [128, 128, 128];
+}
+
 function readPalette(): void {
   const cs = getComputedStyle(document.documentElement);
-  const names = ["bg", "surface", "fg", "muted", "line", "accent", "good", "warn", "bad", "land-sea", "land-open", "land-forest", "land-urban", "land-urban-dense"];
+  const names = ["bg", "surface", "fg", "muted", "line", "accent", "good", "warn", "bad", "land-sea", "land-open", "land-forest", "land-urban", "land-urban-dense", "land-high", "nodata"];
   palette = Object.fromEntries(names.map((n) => [n, cs.getPropertyValue(`--${n}`).trim()]));
+  for (const n of names) paletteRgb[n] = parseRgb(palette[n]);
   themeKey = `${document.documentElement.dataset.theme ?? ""}|${palette.bg}`;
 }
 
 // ---------------------------------------------------------------- caricamento di una configurazione
 
-function loadConfig(raw: unknown): void {
+/** Terreno di una configurazione: sintetico, piatto, o reale da un pacchetto ("pack:<id>", scaricato se serve). */
+async function resolveTerrain(c: NetworkConfig): Promise<Terrain> {
+  if (c.terrain === undefined) return FLAT_TERRAIN;
+  if (c.terrain.startsWith("pack:")) {
+    const id = c.terrain.slice("pack:".length);
+    if (!PACK_ID_PATTERN.test(id)) throw new Error(`Riferimento di terreno non valido: ${JSON.stringify(c.terrain)}`);
+    if (!library) throw new Error(`Le mappe reali non sono disponibili: ${libraryNote || "nessun catalogo caricato"}`);
+    const pack = await library.load(id);
+    return new PackTerrain(pack, packOffset(pack, c.frame));
+  }
+  if (Object.hasOwn(TERRAINS, c.terrain)) return TERRAINS[c.terrain];
+  throw new Error(`Territorio sconosciuto: ${c.terrain}`);
+}
+
+/**
+ * Carica una configurazione (anche con terreno da scaricare). Restituisce "applied" se la rete è stata
+ * applicata, "superseded" se nel frattempo è partito un altro caricamento (nessun effetto, nessun errore
+ * da mostrare); un errore del caricamento corrente viene rilanciato.
+ */
+async function loadConfig(raw: unknown): Promise<"applied" | "superseded"> {
   const next = parseNetworkConfig(raw);
-  const t = next.terrain === undefined ? FLAT_TERRAIN : Object.hasOwn(TERRAINS, next.terrain) ? TERRAINS[next.terrain] : undefined;
-  if (!t) throw new Error(`Territorio sconosciuto: ${next.terrain}`);
-  // Atomico: se il calcolo fallisce si torna alla rete precedente, mai a metà.
+  const token = ++loadToken;
+  const needsDownload = next.terrain?.startsWith("pack:") === true;
+  setNotice(needsDownload ? "Carico la mappa…" : baseNotice);
+  let t: Terrain;
+  try {
+    t = await resolveTerrain(next);
+  } catch (e) {
+    if (token !== loadToken) return "superseded";
+    setNotice(baseNotice);
+    throw e;
+  }
+  if (token !== loadToken) return "superseded"; // nel frattempo ne è stata scelta un'altra
+  setNotice(baseNotice);
+  applyConfig(next, t);
+  return "applied";
+}
+
+/** Applica una configurazione con il suo terreno. Atomico: se il calcolo fallisce si torna alla rete precedente. */
+function applyConfig(next: NetworkConfig, t: Terrain): void {
   const prev = cfg ? { cfg, terrain } : null;
   try {
     cfg = next;
@@ -104,6 +169,8 @@ function loadConfig(raw: unknown): void {
     if (prev) { cfg = prev.cfg; terrain = prev.terrain; recompute(); }
     throw e;
   }
+  terrainMaxM = 0;
+  if (terrain instanceof PackTerrain) for (const v of terrain.pack.elevation) if (v > terrainMaxM) terrainMaxM = v;
   selected = next.devices.find((d) => d.kind === "box")?.id ?? next.devices[0]?.id ?? null;
   failed.clear();
   areas = [];
@@ -112,7 +179,26 @@ function loadConfig(raw: unknown): void {
   $<HTMLSelectElement>("reg").value = cfg.regulatory;
   view = fitView(nodes.flatMap((n) => n.path.map((w) => ({ x: w.x, y: w.y }))), view.w, view.h, 0.18, 6000);
   bg = null;
+  renderAttribution();
   refreshAll();
+}
+
+/** Messaggio di stato sotto l'intestazione (caricamenti, mappe reali non disponibili). */
+function setNotice(text: string): void {
+  const el = $("notice");
+  el.textContent = text;
+  el.hidden = text === "";
+}
+
+function renderAttribution(): void {
+  const el = $("attribution");
+  if (terrain instanceof PackTerrain) {
+    el.textContent = `Terreno reale: ${terrain.name}. ${terrain.pack.header.attribution}`;
+    el.title = el.textContent;
+  } else {
+    el.textContent = "Terreno sintetico di esempio, non rilevato.";
+    el.title = "";
+  }
 }
 
 /** Ricalcola ciò che dipende dalla rete (collegamenti); la resilienza viene rifatta solo se serve. */
@@ -231,7 +317,11 @@ function scheduleHalo(): void {
     if (!KIND_DEFAULTS[n.kind].caps[halo]) {
       haloGrid = null;
     } else {
-      haloGrid = { key, grid: coverageGrid(n, pos, halo, params, bbox, cellM), bbox, mPerPx: view.mPerPx };
+      const grid = coverageGrid(n, pos, halo, params, bbox, cellM);
+      const real = terrain instanceof PackTerrain ? terrain : null;
+      // celle raggiunte, senza quelle fuori dall'area dei dati (là non c'è terreno: l'alone non avrebbe senso)
+      const cells = grid.cells.filter((c) => c.possible && (!real || real.contains(c.x, c.y)));
+      haloGrid = { key, grid, bbox, mPerPx: view.mPerPx, cells };
     }
     haloBusy = false;
     if (token === haloToken) { draw(); renderStatus(); }
@@ -250,33 +340,87 @@ const COVER_KEY: Record<LandCover, string> = { sea: "land-sea", open: "land-open
 
 const BG_PAD = 0.25; // lo sfondo è un quarto più largo dello schermo per lato: durante un trascinamento non restano bordi vuoti
 
+// luce da nord-ovest, un po' alta sull'orizzonte
+const LIGHT = (() => { const l = [-0.5, 0.6, 0.62]; const n = Math.hypot(l[0], l[1], l[2]); return l.map((v) => v / n); })();
+
+function mix(a: readonly number[], b: readonly number[], t: number): [number, number, number] {
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+}
+
+/**
+ * Sfondo: un solo passaggio sui blocchi di pixel, con una sola lettura della quota per blocco (reticolo di
+ * quote, le pendenze si leggono dai vicini) e scrittura diretta dei pixel. Su terreno reale: suolo + tinta
+ * per quota + rilievo ombreggiato; fuori dall'area dei dati una tinta neutra a scacchi, mai il mare.
+ */
 function renderBackground(fine: boolean): void {
-  const block = fine ? 6 : 12;
+  const real = terrain instanceof PackTerrain ? terrain : null;
+  const block = fine ? (real ? 3 : 6) : 10;
   const ox = view.w * BG_PAD;
   const oy = view.h * BG_PAD;
-  const c = document.createElement("canvas");
-  c.width = Math.ceil(view.w * (1 + 2 * BG_PAD));
-  c.height = Math.ceil(view.h * (1 + 2 * BG_PAD));
-  const bc = c.getContext("2d")!;
-  const d = view.mPerPx * block;
-  for (let sy = 0; sy < c.height; sy += block) {
-    for (let sx = 0; sx < c.width; sx += block) {
-      const p = screenToWorld(view, sx + block / 2 - ox, sy + block / 2 - oy);
-      const cover = terrain.landCoverAt(p.x, p.y);
-      const e = terrain.elevationAt(p.x, p.y);
-      bc.fillStyle = palette[COVER_KEY[cover]] || palette["land-open"];
-      bc.fillRect(sx, sy, block, block);
-      if (cover !== "sea") {
-        // ombreggiatura: pendenza verso nord-ovest più chiara, opposta più scura
-        const slope = (terrain.elevationAt(p.x + d, p.y - d) - e) / d;
-        const shade = Math.max(-0.35, Math.min(0.35, slope * 1.2));
-        if (Math.abs(shade) > 0.02) {
-          bc.fillStyle = shade > 0 ? `rgba(0,0,0,${shade * 0.45})` : `rgba(255,255,255,${-shade * 0.45})`;
-          bc.fillRect(sx, sy, block, block);
+  const W = Math.ceil(view.w * (1 + 2 * BG_PAD));
+  const H = Math.ceil(view.h * (1 + 2 * BG_PAD));
+  const nx = Math.ceil(W / block);
+  const ny = Math.ceil(H / block);
+  const stride = nx + 2;
+  const d = view.mPerPx * block; // distanza tra due blocchi vicini, in metri
+  const wx = (i: number): number => view.cx + (i * block + block / 2 - ox - view.w / 2) * view.mPerPx;
+  const wy = (j: number): number => view.cy - (j * block + block / 2 - oy - view.h / 2) * view.mPerPx;
+  const E = new Float32Array(stride * (ny + 2));
+  for (let j = -1; j <= ny; j++) for (let i = -1; i <= nx; i++) E[(j + 1) * stride + i + 1] = terrain.elevationAt(wx(i), wy(j));
+
+  const img = new ImageData(W, H);
+  const px = img.data;
+  const high = paletteRgb["land-high"];
+  const nodata = paletteRgb["nodata"];
+  const nodataAlt = mix(nodata, paletteRgb["bg"], 0.35);
+  const k = 0.9; // esagerazione verticale (le pendenze alpine sono già ripide)
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      const x = wx(i);
+      const y = wy(j);
+      let rgb: readonly number[];
+      if (real && !real.contains(x, y)) {
+        rgb = ((i + j) & 1) === 0 ? nodata : nodataAlt;
+      } else {
+        const cover = terrain.landCoverAt(x, y);
+        rgb = paletteRgb[COVER_KEY[cover]] ?? paletteRgb["land-open"];
+        if (cover !== "sea") {
+          const c = (j + 1) * stride + i + 1;
+          const e = E[c];
+          let lightening = 0; // > 0 schiarisce verso il bianco, < 0 scurisce verso il nero
+          if (real) {
+            if (terrainMaxM > 0) rgb = mix(rgb, high, 0.38 * Math.min(1, Math.max(0, e) / terrainMaxM) ** 1.4);
+            const dzdx = (E[c + 1] - E[c - 1]) / (2 * d);
+            const dzdy = (E[c - stride] - E[c + stride]) / (2 * d); // nord meno sud
+            const len = Math.hypot(k * dzdx, k * dzdy, 1);
+            const shade = (-k * dzdx * LIGHT[0] - k * dzdy * LIGHT[1] + LIGHT[2]) / len - LIGHT[2];
+            if (shade > 0.01) lightening = Math.min(0.3, shade * 0.9);
+            else if (shade < -0.01) lightening = -Math.min(0.42, -shade * 1.1);
+          } else {
+            // ombreggiatura: pendenza verso nord-ovest più chiara, opposta più scura
+            const slope = (E[c + stride + 1] - e) / d;
+            const shade = Math.max(-0.35, Math.min(0.35, slope * 1.2));
+            if (Math.abs(shade) > 0.02) lightening = -shade * 0.45;
+          }
+          if (lightening > 0) rgb = mix(rgb, [255, 255, 255], lightening);
+          else if (lightening < 0) rgb = mix(rgb, [0, 0, 0], -lightening);
         }
+      }
+      const r = Math.round(rgb[0]);
+      const gg = Math.round(rgb[1]);
+      const bl = Math.round(rgb[2]);
+      const y1 = Math.min(H, (j + 1) * block);
+      const x1 = Math.min(W, (i + 1) * block);
+      for (let yy = j * block; yy < y1; yy++) {
+        let o = (yy * W + i * block) * 4;
+        for (let xx = i * block; xx < x1; xx++) { px[o] = r; px[o + 1] = gg; px[o + 2] = bl; px[o + 3] = 255; o += 4; }
       }
     }
   }
+  const c = document.createElement("canvas");
+  c.width = W;
+  c.height = H;
+  c.getContext("2d")!.putImageData(img, 0, 0);
   bg = { canvas: c, view: { ...view }, theme: themeKey, fine };
 }
 
@@ -295,13 +439,31 @@ function drawBackground(): void {
   }
 }
 
-function drawCells(cells: { x: number; y: number }[], cellM: number, color: (i: number) => string): void {
+let cellLayer: HTMLCanvasElement | null = null;
+
+/**
+ * Disegna uno strato di celle colorate con trasparenza uniforme: le celle vanno prima su un livello
+ * opaco (riusato tra un disegno e l'altro) e poi il livello viene composto una volta, così i bordi tra
+ * celle vicine non si sovrappongono (con una trasparenza per cella apparirebbe un reticolo).
+ */
+function drawCells(cells: { x: number; y: number }[], cellM: number, color: (i: number) => string, alpha: number): void {
+  if (!cellLayer) cellLayer = document.createElement("canvas");
+  const w = Math.ceil(view.w * dpr);
+  const hh = Math.ceil(view.h * dpr);
+  if (cellLayer.width !== w || cellLayer.height !== hh) { cellLayer.width = w; cellLayer.height = hh; }
+  const lc = cellLayer.getContext("2d")!;
+  lc.setTransform(dpr, 0, 0, dpr, 0, 0);
+  lc.clearRect(0, 0, view.w, view.h);
   const s = Math.max(1, cellM / view.mPerPx);
   cells.forEach((c, i) => {
     const p = worldToScreen(view, c.x, c.y);
-    g.fillStyle = color(i);
-    g.fillRect(p.x - s / 2, p.y - s / 2, s + 0.6, s + 0.6);
+    if (p.x < -s || p.y < -s || p.x > view.w + s || p.y > view.h + s) return;
+    lc.fillStyle = color(i);
+    lc.fillRect(Math.floor(p.x - s / 2), Math.floor(p.y - s / 2), Math.ceil(s) + 1, Math.ceil(s) + 1);
   });
+  g.globalAlpha = alpha;
+  g.drawImage(cellLayer, 0, 0, view.w, view.h);
+  g.globalAlpha = 1;
 }
 
 function drawKindGlyph(kind: NodeKind, x: number, y: number, r: number): void {
@@ -323,18 +485,27 @@ function draw(): void {
 
   // alone (un dispositivo spento non copre nulla)
   if (haloGrid && haloValid() && halo !== "none" && !(selected && hidden.has(selected))) {
-    const cells = haloGrid.grid.cells.filter((c) => c.possible);
-    drawCells(cells, haloGrid.grid.cellM, (i) => { g.globalAlpha = 0.5; return qualityColor(cells[i].quality, 50); });
-    g.globalAlpha = 1;
+    const cells = haloGrid.cells;
+    drawCells(cells, haloGrid.grid.cellM, (i) => qualityColor(cells[i].quality, 50), 0.5);
+  }
+
+  // contorno dell'area dei dati reali
+  if (terrain instanceof PackTerrain) {
+    const b = terrain.bounds();
+    const a1 = worldToScreen(view, b.minX, b.maxY);
+    const a2 = worldToScreen(view, b.maxX, b.minY);
+    g.setLineDash([8, 5]);
+    g.strokeStyle = palette.muted;
+    g.lineWidth = 1.5;
+    g.strokeRect(a1.x, a1.y, a2.x - a1.x, a2.y - a1.y);
+    g.setLineDash([]);
   }
 
   // celle di copertura perse con il guasto
   if (report && resCtx?.spec.coverage && report.lostCells.length > 0) {
     const cv = resCtx.spec.coverage;
     const cells = report.lostCells.map((i) => ({ x: cv.bbox.minX + ((i % cv.cols) + 0.5) * cv.cellM, y: cv.bbox.maxY - (Math.floor(i / cv.cols) + 0.5) * cv.cellM }));
-    g.globalAlpha = 0.45;
-    drawCells(cells, cv.cellM, () => palette.bad);
-    g.globalAlpha = 1;
+    drawCells(cells, cv.cellM, () => palette.bad, 0.45);
   }
 
   // percorsi dei dispositivi mobili
@@ -478,6 +649,7 @@ function renderStatus(): void {
 }
 
 function renderPanel(): void {
+  if (!cfg) return;
   document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
   const root = $("panel-body");
   root.replaceChildren(tab === "rete" ? panelNetwork() : panelResilience());
@@ -503,6 +675,14 @@ function panelNetwork(): HTMLElement {
     agl.addEventListener("change", () => { const v = Number(agl.value); if (Number.isFinite(v) && v >= 0 && v <= 200) { n.heightAglM = v; recompute(); refreshAll(); } });
     form.append(h("label", { class: "field" }, "Nome", label), h("label", { class: "field" }, "Altezza antenna (m)", agl));
     if (n.route) form.append(h("p", { class: "hint" }, "Dispositivo mobile: è mostrato alla partenza, il suo percorso è tratteggiato."));
+    const at = posOf(n.id);
+    if (at) {
+      const gr = groundAt(terrain, at.x, at.y);
+      const ant = nodes.find((q) => q.id === n.id)?.path[0].z;
+      const real = terrain instanceof PackTerrain;
+      if (gr.inside) form.append(h("p", { class: "ground" }, real ? `Suolo: ${COVER_LABEL[gr.cover]}, quota ${Math.round(gr.elevationM)} m` : `Suolo: ${COVER_LABEL[gr.cover]}`, ant !== undefined && real ? ` · antenna a ${Math.round(ant)} m s.l.m.` : ""));
+      for (const w of groundWarnings(gr, kind, n.route !== undefined)) form.append(h("p", { class: "warn-note", role: "note" }, w));
+    }
     const rm = h("button", { type: "button", class: "btn danger" }, "Rimuovi dispositivo");
     rm.addEventListener("click", () => { cfg = removeDevice(cfg, n.id); failed.delete(n.id); selected = null; recompute(); refreshAll(); });
     form.append(rm);
@@ -511,6 +691,8 @@ function panelNetwork(): HTMLElement {
     box.append(h("p", { class: "hint" }, cfg.devices.length === 0 ? "Rete vuota. Scegli “Aggiungi”, un tipo di dispositivo, e fai clic sulla mappa." : "Fai clic su un dispositivo per vederne i dettagli, trascinalo per spostarlo."));
   }
 
+  const outside = devicesOutside(terrain, cfg);
+  if (outside.length > 0) box.append(h("p", { class: "warn-note", role: "note" }, `Fuori dall'area dei dati reali: ${outside.join(", ")}. I risultati che li riguardano non sono affidabili (quota 0, nessun suolo).`));
   const rows = links.filter((l) => !selected || l.a === selected || l.b === selected);
   box.append(h("h3", {}, selected ? `Collegamenti di ${selected}` : "Collegamenti"));
   if (rows.length === 0) box.append(h("p", { class: "hint" }, "Nessun collegamento possibile."));
@@ -682,7 +864,7 @@ type Drag = { kind: "pan"; lastX: number; lastY: number } | { kind: "dev"; id: s
 let drag: Drag | null = null;
 
 canvas.addEventListener("pointerdown", (ev) => {
-  if (ev.button !== 0 || !ev.isPrimary) return; // solo il tasto principale / un dito
+  if (!cfg || ev.button !== 0 || !ev.isPrimary) return; // solo il tasto principale / un dito
   canvas.setPointerCapture(ev.pointerId);
   const r = canvas.getBoundingClientRect();
   const sx = ev.clientX - r.left;
@@ -805,13 +987,21 @@ function resize(): void {
 
 function setupControls(): void {
   const scenario = $<HTMLSelectElement>("scenario");
-  for (const p of PRESETS) scenario.append(h("option", { value: p.id }, p.label));
+  for (const p of PRESETS) {
+    const o = h("option", { value: p.id }, p.label);
+    if (p.real && !library) o.disabled = true;
+    scenario.append(o);
+  }
   scenario.addEventListener("change", () => {
     const p = PRESETS.find((q) => q.id === scenario.value);
-    if (p) loadConfig(p.raw);
+    if (!p) return;
+    loadConfig(p.raw).then((r) => { if (r === "applied") currentPreset = p.id; }, (e: Error) => {
+      scenario.value = currentPreset; // torna alla rete che c'è davvero
+      setNotice(`Non riesco a caricare "${p.label}": ${e.message}`);
+    });
   });
-  $<HTMLSelectElement>("env").addEventListener("change", (e) => { cfg = { ...cfg, environment: (e.target as HTMLSelectElement).value as NetworkConfig["environment"] }; recompute(); refreshAll(); });
-  $<HTMLSelectElement>("reg").addEventListener("change", (e) => { cfg = { ...cfg, regulatory: (e.target as HTMLSelectElement).value as NetworkConfig["regulatory"] }; recompute(); refreshAll(); });
+  $<HTMLSelectElement>("env").addEventListener("change", (e) => { if (!cfg) return; cfg = { ...cfg, environment: (e.target as HTMLSelectElement).value as NetworkConfig["environment"] }; recompute(); refreshAll(); });
+  $<HTMLSelectElement>("reg").addEventListener("change", (e) => { if (!cfg) return; cfg = { ...cfg, regulatory: (e.target as HTMLSelectElement).value as NetworkConfig["regulatory"] }; recompute(); refreshAll(); });
   document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((b) => b.addEventListener("click", () => { tool = b.dataset.tool as Tool; renderToolbar(); }));
   document.querySelectorAll<HTMLButtonElement>("[data-halo]").forEach((b) => b.addEventListener("click", () => { halo = b.dataset.halo as Halo; haloGrid = null; renderToolbar(); scheduleHalo(); renderStatus(); draw(); }));
   document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((b) => b.addEventListener("click", () => setTab(b.dataset.tab as Tab)));
@@ -820,7 +1010,7 @@ function setupControls(): void {
   kind.addEventListener("change", () => { addKind = kind.value as NodeKind; });
   const rad = $<HTMLInputElement>("area-radius");
   rad.addEventListener("input", () => { const v = Number(rad.value); if (v > 0) areaRadiusM = v * 1000; $("area-radius-v").textContent = `${rad.value} km`; });
-  $("fit").addEventListener("click", () => { view = fitView(nodes.flatMap((n) => n.path.map((w) => ({ x: w.x, y: w.y }))), view.w, view.h, 0.18, 6000); bg = null; scheduleHalo(); draw(); });
+  $("fit").addEventListener("click", () => { if (!cfg) return; view = fitView(nodes.flatMap((n) => n.path.map((w) => ({ x: w.x, y: w.y }))), view.w, view.h, 0.18, 6000); bg = null; scheduleHalo(); draw(); });
 
   // configurazione salvabile: testo, non file scaricato (nell'anteprima il download è bloccato)
   const modal = $("modal");
@@ -829,8 +1019,13 @@ function setupControls(): void {
   $("cfg-open").addEventListener("click", () => { text.value = JSON.stringify(cfg, null, 2); msg.textContent = ""; modal.hidden = false; text.focus(); });
   $("cfg-close").addEventListener("click", () => { modal.hidden = true; });
   $("cfg-apply").addEventListener("click", () => {
-    try { loadConfig(JSON.parse(text.value)); msg.textContent = ""; modal.hidden = true; }
-    catch (e) { msg.textContent = `Configurazione non valida: ${(e as Error).message}`; }
+    let raw: unknown;
+    try { raw = JSON.parse(text.value); } catch (e) { msg.textContent = `Configurazione non valida: ${(e as Error).message}`; return; }
+    msg.textContent = "Carico…";
+    loadConfig(raw).then((r) => {
+      if (r === "applied") { msg.textContent = ""; modal.hidden = true; scenario.value = ""; currentPreset = ""; }
+      else msg.textContent = "Nel frattempo è stato scelto un altro scenario: la configurazione non è stata applicata. Premi di nuovo Applica.";
+    }, (e: Error) => { msg.textContent = `Configurazione non valida: ${e.message}`; });
   });
   $("cfg-copy").addEventListener("click", () => {
     navigator.clipboard.writeText(text.value).then(() => { msg.textContent = "Copiato."; }, () => { text.select(); msg.textContent = "Copia non consentita qui: il testo è selezionato, usa Ctrl+C."; });
@@ -840,6 +1035,18 @@ function setupControls(): void {
     if (!f) return;
     f.text().then((t) => { text.value = t; msg.textContent = "File letto: premi “Applica”."; }, () => { msg.textContent = "File non leggibile."; });
   });
+
+  const info = $("cursor-info");
+  canvas.addEventListener("pointermove", (ev) => {
+    if (!cfg || drag) return;
+    const r = canvas.getBoundingClientRect();
+    const w = screenToWorld(view, ev.clientX - r.left, ev.clientY - r.top);
+    const geo = toGeo(cfg.frame, w);
+    const gr = groundAt(terrain, w.x, w.y);
+    const real = terrain instanceof PackTerrain;
+    info.textContent = `${geo.lat.toFixed(4)}°, ${geo.lon.toFixed(4)}°` + (real ? (gr.inside ? ` · ${Math.round(gr.elevationM)} m · ${COVER_LABEL[gr.cover]}` : " · fuori dai dati") : "");
+  });
+  canvas.addEventListener("pointerleave", () => { info.textContent = ""; });
 
   const mq = window.matchMedia("(prefers-color-scheme: dark)");
   const onTheme = (): void => { readPalette(); bg = null; draw(); };
@@ -851,6 +1058,38 @@ function setupControls(): void {
 // ---------------------------------------------------------------- avvio
 
 readPalette();
-setupControls();
-resize();
-loadConfig(PRESETS[0].raw);
+
+/** Cerca il catalogo delle mappe reali accanto alla pagina (cartella data/). Fallisce senza server (file://) o se manca. */
+async function initLibrary(): Promise<void> {
+  const lib = new PackLibrary("data/");
+  try {
+    await lib.catalog();
+    library = lib;
+  } catch (e) {
+    library = null;
+    libraryNote = location.protocol === "file:"
+      ? "la pagina è aperta da file: apri la pagina con npm run design-tool:serve"
+      : (e as Error).message;
+  }
+}
+
+async function start(): Promise<void> {
+  await initLibrary();
+  if (!library) baseNotice = `Mappe reali non disponibili: ${libraryNote}. Restano gli esempi con terreno sintetico.`;
+  setNotice(baseNotice);
+  setupControls();
+  resize();
+  const first = library ? PRESETS[0] : PRESETS.find((p) => !p.real)!;
+  try {
+    await loadConfig(first.raw);
+    currentPreset = first.id;
+  } catch (e) {
+    // la rete di partenza non si carica (es. area non scaricabile): si parte da una rete vuota, che funziona sempre
+    setNotice(`Non riesco a caricare "${first.label}": ${(e as Error).message}. Parto da una rete vuota.`);
+    const blank = PRESETS.find((p) => p.id === "blank")!;
+    try { await loadConfig(blank.raw); currentPreset = blank.id; } catch { /* resta senza rete: ogni gestore controlla che esista */ }
+  }
+  $<HTMLSelectElement>("scenario").value = currentPreset;
+}
+
+void start();

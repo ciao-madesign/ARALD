@@ -3,7 +3,7 @@
  * Uso: npm run design-tool:build. Il motore (tools/scenario-model/) gira nel browser, nessun server.
  */
 import { build } from "esbuild";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -26,4 +26,12 @@ const standalone = `<!doctype html>\n<html lang="it">\n<meta charset="utf-8">\n<
 writeFileSync(join(here, "dist", "index.html"), standalone);
 // artifact.html: lo stesso contenuto senza doctype/html/meta, per essere pubblicato come Artifact (che aggiunge il proprio scheletro).
 writeFileSync(join(here, "dist", "artifact.html"), html);
+// mappe reali: catalogo e pacchetti accanto alla pagina (dist/data/), da cui la pagina li scarica
+const dataSrc = join(here, "data");
+const dataDest = join(here, "dist", "data");
+rmSync(dataDest, { recursive: true, force: true });
+if (existsSync(dataSrc)) {
+  mkdirSync(dataDest, { recursive: true });
+  for (const f of readdirSync(dataSrc)) if (f === "index.json" || f.endsWith(".pack.gz")) cpSync(join(dataSrc, f), join(dataDest, f));
+}
 console.log(`tools/network-design/dist/index.html + artifact.html (${(html.length / 1024).toFixed(0)} KB)`);

@@ -4,8 +4,9 @@
  * `tools/scenario-model/`: qui non c'è nessun calcolo radio.
  */
 import type { NodeKind } from "../scenario-model/model.js";
+import { PackTerrain } from "../scenario-model/terrain-pack.js";
 import { type DeviceConfig, type NetworkConfig } from "../scenario-model/network-config.js";
-import { type LocalFrame, toGeo, toLocal } from "../scenario-model/terrain.js";
+import { type LandCover, type LocalFrame, type Terrain, toGeo, toLocal } from "../scenario-model/terrain.js";
 
 // ---------------------------------------------------------------- vista
 
@@ -131,4 +132,36 @@ export function fmtRate(bps: number): string {
   if (bps >= 1e6) return `${(bps / 1e6).toFixed(1).replace(".", ",")} Mbps`;
   if (bps >= 1e3) return `${(bps / 1e3).toFixed(bps >= 1e4 ? 0 : 1).replace(".", ",")} kbps`;
   return `${bps.toFixed(0)} bps`;
+}
+
+// ---------------------------------------------------------------- terreno sotto un punto
+
+export interface GroundInfo {
+  /** Quota del suolo (m s.l.m.). */
+  elevationM: number;
+  cover: LandCover;
+  /** false se il punto è fuori dall'area dei dati reali (quota 0 e «mare» sono allora solo un valore di ripiego). */
+  inside: boolean;
+}
+
+export const COVER_LABEL: Record<LandCover, string> = { sea: "acqua", open: "aperto", forest: "bosco", urban: "abitato", "urban-dense": "abitato denso" };
+
+/** Cosa c'è sotto un punto (x, y locali): per un terreno senza limiti noti (sintetico) `inside` è sempre vero. */
+export function groundAt(terrain: Terrain, x: number, y: number): GroundInfo {
+  const inside = terrain instanceof PackTerrain ? terrain.contains(x, y) : true;
+  return { elevationM: terrain.elevationAt(x, y), cover: terrain.landCoverAt(x, y), inside };
+}
+
+/** Avvisi leggibili per la posizione di un dispositivo; vuoto se tutto regolare. */
+export function groundWarnings(g: GroundInfo, kind: NodeKind, mobile: boolean): string[] {
+  const out: string[] = [];
+  if (!g.inside) out.push("Fuori dall'area dei dati reali: quota e suolo non sono noti, i risultati che lo riguardano non sono affidabili.");
+  else if (g.cover === "sea" && !mobile) out.push(kind === "relay" || kind === "box" || kind === "portable" ? "Il punto è in acqua: controlla la posizione (un dispositivo fisso in mare è raro)." : "Il punto è in acqua.");
+  return out;
+}
+
+/** Identificativi dei dispositivi la cui posizione (o un punto del percorso) cade fuori dall'area dei dati reali; vuoto per un terreno senza limiti noti. */
+export function devicesOutside(terrain: Terrain, cfg: NetworkConfig): string[] {
+  if (!(terrain instanceof PackTerrain)) return [];
+  return cfg.devices.filter((d) => [d, ...(d.route ?? [])].some((q) => { const p = toLocal(cfg.frame, q); return !terrain.contains(p.x, p.y); })).map((d) => d.id);
 }
