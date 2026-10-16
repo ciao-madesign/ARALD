@@ -15,9 +15,30 @@
  * `internet-gateway.ts` needed the exact same "bounded outbound fetch"
  * behavior — same reasoning `bounded-map.ts`/`loopback-http-server.ts`
  * already established for shared boilerplate in this codebase.
+ *
+ * `redirect` option (found analyzing Project NOMAD's own v1.35.1 fix,
+ * "forward upstream redirects instead of following them", `docs/next-steps.md`):
+ * `internet-gateway.ts` validates its `url` with `isPubliclyRoutableUrl()`
+ * (`url-safety.ts`) exactly once, *before* calling this function — fetch()'s
+ * default `redirect: "follow"` would otherwise silently chase a 3xx response's
+ * `Location` header to wherever it points, including a private/internal
+ * address, bypassing that guard entirely. `internet-gateway.ts` therefore
+ * always passes `redirect: "manual"` explicitly. Verified empirically against
+ * this project's Node version: unlike a browser, Node's `fetch()` does not
+ * turn a manual-mode redirect into an opaque response — it hands back the
+ * real 3xx status, which simply fails the `!res.ok` check right below, same
+ * as any other non-2xx response.
+ *
+ * Defaults to `"follow"` (fetch()'s own default, unchanged) for
+ * `news-gateway.ts`'s call, deliberately — found by code-review: a blanket
+ * `"manual"` here would have silently broken ingestion for any real-world
+ * operator-configured feed that happens to redirect (moved URL, http→https),
+ * a functional regression with no SSRF benefit, since `feedUrl` is trusted
+ * operator configuration, never a mesh-attacker-reachable value, and is never
+ * passed through `isPubliclyRoutableUrl()` in the first place.
  */
-export async function fetchTextBounded(url: string, maxBytes: number): Promise<string> {
-  const res = await fetch(url);
+export async function fetchTextBounded(url: string, maxBytes: number, options: { redirect?: RequestRedirect } = {}): Promise<string> {
+  const res = await fetch(url, { redirect: options.redirect ?? "follow" });
   if (!res.ok) throw new Error(`fetch failed (HTTP ${res.status})`);
   if (!res.body) {
     // Not expected from Node's fetch() for a normal response with a body — kept only as a

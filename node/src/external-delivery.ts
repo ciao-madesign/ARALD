@@ -458,6 +458,15 @@ export async function attemptExternalDeliveryPost(entry: QueuedExternalDelivery,
         submittedAt: entry.submittedAt,
       }),
       signal: controller.signal,
+      // Found analyzing Project NOMAD's v1.35.1 fix, "forward upstream redirects instead of
+      // following them" (docs/next-steps.md): without this, fetch()'s default redirect: "follow"
+      // would silently chase a 3xx response's Location header wherever it points, including a
+      // private/internal address, bypassing the isPubliclyRoutableUrl() check above entirely — the
+      // guard only ever validates the *configured* URL, never a redirect target. Node's fetch()
+      // hands back the real 3xx status in manual mode (verified empirically, no opaque-response
+      // behavior here unlike a browser), which simply isn't `res.ok` below — same outcome as any
+      // other delivery failure, retried next tick, never followed.
+      redirect: "manual",
     });
     return res.ok;
   } catch {

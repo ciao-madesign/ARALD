@@ -53,6 +53,13 @@ function startTestServer(): Promise<{ server: Server; url: (path: string) => str
         res.end("comunicato ufficiale ".repeat(200));
         return;
       }
+      if (url.pathname === "/redirect") {
+        // Target configurable per-test via ?to= — used to prove a redirect is never followed
+        // (SSRF-via-redirect fix, docs/next-steps.md).
+        res.writeHead(302, { Location: url.searchParams.get("to") ?? "/feed.xml" });
+        res.end();
+        return;
+      }
       res.writeHead(404);
       res.end("not found");
     });
@@ -206,6 +213,32 @@ describe("service://internet-fetch (InternetGateway)", () => {
       gatewayNode.node.callService("service://internet-fetch", { kind: "text", url: started.url("/huge.txt") }),
     ).rejects.toThrow(/exceeded/);
     expect(gatewayNode.node.listKnownContent()).toEqual([]);
+  });
+
+  it("kind: rss — a redirect from the fetched URL is never followed, not even to another publicly-routable address — the SSRF guard only ever validates the originally-requested URL (regression, docs/next-steps.md)", async () => {
+    const started = await startTestServer();
+    server = started.server;
+    // A second, independent server standing in for whatever a redirect could point to — proven
+    // below to never receive a single request. Loopback is fine here since isPubliclyRoutableUrl()
+    // is mocked for this describe block (see the top-of-file comment); the point of this test is
+    // the redirect itself never being followed, not the IP-literal guard (covered separately below).
+    const internal = await startTestServer();
+    try {
+      gatewayNode = makeNode("gateway");
+      await gatewayNode.node.start();
+      const gateway = new InternetGateway(gatewayNode.node);
+      gateway.registerInternetFetchService();
+
+      await expect(
+        gatewayNode.node.callService("service://internet-fetch", {
+          kind: "rss",
+          url: started.url(`/redirect?to=${encodeURIComponent(internal.url("/feed.xml"))}`),
+        }),
+      ).rejects.toThrow(/fetch failed \(HTTP 302\)/);
+      expect(gatewayNode.node.listKnownContent()).toEqual([]);
+    } finally {
+      await stopTestServer(internal.server);
+    }
   });
 
   it("rejects a malformed payload before ever attempting a fetch: unknown kind, missing url, malformed url, non-http(s) scheme", async () => {
