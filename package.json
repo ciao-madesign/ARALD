@@ -15,7 +15,7 @@
     "gateway:demo": "tsx gateway/local-services/cli.ts",
     "hub": "tsx nomad-hub/cli.ts",
     "portal:sync": "tsx arald-backend/sync.ts",
-    "portal:local": "tsx local-portal/cli.ts",
+    "portal:local": "node tools/network-design/build.mjs || echo \"Strumento di progettazione non costruito: il portale parte senza (npm run design-tool:build)\" && tsx local-portal/cli.ts",
     "whatsapp-relay": "tsx whatsapp-relay/cli.ts",
     "email-relay": "tsx email-relay/cli.ts",
     "webhook-relay": "tsx webhook-relay/cli.ts",

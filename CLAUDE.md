@@ -89,7 +89,7 @@ arald/
 ├─ nomad-hub/       ARALD Hub Management API: amministra Docker sull'host che esegue i servizi (Project NOMAD storicamente, service-stack/ da quando applicabile) — mai la mesh; non nel workspace npm, come gateway/local-services/
 ├─ mobile/          client mobile Capacitor verso un gateway — vedi mobile/README.md; mobile/ios/ ancora solo segnaposto; mobile/www/hub-control.html+.js è la Control UI (nomad-hub/), pagina separata da index.html/app.js
 ├─ arald-backend/   sincronizzazione Box → specchio Postgres (Emergency Portal) — vedi docs/emergency-portal.md
-├─ local-portal/    dashboard operativa servita via LAN dal Box (Emergency Portal) — vedi docs/emergency-portal.md
+├─ local-portal/    dashboard operativa servita via LAN dal Box (Emergency Portal) — vedi docs/emergency-portal.md; serve anche il Network Design Tool su `/strumento-rete/` dietro la password di rete del nodo («Quindicesimo pezzo»)
 ├─ mirror-portal/   frontend Next.js sullo specchio Postgres, in produzione su Vercel — vedi docs/emergency-portal.md
 ├─ firmware/        firmware embedded Arduino/C++ per microcontrollori reali (es. sx126x-bridge/, il bridge seriale↔SPI per il chip radio SX1262) — vedi docs/security.md voce #73
 ├─ whatsapp-relay/  destinazione "consegna esterna differita" verso WhatsApp — servizio indipendente fuori dalla mesh, non nel workspace npm, come gateway/local-services/ — vedi docs/security.md voce #79

@@ -1834,6 +1834,19 @@ Un audit mirato dell'intero `node/src` (non solo del codice nuovo) — vedi anch
 
     Limiti: la copia si allinea a mano (il test della radice lo controlla, ma Vercel non lo esegue); dopo il login si torna alla mappa e non al tool; su Vercel solo i pacchetti (nessun terreno del mondo); la politica dei contenuti ammette stili in linea (la pagina usa attributi `style=`); le funzioni di Vercel rispondono al più con 4,5 MB (i pacchetti pesano 24-240 KB).
 
+140. **Network Design Tool nel Local Portal, dietro la password di rete**, 16 ottobre 2026 — su ok esplicito dell'utente («Funziona, procedi con il Local Portal»), seguito della voce #139. `local-portal/design-tool.ts` (`DesignToolRoutes`) serve pagina, pacchetti e — se il Box ha Internet — tessere del mondo sotto `/strumento-rete/`; `local-portal/static-server.ts` gli passa le richieste prima del resto; `local-portal/hosted-page.ts` (politica dei contenuti a impronte, niente font esterni, link di ritorno). Dettagli in `docs/emergency-portal.md` («Quindicesimo pezzo»). Verificato con un vero `WebUiServer` (400/401/404), con Chromium (accesso sbagliato e giusto, Valle Maira sul terreno del mondo costruito dalla rete reale = 66/100, nessuna richiesta esterna) e con 17 test di integrazione.
+
+    Problemi trovati dalla revisione, corretti con test:
+    1. un limite **globale** ai tentativi (30 in 10 minuti) permetteva a un ospite del LAN di chiudere l'accesso anche agli operatori con la password giusta: rimosso, resta solo il limite per indirizzo (IPv4-mappato normalizzato, IPv6 per /64);
+    2. il tentativo veniva contato solo dopo la verifica: richieste in parallelo aggiravano il limite e inondavano il nodo; ora il tentativo si conta prima (e si scarta se la password è giusta o il nodo non risponde), e le verifiche contemporanee sono al più 4;
+    3. password con caratteri non ASCII o con `\r\n` facevano lanciare `fetch` (503 fuorviante e una richiesta al nodo): ora respinte come sbagliate prima di interpellare il nodo;
+    4. oltre 1000 indirizzi `failures.clear()` azzerava anche i blocchi in corso: ora si scarta il più vecchio;
+    5. il controllo di `Origin` sul login era l'unico: aggiunto `Sec-Fetch-Site`;
+    6. `npm run portal:local` si fermava se la build facoltativa della pagina falliva, impedendo la dashboard di emergenza: ora parte comunque con un avviso;
+    7. il messaggio per un nodo senza chiamate ai servizi attive era falso («senza password di rete»): ora dice di cosa serve il nodo (`--allow-service-calls`).
+
+    Limiti: il `WebUiServer` del nodo non limita da sé i tentativi sulla password di rete e resta raggiungibile direttamente sul LAN (candidato in `docs/next-steps.md`); l'accesso dipende dal comportamento di `GET /api/messages` (un test con il vero `WebUiServer` lo blocca); cookie senza `Secure` su http; sessioni in memoria (un riavvio del portale le perde).
+
 ## Nota sui test di scala: soglia TTL ricalibrata due volte
 
 `tests/network/simulate.test.ts`'s "a TTL shorter than the mesh's depth leaves the farthest nodes legitimately unreachable" non verifica una proprietà di sicurezza, ma è comunque rilevante qui: il suo margine numerico è dovuto essere aumentato due volte in questa sessione (prima per il routing a costo, poi per il retry verso il prossimo fornitore) perché entrambe le funzionalità rendono la propagazione del contenuto più efficiente, spostando il punto in cui un nodo lontano riesce comunque a trovare una copia in cache entro il budget TTL. Ora usa una distanza volutamente enorme rispetto al TTL (~5x) invece di un margine "appena sufficiente", proprio per non dover essere ricalibrato una terza volta a ogni miglioramento futuro dell'efficienza della mesh.

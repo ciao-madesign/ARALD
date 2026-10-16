@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { LoopbackHttpServer, sendBinary } from "../node/src/loopback-http-server.js";
+import type { DesignToolRoutes } from "./design-tool.js";
 
 /**
  * The "portale vive sul Box" piece (`docs/emergency-portal.md`, "Correzione
@@ -54,6 +55,11 @@ export interface StaticPortalOptions {
    * deployment passes its own LAN-facing `--host` explicitly.
    */
   host?: string;
+  /**
+   * Network Design Tool sotto `/strumento-rete/` (dietro la password di rete del nodo, vedi `design-tool.ts`);
+   * assente = il portale serve solo `rootDir`.
+   */
+  designTool?: DesignToolRoutes;
 }
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -99,10 +105,12 @@ export class StaticPortalServer {
   private readonly loopback: LoopbackHttpServer;
   private readonly rootDir: string;
   private readonly gatewayUrl: string;
+  private readonly designTool: DesignToolRoutes | undefined;
 
   constructor(options: StaticPortalOptions) {
     this.rootDir = path.resolve(options.rootDir);
     this.gatewayUrl = options.gatewayUrl;
+    this.designTool = options.designTool;
     this.loopback = new LoopbackHttpServer((req, res) => void this.handleRequest(req, res), { port: options.port, host: options.host });
   }
 
@@ -119,6 +127,8 @@ export class StaticPortalServer {
   }
 
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    // lo strumento di progettazione ha le sue regole (anche POST per l'accesso): prima del resto, che resta solo GET/HEAD statico
+    if (this.designTool && (await this.designTool.handle(req, res))) return;
     if (req.method !== "GET" && req.method !== "HEAD") {
       res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("Method Not Allowed");
