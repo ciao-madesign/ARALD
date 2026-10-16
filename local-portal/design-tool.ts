@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
+import { ipLimiterKey } from "../node/src/auth-throttle.js";
 import { readRequestBody, BodyTooLargeError } from "../node/src/loopback-http-server.js";
 import { TileService } from "../tools/map-data/tile-service.js";
 import { HOSTED_DATA_FILE, designToolCsp, insertBackLink, removeExternalFonts } from "./hosted-page.js";
@@ -278,16 +279,8 @@ export class DesignToolRoutes {
 
 // ---------------------------------------------------------------- utilità
 
-/** Chiave del limite dei tentativi: l'indirizzo (IPv4 mappato in IPv6 ridotto a IPv4; IPv6 per prefisso /64, che un ospite cambia a piacere). */
-export function ipLimiterKey(raw: string | undefined): string {
-  const ip = (raw ?? "?").replace(/^::ffff:/i, "");
-  if (!ip.includes(":")) return ip;
-  const groups = ip.toLowerCase().split(":");
-  // «::» abbreviato: si espande per prendere davvero i primi quattro gruppi
-  const i = groups.indexOf("");
-  const full = i >= 0 && ip.includes("::") ? [...groups.slice(0, i).filter(Boolean), ...Array(Math.max(0, 8 - groups.filter(Boolean).length)).fill("0"), ...groups.slice(i + 1).filter(Boolean)] : groups;
-  return full.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, "")).join(":");
-}
+/** Chiave del limite dei tentativi: la stessa del nodo (`node/src/auth-throttle.ts`), riesportata per i test. */
+export { ipLimiterKey };
 
 function text(res: ServerResponse, status: number, body: string): void {
   res.writeHead(status, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });

@@ -590,6 +590,14 @@ async function main(): Promise<void> {
       networkPassword,
       publicHost: args["public-host"],
       mapTiles,
+      // limite ai tentativi sbagliati sulla password di rete (docs/security.md voce #141): attivo di default (10 in 10 minuti per indirizzo)
+      authThrottle: args["no-auth-throttle"] === "true"
+        ? false
+        : {
+            maxFailures: parsePositiveNumberFlag("auth-max-failures", args["auth-max-failures"]),
+            windowMs: parsePositiveNumberFlag("auth-window-ms", args["auth-window-ms"]),
+            exemptLocal: args["auth-throttle-include-local"] !== "true", // dietro un proxy sulla stessa macchina (vedi auth-throttle.ts)
+          },
     });
     await webUi.start();
     const webHost = args["web-host"] ?? "127.0.0.1";

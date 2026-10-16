@@ -10,6 +10,7 @@ import { encodeQr, qrToSvg } from "./qrcode.js";
 import { raceTimeout } from "./async-timeout.js";
 import type { MbtilesReader } from "./map-tiles.js";
 import { BoundedFifoMap } from "./bounded-map.js";
+import { AuthFailureThrottle, type AuthThrottleOptions } from "./auth-throttle.js";
 import { extractRelayRegistration } from "./relay-registry.js";
 import { PRIORITY_LEVEL_COUNT, priorityRank, type Packet, type Priority } from "./packet.js";
 
@@ -156,6 +157,15 @@ export interface WebUiOptions {
    * peer via store-and-forward.
    */
   exposeEmergencyBeacons?: boolean;
+  /**
+   * Limite ai tentativi sbagliati sulla password di rete (docs/security.md voce #141): per indirizzo, mai globale — dopo
+   * `maxFailures` (default 10) password presentate e sbagliate in `windowMs` (default 10 minuti) l'indirizzo riceve `429`
+   * con `Retry-After` su ogni richiesta che porta un'intestazione `Authorization`, fino alla fine della finestra. Le
+   * richieste dalla macchina stessa non sono limitate. `false` lo spegne. Ha effetto dove la password non è già letta
+   * da `GET /api/pairing` (che con `allowServiceCalls` la mostra a chiunque raggiunga il server, per scelta di design):
+   * cioè con `exposeRelayRegistry`/`exposeEmergencyBeacons`/… senza `allowServiceCalls`.
+   */
+  authThrottle?: AuthThrottleOptions | false;
   /**
    * Enables `GET /api/map-info` and `GET /api/map-tiles/:z/:x/:y` — offline
    * topographic map tiles read from a local MBTiles file (`map-tiles.ts`),
@@ -1122,6 +1132,7 @@ export class WebUiServer {
   private readonly allowRemoteExternalDeliveryIngest: boolean;
   private readonly networkName: string | undefined;
   private readonly networkPassword: string | undefined;
+  private readonly authThrottle: AuthFailureThrottle | undefined;
   private readonly publicHost: string | undefined;
   private readonly mapTiles: MbtilesReader | undefined;
   private readonly mapTileRateLimitState = new BoundedFifoMap<string, { windowStart: number; count: number }>({
@@ -1146,6 +1157,7 @@ export class WebUiServer {
     }
     this.networkName = this.allowServiceCalls ? (options.networkName ?? node.displayName) : undefined;
     this.networkPassword = options.networkPassword;
+    this.authThrottle = options.authThrottle === false ? undefined : new AuthFailureThrottle(options.authThrottle ?? {});
     this.exposeLocationRegistry = options.exposeLocationRegistry ?? false;
     if (this.exposeLocationRegistry && !options.networkPassword) {
       throw new Error("WebUiServer: exposeLocationRegistry requires a networkPassword");
@@ -1522,10 +1534,7 @@ export class WebUiServer {
       res.end("Not Found");
       return;
     }
-    if (!this.isAuthorized(req, this.networkPassword)) {
-      sendJson(res, 401, { error: "missing or invalid network password" });
-      return;
-    }
+    if (!this.authorize(req, res, this.networkPassword)) return;
 
     let raw: Buffer;
     try {
@@ -1601,10 +1610,7 @@ export class WebUiServer {
       res.end("Not Found");
       return;
     }
-    if (!this.isAuthorized(req, this.networkPassword)) {
-      sendJson(res, 401, { error: "missing or invalid network password" });
-      return;
-    }
+    if (!this.authorize(req, res, this.networkPassword)) return;
     const peer = url.searchParams.get("peer");
     if (!peer) {
       sendJson(res, 400, { error: "'peer' query parameter is required" });
@@ -1703,10 +1709,7 @@ export class WebUiServer {
       res.end("Not Found");
       return;
     }
-    if (!this.isAuthorized(req, this.networkPassword)) {
-      sendJson(res, 401, { error: "missing or invalid network password" });
-      return;
-    }
+    if (!this.authorize(req, res, this.networkPassword)) return;
 
     let raw: Buffer;
     try {
@@ -1791,10 +1794,7 @@ export class WebUiServer {
       res.end("Not Found");
       return;
     }
-    if (!this.isAuthorized(req, this.networkPassword)) {
-      sendJson(res, 401, { error: "missing or invalid network password" });
-      return;
-    }
+    if (!this.authorize(req, res, this.networkPassword)) return;
 
     let raw: Buffer;
     try {
@@ -1859,10 +1859,7 @@ export class WebUiServer {
       res.end("Not Found");
       return;
     }
-    if (!this.isAuthorized(req, this.networkPassword)) {
-      sendJson(res, 401, { error: "missing or invalid network password" });
-      return;
-    }
+    if (!this.authorize(req, res, this.networkPassword)) return;
 
     let raw: Buffer;
     try {
@@ -1958,10 +1955,7 @@ export class WebUiServer {
       res.end("Not Found");
       return;
     }
-    if (!this.isAuthorized(req, this.networkPassword)) {
-      sendJson(res, 401, { error: "missing or invalid network password" });
-      return;
-    }
+    if (!this.authorize(req, res, this.networkPassword)) return;
 
     let raw: Buffer;
     try {
@@ -2040,10 +2034,7 @@ export class WebUiServer {
       res.end("Not Found");
       return;
     }
-    if (!this.isAuthorized(req, this.networkPassword)) {
-      sendJson(res, 401, { error: "missing or invalid network password" });
-      return;
-    }
+    if (!this.authorize(req, res, this.networkPassword)) return;
 
     let raw: Buffer;
     try {
@@ -2112,10 +2103,7 @@ export class WebUiServer {
       res.end("Not Found");
       return;
     }
-    if (!this.isAuthorized(req, this.networkPassword)) {
-      sendJson(res, 401, { error: "missing or invalid network password" });
-      return;
-    }
+    if (!this.authorize(req, res, this.networkPassword)) return;
 
     let raw: Buffer;
     try {
@@ -2188,10 +2176,7 @@ export class WebUiServer {
       res.end("Not Found");
       return;
     }
-    if (!this.isAuthorized(req, this.networkPassword)) {
-      sendJson(res, 401, { error: "missing or invalid network password" });
-      return;
-    }
+    if (!this.authorize(req, res, this.networkPassword)) return;
 
     const maxBodyBytes = this.node.maxExternalDeliveryPayloadBytes * 2 + 4096;
     let raw: Buffer;
@@ -2257,10 +2242,7 @@ export class WebUiServer {
       res.end("Not Found");
       return;
     }
-    if (!this.isAuthorized(req, this.networkPassword)) {
-      sendJson(res, 401, { error: "missing or invalid network password" });
-      return;
-    }
+    if (!this.authorize(req, res, this.networkPassword)) return;
 
     let raw: Buffer;
     try {
@@ -2341,10 +2323,7 @@ export class WebUiServer {
       res.end("Not Found");
       return;
     }
-    if (!this.isAuthorized(req, this.networkPassword)) {
-      sendJson(res, 401, { error: "missing or invalid network password" });
-      return;
-    }
+    if (!this.authorize(req, res, this.networkPassword)) return;
     sendJson(res, 200, this.node.groups.listGroups().map(toGroupSummary));
   }
 
@@ -2362,10 +2341,7 @@ export class WebUiServer {
       res.end("Not Found");
       return;
     }
-    if (!this.isAuthorized(req, this.networkPassword)) {
-      sendJson(res, 401, { error: "missing or invalid network password" });
-      return;
-    }
+    if (!this.authorize(req, res, this.networkPassword)) return;
     const groupId = url.searchParams.get("groupId");
     if (!groupId) {
       sendJson(res, 400, { error: "'groupId' query parameter is required" });
@@ -2387,10 +2363,7 @@ export class WebUiServer {
       res.end("Not Found");
       return;
     }
-    if (!this.isAuthorized(req, this.networkPassword)) {
-      sendJson(res, 401, { error: "missing or invalid network password" });
-      return;
-    }
+    if (!this.authorize(req, res, this.networkPassword)) return;
 
     let raw: Buffer;
     try {
@@ -2451,10 +2424,7 @@ export class WebUiServer {
       res.end("Not Found");
       return;
     }
-    if (!this.isAuthorized(req, this.networkPassword)) {
-      sendJson(res, 401, { error: "missing or invalid network password" });
-      return;
-    }
+    if (!this.authorize(req, res, this.networkPassword)) return;
 
     let raw: Buffer;
     try {
@@ -2517,10 +2487,7 @@ export class WebUiServer {
       res.end("Not Found");
       return;
     }
-    if (!this.isAuthorized(req, this.networkPassword)) {
-      sendJson(res, 401, { error: "missing or invalid network password" });
-      return;
-    }
+    if (!this.authorize(req, res, this.networkPassword)) return;
     sendJson(res, 200, this.node.locationRegistry.list());
   }
 
@@ -2536,10 +2503,7 @@ export class WebUiServer {
       res.end("Not Found");
       return;
     }
-    if (!this.isAuthorized(req, this.networkPassword)) {
-      sendJson(res, 401, { error: "missing or invalid network password" });
-      return;
-    }
+    if (!this.authorize(req, res, this.networkPassword)) return;
     sendJson(res, 200, this.node.relayRegistry.list());
   }
 
@@ -2558,10 +2522,7 @@ export class WebUiServer {
       res.end("Not Found");
       return;
     }
-    if (!this.isAuthorized(req, this.networkPassword)) {
-      sendJson(res, 401, { error: "missing or invalid network password" });
-      return;
-    }
+    if (!this.authorize(req, res, this.networkPassword)) return;
     sendJson(res, 200, this.node.emergencyBeacons.list());
   }
 
@@ -2597,10 +2558,7 @@ export class WebUiServer {
       res.end("Not Found");
       return;
     }
-    if (!this.isAuthorized(req, this.networkPassword)) {
-      sendJson(res, 401, { error: "missing or invalid network password" });
-      return;
-    }
+    if (!this.authorize(req, res, this.networkPassword)) return;
 
     let raw: Buffer;
     try {
@@ -2687,10 +2645,7 @@ export class WebUiServer {
       res.end("Not Found");
       return;
     }
-    if (!this.isAuthorized(req, this.networkPassword)) {
-      sendJson(res, 401, { error: "missing or invalid network password" });
-      return;
-    }
+    if (!this.authorize(req, res, this.networkPassword)) return;
 
     let raw: Buffer;
     try {
@@ -2749,10 +2704,7 @@ export class WebUiServer {
       res.end("Not Found");
       return;
     }
-    if (!this.isAuthorized(req, this.networkPassword)) {
-      sendJson(res, 401, { error: "missing or invalid network password" });
-      return;
-    }
+    if (!this.authorize(req, res, this.networkPassword)) return;
     let raw: Buffer;
     try {
       raw = await readRequestBody(req, MAX_MESSAGE_BODY_BYTES, MAX_CALL_BODY_READ_MS);
@@ -2802,10 +2754,7 @@ export class WebUiServer {
       res.end("Not Found");
       return;
     }
-    if (!this.isAuthorized(req, this.networkPassword)) {
-      sendJson(res, 401, { error: "missing or invalid network password" });
-      return;
-    }
+    if (!this.authorize(req, res, this.networkPassword)) return;
 
     let raw: Buffer;
     try {
@@ -2888,10 +2837,7 @@ export class WebUiServer {
       res.end("Not Found");
       return;
     }
-    if (!this.isAuthorized(req, this.networkPassword)) {
-      sendJson(res, 401, { error: "missing or invalid network password" });
-      return;
-    }
+    if (!this.authorize(req, res, this.networkPassword)) return;
 
     const maxBodyBytes = Math.ceil((this.node.maxExternalDeliveryPayloadBytes * 4) / 3) + 4096;
     let raw: Buffer;
@@ -3112,10 +3058,7 @@ export class WebUiServer {
       res.end("Not Found");
       return;
     }
-    if (!this.isAuthorized(req, this.networkPassword)) {
-      sendJson(res, 401, { error: "missing or invalid network password" });
-      return;
-    }
+    if (!this.authorize(req, res, this.networkPassword)) return;
 
     let raw: Buffer;
     try {
@@ -3164,16 +3107,33 @@ export class WebUiServer {
   }
 
   /**
-   * Shared Bearer-token check for every endpoint gated behind the network
-   * password (`handleCall`, `handleGetMessages`, `handleSendMessage`) —
-   * callers must first confirm `expectedPassword` is set (the `!this.allowServiceCalls
-   * || !this.networkPassword` guard each of them already has) so TypeScript
-   * narrows it to `string` here.
+   * Shared Bearer-token check for every endpoint gated behind the network password — callers must first confirm
+   * `expectedPassword` is set (the `!this.allowServiceCalls || !this.networkPassword` guard each of them already has) so
+   * TypeScript narrows it to `string` here. Sends the failure response itself and returns false: `429` with
+   * `Retry-After` for an address blocked by the attempt limit (docs/security.md voce #141: checked BEFORE the password,
+   * so a blocked address cannot keep guessing — and only on these protected endpoints, never on the public ones), `401`
+   * otherwise. Only a presented-and-wrong `Authorization` counts as a failed attempt; a missing header does not.
    */
-  private isAuthorized(req: IncomingMessage, expectedPassword: string): boolean {
+  private authorize(req: IncomingMessage, res: ServerResponse, expectedPassword: string): boolean {
     const authHeader = req.headers.authorization;
-    const provided = typeof authHeader === "string" && authHeader.startsWith("Bearer ") ? authHeader.slice(7) : undefined;
-    return provided !== undefined && timingSafeStringEqual(provided, expectedPassword);
+    const presented = typeof authHeader === "string";
+    if (this.authThrottle && presented) {
+      const wait = this.authThrottle.lockedForSeconds(req.socket.remoteAddress);
+      if (wait > 0) {
+        res.setHeader("Retry-After", String(wait));
+        sendJson(res, 429, { error: "too many failed attempts, try again later" });
+        return false;
+      }
+    }
+    const provided = presented && authHeader.startsWith("Bearer ") ? authHeader.slice(7) : undefined;
+    const ok = provided !== undefined && timingSafeStringEqual(provided, expectedPassword);
+    if (this.authThrottle && presented) {
+      // a success clears the address's count: whoever already holds the password has nothing left to guess
+      if (ok) this.authThrottle.recordSuccess(req.socket.remoteAddress);
+      else this.authThrottle.recordFailure(req.socket.remoteAddress);
+    }
+    if (!ok) sendJson(res, 401, { error: "missing or invalid network password" });
+    return ok;
   }
 }
 
