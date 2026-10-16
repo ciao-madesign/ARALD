@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { networkInterfaces } from "node:os";
-import { AuthFailureThrottle, DEFAULT_AUTH_MAX_FAILURES, ipLimiterKey, machineAddresses, normalizeAddress } from "../../node/src/auth-throttle.js";
+import { AuthFailureThrottle, DEFAULT_AUTH_MAX_FAILURES, ipLimiterKey } from "../../node/src/auth-throttle.js";
+import { machineAddresses, normalizeAddress } from "../../node/src/machine-address.js";
 
 describe("chiave del limite", () => {
   it("normalizza IPv4 mappato e raggruppa IPv6 per /64", () => {

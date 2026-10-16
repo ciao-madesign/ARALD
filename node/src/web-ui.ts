@@ -11,6 +11,7 @@ import { raceTimeout } from "./async-timeout.js";
 import type { MbtilesReader } from "./map-tiles.js";
 import { BoundedFifoMap } from "./bounded-map.js";
 import { AuthFailureThrottle, type AuthThrottleOptions } from "./auth-throttle.js";
+import { isThisMachine, machineAddresses } from "./machine-address.js";
 import { extractRelayRegistration } from "./relay-registry.js";
 import { PRIORITY_LEVEL_COUNT, priorityRank, type Packet, type Priority } from "./packet.js";
 
@@ -166,6 +167,16 @@ export interface WebUiOptions {
    * cioè con `exposeRelayRegistry`/`exposeEmergencyBeacons`/… senza `allowServiceCalls`.
    */
   authThrottle?: AuthThrottleOptions | false;
+  /**
+   * `GET /api/pairing` (e con esso il pannello «Collega un telefono» e la pagina `/welcome`) mostra la password di rete e
+   * il QR **solo a chi si collega dalla macchina del nodo** (docs/security.md voce #144): prima li dava a chiunque
+   * raggiungesse il server, quindi la password non proteggeva nulla sul LAN. Con `true` torna il comportamento di prima
+   * (utile per un Box senza schermo, da cui si inquadra il QR da un altro dispositivo sul LAN): la password diventa
+   * leggibile da ogni dispositivo che raggiunge il server.
+   */
+  pairingOnLan?: boolean;
+  /** Indirizzi della macchina del nodo (default: letti dal sistema). Serve ai test per far sembrare «remota» una richiesta da loopback. */
+  machineAddresses?: () => Set<string>;
   /**
    * Enables `GET /api/map-info` and `GET /api/map-tiles/:z/:x/:y` — offline
    * topographic map tiles read from a local MBTiles file (`map-tiles.ts`),
@@ -733,7 +744,8 @@ const PAGE_HTML = `<!doctype html>
 
 <section class="panel" id="pairing-panel" hidden>
   <h2>Collega un telefono</h2>
-  <div class="pairing-body">
+  <p id="pairing-remote-note" role="note" hidden>Per ragioni di sicurezza la password di rete e il QR si vedono solo da questa pagina aperta sul computer del nodo stesso (non da un altro dispositivo della rete). Se il nodo non ha uno schermo, la password è sul cartello del Box o nel terminale; per mostrarla anche sulla rete (meno sicuro) avvia il nodo con <code>--pairing-on-lan true</code>.</p>
+  <div class="pairing-body" id="pairing-values">
     <img id="pairing-qr" alt="QR di pairing" hidden>
     <div class="pairing-grid">
       <div>
@@ -955,6 +967,13 @@ function refreshAll() {
 // this server process (cli.ts generates a fresh one only on restart), so there's nothing to refresh.
 async function loadPairingInfo() {
   var res = await fetch("/api/pairing");
+  if (res.status === 403) {
+    // pairing abilitato ma riservato alla macchina del nodo (voce #144): un avviso al posto di nome/password/QR
+    document.getElementById("pairing-values").hidden = true;
+    document.getElementById("pairing-remote-note").hidden = false;
+    document.getElementById("pairing-panel").hidden = false;
+    return;
+  }
   if (!res.ok) return; // pairing not enabled on this node — panel stays hidden
   var info = await res.json();
   document.getElementById("pairing-name").textContent = info.networkName;
@@ -1075,6 +1094,7 @@ const WELCOME_PAGE_HTML = `<!doctype html>
       </div>
     </div>
     <p id="welcome-pairing-missing" class="muted" hidden>Il pairing non è configurato su questo nodo.</p>
+    <p id="welcome-pairing-remote" class="muted" hidden>Il QR e la password si vedono solo da questa pagina aperta sul computer del nodo stesso. Aprila da lì, oppure leggi la password sul cartello del Box o nel terminale.</p>
   </section>
   <a class="welcome-continue" href="/">Vai alla dashboard &rarr;</a>
 </div>
@@ -1084,6 +1104,10 @@ const WELCOME_PAGE_HTML = `<!doctype html>
 // pagina si vede una volta per installazione, nulla qui cambia mentre resta aperta.
 (async function loadWelcomePairing() {
   var res = await fetch("/api/pairing");
+  if (res.status === 403) {
+    document.getElementById("welcome-pairing-remote").hidden = false;
+    return;
+  }
   if (!res.ok) {
     document.getElementById("welcome-pairing-missing").hidden = false;
     return;
@@ -1119,6 +1143,23 @@ const WELCOME_PAGE_HTML = `<!doctype html>
  * name/password back for a human to read, deliberately without requiring
  * the password itself.
  */
+/** Richiesta del browser fatta dalla pagina del nodo stessa: nessun segnale cross-site e Host letterale (IP, localhost, .local). */
+function isSameOriginLocalRequest(req: IncomingMessage): boolean {
+  const site = req.headers["sec-fetch-site"];
+  if (typeof site === "string" && site !== "same-origin" && site !== "none") return false;
+  const host = (req.headers.host ?? "").toLowerCase();
+  const origin = req.headers.origin;
+  if (typeof origin === "string") {
+    try {
+      if (new URL(origin).host.toLowerCase() !== host) return false;
+    } catch {
+      return false;
+    }
+  }
+  const name = host.startsWith("[") ? host.slice(1, host.indexOf("]")) : host.replace(/:\d+$/, "");
+  return name === "localhost" || name.endsWith(".local") || /^[\d.]+$/.test(name) || name.includes(":");
+}
+
 export class WebUiServer {
   private readonly node: NomadNode;
   private readonly internetStatus: () => "ONLINE" | "OFFLINE";
@@ -1133,6 +1174,8 @@ export class WebUiServer {
   private readonly networkName: string | undefined;
   private readonly networkPassword: string | undefined;
   private readonly authThrottle: AuthFailureThrottle | undefined;
+  private readonly pairingOnLan: boolean;
+  private readonly machineAddresses: () => Set<string>;
   private readonly publicHost: string | undefined;
   private readonly mapTiles: MbtilesReader | undefined;
   private readonly mapTileRateLimitState = new BoundedFifoMap<string, { windowStart: number; count: number }>({
@@ -1157,7 +1200,9 @@ export class WebUiServer {
     }
     this.networkName = this.allowServiceCalls ? (options.networkName ?? node.displayName) : undefined;
     this.networkPassword = options.networkPassword;
-    this.authThrottle = options.authThrottle === false ? undefined : new AuthFailureThrottle(options.authThrottle ?? {});
+    this.pairingOnLan = options.pairingOnLan ?? false;
+    this.machineAddresses = options.machineAddresses ?? machineAddresses;
+    this.authThrottle = options.authThrottle === false ? undefined : new AuthFailureThrottle({ localAddresses: this.machineAddresses, ...(options.authThrottle ?? {}) });
     this.exposeLocationRegistry = options.exposeLocationRegistry ?? false;
     if (this.exposeLocationRegistry && !options.networkPassword) {
       throw new Error("WebUiServer: exposeLocationRegistry requires a networkPassword");
@@ -1363,7 +1408,7 @@ export class WebUiServer {
     }
 
     if (url.pathname === "/api/pairing") {
-      this.handlePairing(res);
+      this.handlePairing(req, res);
       return;
     }
 
@@ -1467,13 +1512,13 @@ export class WebUiServer {
    * is setting up the mobile app, the same way a Wi-Fi password is often
    * shared out loud or read off a router sticker rather than only ever
    * available to whoever has terminal access to the machine (`cli.ts`
-   * still prints both to the console too). Deliberately unauthenticated —
-   * requiring the password to read the password would be circular — so
-   * this is exactly as exposed as every other read-only endpoint on this
-   * class: anyone who can reach this LAN-bound server can read it, not
-   * just the intended human. See `docs/security.md` for that tradeoff
-   * spelled out. 404s when pairing isn't enabled, same posture as
-   * `handleCall()` below.
+   * still prints both to the console too). Unauthenticated — requiring
+   * the password to read the password would be circular — but, since
+   * docs/security.md voce #144, **only answered to a request coming from
+   * this node's own machine** (`403` otherwise, unless `pairingOnLan`):
+   * before that anyone who could reach this LAN-bound server could read
+   * the password, so it protected nothing on the LAN. 404s when pairing
+   * isn't enabled, same posture as `handleCall()` below.
    *
    * Also includes `address`/`qrDataUri` when a public host could be
    * resolved (`WebUiOptions.publicHost`, explicit or auto-detected) — the
@@ -1485,7 +1530,7 @@ export class WebUiServer {
    * operator-chosen `--network-name` would have to be extremely long) —
    * the text fields above still work either way, this is additive.
    */
-  private handlePairing(res: ServerResponse): void {
+  private handlePairing(req: IncomingMessage, res: ServerResponse): void {
     // Checks `=== undefined` rather than falsiness for networkName specifically — the constructor
     // only ever leaves it undefined when allowServiceCalls is false (see constructor), so an
     // operator-chosen empty-string display name would otherwise be misread as "pairing not
@@ -1495,6 +1540,21 @@ export class WebUiServer {
     if (!this.allowServiceCalls || this.networkName === undefined || !this.networkPassword) {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("Not Found");
+      return;
+    }
+    // La password (e il QR che la contiene) solo a chi è sulla macchina del nodo (voce #144), salvo `pairingOnLan`:
+    // controllato DOPO il 404 di «pairing non abilitato», così un visitatore remoto non impara nulla di più di prima
+    // sul fatto che il pairing esista, tranne che è riservato.
+    if (!this.pairingOnLan && !isThisMachine(req.socket.remoteAddress, this.machineAddresses)) {
+      sendJson(res, 403, { error: "pairing info is shown only on this node's own machine", reason: "local-only" });
+      return;
+    }
+    // Mai a una pagina di un altro sito: il CORS «*» (necessario ad altri endpoint) qui non vale, e una richiesta
+    // cross-site dal browser del PC del nodo (o con Host non locale, DNS rebinding) viene rifiutata. La pagina
+    // del nodo stessa chiama questo endpoint same-origin, senza Origin.
+    res.removeHeader("Access-Control-Allow-Origin");
+    if (!this.pairingOnLan && !isSameOriginLocalRequest(req)) {
+      sendJson(res, 403, { error: "pairing info is not available to cross-site requests", reason: "local-only" });
       return;
     }
     // Memoized — networkName/networkPassword/publicHost/port are all fixed for the server's

@@ -590,6 +590,8 @@ async function main(): Promise<void> {
       networkPassword,
       publicHost: args["public-host"],
       mapTiles,
+      // password e QR di pairing solo dalla macchina del nodo (docs/security.md voce #144); --pairing-on-lan true li mostra anche sul LAN
+      pairingOnLan: args["pairing-on-lan"] === "true",
       // limite ai tentativi sbagliati sulla password di rete (docs/security.md voce #143): attivo di default (10 in 10 minuti per indirizzo)
       authThrottle: args["no-auth-throttle"] === "true"
         ? false
@@ -637,7 +639,9 @@ async function main(): Promise<void> {
       // allowServiceCalls is on — an exposeLocationRegistry-only node still has networkName/
       // networkPassword above for a human to relay verbally/by hand, just no QR shortcut for it.
       if (allowServiceCalls) {
-        console.log(`(anche visibili, con QR da inquadrare, sulla pagina web sopra, sezione "Collega un telefono")`);
+        console.log(args["pairing-on-lan"] === "true"
+          ? `(anche visibili, con QR da inquadrare, sulla pagina web sopra, sezione "Collega un telefono" — da ogni dispositivo sulla rete: --pairing-on-lan è attivo, la password non è più riservata)`
+          : `(anche visibili, con QR da inquadrare, sulla pagina web sopra, sezione "Collega un telefono", ma solo se la pagina è aperta sul computer del nodo; --pairing-on-lan true li mostra anche agli altri dispositivi della rete, meno sicuro)`);
       }
       if (!args["web-host"]) {
         console.log(`Note: --web-host wasn't set, so the Web UI is still loopback-only — a phone on the same Wi-Fi can't reach it yet.`);

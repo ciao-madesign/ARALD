@@ -1,5 +1,6 @@
-import { networkInterfaces } from "node:os";
 import { BoundedFifoMap } from "./bounded-map.js";
+import { isThisMachine, machineAddresses, normalizeAddress } from "./machine-address.js";
+
 
 /**
  * Limite ai tentativi sbagliati sulla password di rete (`WebUiServer`, docs/security.md voce #143). Prima di questa voce il
@@ -43,41 +44,10 @@ export const DEFAULT_AUTH_WINDOW_MS = 600_000;
 /** Moltiplicatore del limite sul prefisso /64 rispetto al limite per indirizzo intero. */
 const PREFIX_LIMIT_FACTOR = 5;
 
-function expandIpv6(ip: string): string[] {
-  const groups = ip.toLowerCase().split(":");
-  const i = groups.indexOf("");
-  if (i >= 0 && ip.includes("::")) {
-    const head = groups.slice(0, i).filter(Boolean);
-    const tail = groups.slice(i + 1).filter(Boolean);
-    return [...head, ...Array(Math.max(0, 8 - head.length - tail.length)).fill("0"), ...tail];
-  }
-  return groups;
-}
-
-/** Indirizzo normalizzato: IPv4 mappato in IPv6 ridotto a IPv4; IPv6 espanso, senza zeri iniziali e in minuscolo. */
-export function normalizeAddress(raw: string | undefined): string {
-  const ip = (raw ?? "?").replace(/^::ffff:/i, "").replace(/%.*$/, "");
-  if (!ip.includes(":")) return ip;
-  return expandIpv6(ip).map((g) => g.replace(/^0+(?=.)/, "")).join(":");
-}
-
 /** Chiave del prefisso /64 di un indirizzo IPv6 (per un IPv4: l'indirizzo stesso). */
 export function ipLimiterKey(raw: string | undefined): string {
   const ip = normalizeAddress(raw);
   return ip.includes(":") ? ip.split(":").slice(0, 4).join(":") : ip;
-}
-
-let cachedMachine: { at: number; set: Set<string> } | undefined;
-const MACHINE_CACHE_MS = 30_000;
-
-/** Indirizzi della macchina (normalizzati), riletti al più ogni 30 s: possono cambiare (DHCP, punto di accesso che si accende). */
-export function machineAddresses(): Set<string> {
-  const now = Date.now();
-  if (cachedMachine && now - cachedMachine.at < MACHINE_CACHE_MS) return cachedMachine.set;
-  const out = new Set<string>(["127.0.0.1", "::1"].map(normalizeAddress));
-  for (const list of Object.values(networkInterfaces())) for (const a of list ?? []) out.add(normalizeAddress(a.address));
-  cachedMachine = { at: now, set: out };
-  return out;
 }
 
 export class AuthFailureThrottle {
@@ -101,8 +71,7 @@ export class AuthFailureThrottle {
   }
 
   private isLocal(raw: string | undefined): boolean {
-    if (!this.exemptLocal || raw === undefined) return false;
-    return this.localAddresses().has(normalizeAddress(raw));
+    return this.exemptLocal && isThisMachine(raw, this.localAddresses);
   }
 
   /** Le chiavi da controllare per un indirizzo: l'indirizzo intero e, per IPv6, il prefisso /64 (con un limite cinque volte più alto). */

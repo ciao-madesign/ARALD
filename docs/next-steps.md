@@ -167,7 +167,7 @@ Con l'area ampia (`docs/real-maps.md`, voci #135-#138 di `docs/security.md`) res
 
 ### La password di rete è leggibile da chiunque sul LAN quando il nodo ha `allowServiceCalls` (16 ottobre 2026, scoperta nella revisione della voce #143)
 
-Il limite ai tentativi sbagliati nel nodo è fatto (voce #143), ma `GET /api/pairing` restituisce la password di rete **senza autenticazione** a chiunque raggiunga il `WebUiServer` quando `allowServiceCalls` è attivo (scelta di design documentata in `node/src/web-ui.ts`: come l'etichetta di un router, da leggere sul posto). Quindi su quei nodi la password non protegge da un ospite sul LAN, e il limite ai tentativi non cambia nulla; lo stesso vale per la schermata di accesso del Network Design Tool nel Local Portal (voce #140). Il limite serve davvero ai nodi con password ma senza `allowServiceCalls` (registri, beacon, ingest). **Decisione da prendere, non pianificata**: rivedere `/api/pairing` (per esempio mostrare la password solo a chi si collega dalla macchina del nodo, o dopo un gesto fisico, o solo il QR su una pagina locale), con l'effetto da valutare sull'app mobile e sulla pagina `/welcome` (che oggi la leggono da lì).
+Fatto (voce #144): `GET /api/pairing` mostra password e QR solo a chi si collega dalla macchina del nodo (`--pairing-on-lan true` per ripristinare il LAN). Resta aperto: con proxy inverso/Docker `-p` sulla stessa macchina i client remoti sembrano locali.
 
 ## Milestone/feature completate — pointer al dettaglio in `docs/security.md`
 
