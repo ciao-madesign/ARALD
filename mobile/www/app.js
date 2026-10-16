@@ -872,7 +872,7 @@ const POSITION_DIRECTION_MAX_AGE_MS = 10 * 60 * 1000;
 /**
  * Etichetta "distanza + direzione" ("850 m NE") dalla mia ultima posizione nota verso un punto, per le
  * liste Bacheca/SOS — `undefined` (nessun tag) se la posizione propria non è nota o il punto non è
- * valido. La logica vive in geo-core.js (ARALD GEO CORE, docs/security.md voce #140); direzione
+ * valido. La logica vive in geo-core.js (ARALD GEO CORE, docs/security.md voce #141); direzione
  * geografica verso una coordinata dichiarata, mai radiogoniometria. Una posizione più vecchia di
  * POSITION_DIRECTION_MAX_AGE_MS dà solo la distanza, mai la direzione: geo-core.js omette comunque la
  * direzione quando l'accuratezza del fix è peggiore di metà distanza.

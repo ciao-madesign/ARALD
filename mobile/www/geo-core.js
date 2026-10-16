@@ -1,4 +1,4 @@
-// ARALD GEO CORE, passo 2 (docs/external-inspiration.md, docs/security.md voci #124/#140): la geo-logica
+// ARALD GEO CORE, passo 2 (docs/external-inspiration.md, docs/security.md voci #124/#141): la geo-logica
 // condivisa dell'app mobile — distanza, direzione geografica verso un punto, etichetta leggibile.
 // Prima di questo file la distanza viveva in app.js (haversineDistanceMeters()) e la stringa
 // "N m / N,N km" era copiata due volte (bacheca drop e avvistamenti SOS).

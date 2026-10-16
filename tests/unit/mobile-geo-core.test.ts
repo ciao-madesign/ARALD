@@ -12,7 +12,7 @@ import {
 // I valori attesi sono stati calcolati con un'implementazione Python indipendente della stessa formula
 // (raggio terrestre 6371000 m) — sono i vettori di riferimento che un'altra piattaforma (Watch, firmware)
 // deve riprodurre (docs/external-inspiration.md, "ARALD GEO CORE").
-describe("mobile/www/geo-core (ARALD GEO CORE, docs/security.md voce #140)", () => {
+describe("mobile/www/geo-core (ARALD GEO CORE, docs/security.md voce #141)", () => {
   describe("haversineDistanceMeters", () => {
     it("matches the reference vectors", () => {
       expect(haversineDistanceMeters({ lat: 0, lon: 0 }, { lat: 0, lon: 1 })).toBeCloseTo(111194.927, 1);
