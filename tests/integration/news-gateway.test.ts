@@ -319,6 +319,31 @@ describe("NewsGateway (mocked with a test-local RSS HTTP server, no shipped fake
     await expect(gateway.syncNews()).rejects.toThrow();
   });
 
+  it("syncNews() still follows a redirect from feedUrl — regression guard: the SSRF-via-redirect fix for internet-gateway.ts (docs/next-steps.md) must never change fetchTextBounded()'s default behavior for this gateway's own operator-configured, trusted feedUrl (found by code-review)", async () => {
+    const started = await startTestNewsServer(() => [headline1], { source: "Notizie di test" });
+    server = started.server;
+    const feedPath = new URL(started.url).pathname;
+    const redirecting = createServer((req, res) => {
+      res.writeHead(302, { Location: `http://127.0.0.1:${new URL(started.url).port}${feedPath}` });
+      res.end();
+    });
+    await new Promise<void>((resolve) => redirecting.listen(0, "127.0.0.1", resolve));
+    const redirectingAddress = redirecting.address();
+    if (!redirectingAddress || typeof redirectingAddress === "string") throw new Error("unexpected server address");
+    const redirectingUrl = `http://127.0.0.1:${redirectingAddress.port}/old-feed.xml`;
+
+    gatewayNode = makeNode("gateway");
+    await gatewayNode.node.start();
+    gateway = new NewsGateway(gatewayNode.node, redirectingUrl);
+
+    try {
+      const [result] = await gateway.syncNews();
+      expect(result).toEqual(expectedHeadline(headline1, { source: "Notizie di test" }));
+    } finally {
+      await new Promise<void>((resolve) => redirecting.close(() => resolve()));
+    }
+  });
+
   it("startAutoSync() refreshes the cache on a real short timer and stopAutoSync() actually stops it", async () => {
     // A real interval, not vi.useFakeTimers() — this codebase's convention (see CLAUDE.md) is real
     // short delays + polling for async integration tests; faking timers alongside genuine socket

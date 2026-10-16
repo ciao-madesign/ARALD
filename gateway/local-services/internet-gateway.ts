@@ -142,7 +142,9 @@ export class InternetGateway {
     }
 
     if (kind === "rss") {
-      const xml = await fetchTextBounded(url, MAX_FEED_BYTES);
+      // redirect: "manual" — see fetch-bounded.ts's own doc comment: isPubliclyRoutableUrl() above
+      // only ever validates this URL, never a redirect target, so a followed 3xx would bypass it.
+      const xml = await fetchTextBounded(url, MAX_FEED_BYTES, { redirect: "manual" });
       if (!parseFeed(xml)) throw new Error("il contenuto scaricato non è un feed RSS/Atom valido");
       // publishContent() signs with *this gateway node's own* identity — the resulting content://
       // signature attests "this node downloaded these bytes from this URL just now", never anything
@@ -155,7 +157,8 @@ export class InternetGateway {
     }
 
     // kind === "text" — same signing-attestation caveat as the "rss" branch above.
-    const text = await fetchTextBounded(url, this.maxResponseBytes);
+    // redirect: "manual" — same reason as the "rss" branch above.
+    const text = await fetchTextBounded(url, this.maxResponseBytes, { redirect: "manual" });
     const metadata = this.node.publishContent(`internet-fetch (text): ${url}`, "text/plain", Buffer.from(text, "utf8"));
     return { contentId: metadata.contentId, mimeType: "text/plain", size: metadata.originalSize ?? metadata.size };
   }

@@ -838,6 +838,7 @@ async function getCurrentPosition() {
     const pos = await nativeGeolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 10000 });
     const result = { lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy ?? undefined };
     myLastKnownPosition = result;
+    myLastKnownPositionAt = Date.now();
     return result;
   }
   if (!navigator.geolocation) throw new Error("Geolocalizzazione non disponibile su questo dispositivo.");
@@ -846,6 +847,7 @@ async function getCurrentPosition() {
       (pos) => {
         const result = { lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy ?? undefined };
         myLastKnownPosition = result;
+        myLastKnownPositionAt = Date.now();
         resolve(result);
       },
       (err) => reject(new Error(err.message || "Impossibile ottenere la posizione")),
@@ -862,19 +864,55 @@ async function getCurrentPosition() {
  * render a list; `null` until the user has shared their position or created a drop at least once.
  */
 let myLastKnownPosition = null;
+/** `Date.now()` dell'ultima volta in cui `myLastKnownPosition` è stata aggiornata — serve a sapere quanto è vecchia (vedi targetDistanceLabel()). */
+let myLastKnownPositionAt = 0;
+/** Oltre questa età la mia posizione non basta più per dare una *direzione* (ci si è mossi da allora) — la distanza resta, come sempre, ma senza il punto cardinale. */
+const POSITION_DIRECTION_MAX_AGE_MS = 10 * 60 * 1000;
 
 /**
- * Great-circle distance between two lat/lon points in meters (standard haversine formula, public
- * domain math — no licensing concern, unlike anything that might come from BitChat/NOMAD). Used only
- * to show a rough "distance from me" on bacheca drops (renderDrops()) when myLastKnownPosition is known.
+ * Etichetta "distanza + direzione" ("850 m NE") dalla mia ultima posizione nota verso un punto, per le
+ * liste Bacheca/SOS — `undefined` (nessun tag) se la posizione propria non è nota o il punto non è
+ * valido. La logica vive in geo-core.js (ARALD GEO CORE, docs/security.md voce #141); direzione
+ * geografica verso una coordinata dichiarata, mai radiogoniometria. Una posizione più vecchia di
+ * POSITION_DIRECTION_MAX_AGE_MS dà solo la distanza, mai la direzione: geo-core.js omette comunque la
+ * direzione quando l'accuratezza del fix è peggiore di metà distanza.
+ *
+ * geo-core.js è un modulo ES deferred (gira dopo questo script classico): qui lo si legge solo a tempo
+ * di render, mai a livello di script, e un render che lo precedesse si ripara da solo al giro di
+ * refreshAll() successivo. Se invece il modulo non si carica mai, il tag sparirebbe in silenzio — per
+ * questo un solo console.warn (solo a pagina completa, mai per un semplice ritardo di caricamento).
  */
-function haversineDistanceMeters(lat1, lon1, lat2, lon2) {
-  const R = 6371000;
-  const toRad = (deg) => (deg * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(a));
+let geoCoreMissingWarned = false;
+function targetDistanceLabel(lat, lon) {
+  if (!myLastKnownPosition) return undefined;
+  if (typeof window.AraldGeoCore === "undefined") {
+    // Prima che la pagina sia "complete" il modulo deferred può semplicemente non aver ancora girato —
+    // non è un guasto (il giro di refreshAll() successivo ripara da solo). Solo dopo è un caricamento fallito.
+    if (document.readyState === "complete" && !geoCoreMissingWarned) {
+      geoCoreMissingWarned = true;
+      console.warn("geo-core.js non caricato: distanza/direzione non mostrate");
+    }
+    return undefined;
+  }
+  const ageMs = Date.now() - myLastKnownPositionAt;
+  const withDirection = ageMs <= POSITION_DIRECTION_MAX_AGE_MS;
+  const described = window.AraldGeoCore.describeTarget(myLastKnownPosition, { lat, lon }, { withDirection });
+  if (!described) return undefined;
+  if (withDirection) return { label: described.label, description: described.description };
+  // Posizione vecchia: la distanza resta (era già così) ma ora dice da quanto è calcolata — prima
+  // era indistinguibile da una misura fresca.
+  const ageText = ageMs < 3600000 ? Math.round(ageMs / 60000) + " min" : Math.round(ageMs / 3600000) + " h";
+  return { label: described.label + " (da " + ageText + ")", description: described.description + ", calcolata dalla tua posizione di " + ageText + " fa" };
+}
+
+/** Tag distanza/direzione con una descrizione estesa ("458 metri, direzione geografica verso nord-est") per tooltip e screen reader — "O" da solo sarebbe ambiguo (ovest o zero?). */
+function distanceTag(target) {
+  const tag = el("span", { className: "tag", textContent: target.label, title: target.description });
+  // role="img" così l'aria-label viene davvero letto (su uno <span> senza ruolo gli screen reader mobile lo
+  // ignorano e leggerebbero il testo visibile "458 m O"); il title da solo non appare mai su touch.
+  tag.setAttribute("role", "img");
+  tag.setAttribute("aria-label", target.description);
+  return tag;
 }
 
 /**
@@ -2717,10 +2755,8 @@ function renderEmergencyBeacons(beacons) {
   for (const b of sorted) {
     nextSeen.add(b.beaconContentId);
     const tags = [];
-    if (myLastKnownPosition && typeof b.lat === "number" && typeof b.lon === "number") {
-      const distance = haversineDistanceMeters(myLastKnownPosition.lat, myLastKnownPosition.lon, b.lat, b.lon);
-      tags.push(el("span", { className: "tag", textContent: distance < 1000 ? Math.round(distance) + " m" : (distance / 1000).toFixed(1) + " km" }));
-    }
+    const beaconDistance = targetDistanceLabel(b.lat, b.lon);
+    if (beaconDistance) tags.push(distanceTag(beaconDistance));
     if (b.receivedFrom) tags.push(el("span", { className: "tag", textContent: "via " + getContactName(b.receivedFrom, "NODE-" + b.receivedFrom.slice(0, 8)) }));
     const li = el("li", null, [
       el("div", { className: "row" }, [
@@ -2787,10 +2823,8 @@ function renderDrops(drops) {
     const tags = [];
     if (d.kind === "emergency") tags.push(el("span", { className: "tag urgent", textContent: "Emergenza" }));
     else if (d.kind === "hazard") tags.push(el("span", { className: "tag hazard", textContent: "Pericolo" }));
-    if (myLastKnownPosition) {
-      const distance = haversineDistanceMeters(myLastKnownPosition.lat, myLastKnownPosition.lon, d.lat, d.lon);
-      tags.push(el("span", { className: "tag", textContent: distance < 1000 ? Math.round(distance) + " m" : (distance / 1000).toFixed(1) + " km" }));
-    }
+    const dropDistance = targetDistanceLabel(d.lat, d.lon);
+    if (dropDistance) tags.push(distanceTag(dropDistance));
     if (d.receivedFrom) tags.push(el("span", { className: "tag", textContent: "via " + getContactName(d.receivedFrom, "NODE-" + d.receivedFrom.slice(0, 8)) }));
     const li = el("li", null, [
       el("div", { className: "row" }, [

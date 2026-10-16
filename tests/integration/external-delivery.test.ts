@@ -326,4 +326,40 @@ describe("Consegna esterna differita (sendExternalDelivery / handleExternalDeliv
     expect(box.externalDeliveryQueue.size).toBe(1); // refused before ever reaching the fake server
     expect(fakeServer.received).toHaveLength(0);
   });
+
+  it("attemptExternalDeliveryPost() never follows a redirect from the configured destination URL, even one pointing to another publicly-routable address — the SSRF guard only ever validates the configured URL itself (regression, docs/next-steps.md)", async () => {
+    // isPubliclyRoutableUrl() stays mocked true for this test (top-of-file mock) — the point here
+    // is the redirect itself never being followed, independent of the IP-literal guard already
+    // covered by the test above.
+    const internal = await startFakeDestinationServer(); // stands in for whatever a redirect could point to
+    servers.push(internal);
+    const redirecting = createServer((_req, res) => {
+      res.writeHead(302, { Location: internal.url });
+      res.end();
+    });
+    await new Promise<void>((resolve) => redirecting.listen(0, "127.0.0.1", resolve));
+    servers.push({ close: () => new Promise((resolve) => redirecting.close(() => resolve())) });
+    const redirectingAddress = redirecting.address();
+    if (!redirectingAddress || typeof redirectingAddress === "string") throw new Error("unexpected server address");
+    const redirectingUrl = `http://127.0.0.1:${redirectingAddress.port}/intake`;
+
+    const destination = EncryptionIdentity.generate();
+    const allowlist: ExternalDeliveryAllowlist = new Map([
+      ["hq-1", { destinationId: "hq-1", label: "Headquarter", publicKeyHex: destination.publicKeyHex, url: redirectingUrl }],
+    ]);
+    const box = makeNode("Box", { externalDeliveryAllowlist: allowlist });
+    const sender = makeNode("Sender");
+    nodes.push(box.node, sender.node);
+    await Promise.all([box, sender].map(({ node }) => node.start()));
+    await sender.node.connect({ host: "127.0.0.1", port: box.transport.port });
+
+    sender.node.sendExternalDelivery(box.node.nodeId, "hq-1", destination.publicKeyHex, Buffer.from("dati"));
+    await waitFor(() => box.node.externalDeliveryQueue.size === 1);
+
+    await box.node.attemptExternalDeliveries();
+    // res.ok is false for the 302 itself (never followed) — the delivery is treated as failed and
+    // stays queued for the next tick, exactly like any other non-2xx response.
+    expect(box.node.externalDeliveryQueue.size).toBe(1);
+    expect(internal.received).toHaveLength(0);
+  });
 });

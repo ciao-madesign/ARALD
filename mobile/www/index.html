@@ -866,6 +866,12 @@
      moduli (solo localStorage) — dopo sos-queue.js solo per coerenza, "i moduli SOS insieme". -->
 <script type="module" src="emergency-state.js"></script>
 
+<!-- Vero modulo ES come ble-relay.js/sos-queue.js sopra (window.AraldGeoCore come ponte verso app.js, uno
+     script classico sotto) — distanza/direzione geografica/etichetta ("850 m NE") per le liste Bacheca e
+     SOS, ARALD GEO CORE passo 2 (docs/security.md voce #141). app.js lo usa solo dentro corpi funzione
+     (targetDistanceLabel()), mai a livello di script, e degrada a "nessun tag" se non ha ancora girato. -->
+<script type="module" src="geo-core.js"></script>
+
 <!-- mapview.js prima di app.js: app.js chiama fetchMapInfo()/renderMapAvailability() (definite in
      mapview.js) in modo sincrono dal proprio codice di avvio (showDashboard() -> refreshAll(), per
      un dispositivo già paired) — se l'ordine fosse invertito, quella chiamata fallirebbe con un
