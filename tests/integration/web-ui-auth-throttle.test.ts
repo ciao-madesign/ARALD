@@ -3,7 +3,7 @@ import { NomadNode } from "../../node/src/node.js";
 import { WebUiServer } from "../../node/src/web-ui.js";
 
 /**
- * Limite ai tentativi sulla password di rete (docs/security.md voce #141) contro un vero `WebUiServer`. I test girano da
+ * Limite ai tentativi sulla password di rete (docs/security.md voce #143) contro un vero `WebUiServer`. I test girano da
  * loopback, che per default è esente: `exemptLocal: false` lo toglie per poter provare il limite.
  */
 describe("WebUiServer: limite ai tentativi sulla password di rete", () => {

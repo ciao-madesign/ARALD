@@ -158,7 +158,7 @@ export interface WebUiOptions {
    */
   exposeEmergencyBeacons?: boolean;
   /**
-   * Limite ai tentativi sbagliati sulla password di rete (docs/security.md voce #141): per indirizzo, mai globale — dopo
+   * Limite ai tentativi sbagliati sulla password di rete (docs/security.md voce #143): per indirizzo, mai globale — dopo
    * `maxFailures` (default 10) password presentate e sbagliate in `windowMs` (default 10 minuti) l'indirizzo riceve `429`
    * con `Retry-After` su ogni richiesta che porta un'intestazione `Authorization`, fino alla fine della finestra. Le
    * richieste dalla macchina stessa non sono limitate. `false` lo spegne. Ha effetto dove la password non è già letta
@@ -3110,7 +3110,7 @@ export class WebUiServer {
    * Shared Bearer-token check for every endpoint gated behind the network password — callers must first confirm
    * `expectedPassword` is set (the `!this.allowServiceCalls || !this.networkPassword` guard each of them already has) so
    * TypeScript narrows it to `string` here. Sends the failure response itself and returns false: `429` with
-   * `Retry-After` for an address blocked by the attempt limit (docs/security.md voce #141: checked BEFORE the password,
+   * `Retry-After` for an address blocked by the attempt limit (docs/security.md voce #143: checked BEFORE the password,
    * so a blocked address cannot keep guessing — and only on these protected endpoints, never on the public ones), `401`
    * otherwise. Only a presented-and-wrong `Authorization` counts as a failed attempt; a missing header does not.
    */

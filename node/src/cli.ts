@@ -590,7 +590,7 @@ async function main(): Promise<void> {
       networkPassword,
       publicHost: args["public-host"],
       mapTiles,
-      // limite ai tentativi sbagliati sulla password di rete (docs/security.md voce #141): attivo di default (10 in 10 minuti per indirizzo)
+      // limite ai tentativi sbagliati sulla password di rete (docs/security.md voce #143): attivo di default (10 in 10 minuti per indirizzo)
       authThrottle: args["no-auth-throttle"] === "true"
         ? false
         : {

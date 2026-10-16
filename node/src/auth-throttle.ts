@@ -2,11 +2,11 @@ import { networkInterfaces } from "node:os";
 import { BoundedFifoMap } from "./bounded-map.js";
 
 /**
- * Limite ai tentativi sbagliati sulla password di rete (`WebUiServer`, docs/security.md voce #141). Prima di questa voce il
+ * Limite ai tentativi sbagliati sulla password di rete (`WebUiServer`, docs/security.md voce #143). Prima di questa voce il
  * confronto della password era in tempo costante ma nulla limitava quante ne si potessero provare: chiunque sul LAN poteva
  * provarle a piena velocità su qualunque endpoint protetto.
  *
- * Scelte (dalle revisioni della voce #140 e #141):
+ * Scelte (dalle revisioni della voce #140 e #143):
  * - **per indirizzo, mai globale**: un limite globale lascerebbe a un ospite del LAN il modo di chiudere l'accesso a tutti
  *   gli operatori. Un indirizzo bloccato non blocca gli altri;
  * - IPv4 mappato in IPv6 → IPv4. IPv6: due livelli, l'indirizzo intero (limite `maxFailures`) e il prefisso /64 (limite
