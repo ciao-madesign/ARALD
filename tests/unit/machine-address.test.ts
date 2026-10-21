@@ -1,6 +1,6 @@
 import { networkInterfaces } from "node:os";
 import { describe, expect, it } from "vitest";
-import { isThisMachine, machineAddresses, normalizeAddress } from "../../node/src/machine-address.js";
+import { isThisMachine, looksForwarded, machineAddresses, normalizeAddress } from "../../node/src/machine-address.js";
 
 describe("machine-address", () => {
   it("normalizza IPv4 mappato, scope, maiuscole e abbreviazioni IPv6", () => {
@@ -22,5 +22,15 @@ describe("machine-address", () => {
   it("un altro dispositivo, un indirizzo assente o malformato non è la macchina", () => {
     for (const a of ["192.0.2.77", "203.0.113.9", "fd00::abcd", "", "non-un-indirizzo", undefined]) expect(isThisMachine(a, () => new Set(["127.0.0.1"])), String(a)).toBe(false);
     expect(isThisMachine("10.0.0.1", () => new Set(["10.0.0.1"]))).toBe(true);
+  });
+
+  it("looksForwarded: riconosce le intestazioni dei proxy inversi, ignora le altre", () => {
+    expect(looksForwarded({ "x-forwarded-for": "1.2.3.4" })).toBe(true);
+    expect(looksForwarded({ forwarded: "for=1.2.3.4" })).toBe(true);
+    expect(looksForwarded({ "X-Forwarded-Proto": "https" })).toBe(true);
+    expect(looksForwarded({ "cf-ray": "abc" })).toBe(true);
+    expect(looksForwarded({ "x-forwarded-for": ["", " "] })).toBe(false);
+    expect(looksForwarded({ "x-forwarded-for": "" , via: "1.1 x" })).toBe(false);
+    expect(looksForwarded({ host: "127.0.0.1:80", accept: "*/*" })).toBe(false);
   });
 });

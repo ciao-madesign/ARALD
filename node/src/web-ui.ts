@@ -11,7 +11,7 @@ import { raceTimeout } from "./async-timeout.js";
 import type { MbtilesReader } from "./map-tiles.js";
 import { BoundedFifoMap } from "./bounded-map.js";
 import { AuthFailureThrottle, type AuthThrottleOptions } from "./auth-throttle.js";
-import { isThisMachine, machineAddresses } from "./machine-address.js";
+import { isThisMachine, looksForwarded, machineAddresses } from "./machine-address.js";
 import { extractRelayRegistration } from "./relay-registry.js";
 import { PRIORITY_LEVEL_COUNT, priorityRank, type Packet, type Priority } from "./packet.js";
 
@@ -1545,7 +1545,7 @@ export class WebUiServer {
     // La password (e il QR che la contiene) solo a chi è sulla macchina del nodo (voce #144), salvo `pairingOnLan`:
     // controllato DOPO il 404 di «pairing non abilitato», così un visitatore remoto non impara nulla di più di prima
     // sul fatto che il pairing esista, tranne che è riservato.
-    if (!this.pairingOnLan && !isThisMachine(req.socket.remoteAddress, this.machineAddresses)) {
+    if (!this.pairingOnLan && (looksForwarded(req.headers) || !isThisMachine(req.socket.remoteAddress, this.machineAddresses))) {
       sendJson(res, 403, { error: "pairing info is shown only on this node's own machine", reason: "local-only" });
       return;
     }

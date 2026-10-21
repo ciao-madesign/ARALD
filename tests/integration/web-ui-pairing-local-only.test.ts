@@ -111,4 +111,20 @@ describe("WebUiServer: password e QR di pairing solo dalla macchina del nodo", (
     });
     expect(status).toBe(403);
   });
+
+  it("dietro un proxy inverso sulla stessa macchina (intestazioni di inoltro): 403 anche se la connessione è locale", async () => {
+    const base = await start();
+    for (const h of [{ "X-Forwarded-For": "203.0.113.9" }, { Forwarded: "for=203.0.113.9" }, { "X-Real-IP": "203.0.113.9" }, { "X-Forwarded-Host": "box.example" }, { "Cf-Connecting-Ip": "203.0.113.9" }, { "X-Client-Ip": "203.0.113.9" }, { "X-Forwarded-Proto": "https" }]) {
+      const res = await fetch(`${base}/api/pairing`, { headers: h });
+      expect(res.status).toBe(403);
+      expect(await res.text()).not.toContain(PASSWORD);
+    }
+    // richiesta realistica del browser sulla macchina del nodo, e intestazione vuota o Via: non bloccano
+    expect((await fetch(`${base}/api/pairing`, { headers: { Accept: "*/*", "Sec-Fetch-Site": "same-origin", Via: "1.1 proxy-locale", "X-Forwarded-For": "" } })).status).toBe(200);
+  });
+
+  it("con pairingOnLan le intestazioni di inoltro non bloccano (scelta esplicita dell'operatore)", async () => {
+    const base = await start({ pairingOnLan: true });
+    expect((await fetch(`${base}/api/pairing`, { headers: { "X-Forwarded-For": "203.0.113.9" } })).status).toBe(200);
+  });
 });

@@ -54,3 +54,23 @@ export function isThisMachine(remoteAddress: string | undefined, addresses: () =
   }
   return false;
 }
+
+const FORWARDING_HEADERS = new Set(["forwarded", "x-real-ip", "x-client-ip", "true-client-ip", "x-original-forwarded-for", "cdn-loop"]);
+const FORWARDING_PREFIXES = ["x-forwarded-", "cf-"];
+
+/**
+ * Vero se la richiesta porta intestazioni tipiche di un proxy inverso/tunnel (nginx e Caddy con `proxy_set_header`,
+ * Traefik, Apache, Cloudflare Tunnel...): una connessione «locale» con queste intestazioni arriva quasi certamente da
+ * un client remoto, quindi non va trattata come la macchina stessa. Le intestazioni servono solo a RIFIUTARE, mai a
+ * concedere (falsificabili). **Elenco di rifiuto, non una garanzia**: un proxy che non aggiunge nulla (nginx con la
+ * configurazione predefinita, `ssh -L`, inoltri TCP) non si riconosce. Intestazioni vuote ignorate; `Via` non è
+ * considerata (la aggiungono anche proxy locali legittimi, rifiuterebbe l'utente sulla propria macchina).
+ */
+export function looksForwarded(headers: Record<string, string | string[] | undefined>): boolean {
+  for (const [name, value] of Object.entries(headers)) {
+    const key = name.toLowerCase();
+    if (!(FORWARDING_HEADERS.has(key) || FORWARDING_PREFIXES.some((p) => key.startsWith(p)))) continue;
+    if (Array.isArray(value) ? value.some((v) => v.trim() !== "") : (value ?? "").trim() !== "") return true;
+  }
+  return false;
+}

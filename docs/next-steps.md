@@ -167,7 +167,7 @@ Con l'area ampia (`docs/real-maps.md`, voci #135-#138 di `docs/security.md`) res
 
 ### La password di rete è leggibile da chiunque sul LAN quando il nodo ha `allowServiceCalls` (16 ottobre 2026, scoperta nella revisione della voce #143)
 
-Fatto (voce #144): `GET /api/pairing` mostra password e QR solo a chi si collega dalla macchina del nodo (`--pairing-on-lan true` per ripristinare il LAN). Resta aperto: con proxy inverso/Docker `-p` sulla stessa macchina i client remoti sembrano locali.
+Parzialmente fatto (voci #144 e #145): `GET /api/pairing` mostra password e QR solo a chi si collega dalla macchina del nodo e rifiuta le richieste con intestazioni tipiche di un proxy inverso (`--pairing-on-lan true` per ripristinare il LAN). Resta aperto: proxy che non aggiungono intestazioni (nginx predefinito), `ssh -L`, Docker host-network, e l'esenzione dal limite ai tentativi per richieste inoltrate.
 
 ## Milestone/feature completate — pointer al dettaglio in `docs/security.md`
 
