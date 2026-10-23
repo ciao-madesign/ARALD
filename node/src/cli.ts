@@ -1,3 +1,5 @@
+import { findArgProblems } from "./cli-args.js";
+import { resolveNetworkPassword } from "./network-password-source.js";
 import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { NomadNode } from "./node.js";
@@ -145,6 +147,7 @@ function parseCodingRateDenominatorFlag(rawValue: string | undefined): 5 | 6 | 7
 }
 
 async function main(): Promise<void> {
+  for (const problem of findArgProblems(process.argv.slice(2))) console.error(`Attenzione: ${problem}`);
   const args = parseArgs(process.argv.slice(2));
 
   // "ARALD Portable" software-puro (docs/next-steps.md, packaging/README.md) — the one flag the
@@ -166,6 +169,22 @@ async function main(): Promise<void> {
   // page this whole feature exists to open a browser onto (`needsNetworkPassword` below reads exactly
   // this flag) — without it, the wizard would open a browser onto a page with no pairing info at all.
   let portableFirstRun = false;
+  let networkPasswordSource: string | undefined; // flag/file/variabile d'ambiente: l'operatore la conosce già, non va ripetuta nel journal
+  if (args["network-password"] === "true") {
+    console.error("--network-password richiede un valore (mancante, oppure uguale a \"true\" o che inizia con --: usa --network-password-file o ARALD_NETWORK_PASSWORD)");
+    process.exit(1);
+  }
+  try {
+    const resolved = resolveNetworkPassword({ flag: args["network-password"], file: args["network-password-file"], env: process.env.ARALD_NETWORK_PASSWORD });
+    if (resolved) {
+      args["network-password"] = resolved.password;
+      networkPasswordSource = { flag: "riga di comando", file: "file", env: "ARALD_NETWORK_PASSWORD" }[resolved.source];
+      for (const w of resolved.warnings) console.error(`Attenzione: ${w}`);
+    }
+  } catch (err) {
+    console.error((err as Error).message);
+    process.exit(1);
+  }
   if (args["portable"] === "true") {
     const dataDir = args["data-dir"] ?? resolveDataDir();
     mkdirSync(dataDir, { recursive: true });
@@ -634,7 +653,9 @@ async function main(): Promise<void> {
     }
     if (needsNetworkPassword) {
       console.log(`Mobile network name: ${networkName}`);
-      console.log(`Mobile network password: ${networkPassword}`);
+      // Stampata solo se l'ha generata il nodo (o ARALD Portable, sul computer dell'utente): se l'ha scelta l'operatore la
+      // conosce già, e ripeterla finirebbe nel journal di systemd.
+      console.log(networkPasswordSource ? `Mobile network password: (impostata dall'operatore, da ${networkPasswordSource}; non ripetuta qui)` : `Mobile network password: ${networkPassword}`);
       // handlePairing() (web-ui.ts) only serves /api/pairing (and thus the QR panel) when
       // allowServiceCalls is on — an exposeLocationRegistry-only node still has networkName/
       // networkPassword above for a human to relay verbally/by hand, just no QR shortcut for it.
