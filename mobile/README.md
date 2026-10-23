@@ -38,7 +38,7 @@ Poi apri `http://127.0.0.1:8090`, inserisci `127.0.0.1:8080` come indirizzo e la
 ## Provarla su un telefono reale da un browser — cosa aspettarsi (23 ottobre 2026)
 
 La pagina funziona da browser (provata con un iPhone, Chrome per iOS, contro un Box reale), ma due cose non sono ovvie:
-- **La posizione richiede HTTPS.** Su una pagina `http://` il browser disattiva la geolocalizzazione ("origin does not have permission to use Geolocation") e un drop non si pubblica senza posizione. Per una prova, la pagina va servita in HTTPS (certificato self-signed) e anche il gateway deve rispondere in HTTPS, altrimenti il browser blocca la chiamata come contenuto misto ("Load failed"): procedura di prova in `docs/riavvio-box-prototipo.md`, motivazioni e ostacoli in `docs/security.md` voce #146. **Non è la configurazione di un uso normale.**
+- **La posizione richiede HTTPS.** Su una pagina `http://` il browser disattiva la geolocalizzazione ("origin does not have permission to use Geolocation") e un drop non si pubblica senza posizione. Per una prova, la pagina va servita in HTTPS (certificato self-signed) e anche il gateway deve rispondere in HTTPS, altrimenti il browser blocca la chiamata come contenuto misto ("Load failed"): procedura di prova in `docs/riavvio-box-prototipo.md`, motivazioni e ostacoli in `docs/security.md` voce #147. **Non è la configurazione di un uso normale.**
 - **Niente funziona offline.** È una pagina caricata dalla rete: senza rete non si apre, e i drop non hanno una coda sul client (l'SOS sì, `sos-queue.js`).
 
 L'indirizzo del gateway va scritto con lo schema (`https://...`) solo quando il gateway è dietro HTTPS; senza schema l'app usa `http://`, che è il comportamento giusto per un gateway normale.

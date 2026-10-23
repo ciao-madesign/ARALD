@@ -60,7 +60,7 @@ Il software si ferma da solo quando il sistema operativo si spegne (il servizio 
 
 ## Identità persistente (`--identity-dir`) — fatto il 23 ottobre 2026
 
-**Scoperto il 28 settembre 2026**: il Node ID del Box cambiava a ogni riavvio del servizio, perché il comando non passava `--identity-dir`. **Risolto il 23 ottobre 2026**, ma con un'avvertenza utile da ricordare: la prima volta il flag era scritto con uno spazio di troppo (`-- identity-dir`) e il nodo lo ignorava **senza alcun errore**; in più la build che girava sul Box era vecchia e non conosceva proprio quel flag (`docs/security.md` voce #146). Il modo giusto di controllare è la riga di avvio, non fidarsi della configurazione:
+**Scoperto il 28 settembre 2026**: il Node ID del Box cambiava a ogni riavvio del servizio, perché il comando non passava `--identity-dir`. **Risolto il 23 ottobre 2026**, ma con un'avvertenza utile da ricordare: la prima volta il flag era scritto con uno spazio di troppo (`-- identity-dir`) e il nodo lo ignorava **senza alcun errore**; in più la build che girava sul Box era vecchia e non conosceva proprio quel flag (`docs/security.md` voce #147). Il modo giusto di controllare è la riga di avvio, non fidarsi della configurazione:
 ```bash
 journalctl -u arald-box.service -n 30 --no-pager | grep -E "Node ID|Identity"
 ```
@@ -84,7 +84,7 @@ git log --oneline -1                  # conferma che il pull è avvenuto
 
 ## Provare l'app mobile da un telefono (procedura di test, non per l'uso normale) — 23 ottobre 2026
 
-Un telefono che apre `mobile/www/` da una pagina HTTP non può usare la posizione (il browser la blocca fuori da un contesto sicuro) e senza posizione non si pubblica un drop. Per una **prova** (provata con un iPhone, Chrome per iOS) servono: un certificato self-signed, l'app servita in HTTPS e il nodo raggiungibile in HTTPS (una pagina HTTPS non può chiamare un indirizzo HTTP). Tutto va spento a fine prova. Non è la configurazione di un Box consegnato: lì l'utente non deve mai fare nulla di questo (vedi `docs/security.md` voce #146, "Come dovrà essere a regime").
+Un telefono che apre `mobile/www/` da una pagina HTTP non può usare la posizione (il browser la blocca fuori da un contesto sicuro) e senza posizione non si pubblica un drop. Per una **prova** (provata con un iPhone, Chrome per iOS) servono: un certificato self-signed, l'app servita in HTTPS e il nodo raggiungibile in HTTPS (una pagina HTTPS non può chiamare un indirizzo HTTP). Tutto va spento a fine prova. Non è la configurazione di un Box consegnato: lì l'utente non deve mai fare nulla di questo (vedi `docs/security.md` voce #147, "Come dovrà essere a regime").
 
 1. **Certificato** (nella cartella `mobile/www/`, mai da committare):
    ```bash
@@ -100,7 +100,7 @@ Un telefono che apre `mobile/www/` da una pagina HTTP non può usare la posizion
    ```
    Devono comparire tutte e tre le porte.
 3. **Sul telefono**, nell'ordine: aprire in una scheda `https://192.168.1.50:8443/api/status` e accettare l'avviso del certificato (necessario una volta per ogni indirizzo HTTPS, `fetch()` non permette di procedere comunque); poi aprire `https://192.168.1.50:8090/`, accettare di nuovo l'avviso, inserire come indirizzo del gateway **`https://192.168.1.50:8443`** (con lo schema) e la password di rete.
-   - Se scrivendo lo schema a mano compare `http://https://...` nel messaggio d'errore (successo una volta, causa non individuata, `docs/security.md` voce #146), una scorciatoia **solo per la prova** è cambiare il default dello schema nella copia sul Box e riportarlo a fine prova: `sed -i 's|return "http://" + trimmed;|return "https://" + trimmed;|' ~/ARALD/mobile/www/app.js` (poi basta scrivere `192.168.1.50:8443`), annullata con `git checkout mobile/www/app.js`. Il default `http://` è quello giusto per un gateway normale: non va cambiato in modo permanente.
+   - Se scrivendo lo schema a mano compare `http://https://...` nel messaggio d'errore (successo una volta, causa non individuata, `docs/security.md` voce #147), una scorciatoia **solo per la prova** è cambiare il default dello schema nella copia sul Box e riportarlo a fine prova: `sed -i 's|return "http://" + trimmed;|return "https://" + trimmed;|' ~/ARALD/mobile/www/app.js` (poi basta scrivere `192.168.1.50:8443`), annullata con `git checkout mobile/www/app.js`. Il default `http://` è quello giusto per un gateway normale: non va cambiato in modo permanente.
 4. **Fine prova — spegnere tutto e pulire:**
    ```bash
    pkill -f http-server; pkill -f ssl-proxy
