@@ -94,6 +94,11 @@ La configurazione "1 Box + 2 Portable + 3 Card + 3 smartphone" (Fase 4-6) è una
 
 **Pass criteria**: il modello content-centric funziona indipendentemente dal mezzo di trasporto.
 
+**Esito della prima esecuzione reale (23 ottobre 2026, iPhone ↔ prototipo Box Orange Pi 4 Pro, Wi-Fi)** — dettaglio completo, ostacoli e cause in `docs/security.md` voce #146:
+- **T1.1/T1.3/T1.4**: ✅ drop `info` con posizione GPS e SOS creati dall'app, letti dal Box (`GET /api/drops`, `GET /api/emergency-beacons`). Richiede che l'app sia servita in HTTPS (il browser blocca la geolocalizzazione su HTTP) e, per leggere gli SOS, `--expose-emergency-beacons` sul nodo.
+- **T1.2**: ⚠️ `dropId` verificato, ma `author`/`deviceId` è il Node ID **del Box**, non del telefono — il telefono non ha un'identità propria nella mesh quando passa dal gateway. Il criterio "autore pseudonimo" vale solo per ciò che il telefono origina via Bluetooth.
+- **T1.5**: ⚠️ per i **drop** non eseguibile con l'app web (pagina non disponibile offline, nessuna coda lato client per i drop); per l'**SOS** la coda persistente esiste (`sos-queue.js`) ma l'esito del passaggio offline va **riconfermato** esplicitamente. Valutazione complessiva Fase 1: **CONDITIONAL PASS**.
+
 ---
 
 ## Fase 2 — Introduzione della prima Card

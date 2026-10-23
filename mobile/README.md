@@ -35,6 +35,14 @@ Poi apri `http://127.0.0.1:8090`, inserisci `127.0.0.1:8080` come indirizzo e la
 
 **Nota sulla scansione QR**: usa la Shape Detection API nativa del browser (`BarcodeDetector`), zero dipendenze — ma **non disponibile** nel Chromium headless sandboxato di questa sessione di sviluppo, quindi il percorso di scansione live via fotocamera reale non è mai stato verificato end-to-end in questo ambiente (né lo sarà finché non gira su un vero Chrome/Android WebView). Verificato invece: il bottone resta correttamente nascosto quando l'API manca (nessun elemento rotto in pagina), `parsePairingUri()` con input sintetico, e l'intero percorso post-scansione (`applyScannedPairing()` → stessa validazione del form manuale) chiamando quelle funzioni direttamente. Stesso limite di principio della build Android nativa sotto — scritto secondo spec, non eseguibile end-to-end qui.
 
+## Provarla su un telefono reale da un browser — cosa aspettarsi (23 ottobre 2026)
+
+La pagina funziona da browser (provata con un iPhone, Chrome per iOS, contro un Box reale), ma due cose non sono ovvie:
+- **La posizione richiede HTTPS.** Su una pagina `http://` il browser disattiva la geolocalizzazione ("origin does not have permission to use Geolocation") e un drop non si pubblica senza posizione. Per una prova, la pagina va servita in HTTPS (certificato self-signed) e anche il gateway deve rispondere in HTTPS, altrimenti il browser blocca la chiamata come contenuto misto ("Load failed"): procedura di prova in `docs/riavvio-box-prototipo.md`, motivazioni e ostacoli in `docs/security.md` voce #146. **Non è la configurazione di un uso normale.**
+- **Niente funziona offline.** È una pagina caricata dalla rete: senza rete non si apre, e i drop non hanno una coda sul client (l'SOS sì, `sos-queue.js`).
+
+L'indirizzo del gateway va scritto con lo schema (`https://...`) solo quando il gateway è dietro HTTPS; senza schema l'app usa `http://`, che è il comportamento giusto per un gateway normale.
+
 ## Stato della build nativa Android
 
 `npx cap add android` genera correttamente il progetto Gradle (verificato in questa sessione). **La compilazione reale (`./gradlew assembleDebug`) non è stata completabile in questo ambiente**: richiede l'Android Gradle Plugin da `dl.google.com`, un host bloccato dalla policy di rete della sessione remota (`403 Forbidden` dal proxy — non un problema di codice, un limite dell'ambiente). Su una macchina di sviluppo normale con [Android Studio](https://developer.android.com/studio) installato (che porta con sé l'SDK):
