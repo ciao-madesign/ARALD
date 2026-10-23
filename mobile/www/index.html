@@ -617,7 +617,7 @@
             </summary>
             <form id="create-drop-form">
               <input id="create-drop-label" type="text" placeholder="Etichetta breve (opzionale), es. Frana sul sentiero" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="100">
-              <textarea id="create-drop-text" placeholder="Descrivi la segnalazione..." rows="2" required></textarea>
+              <textarea id="create-drop-text" placeholder="Descrivi la segnalazione..." rows="2" maxlength="4000" required></textarea>
               <select id="create-drop-kind">
                 <option value="info" selected>Informazione (es. sentiero chiuso)</option>
                 <option value="hazard">Pericolo (es. crepaccio, frana)</option>
@@ -853,6 +853,10 @@
      ble-sos.js/ble-identity.js (solo da localStorage), quindi l'ordine stretto con quelli non è
      necessario — dopo per coerenza con l'ordine "i moduli SOS insieme". -->
 <script type="module" src="sos-queue.js"></script>
+<!-- Coda persistente dei drop in uscita (docs/test-protocol.md T1.5, docs/security.md voce #149): vero modulo
+     ES con ponte `window.AraldDropQueue` verso app.js, stessa forma di sos-queue.js sopra. Solo localStorage,
+     nessuna dipendenza dagli altri moduli. -->
+<script type="module" src="drop-queue.js"></script>
 <!-- Vero modulo ES come ble-link.js/ecc sopra (window.AraldBleWifiProvisioning come ponte verso
      app.js, uno script classico sotto) — vedi ble-wifi-provisioning.js's own header. Dopo
      ble-link.js/vendor/nacl.js (di cui usa rispettivamente base64ToBytes()/bytesToBase64() e il

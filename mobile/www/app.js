@@ -150,24 +150,51 @@ function loadActivityLog() {
   return activityLogCache;
 }
 
-function recordActivity(type, label, status) {
+/**
+ * `ref` (opzionale) lega la voce a qualcosa che può cambiare stato dopo — oggi il `queueId` di un drop
+ * in coda (drop-queue.js): `updateActivity()` lo ritrova e ne aggiorna lo stato quando il Box lo
+ * accetta, lo rifiuta o la voce scade. Le voci senza `ref` non cambiano mai.
+ */
+function recordActivity(type, label, status, ref) {
   const entries = loadActivityLog();
-  entries.unshift({ type, label, status, timestamp: Date.now() });
+  entries.unshift({ type, label, status, ref, timestamp: Date.now() });
   entries.length = Math.min(entries.length, MAX_ACTIVITY_LOG_ENTRIES);
   activityLogCache = entries;
+  persistActivityLog();
+  renderActivityLog();
+}
+
+function persistActivityLog() {
   try {
-    localStorage.setItem(STORAGE_KEY_ACTIVITY_LOG, JSON.stringify(entries));
+    localStorage.setItem(STORAGE_KEY_ACTIVITY_LOG, JSON.stringify(activityLogCache));
   } catch {
     // Storage full or unavailable — same accepted degradation as setContactName() above: the entry
     // still renders for this page view, it just won't survive a reload.
   }
+}
+
+/** Aggiorna lo stato della voce con questo `ref`, se è ancora nel registro (può essere uscita dalle ultime MAX_ACTIVITY_LOG_ENTRIES). */
+function updateActivity(ref, status) {
+  if (!ref) return;
+  const entry = loadActivityLog().find((e) => e && e.ref === ref);
+  if (!entry || entry.status === status) return;
+  entry.status = status;
+  persistActivityLog();
   renderActivityLog();
 }
 
 const ACTIVITY_TYPE_LABELS = { message: "Messaggio", "external-delivery": "Invio a un'organizzazione", drop: "Bacheca", channel: "Canale", sos: "SOS" };
 const ACTIVITY_STATUS_TEXT = { sent: "Inviato", queued: "In coda — verrà inoltrato appena c'è un vicino nelle vicinanze", published: "Pubblicato" };
 /** Overrides ACTIVITY_STATUS_TEXT for a (type, status) pair that reads better as its own dedicated phrase than as a generic verb + type label (docs/security.md voce #87, Fase 2 dell'audit UX/UI; "queued" aggiunto dalla coda SOS persistente, docs/next-steps.md voci #106/#107) — "SOS trasmesso" è una conferma diretta e rassicurante per l'unica azione dove conta di più, invece del generico "Inviato"; "in attesa di trasmissione" nomina esplicitamente il comportamento automatico della coda multi-canale (gateway o Bluetooth, il primo che funziona) invece del testo generico pensato per un pacchetto unicast già instradato. */
-const ACTIVITY_STATUS_TEXT_OVERRIDE = { sos: { sent: "SOS trasmesso", queued: "In attesa di trasmissione — verrà inviato appena un canale sarà disponibile (gateway o Bluetooth)" } };
+const ACTIVITY_STATUS_TEXT_OVERRIDE = {
+  sos: { sent: "SOS trasmesso", queued: "In attesa di trasmissione — verrà inviato appena un canale sarà disponibile (gateway o Bluetooth)" },
+  drop: {
+    queued: "In attesa del Box — verrà pubblicata appena il Box sarà raggiungibile",
+    published: "Pubblicata",
+    failed: "Non pubblicata — il Box l'ha rifiutata",
+    expired: "Scaduta prima di poter essere pubblicata",
+  },
+};
 
 function activityStatusText(type, status) {
   const override = ACTIVITY_STATUS_TEXT_OVERRIDE[type];
@@ -472,13 +499,15 @@ async function createGroup(name, members) {
  * see node/src/drops.ts's own doc comment). `lat`/`lon` are always the caller's own current position
  * (see createDropFromHere()'s doc comment below), never typed in by hand.
  */
-async function createDrop({ text, lat, lon, label, kind }) {
+async function createDrop({ text, lat, lon, label, kind, expiresInMs }) {
   const res = await fetchWithTimeout(
     apiUrl("/api/drops"),
     {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + networkPassword },
-      body: JSON.stringify({ text, lat, lon, label, kind }),
+      // `expiresInMs` solo per un drop uscito dalla coda (drop-queue.js): riporta al nodo la vita
+      // residua, così un drop pubblicato dopo ore di attesa non vive di nuovo per il tempo pieno.
+      body: JSON.stringify({ text, lat, lon, label, kind, expiresInMs }),
     },
     CALL_TIMEOUT_MS,
   );
@@ -2880,6 +2909,51 @@ function renderNodeAppends(nodeAppends) {
   nodeAppendSeenIds = nextSeen;
 }
 
+/**
+ * Un solo giro di invio alla volta: `refreshAll()` (ogni 5 s) la chiama a fine ciclo, e un invio lento
+ * non deve mai poterne far partire un secondo sulle stesse voci (pubblicherebbe ogni drop due volte —
+ * stessa classe di bug di `gatewaySosAttempt`, ble-client.js, e di `externalDeliveryAttemptInFlight`,
+ * node.ts).
+ */
+let dropFlushInFlight = false;
+
+/**
+ * Ritenta i drop rimasti in coda sul telefono (drop-queue.js, docs/test-protocol.md T1.5). Chiamata da
+ * `refreshAll()` solo dopo un ciclo che ha raggiunto il Box: quel successo è il segnale più economico
+ * che il Box è tornato — nessun timer nuovo, stessa scelta della coda SOS. Dalla più vecchia alla più
+ * recente; al primo errore ritentabile (Box di nuovo irraggiungibile, 429, 401) si ferma e lascia
+ * tutto com'è. Un rifiuto definitivo del nodo (4xx) toglie solo quella voce e lo dice all'utente.
+ * Non lancia mai e non blocca mai il refresh della dashboard.
+ */
+async function tryFlushPendingDrops() {
+  const queue = window.AraldDropQueue;
+  if (!queue || dropFlushInFlight || !gatewayUrl || !networkPassword) return;
+  dropFlushInFlight = true;
+  try {
+    // Ordine, arresto e classificazione degli errori vivono in drop-queue.js (unit-testati): qui solo
+    // l'invio vero e ciò che l'utente vede. Le voci di un altro Box non si toccano.
+    const result = await queue.flushPendingDrops({
+      gateway: gatewayUrl,
+      send: (entry, expiresInMs) => createDrop({ text: entry.text, lat: entry.lat, lon: entry.lon, label: entry.label, kind: entry.kind, expiresInMs }),
+      onPublished: (entry) => updateActivity(entry.queueId, "published"),
+      onExpired: (entry) => updateActivity(entry.queueId, "expired"),
+      onDiscarded: (entry, err) => {
+        updateActivity(entry.queueId, "failed");
+        showToast("Il Box ha rifiutato una segnalazione in attesa: " + err.message, "alert-triangle");
+      },
+      // La password non è più valida: le voci restano in coda e ripartono da sole dopo il nuovo pairing.
+      onReauth: () => handlePasswordRejected(),
+    });
+    if (result.published > 0) {
+      vibrate(10);
+      showToast(result.published === 1 ? "Segnalazione in attesa pubblicata" : result.published + " segnalazioni in attesa pubblicate", "alert-triangle");
+      refreshAll().catch(() => {});
+    }
+  } finally {
+    dropFlushInFlight = false;
+  }
+}
+
 function setCreateDropBusy(submit, busy) {
   submit.disabled = busy;
   submit.textContent = busy ? "Invio..." : "Segnala qui";
@@ -2899,14 +2973,39 @@ document.getElementById("create-drop-form").addEventListener("submit", async (ev
   setCreateDropBusy(submit, true);
   status.classList.remove("error");
   status.textContent = "Individuazione della posizione...";
-  try {
-    const { lat, lon } = await getCurrentPosition();
-    status.textContent = "Invio in corso...";
-    await createDrop({ text, lat, lon, label: label || undefined, kind });
-    recordActivity("drop", label || undefined, "published");
+  const clearCreateDropForm = () => {
     textInput.value = "";
     labelInput.value = "";
     kindInput.value = "info";
+  };
+  try {
+    const { lat, lon } = await getCurrentPosition();
+    status.textContent = "Invio in corso...";
+    try {
+      await createDrop({ text, lat, lon, label: label || undefined, kind });
+    } catch (sendErr) {
+      // Box non raggiungibile (o in errore transitorio): la posizione è già stata presa, il testo è
+      // già scritto — salvarli sul telefono invece di farli riscrivere (docs/test-protocol.md T1.5).
+      // Una password rifiutata (401) e un rifiuto del nodo (400, ...) NON si accodano: il primo si
+      // gestisce qui sotto, il secondo darebbe lo stesso errore a ogni ritentativo.
+      const queue = window.AraldDropQueue;
+      if (!queue || !queue.shouldQueueOnSubmit(sendErr)) throw sendErr;
+      // Prima di contare lo spazio, chiudi le voci scadute: restituite da loadPendingDrops() e
+      // segnate "Scaduta" in "Le mie attività", così non occupano posto né restano "in attesa".
+      for (const gone of queue.loadPendingDrops().expired) updateActivity(gone.queueId, "expired");
+      const queued = queue.enqueuePendingDrop({ text, lat, lon, label: label || undefined, kind, gateway: gatewayUrl });
+      if (!queued) {
+        throw new Error("Il Box non risponde e la segnalazione non si può salvare sul telefono (coda piena o memoria non disponibile): " + sendErr.message);
+      }
+      recordActivity("drop", label || undefined, "queued", queued.queueId);
+      clearCreateDropForm();
+      status.textContent = "Il Box non risponde: segnalazione salvata sul telefono, verrà pubblicata appena possibile.";
+      vibrate([12, 30]);
+      showToast("Segnalazione in attesa del Box", "send");
+      return;
+    }
+    recordActivity("drop", label || undefined, "published");
+    clearCreateDropForm();
     status.textContent = "Segnalazione pubblicata.";
     // Three-tier tactile feedback (info < hazard < emergency), same "intensity mirrors severity"
     // posture as the previous two-tier urgent/non-urgent scheme.
@@ -3821,6 +3920,8 @@ async function refreshAll() {
     // al ritentativo). Fire-and-forget — `tryFlushPendingSosViaGateway()` (ble-client.js) non lancia
     // mai e non deve mai bloccare il refresh della dashboard.
     if (typeof tryFlushPendingSosViaGateway === "function") tryFlushPendingSosViaGateway();
+    // Stesso segnale per i drop in coda (drop-queue.js) — vedi tryFlushPendingDrops().
+    tryFlushPendingDrops().catch(() => {});
   } catch (err) {
     if (cycleId !== refreshCycleId) return;
     setDashboardError("Gateway non raggiungibile: " + err.message);
