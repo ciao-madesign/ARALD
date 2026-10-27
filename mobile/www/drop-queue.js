@@ -25,13 +25,14 @@
 // iniettabile (tests/unit/mobile-drop-queue.test.ts).
 //
 // **Limiti noti, non risolti qui** (docs/security.md voce #149):
-// - `POST /api/drops` non ha una chiave di idempotenza: se una richiesta arriva al Box ma la risposta
-//   si perde, il ritentativo pubblica un drop doppio. Mitigato (non eliminato) da `claimPendingDrop()`:
-//   una voce già in invio da un'altra pagina/scheda, o da meno di `CLAIM_TTL_MS`, non viene reinviata.
-// - Il nodo dà al drop il timestamp del momento in cui lo pubblica (`publishDrop()`), non quello in
-//   cui l'utente l'ha scritto: un drop uscito dalla coda dopo ore sembra una segnalazione di adesso.
-//   Per questo la vita residua (`remainingLifetimeMs()`) si riporta al nodo, ma il momento della
-//   segnalazione originale non può essere trasmesso senza una modifica al nodo.
+// - Duplicati: ogni invio porta `idempotencyKey` = `queueId` (voce #150), e il Box non pubblica due
+//   volte la stessa chiave. Resta possibile un duplicato solo se il Box si riavvia fra la richiesta
+//   originale e il suo ritentativo (la memoria delle chiavi è in RAM), o con un Box più vecchio che
+//   ignora il campo. `claimPendingDrop()` evita in più l'invio parallelo della stessa voce.
+// - Il momento della segnalazione (`createdAt` = `queuedAt`) viene riportato al Box, che lo usa come
+//   `timestamp` del drop (limitato a [adesso - 24 h, adesso]): un drop uscito dalla coda dopo ore
+//   conserva l'ora in cui è stato scritto (inviato solo per i drop in coda, mai per un invio diretto:
+//   l'orologio di un telefono senza rete può essere sbagliato). Un Box più vecchio lo ignora e usa l'ora di pubblicazione.
 
 export const PENDING_DROPS_STORAGE_KEY = "arald.pendingDrops";
 export const MAX_PENDING_DROPS = 20;
@@ -66,7 +67,12 @@ function defaultStorage() {
   }
 }
 
-function newQueueId() {
+/**
+ * Identificatore di una voce, usato anche come chiave di idempotenza verso il nodo (`POST /api/drops`
+ * → `idempotencyKey`): app.js lo genera PRIMA del primo invio, così il ritentativo di un invio la cui
+ * risposta si è persa porta la stessa chiave e il Box non pubblica un duplicato.
+ */
+export function newQueueId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
   return "q-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
 }
@@ -184,15 +190,18 @@ export function loadPendingDrops(storage = defaultStorage(), now = Date.now()) {
  * Non toglie nulla dallo storage (nemmeno le voci scadute, che contano per il limite): la ripulitura
  * spetta a `loadPendingDrops()`, che le restituisce a chi può aggiornarne lo stato mostrato.
  */
-export function enqueuePendingDrop({ text, lat, lon, label, kind, gateway }, storage = defaultStorage(), now = Date.now()) {
+export function enqueuePendingDrop({ text, lat, lon, label, kind, gateway, queueId }, storage = defaultStorage(), now = Date.now()) {
   if (!storage) return null;
-  const entry = { queueId: newQueueId(), gateway, text, lat, lon, label: label || undefined, kind: kind || "info", queuedAt: now };
+  const entry = { queueId: queueId || newQueueId(), gateway, text, lat, lon, label: label || undefined, kind: kind || "info", queuedAt: now };
   // Il limite del testo si applica solo qui, non in isWellFormedEntry(): un testo troppo lungo già in
   // storage resta una voce valida e il nodo lo rifiuta con un 400 definitivo ("Non pubblicata"),
   // invece di sparire senza traccia al caricamento.
   if (!isWellFormedEntry(entry) || text.length > MAX_DROP_TEXT_LENGTH) return null;
   const existing = readEntries(storage).filter(isWellFormedEntry);
   if (existing.length >= MAX_PENDING_DROPS) return null;
+  // Stesso id già in coda (doppio invio dello stesso modulo): è la stessa segnalazione, già salvata.
+  const already = existing.find((e) => e.queueId === entry.queueId);
+  if (already) return already;
   existing.push(entry);
   return writeEntries(existing, storage) ? entry : null;
 }
@@ -285,6 +294,14 @@ export async function flushPendingDrops({ gateway, send, onPublished, onDiscarde
   }
   for (const entry of pending) {
     if (entry.gateway !== gateway) continue;
+    // La vita residua si ricalcola al momento dell'invio: loadPendingDrops() ha filtrato prima, e il
+    // nodo risponde 400 a un `expiresInMs` non positivo (che qui diventerebbe un rifiuto definitivo).
+    if (remainingLifetimeMs(entry, clock()) <= 0) {
+      removePendingDrop(entry.queueId, storage);
+      result.expired += 1;
+      if (onExpired) onExpired(entry);
+      continue;
+    }
     if (!claimPendingDrop(entry.queueId, storage, clock())) continue;
 
     let failure = null;
@@ -328,6 +345,7 @@ const AraldDropQueue = {
   MAX_PENDING_DROPS,
   PENDING_DROP_MAX_AGE_MS,
   CLAIM_TTL_MS,
+  newQueueId,
   loadPendingDrops,
   enqueuePendingDrop,
   removePendingDrop,

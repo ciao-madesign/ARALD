@@ -1187,6 +1187,13 @@ export class WebUiServer {
   // default EventEmitter maxListeners (10) and print MaxListenersExceededWarning (found by review).
   private deliveryStatusListenersAttached = false;
   private readonly deliveryStatusWaiters = new Map<string, (status: "sent" | "queued") => void>();
+  /**
+   * `POST /api/drops` con `idempotencyKey`: il drop già pubblicato per quella chiave, così un
+   * ritentativo del client (risposta persa, coda sul telefono) non pubblica un duplicato. Solo in
+   * memoria e limitata: un riavvio del nodo la azzera (il duplicato resterebbe possibile solo se la
+   * richiesta originale e il suo ritentativo sono separati da un riavvio).
+   */
+  private readonly dropsByIdempotencyKey = new BoundedFifoMap<string, { drop: { expiresAt?: number }; fingerprint: string }>({ maxSize: 512 });
   private readonly recentDeliveryStatuses = new BoundedFifoMap<string, "sent" | "queued">({ maxSize: 200 });
   private cachedPairingInfo: PairingInfo | undefined;
   private readonly httpServer: LoopbackHttpServer;
@@ -1903,7 +1910,7 @@ export class WebUiServer {
   }
 
   /**
-   * `POST /api/drops` — publishes a drop (body `{ text, lat, lon, label?, kind?, expiresInMs? }`)
+   * `POST /api/drops` — publishes a drop (body `{ text, lat, lon, label?, kind?, expiresInMs?, idempotencyKey?, createdAt? }`)
    * via `NomadNode.publishDrop()`. Same auth as `POST /api/channel-messages` — reading drops needs
    * no password (`GET /api/drops`, public mesh content), but *creating* one is still gated behind
    * pairing like every other write this class exposes. `lat`/`lon`'s deeper validation happens
@@ -1944,7 +1951,7 @@ export class WebUiServer {
       return;
     }
 
-    const body = parsed as { text?: unknown; lat?: unknown; lon?: unknown; label?: unknown; kind?: unknown; expiresInMs?: unknown } | null;
+    const body = parsed as { text?: unknown; lat?: unknown; lon?: unknown; label?: unknown; kind?: unknown; expiresInMs?: unknown; idempotencyKey?: unknown; createdAt?: unknown } | null;
     const text = body?.text;
     if (typeof text !== "string" || text.length === 0) {
       sendJson(res, 400, { error: "'text' must be a non-empty string" });
@@ -1969,9 +1976,41 @@ export class WebUiServer {
       sendJson(res, 400, { error: "'expiresInMs' must be a number" });
       return;
     }
+    const createdAt = body.createdAt;
+    if (createdAt !== undefined && typeof createdAt !== "number") {
+      sendJson(res, 400, { error: "'createdAt' must be a number" });
+      return;
+    }
+    const idempotencyKey = body.idempotencyKey;
+    if (idempotencyKey !== undefined && (typeof idempotencyKey !== "string" || idempotencyKey.length === 0 || idempotencyKey.length > MAX_IDEMPOTENCY_KEY_LENGTH)) {
+      sendJson(res, 400, { error: `'idempotencyKey' must be a string of 1-${MAX_IDEMPOTENCY_KEY_LENGTH} characters` });
+      return;
+    }
+    // Impronta del contenuto: la stessa chiave con un contenuto diverso è un errore del client (o una
+    // collisione fra due client), mai «già pubblicato» — il chiamante crederebbe pubblicata una
+    // segnalazione che in realtà è stata scartata.
+    const fingerprint = JSON.stringify([text, body.lat, body.lon, label ?? null, kind]);
+    if (idempotencyKey !== undefined) {
+      const existing = this.dropsByIdempotencyKey.get(idempotencyKey);
+      if (existing && existing.drop.expiresAt !== undefined && existing.drop.expiresAt <= Date.now()) {
+        // Il drop di quella chiave è scaduto: non esiste più sulla mesh, quindi non è un duplicato.
+        this.dropsByIdempotencyKey.delete(idempotencyKey);
+      } else if (existing) {
+        if (existing.fingerprint !== fingerprint) {
+          sendJson(res, 409, { error: "'idempotencyKey' already used for a different drop" });
+          return;
+        }
+        // Già pubblicato per questa chiave: stessa risposta della prima volta, nessun secondo drop.
+        sendJson(res, 200, { drop: existing.drop, duplicate: true });
+        return;
+      }
+    }
 
     try {
-      const drop = this.node.publishDrop({ text, lat: body.lat, lon: body.lon, label, kind, expiresInMs });
+      const drop = this.node.publishDrop({ text, lat: body.lat, lon: body.lon, label, kind, expiresInMs, createdAt });
+      // publishDrop() è sincrona: fra il controllo sopra e questa registrazione nessun'altra richiesta
+      // può inserirsi, quindi due richieste con la stessa chiave non pubblicano mai entrambe.
+      if (idempotencyKey !== undefined) this.dropsByIdempotencyKey.set(idempotencyKey, { drop, fingerprint });
       sendJson(res, 200, { drop });
     } catch (err) {
       // publishDrop()'s own validation throws for both a rejected input (bad lat/lon/text/label —
@@ -3204,6 +3243,8 @@ function isKnownAvailableService(node: NomadNode, serviceId: string): boolean {
 
 const MAX_CALL_BODY_BYTES = 262_144; // generous for a service call payload, nowhere near CHUNK_SIZE
 const MAX_CALL_BODY_READ_MS = 10_000; // bounds how long a slow/trickling body is tolerated (loopback-http-server.ts), well under Node's own 300s default
+/** Lunghezza massima di `idempotencyKey` in `POST /api/drops` (un UUID ne usa 36). */
+const MAX_IDEMPOTENCY_KEY_LENGTH = 100;
 const MAX_MESSAGE_BODY_BYTES = 65_536; // a chat message's JSON body is tiny compared to a service call's
 const DELIVERY_STATUS_AWAIT_MS = 1500; // generous for local async I/O to settle; see awaitDeliveryStatus()'s own doc comment for the timeout default
 const DEFAULT_CALL_TIMEOUT_MS = 5000;

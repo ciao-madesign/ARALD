@@ -10,6 +10,7 @@ import {
   flushPendingDrops,
   isPendingDropExpired,
   loadPendingDrops,
+  newQueueId,
   releasePendingDrop,
   remainingLifetimeMs,
   removePendingDrop,
@@ -49,6 +50,16 @@ describe("mobile/www/drop-queue (coda persistente dei drop in uscita)", () => {
 
     const { pending } = loadPendingDrops(storage, 1_500);
     expect(pending).toEqual([{ queueId: entry!.queueId, gateway: GW, text: "Frana sul sentiero", lat: 45.1, lon: 9.1, label: "Frana", kind: "hazard", queuedAt: 1_000 }]);
+  });
+
+  it("usa il queueId fornito (la chiave di idempotenza generata prima del primo invio); lo stesso id due volte è la stessa voce, non un errore", () => {
+    const storage = new FakeStorage();
+    const key = newQueueId();
+    const entry = enqueuePendingDrop(drop({ queueId: key }), storage, 1)!;
+    expect(entry.queueId).toBe(key);
+    expect(enqueuePendingDrop(drop({ queueId: key, text: "doppione" }), storage, 2)!.queueId).toBe(key);
+    expect(newQueueId()).not.toBe(newQueueId());
+    expect(texts(loadPendingDrops(storage, 3).pending)).toEqual(["Frana sul sentiero"]);
   });
 
   it("senza kind usa 'info' e senza label non salva un'etichetta vuota", () => {
@@ -433,6 +444,23 @@ describe("mobile/www/drop-queue (coda persistente dei drop in uscita)", () => {
       });
       expect(sent).toEqual([]);
       expect(left(storage)).toEqual(["uno"]);
+    });
+
+    it("rilegge la scadenza al momento dell'invio: una voce scaduta nel frattempo non parte con expiresInMs <= 0", async () => {
+      const storage = setup([{ text: "al limite", queuedAt: 0 }]);
+      const times = [PENDING_DROP_MAX_AGE_MS - 1, PENDING_DROP_MAX_AGE_MS + 5];
+      let i = 0;
+      const sent: string[] = [];
+      const log: string[] = [];
+      const result = await flushPendingDrops(
+        { gateway: GW, send: async (e: Entry) => void sent.push(e.text), onExpired: (e: Entry) => log.push(e.text) },
+        storage,
+        () => times[Math.min(i++, times.length - 1)],
+      );
+      expect(sent).toEqual([]);
+      expect(log).toEqual(["al limite"]);
+      expect(result.expired).toBe(1);
+      expect(texts(loadPendingDrops(storage, 1).pending)).toEqual([]);
     });
 
     it("senza storage non lancia e non fa nulla", async () => {

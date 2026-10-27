@@ -2637,7 +2637,7 @@ export class NomadNode extends EventEmitter {
    * `"info"` drop gets no special treatment beyond what any other announced
    * content already gets.
    */
-  publishDrop(drop: { text: string; lat: number; lon: number; label?: string; kind: DropKind; expiresInMs?: number }): Drop {
+  publishDrop(drop: { text: string; lat: number; lon: number; label?: string; kind: DropKind; expiresInMs?: number; createdAt?: number }): Drop {
     if (drop.text.length === 0 || drop.text.length > MAX_MESSAGE_TEXT_LENGTH) {
       throw new Error(`drop text must be 1-${MAX_MESSAGE_TEXT_LENGTH} characters`);
     }
@@ -2660,11 +2660,23 @@ export class NomadNode extends EventEmitter {
     if (drop.expiresInMs !== undefined && (!Number.isFinite(drop.expiresInMs) || drop.expiresInMs <= 0)) {
       throw new Error("publishDrop: 'expiresInMs' must be a finite positive number");
     }
+    // Anch'essa validata PRIMA di consumare il budget dei drop elevati (stessa ragione di expiresInMs).
+    if (drop.createdAt !== undefined && !Number.isFinite(drop.createdAt)) {
+      throw new Error("publishDrop: 'createdAt' must be a finite number");
+    }
     if (drop.kind !== "info" && !this.tryConsumeElevatedDropBudget()) {
       throw new Error("publishDrop: too many high-priority drops, try again later");
     }
     const ttlMs = Math.min(drop.expiresInMs ?? DEFAULT_DROP_TTL_MS, MAX_DROP_TTL_MS);
-    const timestamp = Date.now();
+    const now = Date.now();
+    // `createdAt`: il momento in cui il client ha scritto il drop (un client che lo ha tenuto in coda
+    // per ore, mobile/www/drop-queue.js). Un dato dichiarato dal client, mai autenticato: limitato a
+    // [adesso - DEFAULT_DROP_TTL_MS, adesso]: la coda del telefono tiene un drop al massimo 24 ore
+    // (`PENDING_DROP_MAX_AGE_MS`, drop-queue.js), quindi non serve una finestra più larga — e una più
+    // larga lascerebbe a un client retrodatare un drop (che ordina in fondo a `drops.list()`) pur con
+    // la scadenza piena. Mai nel futuro. Il resto del codice continua a leggere `timestamp` come
+    // «il momento della segnalazione», solo più fedele.
+    const timestamp = drop.createdAt === undefined ? now : Math.min(now, Math.max(now - DEFAULT_DROP_TTL_MS, drop.createdAt));
     const payload: DropPayload = { text: drop.text, lat: drop.lat, lon: drop.lon, label: drop.label, kind: drop.kind, timestamp };
     const metadata = this.publishContent(DROP_CONTENT_NAME, "application/json", Buffer.from(JSON.stringify(payload), "utf8"), {
       announce: true,

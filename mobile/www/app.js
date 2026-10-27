@@ -499,7 +499,12 @@ async function createGroup(name, members) {
  * see node/src/drops.ts's own doc comment). `lat`/`lon` are always the caller's own current position
  * (see createDropFromHere()'s doc comment below), never typed in by hand.
  */
-async function createDrop({ text, lat, lon, label, kind, expiresInMs }) {
+function newDropKey() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return "d-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12);
+}
+
+async function createDrop({ text, lat, lon, label, kind, expiresInMs, idempotencyKey, createdAt }) {
   const res = await fetchWithTimeout(
     apiUrl("/api/drops"),
     {
@@ -507,7 +512,9 @@ async function createDrop({ text, lat, lon, label, kind, expiresInMs }) {
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + networkPassword },
       // `expiresInMs` solo per un drop uscito dalla coda (drop-queue.js): riporta al nodo la vita
       // residua, così un drop pubblicato dopo ore di attesa non vive di nuovo per il tempo pieno.
-      body: JSON.stringify({ text, lat, lon, label, kind, expiresInMs }),
+      // `idempotencyKey` (= queueId) e `createdAt`: il Box non pubblica due volte la stessa chiave e
+      // data il drop all'ora in cui è stato scritto, non a quella in cui esce dalla coda (voce #150).
+      body: JSON.stringify({ text, lat, lon, label, kind, expiresInMs, idempotencyKey, createdAt }),
     },
     CALL_TIMEOUT_MS,
   );
@@ -2934,7 +2941,8 @@ async function tryFlushPendingDrops() {
     // l'invio vero e ciò che l'utente vede. Le voci di un altro Box non si toccano.
     const result = await queue.flushPendingDrops({
       gateway: gatewayUrl,
-      send: (entry, expiresInMs) => createDrop({ text: entry.text, lat: entry.lat, lon: entry.lon, label: entry.label, kind: entry.kind, expiresInMs }),
+      send: (entry, expiresInMs) =>
+        createDrop({ text: entry.text, lat: entry.lat, lon: entry.lon, label: entry.label, kind: entry.kind, expiresInMs, idempotencyKey: entry.queueId, createdAt: entry.queuedAt }),
       onPublished: (entry) => updateActivity(entry.queueId, "published"),
       onExpired: (entry) => updateActivity(entry.queueId, "expired"),
       onDiscarded: (entry, err) => {
@@ -2981,8 +2989,14 @@ document.getElementById("create-drop-form").addEventListener("submit", async (ev
   try {
     const { lat, lon } = await getCurrentPosition();
     status.textContent = "Invio in corso...";
+    // Chiave generata PRIMA del primo invio, indipendente dal modulo della coda: se la risposta si
+    // perde e il drop finisce in coda, il ritentativo porta la stessa chiave e il Box non lo
+    // pubblica due volte. `createdAt` NON si manda in un invio diretto (l'orologio del telefono può
+    // essere sbagliato: il Box data da sé il drop), solo per quelli usciti dalla coda.
+    const dropKey = newDropKey();
+    const createdAt = Date.now();
     try {
-      await createDrop({ text, lat, lon, label: label || undefined, kind });
+      await createDrop({ text, lat, lon, label: label || undefined, kind, idempotencyKey: dropKey });
     } catch (sendErr) {
       // Box non raggiungibile (o in errore transitorio): la posizione è già stata presa, il testo è
       // già scritto — salvarli sul telefono invece di farli riscrivere (docs/test-protocol.md T1.5).
@@ -2993,7 +3007,7 @@ document.getElementById("create-drop-form").addEventListener("submit", async (ev
       // Prima di contare lo spazio, chiudi le voci scadute: restituite da loadPendingDrops() e
       // segnate "Scaduta" in "Le mie attività", così non occupano posto né restano "in attesa".
       for (const gone of queue.loadPendingDrops().expired) updateActivity(gone.queueId, "expired");
-      const queued = queue.enqueuePendingDrop({ text, lat, lon, label: label || undefined, kind, gateway: gatewayUrl });
+      const queued = queue.enqueuePendingDrop({ text, lat, lon, label: label || undefined, kind, gateway: gatewayUrl, queueId: dropKey }, undefined, createdAt);
       if (!queued) {
         throw new Error("Il Box non risponde e la segnalazione non si può salvare sul telefono (coda piena o memoria non disponibile): " + sendErr.message);
       }

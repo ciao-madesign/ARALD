@@ -237,4 +237,115 @@ describe("WebUiServer /api/drops", () => {
     expect((await limited.json()).error).toMatch(/too many high-priority drops/);
     expect(a.node.drops.list()).toHaveLength(3);
   });
+
+  describe("idempotencyKey / createdAt (coda dei drop sul telefono, voce #150)", () => {
+    const post = (webUi: WebUiServer, body: Record<string, unknown>): Promise<Response> =>
+      authedFetch(webUi, "/api/drops", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lat: 45, lon: 7, ...body }) });
+
+    it("lo stesso idempotencyKey pubblica un solo drop: il ritentativo riceve lo stesso drop, marcato duplicate", async () => {
+      const a = makeGateway("A");
+      await Promise.all([a.node.start(), a.webUi.start()]);
+
+      const first = await post(a.webUi, { text: "frana", kind: "info", idempotencyKey: "k-1" });
+      const retry = await post(a.webUi, { text: "frana", kind: "info", idempotencyKey: "k-1" });
+      expect(first.status).toBe(200);
+      expect(retry.status).toBe(200);
+      const firstBody = await first.json();
+      const retryBody = await retry.json();
+      expect(firstBody.duplicate).toBeUndefined();
+      expect(retryBody.duplicate).toBe(true);
+      expect(retryBody.drop.dropId).toBe(firstBody.drop.dropId);
+      expect(a.node.drops.list()).toHaveLength(1);
+    });
+
+    it("richieste identiche inviate in parallelo con la stessa chiave non pubblicano più di un drop", async () => {
+      const a = makeGateway("A");
+      await Promise.all([a.node.start(), a.webUi.start()]);
+      const results = await Promise.all([1, 2, 3, 4].map(() => post(a.webUi, { text: "parallelo", kind: "info", idempotencyKey: "k-par" })));
+      expect(results.every((r) => r.status === 200)).toBe(true);
+      expect(a.node.drops.list()).toHaveLength(1);
+    });
+
+    it("chiavi diverse pubblicano drop diversi, e senza chiave nulla cambia", async () => {
+      const a = makeGateway("A");
+      await Promise.all([a.node.start(), a.webUi.start()]);
+      await post(a.webUi, { text: "uno", kind: "info", idempotencyKey: "k-a" });
+      await post(a.webUi, { text: "due", kind: "info", idempotencyKey: "k-b" });
+      await post(a.webUi, { text: "tre", kind: "info" });
+      await post(a.webUi, { text: "tre bis", kind: "info" });
+      expect(a.node.drops.list()).toHaveLength(4);
+    });
+
+    it("un rifiuto (429) non consuma la chiave: il ritentativo può ancora pubblicare", async () => {
+      const a = makeGateway("A");
+      await Promise.all([a.node.start(), a.webUi.start()]);
+      for (let i = 0; i < 3; i++) expect((await post(a.webUi, { text: "e" + i, kind: "emergency" })).status).toBe(200);
+      const limited = await post(a.webUi, { text: "bloccato", kind: "emergency", idempotencyKey: "k-429" });
+      expect(limited.status).toBe(429);
+      const ok = await post(a.webUi, { text: "bloccato", kind: "info", idempotencyKey: "k-429" });
+      expect(ok.status).toBe(200);
+      expect((await ok.json()).duplicate).toBeUndefined();
+    });
+
+    it("idempotencyKey non valido (vuoto, troppo lungo, non stringa) è un 400 e non pubblica", async () => {
+      const a = makeGateway("A");
+      await Promise.all([a.node.start(), a.webUi.start()]);
+      for (const bad of ["", "k".repeat(101), 5, {}]) {
+        expect((await post(a.webUi, { text: "x", kind: "info", idempotencyKey: bad })).status).toBe(400);
+      }
+      expect(a.node.drops.list()).toHaveLength(0);
+    });
+
+    it("createdAt diventa il timestamp del drop (l'ora in cui è stato scritto), non quella di pubblicazione", async () => {
+      const a = makeGateway("A");
+      await Promise.all([a.node.start(), a.webUi.start()]);
+      const written = Date.now() - 3 * 60 * 60 * 1000;
+      const res = await post(a.webUi, { text: "scritto tre ore fa", kind: "info", createdAt: written });
+      expect(res.status).toBe(200);
+      expect((await res.json()).drop.timestamp).toBe(written);
+    });
+
+    it("createdAt nel futuro o oltre 24 ore fa è riportato nei limiti, mai accettato così com'è", async () => {
+      const a = makeGateway("A");
+      await Promise.all([a.node.start(), a.webUi.start()]);
+      const before = Date.now();
+      const future = await (await post(a.webUi, { text: "futuro", kind: "info", createdAt: before + 10 * 24 * 3600 * 1000 })).json();
+      expect(future.drop.timestamp).toBeGreaterThanOrEqual(before);
+      expect(future.drop.timestamp).toBeLessThanOrEqual(Date.now());
+      const ancient = await (await post(a.webUi, { text: "antico", kind: "info", createdAt: 0 })).json();
+      expect(ancient.drop.timestamp).toBeGreaterThanOrEqual(before - 24 * 3600 * 1000 - 1000);
+      expect(ancient.drop.timestamp).toBeLessThan(before - 23 * 3600 * 1000);
+    });
+
+    it("la stessa chiave con un contenuto diverso è un 409: mai 'già pubblicato' per una segnalazione scartata", async () => {
+      const a = makeGateway("A");
+      await Promise.all([a.node.start(), a.webUi.start()]);
+      expect((await post(a.webUi, { text: "originale", kind: "info", idempotencyKey: "k-x" })).status).toBe(200);
+      const clash = await post(a.webUi, { text: "altro testo", kind: "info", idempotencyKey: "k-x" });
+      expect(clash.status).toBe(409);
+      expect(a.node.drops.list()).toHaveLength(1);
+      // lo stesso contenuto con la stessa chiave resta un normale duplicato
+      expect((await (await post(a.webUi, { text: "originale", kind: "info", idempotencyKey: "k-x" })).json()).duplicate).toBe(true);
+    });
+
+    it("un createdAt non finito (1e999 → Infinity) è un 400 che NON consuma il budget dei drop elevati", async () => {
+      const a = makeGateway("A");
+      await Promise.all([a.node.start(), a.webUi.start()]);
+      const raw = (kind: string) =>
+        authedFetch(a.webUi, "/api/drops", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: `{"text":"x","lat":1,"lon":2,"kind":"${kind}","createdAt":1e999}`,
+        });
+      for (let i = 0; i < 5; i++) expect((await raw("emergency")).status).toBe(400);
+      for (let i = 0; i < 3; i++) expect((await post(a.webUi, { text: "vero " + i, kind: "emergency" })).status).toBe(200);
+    });
+
+    it("createdAt non numerico è un 400; NaN dal nodo stesso è un errore", async () => {
+      const a = makeGateway("A");
+      await Promise.all([a.node.start(), a.webUi.start()]);
+      expect((await post(a.webUi, { text: "x", kind: "info", createdAt: "ieri" })).status).toBe(400);
+      expect(() => a.node.publishDrop({ text: "x", lat: 1, lon: 2, kind: "info", createdAt: Number.NaN })).toThrow(/createdAt/);
+    });
+  });
 });
